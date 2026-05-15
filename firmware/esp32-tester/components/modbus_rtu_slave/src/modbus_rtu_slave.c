@@ -9,6 +9,7 @@
 #include "esp_random.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -26,17 +27,25 @@ static const char *TAG = "modbus_rtu_slave";
 #define DE_PIN           CONFIG_MODBUS_RTU_DE_PIN
 #define TX_PIN           CONFIG_MODBUS_RTU_TX_PIN
 #define RX_PIN           CONFIG_MODBUS_RTU_RX_PIN
-#define LED_PIN          2
 
 #define REG_COUNT        100
-#define COIL_COUNT       100
+#define NUM_COILS        6
 
 /* ---------- Data model ---------- */
 
+// Register map:
+//   0     = auto-incrementing counter
+//   1     = random value
+//   10    = buzzer (0=off, 1=on)
+//   11    = RGB Red (0-255)
+//   12    = RGB Green (0-255)
+//   13    = RGB Blue (0-255)
+//   14-99 = general purpose
+
 static uint16_t holding_regs[REG_COUNT];
 static uint16_t input_regs[REG_COUNT];
-static uint8_t  coils[(COIL_COUNT + 7) / 8];
-static uint8_t  discrete_inputs[(COIL_COUNT + 7) / 8];
+static uint8_t  coils[(NUM_COILS + 7) / 8];
+static uint8_t  discrete_inputs[(NUM_COILS + 7) / 8];
 
 static QueueHandle_t uart_queue;
 
@@ -62,13 +71,13 @@ static uint16_t crc16(const uint8_t *data, size_t len)
 
 static bool coil_get(uint16_t addr)
 {
-    if (addr >= COIL_COUNT) return false;
+    if (addr >= NUM_COILS) return false;
     return (coils[addr / 8] >> (addr % 8)) & 1;
 }
 
 static void coil_set(uint16_t addr, bool val)
 {
-    if (addr >= COIL_COUNT) return;
+    if (addr >= NUM_COILS) return;
     if (val) {
         coils[addr / 8] |= (1 << (addr % 8));
     } else {
@@ -78,15 +87,21 @@ static void coil_set(uint16_t addr, bool val)
 
 static bool discrete_get(uint16_t addr)
 {
-    if (addr >= COIL_COUNT) return false;
+    if (addr >= NUM_COILS) return false;
     return (discrete_inputs[addr / 8] >> (addr % 8)) & 1;
 }
 
-/* ---------- LED control ---------- */
+/* ---------- Board control helpers ---------- */
 
-static void update_led(void)
+static void apply_register_write(uint16_t addr, uint16_t value)
 {
-    gpio_set_level(LED_PIN, coil_get(0) ? 1 : 0);
+    holding_regs[addr] = value;
+    switch (addr) {
+    case 10: board_set_buzzer(value != 0); break;
+    case 11: board_set_rgb(value & 0xFF, holding_regs[12] & 0xFF, holding_regs[13] & 0xFF); break;
+    case 12: board_set_rgb(holding_regs[11] & 0xFF, value & 0xFF, holding_regs[13] & 0xFF); break;
+    case 13: board_set_rgb(holding_regs[11] & 0xFF, holding_regs[12] & 0xFF, value & 0xFF); break;
+    }
 }
 
 /* ---------- RS485 DE control ---------- */
@@ -130,7 +145,7 @@ static void send_exception(uint8_t slave, uint8_t fc, uint8_t code)
 /* FC01 - Read Coils */
 static void handle_fc01(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty)
 {
-    if (qty < 1 || qty > 2000 || (start + qty) > COIL_COUNT) {
+    if (qty < 1 || qty > 2000 || (start + qty) > NUM_COILS) {
         send_exception(slave, 0x01, 0x02); /* Illegal Data Address */
         return;
     }
@@ -157,7 +172,7 @@ static void handle_fc01(uint8_t slave, const uint8_t *frame, uint16_t start, uin
 /* FC02 - Read Discrete Inputs */
 static void handle_fc02(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty)
 {
-    if (qty < 1 || qty > 2000 || (start + qty) > COIL_COUNT) {
+    if (qty < 1 || qty > 2000 || (start + qty) > NUM_COILS) {
         send_exception(slave, 0x02, 0x02);
         return;
     }
@@ -232,12 +247,12 @@ static void handle_fc04(uint8_t slave, const uint8_t *frame, uint16_t start, uin
 /* FC05 - Write Single Coil */
 static void handle_fc05(uint8_t slave, const uint8_t *frame, uint16_t addr, uint16_t val)
 {
-    if (addr >= COIL_COUNT) {
+    if (addr >= NUM_COILS) {
         send_exception(slave, 0x05, 0x02);
         return;
     }
     coil_set(addr, val == 0xFF00);
-    if (addr == 0) update_led();
+    if (addr < NUM_COILS) board_set_relay(addr, val == 0xFF00);
     /* Echo back the request as response */
     uint8_t resp[8];
     resp[0] = slave;
@@ -261,7 +276,7 @@ static void handle_fc06(uint8_t slave, const uint8_t *frame, uint16_t addr, uint
         send_exception(slave, 0x06, 0x02);
         return;
     }
-    holding_regs[addr] = val;
+    apply_register_write(addr, val);
     /* Echo back */
     uint8_t resp[8];
     resp[0] = slave;
@@ -281,7 +296,7 @@ static void handle_fc06(uint8_t slave, const uint8_t *frame, uint16_t addr, uint
 /* FC0F - Write Multiple Coils */
 static void handle_fc0f(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty, size_t frame_len)
 {
-    if (qty < 1 || qty > 1968 || (start + qty) > COIL_COUNT) {
+    if (qty < 1 || qty > 1968 || (start + qty) > NUM_COILS) {
         send_exception(slave, 0x0F, 0x02);
         return;
     }
@@ -298,8 +313,8 @@ static void handle_fc0f(uint8_t slave, const uint8_t *frame, uint16_t start, uin
     for (uint16_t i = 0; i < qty; i++) {
         bool val = (frame[7 + i / 8] >> (i % 8)) & 1;
         coil_set(start + i, val);
+        if (start + i < NUM_COILS) board_set_relay(start + i, val);
     }
-    if (start == 0) update_led();
     uint8_t resp[8];
     resp[0] = slave;
     resp[1] = 0x0F;
@@ -333,7 +348,7 @@ static void handle_fc10(uint8_t slave, const uint8_t *frame, uint16_t start, uin
     for (uint16_t i = 0; i < qty; i++) {
         uint16_t val = ((uint16_t)frame[7 + i * 2] << 8) |
                         frame[8 + i * 2];
-        holding_regs[start + i] = val;
+        apply_register_write(start + i, val);
     }
     uint8_t resp[8];
     resp[0] = slave;
@@ -448,8 +463,8 @@ static void data_update_task(void *arg)
         holding_regs[0] = counter;
         holding_regs[1] = (uint16_t)(esp_random() & 0xFFFF);
 
-        /* Update some discrete inputs for variety */
-        for (int i = 0; i < 8 && i < COIL_COUNT; i++) {
+        /* Update discrete inputs for variety */
+        for (int i = 0; i < NUM_COILS; i++) {
             if (coil_get(i)) {
                 discrete_inputs[i / 8] |= (1 << (i % 8));
             } else {
@@ -589,16 +604,8 @@ esp_err_t modbus_rtu_slave_init(void)
     gpio_config(&de_conf);
     gpio_set_level(DE_PIN, 0); /* Start in RX mode */
 
-    /* Configure LED pin */
-    gpio_config_t led_conf = {
-        .pin_bit_mask = (1ULL << LED_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&led_conf);
-    gpio_set_level(LED_PIN, 0);
+    /* Initialize board (relays, buzzer, RGB) */
+    board_init();
 
     /* Initialize data model */
     memset(holding_regs, 0, sizeof(holding_regs));
