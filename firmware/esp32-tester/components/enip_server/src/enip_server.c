@@ -1,6 +1,7 @@
 #include "enip_server.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -44,6 +45,22 @@ static const char *TAG = "enip_server";
 
 static uint32_t next_session_handle = 0x00000001;
 static bool running = false;
+
+/* Output assembly: 6 relay bytes + 1 buzzer byte + 3 RGB bytes = 10 bytes */
+#define OUTPUT_ASSEMBLY_SIZE 10
+static uint8_t output_assembly[OUTPUT_ASSEMBLY_SIZE];
+
+/* Input assembly: 6 relay bytes + 1 buzzer byte + 3 RGB bytes + 2 counter + 2 random = 14 bytes */
+#define INPUT_ASSEMBLY_SIZE 14
+
+static void apply_output_assembly(void)
+{
+    for (int i = 0; i < 6; i++) {
+        board_set_relay(i, output_assembly[i] != 0);
+    }
+    board_set_buzzer(output_assembly[6] != 0);
+    board_set_rgb(output_assembly[7], output_assembly[8], output_assembly[9]);
+}
 
 static void put_u16_le(uint8_t *p, uint16_t v)
 {
@@ -219,6 +236,9 @@ static int handle_forward_open(const uint8_t *req_data, int data_len, uint8_t *r
         resp_data[32] = req_data[params_offset + 30];              /* transport */
         memset(&resp_data[33], 0, 3);                              /* reserved */
 
+        /* Apply output assembly on ForwardOpen */
+        apply_output_assembly();
+
         return 36;
     }
 
@@ -305,7 +325,16 @@ static int handle_send_rr_data(const uint8_t *req, int req_len, uint8_t *resp)
     uint16_t data_item_len = get_u16_le(&req[cip_offset + 2]);
 
     if (data_item_type != 0x00B2) {
-        /* Not unconnected data */
+        /* Not unconnected data - check for connected data (0x00B1) */
+        if (data_item_type == 0x00B1 && data_item_len >= OUTPUT_ASSEMBLY_SIZE) {
+            /* Connected data: parse output assembly from CIP data */
+            int cip_data_offset = cip_offset + 4;
+            /* Skip CIP sequence count (2 bytes) for connected messages */
+            if (cip_data_offset + 2 + OUTPUT_ASSEMBLY_SIZE <= req_len) {
+                memcpy(output_assembly, &req[cip_data_offset + 2], OUTPUT_ASSEMBLY_SIZE);
+                apply_output_assembly();
+            }
+        }
         return 0;
     }
 
@@ -506,6 +535,8 @@ static void tcp_server_task(void *arg)
 
 esp_err_t enip_server_init(void)
 {
+    memset(output_assembly, 0, sizeof(output_assembly));
+    board_init();
     running = true;
 
     ESP_LOGI(TAG, "EtherNet/IP Server initialized (port=%d)", TCP_PORT);

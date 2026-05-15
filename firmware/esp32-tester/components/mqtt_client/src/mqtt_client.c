@@ -1,14 +1,14 @@
 #include "my_mqtt_client.h"
 #include "esp_log.h"
 #include "esp_random.h"
-#include "driver/gpio.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
+#include <stdlib.h>
 
 static const char *TAG = "mqtt_client";
 
-#define LED_PIN 2
 #define PUBLISH_INTERVAL_MS CONFIG_MQTT_PUBLISH_INTERVAL_MS
 
 static esp_mqtt_client_handle_t mqtt_client = NULL;
@@ -27,8 +27,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG, "MQTT connected to broker");
         mqtt_connected = true;
-        esp_mqtt_client_subscribe_single(event->client, "esp32/control/led", 1);
-        ESP_LOGI(TAG, "Subscribed to esp32/control/led");
+        esp_mqtt_client_subscribe_single(event->client, "esp32/control/relay/+", 1);
+        esp_mqtt_client_subscribe_single(event->client, "esp32/control/buzzer", 1);
+        esp_mqtt_client_subscribe_single(event->client, "esp32/control/rgb", 1);
+        ESP_LOGI(TAG, "Subscribed to esp32/control/* topics");
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -40,14 +42,35 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         ESP_LOGI(TAG, "MQTT message received: topic=%.*s data=%.*s",
                  event->topic_len, event->topic,
                  event->data_len, event->data);
-        if (event->topic_len == 18 && strncmp(event->topic, "esp32/control/led", 18) == 0) {
-            if (event->data_len >= 2 && strncmp(event->data, "ON", 2) == 0) {
-                gpio_set_level(LED_PIN, 1);
-                ESP_LOGI(TAG, "LED turned ON");
-            } else if (event->data_len >= 3 && strncmp(event->data, "OFF", 3) == 0) {
-                gpio_set_level(LED_PIN, 0);
-                ESP_LOGI(TAG, "LED turned OFF");
+
+        /* Handle esp32/control/relay/<ch> */
+        if (event->topic_len > 20 && strncmp(event->topic, "esp32/control/relay/", 20) == 0) {
+            int ch = event->topic[20] - '0';
+            if (ch >= 0 && ch < 6) {
+                bool on = (event->data_len >= 2 && strncmp(event->data, "ON", 2) == 0);
+                board_set_relay(ch, on);
+                ESP_LOGI(TAG, "Relay %d turned %s", ch, on ? "ON" : "OFF");
             }
+        }
+        /* Handle esp32/control/buzzer */
+        else if (event->topic_len == 20 && strncmp(event->topic, "esp32/control/buzzer", 20) == 0) {
+            bool on = (event->data_len >= 2 && strncmp(event->data, "ON", 2) == 0);
+            board_set_buzzer(on);
+            ESP_LOGI(TAG, "Buzzer turned %s", on ? "ON" : "OFF");
+        }
+        /* Handle esp32/control/rgb (payload "r,g,b") */
+        else if (event->topic_len == 17 && strncmp(event->topic, "esp32/control/rgb", 17) == 0) {
+            char buf[16] = {0};
+            int cplen = event->data_len < 15 ? event->data_len : 15;
+            memcpy(buf, event->data, cplen);
+            int r = 0, g = 0, b = 0;
+            char *tok = buf;
+            r = atoi(tok);
+            tok = strchr(tok, ',');
+            if (tok) { tok++; g = atoi(tok); tok = strchr(tok, ','); }
+            if (tok) { tok++; b = atoi(tok); }
+            board_set_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b);
+            ESP_LOGI(TAG, "RGB set to %d,%d,%d", r, g, b);
         }
         break;
 
@@ -105,13 +128,20 @@ static void publish_task(void *arg)
         if (msg_id >= 0) {
             ESP_LOGI(TAG, "Published counter: %s (msg_id=%d)", payload, msg_id);
         }
+
+        /* Publish relay states */
+        for (int i = 0; i < 6; i++) {
+            char relay_topic[32];
+            snprintf(relay_topic, sizeof(relay_topic), "esp32/sensor/relay/%d", i);
+            snprintf(payload, sizeof(payload), "%s", board_get_relay(i) ? "ON" : "OFF");
+            esp_mqtt_client_publish(mqtt_client, relay_topic, payload, 0, 1, 0);
+        }
     }
 }
 
 esp_err_t mqtt_client_init(void)
 {
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_PIN, 0);
+    board_init();
 
     ESP_LOGI(TAG, "MQTT Client initialized (broker=%s, interval=%dms)",
              CONFIG_MQTT_BROKER_URL, PUBLISH_INTERVAL_MS);

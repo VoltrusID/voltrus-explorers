@@ -1,25 +1,33 @@
 #include "modbus_tcp_slave.h"
+#include "board.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
-#include "driver/gpio.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
 
 static const char *TAG = "modbus_tcp_slave";
 
-#define LED_PIN 2
 #define TCP_PORT CONFIG_MODBUS_SLAVE_PORT
 #define SLAVE_ID CONFIG_MODBUS_SLAVE_ID
 #define NUM_REGISTERS CONFIG_MODBUS_SLAVE_NUM_REGISTERS
-#define NUM_COILS CONFIG_MODBUS_SLAVE_NUM_COILS
+#define NUM_COILS 6
 #define MAX_CLIENTS 5
 #define RX_BUFFER_SIZE 256
 #define TX_BUFFER_SIZE 512
+
+// Register map:
+//   0     = auto-incrementing counter
+//   1     = random value (0-999)
+//   10    = buzzer (0=off, 1=on)
+//   11    = RGB Red (0-255)
+//   12    = RGB Green (0-255)
+//   13    = RGB Blue (0-255)
+//   14-99 = general purpose
 
 static uint16_t holding_regs[NUM_REGISTERS];
 static uint8_t coils[(NUM_COILS + 7) / 8];
@@ -65,6 +73,16 @@ static int build_exception(uint8_t *req, uint8_t *resp, uint8_t ex_code) {
     resp[7] = req[7] | 0x80;
     resp[8] = ex_code;
     return 9;
+}
+
+static void apply_register_write(uint16_t addr, uint16_t value) {
+    holding_regs[addr] = value;
+    switch (addr) {
+    case 10: board_set_buzzer(value != 0); break;
+    case 11: board_set_rgb(value & 0xFF, holding_regs[12] & 0xFF, holding_regs[13] & 0xFF); break;
+    case 12: board_set_rgb(holding_regs[11] & 0xFF, value & 0xFF, holding_regs[13] & 0xFF); break;
+    case 13: board_set_rgb(holding_regs[11] & 0xFF, holding_regs[12] & 0xFF, value & 0xFF); break;
+    }
 }
 
 static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
@@ -128,9 +146,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
         }
         set_coil(addr, value == 0xFF00);
-        if (addr == 0) {
-            gpio_set_level(LED_PIN, value == 0xFF00);
-        }
+        board_set_relay(addr, value == 0xFF00);
         memcpy(&resp[2], &req[2], 6);
         resp[4] = 0; resp[5] = 6;
         return 12;
@@ -141,7 +157,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
         if (addr >= NUM_REGISTERS) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
         }
-        holding_regs[addr] = value;
+        apply_register_write(addr, value);
         memcpy(&resp[2], &req[2], 6);
         resp[4] = 0; resp[5] = 6;
         return 12;
@@ -160,7 +176,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_VALUE);
         }
         for (int i = 0; i < count; i++) {
-            holding_regs[start + i] = (req[13 + i * 2] << 8) | req[14 + i * 2];
+            apply_register_write(start + i, (req[13 + i * 2] << 8) | req[14 + i * 2]);
         }
         memcpy(&resp[2], &req[2], 6);
         resp[4] = 0; resp[5] = 6;
@@ -183,9 +199,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
         for (int i = 0; i < count; i++) {
             bool val = (req[13 + i / 8] >> (i % 8)) & 1;
             set_coil(start + i, val);
-            if (start + i == 0) {
-                gpio_set_level(LED_PIN, val);
-            }
+            board_set_relay(start + i, val);
         }
         memcpy(&resp[2], &req[2], 6);
         resp[4] = 0; resp[5] = 6;
@@ -291,8 +305,7 @@ esp_err_t modbus_tcp_slave_init(void) {
     memset(holding_regs, 0, sizeof(holding_regs));
     memset(coils, 0, sizeof(coils));
 
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_PIN, 0);
+    board_init();
 
     holding_regs[1] = 123;
     running = true;

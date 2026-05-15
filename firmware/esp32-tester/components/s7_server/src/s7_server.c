@@ -1,6 +1,7 @@
 #include "s7_server.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -296,6 +297,19 @@ static int build_write_var_response(const uint8_t *req, int req_len, uint8_t *re
                 if (write_bytes < 0) write_bytes = 0;
             }
             memcpy(&db1[byte_off], &req[data_offset + 4], write_bytes);
+
+            /* Update board outputs when writing to DB1 bytes 4-14 */
+            for (uint32_t b = byte_off; b < byte_off + (uint32_t)write_bytes; b++) {
+                if (b >= 4 && b <= 9) {
+                    int ch = (int)b - 4;
+                    if (ch < 6) board_set_relay(ch, db1[b] != 0);
+                } else if (b == 10 || b == 11) {
+                    board_set_buzzer(db1[10] != 0 || db1[11] != 0);
+                } else if (b >= 12 && b <= 14) {
+                    board_set_rgb(db1[12], db1[13], db1[14]);
+                }
+            }
+
             resp_s7[out_offset++] = 0xFF; /* success */
         } else if (data_offset + 4 + byte_count <= req_len) {
             resp_s7[out_offset++] = 0x0A; /* object does not exist */
@@ -414,6 +428,16 @@ static void data_update_task(void *arg)
         counter++;
         put_u16_be(&db1[0], counter);
         put_u16_be(&db1[2], (uint16_t)(esp_random() % 1000));
+
+        /* Read relay states from board */
+        for (int i = 0; i < 6; i++) {
+            db1[4 + i] = board_get_relay(i) ? 1 : 0;
+        }
+        /* Buzzer state at bytes 10-11 */
+        db1[10] = 0;
+        db1[11] = 0;
+        /* RGB at bytes 12-14 (read-only reflection, kept as-is) */
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(NULL);
@@ -475,6 +499,7 @@ static void tcp_server_task(void *arg)
 esp_err_t s7_server_init(void)
 {
     memset(db1, 0, sizeof(db1));
+    board_init();
     running = true;
 
     ESP_LOGI(TAG, "S7 Server initialized (port=%d, rack=%d, slot=%d)",

@@ -1,11 +1,11 @@
 #include "bacnet_device.h"
 #include "esp_log.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
-#include "driver/gpio.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -76,23 +76,23 @@ static const char *TAG = "bacnet_device";
 #define ERROR_UNKNOWN_PROPERTY 0x20
 #define ERROR_READ_ACCESS_DENIED 0x0B
 
-/* LED pin */
-#define LED_PIN 2
-
-/* Analog Values */
+/* Analog Values: Counter(1), Temperature(2), Voltage(3), RGB_R(4), RGB_G(5), RGB_B(6) */
 typedef struct {
     const char *name;
     float value;
 } analog_value_t;
 
-/* Binary Values */
+/* Binary Values: Relay1(1)-Relay6(6), Buzzer(7) */
 typedef struct {
     const char *name;
     bool value;
 } binary_value_t;
 
-static analog_value_t av[3];
-static binary_value_t bv[1];
+#define NUM_AV 6
+#define NUM_BV 7
+
+static analog_value_t av[NUM_AV];
+static binary_value_t bv[NUM_BV];
 static uint32_t counter = 0;
 static bool running = false;
 
@@ -312,7 +312,7 @@ static int build_read_property_ack(uint8_t *resp, uint8_t invoke_id,
             break;
         case PROP_OBJECT_LIST:
             /* Return count as first element */
-            pos += encode_app_unsigned(&resp[pos], 5); /* 4 objects (device + 3 AV + 1 BV) */
+            pos += encode_app_unsigned(&resp[pos], 1 + NUM_AV + NUM_BV);
             break;
         default:
             pos += encode_app_unsigned(&resp[pos], 0);
@@ -320,7 +320,7 @@ static int build_read_property_ack(uint8_t *resp, uint8_t invoke_id,
         }
     } else if (obj_type == OBJ_ANALOG_VALUE) {
         int idx = (int)obj_inst - 1;
-        if (idx < 0 || idx > 2) idx = 0;
+        if (idx < 0 || idx >= NUM_AV) idx = 0;
         switch (prop_id) {
         case PROP_OBJECT_IDENTIFIER:
             pos += encode_app_object_id(&resp[pos], OBJ_ANALOG_VALUE, obj_inst);
@@ -339,18 +339,20 @@ static int build_read_property_ack(uint8_t *resp, uint8_t invoke_id,
             break;
         }
     } else if (obj_type == OBJ_BINARY_VALUE) {
+        int idx = (int)obj_inst - 1;
+        if (idx < 0 || idx >= NUM_BV) idx = 0;
         switch (prop_id) {
         case PROP_OBJECT_IDENTIFIER:
-            pos += encode_app_object_id(&resp[pos], OBJ_BINARY_VALUE, 1);
+            pos += encode_app_object_id(&resp[pos], OBJ_BINARY_VALUE, obj_inst);
             break;
         case PROP_OBJECT_NAME:
-            pos += encode_app_string(&resp[pos], bv[0].name);
+            pos += encode_app_string(&resp[pos], bv[idx].name);
             break;
         case PROP_PRESENT_VALUE:
-            pos += encode_app_boolean(&resp[pos], bv[0].value);
+            pos += encode_app_boolean(&resp[pos], bv[idx].value);
             break;
         case PROP_DESCRIPTION:
-            pos += encode_app_string(&resp[pos], bv[0].name);
+            pos += encode_app_string(&resp[pos], bv[idx].name);
             break;
         default:
             pos += encode_app_unsigned(&resp[pos], 0);
@@ -510,8 +512,8 @@ static int process_message(uint8_t *rx, int rx_len, struct sockaddr_in *src_addr
             /* Validate object */
             bool valid = false;
             if (obj_type == OBJ_DEVICE && obj_inst == DEVICE_ID) valid = true;
-            else if (obj_type == OBJ_ANALOG_VALUE && obj_inst >= 1 && obj_inst <= 3) valid = true;
-            else if (obj_type == OBJ_BINARY_VALUE && obj_inst == 1) valid = true;
+            else if (obj_type == OBJ_ANALOG_VALUE && obj_inst >= 1 && obj_inst <= NUM_AV) valid = true;
+            else if (obj_type == OBJ_BINARY_VALUE && obj_inst >= 1 && obj_inst <= NUM_BV) valid = true;
 
             if (!valid) {
                 return build_error_response(tx, invoke_id, SERVICE_READ_PROPERTY, 1, ERROR_UNKNOWN_OBJECT);
@@ -532,8 +534,12 @@ static void data_update_task(void *arg) {
         av[1].value = 20.0f + ((float)(esp_random() % 15000) / 1000.0f);
         av[2].value = 220.0f + ((float)(esp_random() % 20000) / 1000.0f);
 
-        /* Read GPIO2 for LED status */
-        bv[0].value = gpio_get_level(LED_PIN) == 1;
+        /* Read relay states from board */
+        for (int i = 0; i < 6; i++) {
+            bv[i].value = board_get_relay(i);
+        }
+        /* Buzzer state */
+        bv[6].value = false; /* no board_get_buzzer, keep in sync via init */
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -604,12 +610,29 @@ esp_err_t bacnet_device_init(void) {
     av[1].value = 25.0f;
     av[2].name = "Voltage";
     av[2].value = 230.0f;
+    av[3].name = "RGB_R";
+    av[3].value = 0.0f;
+    av[4].name = "RGB_G";
+    av[4].value = 0.0f;
+    av[5].name = "RGB_B";
+    av[5].value = 0.0f;
 
-    bv[0].name = "LED Status";
+    bv[0].name = "Relay1";
     bv[0].value = false;
+    bv[1].name = "Relay2";
+    bv[1].value = false;
+    bv[2].name = "Relay3";
+    bv[2].value = false;
+    bv[3].name = "Relay4";
+    bv[3].value = false;
+    bv[4].name = "Relay5";
+    bv[4].value = false;
+    bv[5].name = "Relay6";
+    bv[5].value = false;
+    bv[6].name = "Buzzer";
+    bv[6].value = false;
 
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_PIN, 0);
+    board_init();
 
     running = true;
 

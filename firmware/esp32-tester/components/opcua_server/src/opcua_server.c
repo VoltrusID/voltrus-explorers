@@ -1,5 +1,6 @@
 #include "opcua_server.h"
 #include "esp_log.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -23,13 +24,16 @@ static const char *TAG = "opcua_server";
 typedef struct {
     uint32_t node_id;
     const char *name;
-    uint8_t  type;       /* 0=UInt32, 1=Double, 2=Boolean */
+    uint8_t  type;       /* 0=UInt32, 1=Double, 2=Boolean, 3=UInt16 */
     uint32_t val_u32;
     double   val_dbl;
     bool     val_bool;
+    uint16_t val_u16;
 } opcua_node_t;
 
-static opcua_node_t nodes[3];
+/* Nodes: Counter(1), Temperature(2), Status(3), Relay1-6(4-9), Buzzer(10), RGB_R(11), RGB_G(12), RGB_B(13) */
+#define NUM_NODES 13
+static opcua_node_t nodes[NUM_NODES];
 static bool running = false;
 
 /* ---- Little-endian helpers ---- */
@@ -257,7 +261,7 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
 
         /* Find node */
         opcua_node_t *node = NULL;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < NUM_NODES; i++) {
             if (nodes[i].node_id == target_node) { node = &nodes[i]; break; }
         }
 
@@ -278,6 +282,10 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
                 resp[wp++] = 0x01; /* Boolean encoding */
                 resp[wp++] = node->val_bool ? 1 : 0;
                 break;
+            case 3: /* UInt16 */
+                resp[wp++] = 0x06; /* UInt16 encoding */
+                put_u16(&resp[wp], node->val_u16); wp += 2;
+                break;
             }
         } else {
             /* Bad node id */
@@ -294,6 +302,145 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
     put_u32(&resp[wp], (uint32_t)-1); wp += 4;
 
     /* Set total message size */
+    resp[0] = 'M'; resp[1] = 'S'; resp[2] = 'G'; resp[3] = 'F';
+    put_u32(&resp[4], wp);
+    return wp;
+}
+
+/* ---- Write Service ---- */
+static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) {
+    int wp = 8;
+    put_u32(&resp[wp], get_u32(&req[8])); wp += 4;  /* SecureChannelId */
+    put_u32(&resp[wp], get_u32(&req[12])); wp += 4; /* TokenId */
+    put_u32(&resp[wp], get_u32(&req[16]) + 1); wp += 4; /* SequenceNumber */
+    put_u32(&resp[wp], get_u32(&req[20])); wp += 4; /* RequestId */
+
+    /* WriteResponse = 673 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x00;
+    put_u16(&resp[wp], 673); wp += 2;
+
+    /* ResponseHeader */
+    put_u32(&resp[wp], 0); wp += 4; put_u32(&resp[wp], 0); wp += 4; /* Timestamp */
+    put_u32(&resp[wp], 0); wp += 4; /* RequestHandle - simplified */
+    put_u32(&resp[wp], 0); wp += 4; /* ServiceResult = Good */
+    resp[wp++] = 0x00; /* Diagnostics */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4; /* StringTable */
+    resp[wp++] = 0x00; /* AdditionalHeader */
+
+    /* Parse request to find nodes to write */
+    int rp = 24;
+    if (rp >= req_len) goto done;
+
+    /* Skip request NodeId */
+    {
+        uint8_t enc = req[rp++];
+        if (enc == 0x00) rp++;
+        else if (enc == 0x01) rp += 3;
+        else rp += 5;
+    }
+
+    /* Skip RequestHeader: Timestamp(8) + RequestHandle(4) + ReturnDiagnostics(4) */
+    rp += 8 + 4 + 4;
+    /* AuditEntryId string */
+    if (rp < req_len) { int32_t sl = (int32_t)get_u32(&req[rp]); rp += 4; if (sl > 0) rp += sl; }
+    /* TimeoutHint */
+    rp += 4;
+    /* AdditionalHeader */
+    if (rp < req_len) { if (req[rp] == 0x00) rp += 1; }
+
+    /* NodesToWrite array */
+    int32_t num_writes = 0;
+    if (rp + 4 <= req_len) {
+        num_writes = (int32_t)get_u32(&req[rp]); rp += 4;
+    }
+    if (num_writes <= 0) num_writes = 0;
+    if (num_writes > NUM_NODES) num_writes = NUM_NODES;
+
+    /* Results array */
+    put_u32(&resp[wp], num_writes); wp += 4;
+
+    for (int n = 0; n < num_writes && rp + 2 <= req_len; n++) {
+        uint32_t target_node = 0;
+
+        /* Parse WriteValue: NodeId + AttributeId + NumericRange + DataValue */
+        uint8_t enc = req[rp++];
+        if (enc == 0x00) {
+            target_node = req[rp++];
+        } else if (enc == 0x01) {
+            rp++; /* namespace */
+            target_node = get_u16(&req[rp]); rp += 2;
+        } else if (enc == 0x02) {
+            rp += 2;
+            target_node = get_u32(&req[rp]); rp += 4;
+        }
+        /* Skip AttributeId(2) */
+        rp += 2;
+        /* Skip NumericRange string */
+        if (rp + 4 <= req_len) { int32_t sl = (int32_t)get_u32(&req[rp]); rp += 4; if (sl > 0) rp += sl; }
+
+        /* DataValue: Encoding(1) + Variant */
+        uint8_t dv_encoding = 0;
+        if (rp < req_len) dv_encoding = req[rp++];
+        if (dv_encoding & 0x01) { /* HasValue */
+            if (rp < req_len) {
+                uint8_t var_type = req[rp++];
+                /* Find node and apply write */
+                opcua_node_t *node = NULL;
+                for (int i = 0; i < NUM_NODES; i++) {
+                    if (nodes[i].node_id == target_node) { node = &nodes[i]; break; }
+                }
+                if (node) {
+                    switch (var_type) {
+                    case 0x01: /* Boolean */
+                        if (rp < req_len) {
+                            node->val_bool = req[rp++] != 0;
+                            /* Apply to board for relay/buzzer nodes */
+                            if (target_node >= 4 && target_node <= 9) {
+                                board_set_relay((int)(target_node - 4), node->val_bool);
+                            } else if (target_node == 10) {
+                                board_set_buzzer(node->val_bool);
+                            }
+                        }
+                        break;
+                    case 0x06: /* UInt16 */
+                        if (rp + 2 <= req_len) {
+                            node->val_u16 = get_u16(&req[rp]); rp += 2;
+                            /* Apply RGB values */
+                            if (target_node == 11 || target_node == 12 || target_node == 13) {
+                                board_set_rgb((uint8_t)nodes[11].val_u16,
+                                              (uint8_t)nodes[12].val_u16,
+                                              (uint8_t)nodes[13].val_u16);
+                            }
+                        }
+                        break;
+                    case 0x07: /* UInt32 */
+                        if (rp + 4 <= req_len) { rp += 4; }
+                        break;
+                    case 0x0B: /* Double */
+                        rp += 8;
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                put_u32(&resp[wp], 0); wp += 4; /* Good */
+            } else {
+                put_u32(&resp[wp], 0x80340000); wp += 4; /* BadNodeIdUnknown */
+            }
+        } else {
+            put_u32(&resp[wp], 0x80340000); wp += 4; /* Bad */
+        }
+        /* Skip Status, SourceTimestamp, ServerTimestamp if present */
+        if (dv_encoding & 0x02) rp += 4;
+        if (dv_encoding & 0x04) rp += 8;
+        if (dv_encoding & 0x08) rp += 8;
+    }
+
+done:
+    /* DiagnosticInfos: empty */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
     resp[0] = 'M'; resp[1] = 'S'; resp[2] = 'G'; resp[3] = 'F';
     put_u32(&resp[4], wp);
     return wp;
@@ -328,10 +475,10 @@ static int build_browse_response(const uint8_t *req, int req_len, uint8_t *resp)
     /* ContinuationPoint: empty string (null) */
     put_u32(&resp[wp], (uint32_t)-1); wp += 4;
 
-    /* References array: 3 references (our 3 nodes) */
-    put_u32(&resp[wp], 3); wp += 4;
+    /* References array */
+    put_u32(&resp[wp], NUM_NODES); wp += 4;
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < NUM_NODES; i++) {
         /* ReferenceDescription */
         /* ReferenceTypeId (NodeId, TwoByte) */
         resp[wp++] = 0x00;
@@ -389,6 +536,8 @@ static int handle_msg(const uint8_t *req, int req_len, uint8_t *resp) {
         return build_read_response(req, req_len, resp);
     case 527: /* Browse */
         return build_browse_response(req, req_len, resp);
+    case 673: /* Write */
+        return build_write_response(req, req_len, resp);
     default:
         ESP_LOGW(TAG, "Unhandled OPC UA service: %u", service_id);
         return 0;
@@ -460,6 +609,11 @@ static void data_update_task(void *arg) {
         if (toggle_cnt >= 5) {
             nodes[2].val_bool = !nodes[2].val_bool;
             toggle_cnt = 0;
+        }
+
+        /* Read relay states from board (nodes 4-9 = Relay1-6) */
+        for (int i = 0; i < 6; i++) {
+            nodes[4 + i].val_bool = board_get_relay(i);
         }
 
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -539,6 +693,40 @@ esp_err_t opcua_server_init(void) {
     nodes[2].type = 2; /* Boolean */
     nodes[2].val_bool = false;
 
+    /* Nodes 4-9: Relay1-6 */
+    static const char *relay_names[6] = {"Relay1", "Relay2", "Relay3", "Relay4", "Relay5", "Relay6"};
+    for (int i = 0; i < 6; i++) {
+        nodes[4 + i].node_id = 4 + i;
+        nodes[4 + i].name = relay_names[i];
+        nodes[4 + i].type = 2; /* Boolean */
+        nodes[4 + i].val_bool = false;
+    }
+
+    /* Node 10: Buzzer */
+    nodes[10].node_id = 10;
+    nodes[10].name = "Buzzer";
+    nodes[10].type = 2; /* Boolean */
+    nodes[10].val_bool = false;
+
+    /* Node 11: RGB_R */
+    nodes[11].node_id = 11;
+    nodes[11].name = "RGB_R";
+    nodes[11].type = 3; /* UInt16 */
+    nodes[11].val_u16 = 0;
+
+    /* Node 12: RGB_G */
+    nodes[12].node_id = 12;
+    nodes[12].name = "RGB_G";
+    nodes[12].type = 3; /* UInt16 */
+    nodes[12].val_u16 = 0;
+
+    /* Node 13: RGB_B */
+    nodes[13].node_id = 13;
+    nodes[13].name = "RGB_B";
+    nodes[13].type = 3; /* UInt16 */
+    nodes[13].val_u16 = 0;
+
+    board_init();
     running = true;
     ESP_LOGI(TAG, "OPC UA Server initialized (port=%d)", TCP_PORT);
     return ESP_OK;

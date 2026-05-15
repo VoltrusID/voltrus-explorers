@@ -1,5 +1,6 @@
 #include "dnp3_outstation.h"
 #include "esp_log.h"
+#include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -28,13 +29,20 @@ static const char *TAG = "dnp3_outstation";
 
 /* Application function codes */
 #define FC_READ 0x01
+#define FC_WRITE 0x02
+#define FC_DIRECT_OPERATE 0x05
+#define FC_DIRECT_OPERATE_NR 0x06
 
 /* Object group/variation IDs */
 #define GROUP_BINARY_INPUT  1
 #define GROUP_ANALOG_INPUT  30
+#define GROUP_BINARY_OUTPUT 10
+#define GROUP_ANALOG_OUTPUT 40
 #define VARIATION_BI_PACKED 1   /* Packed format */
 #define VARIATION_AI_FLOAT  4   /* Short float */
 #define VARIATION_AI_FLOAT32 5  /* Double float */
+#define VARIATION_BO_PACKED 1   /* Binary Output packed */
+#define VARIATION_AO_FLOAT  4   /* Analog Output short float */
 
 /* Qualifier codes */
 #define QUALIFIER_ALL  0x06  /* all points, no prefix */
@@ -46,6 +54,8 @@ static const char *TAG = "dnp3_outstation";
 /* Data points */
 static bool binary_inputs[5];
 static float analog_inputs[5];
+static bool binary_outputs[6];  /* Relays 0-5 */
+static float analog_outputs[4]; /* Buzzer(0), RGB_R(1), RGB_G(2), RGB_B(3) */
 static uint32_t counter = 0;
 static bool running = false;
 
@@ -238,6 +248,26 @@ static int handle_read_request(const uint8_t *req_data, int req_data_len,
                 memcpy(&resp_app[wp], &analog_inputs[i], 4);
                 wp += 4;
             }
+        } else if (group == GROUP_BINARY_OUTPUT && (variation == VARIATION_BO_PACKED || variation == 0)) {
+            /* Binary Output (relays), packed format */
+            resp_app[wp++] = GROUP_BINARY_OUTPUT;
+            resp_app[wp++] = VARIATION_BO_PACKED;
+            resp_app[wp++] = QUALIFIER_ALL;
+            uint8_t packed = 0;
+            for (int i = 0; i < 6; i++) {
+                if (binary_outputs[i]) packed |= (1 << i);
+            }
+            resp_app[wp++] = packed;
+        } else if (group == GROUP_ANALOG_OUTPUT && (variation == VARIATION_AO_FLOAT || variation == 0)) {
+            /* Analog Output (buzzer + RGB), short float */
+            resp_app[wp++] = GROUP_ANALOG_OUTPUT;
+            resp_app[wp++] = VARIATION_AO_FLOAT;
+            resp_app[wp++] = QUALIFIER_ALL;
+            for (int i = 0; i < 4 && wp + 5 < resp_max; i++) {
+                resp_app[wp++] = 0x01; /* flags: online */
+                memcpy(&resp_app[wp], &analog_outputs[i], 4);
+                wp += 4;
+            }
         } else if (group == 60 && variation == 1) {
             /* Class 0 data - return all */
             /* Binary inputs */
@@ -276,6 +306,105 @@ static int handle_read_request(const uint8_t *req_data, int req_data_len,
     return wp;
 }
 
+/* ---- Handle DirectOperate request ---- */
+static int handle_operate_request(const uint8_t *req_data, int req_data_len,
+                                   uint8_t *resp_app, int resp_max) {
+    int rp = 0;
+    int wp = 0;
+
+    if (rp >= req_data_len) return 0;
+    uint8_t ac = req_data[rp++];
+    uint8_t fc = req_data[rp++];
+
+    /* Response AC byte: FIR=1, FIN=1, CON=0, UNS=0, SEQ=same as request */
+    uint8_t seq = ac & 0x0F;
+    resp_app[wp++] = 0xC0 | seq;
+    resp_app[wp++] = fc;
+
+    /* Internal Indications (IIN) */
+    resp_app[wp++] = 0x00;
+    resp_app[wp++] = 0x00;
+
+    /* Process object headers */
+    while (rp + 2 < req_data_len && wp < resp_max - 16) {
+        uint8_t group = req_data[rp++];
+        uint8_t variation = req_data[rp++];
+        uint8_t qualifier = req_data[rp++];
+
+        ESP_LOGI(TAG, "Operate: group=%u var=%u qual=0x%02X", group, variation, qualifier);
+
+        if (group == GROUP_BINARY_OUTPUT && variation == VARIATION_BO_PACKED) {
+            /* Binary Output - control relays */
+            if (qualifier == QUALIFIER_UINT8_START_STOP && rp + 2 < req_data_len) {
+                uint8_t start = req_data[rp++];
+                uint8_t stop = req_data[rp++];
+                /* Each point: output code(1) + status(1) = 2 bytes */
+                resp_app[wp++] = GROUP_BINARY_OUTPUT;
+                resp_app[wp++] = VARIATION_BO_PACKED;
+                resp_app[wp++] = QUALIFIER_UINT8_START_STOP;
+                resp_app[wp++] = start;
+                resp_app[wp++] = stop;
+                for (int i = start; i <= stop && rp + 2 <= req_data_len; i++) {
+                    uint8_t code = req_data[rp++]; /* output code: 1=NUL, 2=OFF, 3=ON */
+                    rp++; /* status byte */
+                    bool on = (code == 0x03);
+                    if (i >= 0 && i < 6) {
+                        binary_outputs[i] = on;
+                        board_set_relay(i, on);
+                    }
+                    resp_app[wp++] = code; /* echo code */
+                    resp_app[wp++] = 0x00; /* status OK */
+                }
+            } else {
+                /* All points packed */
+                rp++; /* skip packed byte */
+                resp_app[wp++] = group;
+                resp_app[wp++] = variation;
+                resp_app[wp++] = qualifier;
+                resp_app[wp++] = 0x00; /* status */
+            }
+        } else if (group == GROUP_ANALOG_OUTPUT && variation == VARIATION_AO_FLOAT) {
+            /* Analog Output - control buzzer/RGB */
+            if (qualifier == QUALIFIER_UINT8_START_STOP && rp + 2 < req_data_len) {
+                uint8_t start = req_data[rp++];
+                uint8_t stop = req_data[rp++];
+                resp_app[wp++] = GROUP_ANALOG_OUTPUT;
+                resp_app[wp++] = VARIATION_AO_FLOAT;
+                resp_app[wp++] = QUALIFIER_UINT8_START_STOP;
+                resp_app[wp++] = start;
+                resp_app[wp++] = stop;
+                for (int i = start; i <= stop && rp + 5 <= req_data_len; i++) {
+                    rp++; /* status byte */
+                    float val = 0;
+                    memcpy(&val, &req_data[rp], 4);
+                    rp += 4;
+                    if (i >= 0 && i < 4) {
+                        analog_outputs[i] = val;
+                        if (i == 0) {
+                            board_set_buzzer(val > 0.0f);
+                        } else if (i >= 1 && i <= 3) {
+                            /* Will apply RGB below */
+                        }
+                    }
+                    /* Apply RGB when all channels updated */
+                    board_set_rgb((uint8_t)analog_outputs[1],
+                                  (uint8_t)analog_outputs[2],
+                                  (uint8_t)analog_outputs[3]);
+                    resp_app[wp++] = 0x00; /* status */
+                    memcpy(&resp_app[wp], &val, 4);
+                    wp += 4;
+                }
+            }
+        } else {
+            /* Unknown group - skip */
+            if (qualifier == QUALIFIER_UINT8_START_STOP) rp += 2;
+            else if (qualifier == QUALIFIER_UINT16_START_STOP) rp += 4;
+        }
+    }
+
+    return wp;
+}
+
 /* ---- Process DNP3 frame ---- */
 static int process_frame(const uint8_t *frame, int frame_len, uint8_t *resp) {
     if (frame_len < 12) return 0; /* header(10) + min app data(2) */
@@ -307,9 +436,15 @@ static int process_frame(const uint8_t *frame, int frame_len, uint8_t *resp) {
              ctrl, func_code, src_addr, dest_addr, app_data_len);
 
     if (func_code == DL_CONFIRMED_USER_DATA && app_data_len >= 2) {
-        /* Build response frame */
+        uint8_t app_fc = app_data[1]; /* function code after AC byte */
         uint8_t resp_app[512];
-        int resp_app_len = handle_read_request(app_data, app_data_len, resp_app, sizeof(resp_app));
+        int resp_app_len = 0;
+
+        if (app_fc == FC_READ) {
+            resp_app_len = handle_read_request(app_data, app_data_len, resp_app, sizeof(resp_app));
+        } else if (app_fc == FC_DIRECT_OPERATE || app_fc == FC_DIRECT_OPERATE_NR || app_fc == FC_WRITE) {
+            resp_app_len = handle_operate_request(app_data, app_data_len, resp_app, sizeof(resp_app));
+        }
 
         if (resp_app_len > 0) {
             /* Set response header: DIR=1(outstation->master), PRM=1, FCV=0, FC=confirm(0x00) or response data */
@@ -429,6 +564,9 @@ static void tcp_server_task(void *arg) {
 esp_err_t dnp3_outstation_init(void) {
     memset(binary_inputs, 0, sizeof(binary_inputs));
     memset(analog_inputs, 0, sizeof(analog_inputs));
+    memset(binary_outputs, 0, sizeof(binary_outputs));
+    memset(analog_outputs, 0, sizeof(analog_outputs));
+    board_init();
     running = true;
 
     ESP_LOGI(TAG, "DNP3 Outstation initialized (port=%d, addr=%d)",
