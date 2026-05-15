@@ -64,10 +64,9 @@ static int build_ack(const uint8_t *hel, int hel_len, uint8_t *ack) {
 /* We respond with a minimal OpenSecureChannelResponse */
 
 static int build_opn_response(const uint8_t *req, int req_len, uint8_t *resp) {
-    (void)req_len;
+    if (req_len < 20) return 0;
     /* Copy secure channel id from request */
     uint32_t sec_chan_id = get_u32(&req[8]);
-    uint32_t req_id = get_u32(&req[req_len - 4]); /* approximate - get last u32 as request id */
 
     /* Build response: MSG header + SecurityHeader + SequenceHeader + Body */
     /* Simplified: OPN response uses "OPN" + 'F' + size */
@@ -79,8 +78,8 @@ static int build_opn_response(const uint8_t *req, int req_len, uint8_t *resp) {
     /* Skip past request security header to find sequence number */
     uint32_t seq_num = get_u32(&req[pos]);
     pos += 4;
-    uint32_t req_id_from_seq = get_u32(&req[pos]);
-    (void)req_id_from_seq;
+    uint32_t req_id = get_u32(&req[pos]);
+    pos += 4;
 
     /* Build response */
     int wp = 8; /* start of body after header */

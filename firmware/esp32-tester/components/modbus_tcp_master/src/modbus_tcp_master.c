@@ -220,11 +220,11 @@ static esp_err_t toggle_coil(void)
     uint8_t req[MAX_ADU_LEN];
     uint8_t resp[MAX_ADU_LEN];
 
-    coil_state = !coil_state;
+    bool new_state = !coil_state;
 
     int req_len = build_adu(req, sizeof(req),
                             TARGET_SLAVE_ID, 0x05, 0,
-                            coil_state ? 1 : 0);
+                            new_state ? 1 : 0);
     if (req_len < 0) return ESP_FAIL;
 
     int resp_len = send_recv(req, req_len, resp, sizeof(resp));
@@ -237,6 +237,8 @@ static esp_err_t toggle_coil(void)
         return ESP_FAIL;
     }
 
+    /* Toggle state only after write confirmed successful */
+    coil_state = new_state;
     ESP_LOGI(TAG, "Coil 0 set to %s", coil_state ? "ON" : "OFF");
 
     /* Suppress unused warning for resp_len (we checked for error above) */

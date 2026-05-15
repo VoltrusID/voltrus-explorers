@@ -145,12 +145,12 @@ static int build_setup_comm_response(const uint8_t *req, uint8_t *resp_s7)
 static bool parse_s7_any(const uint8_t *p, uint8_t *area, uint8_t *transport_size,
                          uint16_t *db_number, uint32_t *byte_offset, uint16_t *item_length)
 {
-    *transport_size = p[0];
-    *item_length = get_u16_be(&p[1]);
-    *db_number = get_u16_be(&p[3]);
-    *area = p[5];
+    *transport_size = p[1];
+    *item_length = get_u16_be(&p[2]);
+    *db_number = get_u16_be(&p[4]);
+    *area = p[6];
     /* byte offset: bits 23-3 of the 3-byte address field */
-    *byte_offset = ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 8) | p[8];
+    *byte_offset = ((uint32_t)p[7] << 16) | ((uint32_t)p[8] << 8) | p[9];
     *byte_offset >>= 3; /* convert bit address to byte address */
     return true;
 }
@@ -210,11 +210,11 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
         /* Skip item spec type byte */
         uint8_t ts_raw = req[data_offset + 1];
         uint16_t item_len = get_u16_be(&req[data_offset + 2]);
-        uint16_t db_num = get_u16_be(&req[data_offset + 3]);
-        uint8_t area = req[data_offset + 5];
-        uint32_t byte_off = (((uint32_t)req[data_offset + 6] << 16) |
-                              ((uint32_t)req[data_offset + 7] << 8) |
-                              req[data_offset + 8]) >> 3;
+        uint16_t db_num = get_u16_be(&req[data_offset + 4]);
+        uint8_t area = req[data_offset + 6];
+        uint32_t byte_off = (((uint32_t)req[data_offset + 7] << 16) |
+                              ((uint32_t)req[data_offset + 8] << 8) |
+                              req[data_offset + 9]) >> 3;
 
         int byte_count = item_len;
         /* For word/int types, item_len is count of words */
@@ -232,7 +232,7 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
                 if (bytes_to_copy < 0) bytes_to_copy = 0;
             }
             memcpy(&resp_s7[out_offset], &db1[byte_off], bytes_to_copy);
-            out_offset += byte_count;
+            out_offset += bytes_to_copy;
         } else {
             resp_s7[out_offset++] = 0x0A; /* object does not exist */
             memset(&resp_s7[out_offset], 0, byte_count);
@@ -273,11 +273,11 @@ static int build_write_var_response(const uint8_t *req, int req_len, uint8_t *re
     for (int i = 0; i < num_items && data_offset + 12 <= req_len; i++) {
         uint8_t ts_raw = req[data_offset + 1];
         uint16_t item_len = get_u16_be(&req[data_offset + 2]);
-        uint16_t db_num = get_u16_be(&req[data_offset + 3]);
-        uint8_t area = req[data_offset + 5];
-        uint32_t byte_off = (((uint32_t)req[data_offset + 6] << 16) |
-                              ((uint32_t)req[data_offset + 7] << 8) |
-                              req[data_offset + 8]) >> 3;
+        uint16_t db_num = get_u16_be(&req[data_offset + 4]);
+        uint8_t area = req[data_offset + 6];
+        uint32_t byte_off = (((uint32_t)req[data_offset + 7] << 16) |
+                              ((uint32_t)req[data_offset + 8] << 8) |
+                              req[data_offset + 9]) >> 3;
 
         int byte_count = item_len;
         if (ts_raw == S7_TS_WORD) {

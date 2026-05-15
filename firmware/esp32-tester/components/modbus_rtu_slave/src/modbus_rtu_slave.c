@@ -279,13 +279,22 @@ static void handle_fc06(uint8_t slave, const uint8_t *frame, uint16_t addr, uint
 }
 
 /* FC0F - Write Multiple Coils */
-static void handle_fc0f(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty)
+static void handle_fc0f(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty, size_t frame_len)
 {
     if (qty < 1 || qty > 1968 || (start + qty) > COIL_COUNT) {
         send_exception(slave, 0x0F, 0x02);
         return;
     }
     uint8_t byte_count = frame[6];
+    uint8_t expected = (qty + 7) / 8;
+    if (byte_count != expected) {
+        send_exception(slave, 0x0F, 0x03);
+        return;
+    }
+    if (frame_len < (size_t)(7 + byte_count + 2)) {
+        send_exception(slave, 0x0F, 0x03);
+        return;
+    }
     for (uint16_t i = 0; i < qty; i++) {
         bool val = (frame[7 + i / 8] >> (i % 8)) & 1;
         coil_set(start + i, val);
@@ -306,13 +315,21 @@ static void handle_fc0f(uint8_t slave, const uint8_t *frame, uint16_t start, uin
 }
 
 /* FC10 - Write Multiple Registers */
-static void handle_fc10(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty)
+static void handle_fc10(uint8_t slave, const uint8_t *frame, uint16_t start, uint16_t qty, size_t frame_len)
 {
     if (qty < 1 || qty > 123 || (start + qty) > REG_COUNT) {
         send_exception(slave, 0x10, 0x02);
         return;
     }
     uint8_t byte_count = frame[6];
+    if (byte_count != qty * 2) {
+        send_exception(slave, 0x10, 0x03);
+        return;
+    }
+    if (frame_len < (size_t)(7 + byte_count + 2)) {
+        send_exception(slave, 0x10, 0x03);
+        return;
+    }
     for (uint16_t i = 0; i < qty; i++) {
         uint16_t val = ((uint16_t)frame[7 + i * 2] << 8) |
                         frame[8 + i * 2];
@@ -399,14 +416,14 @@ static void process_frame(const uint8_t *frame, size_t len)
         if (len < 7) goto bad_len;
         start = ((uint16_t)frame[2] << 8) | frame[3];
         qty   = ((uint16_t)frame[4] << 8) | frame[5];
-        handle_fc0f(slave, frame, start, qty);
+        handle_fc0f(slave, frame, start, qty, len);
         break;
 
     case 0x10: /* Write Multiple Registers */
         if (len < 7) goto bad_len;
         start = ((uint16_t)frame[2] << 8) | frame[3];
         qty   = ((uint16_t)frame[4] << 8) | frame[5];
-        handle_fc10(slave, frame, start, qty);
+        handle_fc10(slave, frame, start, qty, len);
         break;
 
     default:

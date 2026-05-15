@@ -19,6 +19,7 @@ static const char *TAG = "modbus_tcp_slave";
 #define NUM_COILS CONFIG_MODBUS_SLAVE_NUM_COILS
 #define MAX_CLIENTS 5
 #define RX_BUFFER_SIZE 256
+#define TX_BUFFER_SIZE 512
 
 static uint16_t holding_regs[NUM_REGISTERS];
 static uint8_t coils[(NUM_COILS + 7) / 8];
@@ -88,7 +89,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
     case FC_READ_DISCRETE_INPUTS: {
         uint16_t start = (req[8] << 8) | req[9];
         uint16_t count = (req[10] << 8) | req[11];
-        if (start + count > NUM_COILS) {
+        if (count < 1 || count > 2000 || start + count > NUM_COILS) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
         }
         uint8_t byte_count = (count + 7) / 8;
@@ -107,7 +108,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
     case FC_READ_INPUT_REGS: {
         uint16_t start = (req[8] << 8) | req[9];
         uint16_t count = (req[10] << 8) | req[11];
-        if (start + count > NUM_REGISTERS) {
+        if (count < 1 || count > 125 || start + count > NUM_REGISTERS) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
         }
         uint8_t byte_count = count * 2;
@@ -151,6 +152,13 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
         if (start + count > NUM_REGISTERS) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
         }
+        uint8_t byte_count = req[12];
+        if (byte_count != count * 2) {
+            return build_exception(req, resp, EX_ILLEGAL_DATA_VALUE);
+        }
+        if (req_len < 13 + byte_count) {
+            return build_exception(req, resp, EX_ILLEGAL_DATA_VALUE);
+        }
         for (int i = 0; i < count; i++) {
             holding_regs[start + i] = (req[13 + i * 2] << 8) | req[14 + i * 2];
         }
@@ -163,6 +171,14 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
         uint16_t count = (req[10] << 8) | req[11];
         if (start + count > NUM_COILS) {
             return build_exception(req, resp, EX_ILLEGAL_DATA_ADDR);
+        }
+        uint8_t byte_count = req[12];
+        uint8_t expected = (count + 7) / 8;
+        if (byte_count != expected) {
+            return build_exception(req, resp, EX_ILLEGAL_DATA_VALUE);
+        }
+        if (req_len < 13 + byte_count) {
+            return build_exception(req, resp, EX_ILLEGAL_DATA_VALUE);
         }
         for (int i = 0; i < count; i++) {
             bool val = (req[13 + i / 8] >> (i % 8)) & 1;
@@ -182,7 +198,7 @@ static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
 
 static void handle_client(int client_fd) {
     uint8_t rx_buf[RX_BUFFER_SIZE];
-    uint8_t tx_buf[RX_BUFFER_SIZE];
+    uint8_t tx_buf[TX_BUFFER_SIZE];
 
     while (running) {
         int received = recv(client_fd, rx_buf, RX_BUFFER_SIZE, 0);

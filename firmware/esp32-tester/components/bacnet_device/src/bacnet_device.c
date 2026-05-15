@@ -166,11 +166,18 @@ static int encode_app_object_id(uint8_t *buf, uint16_t type, uint32_t instance) 
 
 static int encode_app_string(uint8_t *buf, const char *str) {
     int slen = strlen(str);
-    buf[0] = (TAG_CHARACTER_STRING << 4) | 0x05; /* L-T format */
-    buf[1] = slen + 1; /* length including encoding byte */
-    buf[2] = 0x00; /* ANSI X3.4 encoding */
-    memcpy(&buf[3], str, slen);
-    return 3 + slen;
+    int payload_len = slen + 1; /* encoding byte + string */
+    int pos = 0;
+    if (payload_len < 5) {
+        buf[pos++] = (TAG_CHARACTER_STRING << 4) | payload_len;
+    } else {
+        buf[pos++] = (TAG_CHARACTER_STRING << 4) | 0x05;
+        buf[pos++] = payload_len;
+    }
+    buf[pos++] = 0x00; /* ANSI X3.4 */
+    memcpy(&buf[pos], str, slen);
+    pos += slen;
+    return pos;
 }
 
 /* ---- Decode helpers ---- */
