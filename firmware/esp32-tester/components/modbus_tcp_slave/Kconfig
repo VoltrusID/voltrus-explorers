@@ -1,0 +1,14 @@
+menu "Modbus TCP Slave Config"
+    config MODBUS_SLAVE_PORT
+        int "TCP Port"
+        default 502
+    config MODBUS_SLAVE_ID
+        int "Slave ID"
+        default 1
+    config MODBUS_SLAVE_NUM_REGISTERS
+        int "Number of Holding Registers"
+        default 100
+    config MODBUS_SLAVE_NUM_COILS
+        int "Number of Coils"
+        default 100
+endmenu

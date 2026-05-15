@@ -1,0 +1,5 @@
+menu "EtherNet/IP Server Config"
+    config ENIP_SERVER_PORT
+        int "TCP Port"
+        default 44818
+endmenu
