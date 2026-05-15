@@ -4,9 +4,11 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
+#include "lwip/inet.h"
 #include "driver/gpio.h"
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
 static const char *TAG = "modbus_tcp_slave";
 
@@ -67,9 +69,7 @@ static int build_exception(uint8_t *req, uint8_t *resp, uint8_t ex_code) {
 static int process_request(uint8_t *req, int req_len, uint8_t *resp) {
     if (req_len < 8) return 0;
 
-    uint16_t txn_id = (req[0] << 8) | req[1];
     uint16_t protocol = (req[2] << 8) | req[3];
-    uint16_t length = (req[4] << 8) | req[5];
     uint8_t unit_id = req[6];
     uint8_t func = req[7];
 
@@ -262,8 +262,8 @@ static void tcp_server_task(void *arg) {
             if (running) ESP_LOGE(TAG, "accept failed: errno %d", errno);
             break;
         }
-        ESP_LOGI(TAG, "client connected from " IPSTR ":%d",
-                 IP2STR(&source_addr.sin_addr), ntohs(source_addr.sin_port));
+        ESP_LOGI(TAG, "client connected from %s:%d",
+                 inet_ntoa(source_addr.sin_addr), ntohs(source_addr.sin_port));
         handle_client(client_fd);
     }
 

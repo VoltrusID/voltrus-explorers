@@ -1,4 +1,7 @@
 #include "esp_log.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "wifi_station.h"
 #include "protocol_launcher.h"
 
