@@ -6,7 +6,7 @@
 #include "modbus_tcp_slave.h"
 #include "modbus_tcp_master.h"
 #include "modbus_rtu_slave.h"
-#include "mqtt_client.h"
+#include "my_mqtt_client.h"
 #include "s7_server.h"
 #include "enip_server.h"
 #include "opcua_server.h"
