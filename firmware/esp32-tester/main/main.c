@@ -10,14 +10,15 @@ static const char *TAG = "main";
 void app_main(void) {
     ESP_LOGI(TAG, "ESP32 Protocol Tester starting...");
 
-    esp_err_t ret = wifi_station_init();
+    esp_netif_t *netif = NULL;
+    esp_err_t ret = wifi_station_init(&netif);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "WiFi connection failed, restarting in 5s...");
         vTaskDelay(pdMS_TO_TICKS(5000));
         esp_restart();
     }
 
-    ret = protocol_launcher_start();
+    ret = protocol_launcher_start(netif);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "protocol launch failed");
     }

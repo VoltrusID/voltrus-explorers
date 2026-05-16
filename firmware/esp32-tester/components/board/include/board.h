@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #define BOARD_NUM_RELAYS 6
-#define BOARD_RELAY_PINS { 1, 2, 3, 4, 5, 6 }
+#define BOARD_RELAY_PINS { 1, 2, 41, 42, 45, 46 }
 #define BOARD_BUZZER_PIN 21
 #define BOARD_RGB_PIN    38
 

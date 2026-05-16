@@ -13,5 +13,5 @@ menu "Modbus RTU Slave Config"
         default 17
     config MODBUS_RTU_RX_PIN
         int "UART RX Pin"
-        default 16
+        default 18
 endmenu

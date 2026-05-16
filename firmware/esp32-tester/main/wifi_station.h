@@ -1,5 +1,6 @@
 #pragma once
 
 #include "esp_err.h"
+#include "esp_netif.h"
 
-esp_err_t wifi_station_init(void);
+esp_err_t wifi_station_init(esp_netif_t **out_netif);

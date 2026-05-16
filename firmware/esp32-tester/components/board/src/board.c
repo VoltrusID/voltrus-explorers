@@ -61,8 +61,9 @@ static void update_rgb(uint8_t r, uint8_t g, uint8_t b)
 
 void board_init(void)
 {
-    // Relays
+    // Relays — reset pins first to release from JTAG/other peripheral
     for (int i = 0; i < BOARD_NUM_RELAYS; i++) {
+        gpio_reset_pin(RELAY_PINS[i]);
         gpio_set_direction(RELAY_PINS[i], GPIO_MODE_OUTPUT);
         gpio_set_level(RELAY_PINS[i], 0);
         relay_states[i] = false;

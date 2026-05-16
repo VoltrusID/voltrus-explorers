@@ -16,14 +16,14 @@
 
 static const char *TAG = "protocol_launcher";
 
-esp_err_t protocol_launcher_start(void) {
+esp_err_t protocol_launcher_start(esp_netif_t *netif) {
 #if CONFIG_ESP_TESTER_PROTOCOL_MODBUS_SLAVE
     ESP_LOGI(TAG, "starting Modbus TCP Slave");
-    modbus_tcp_slave_init();
+    modbus_tcp_slave_init(netif);
     return modbus_tcp_slave_start();
 #elif CONFIG_ESP_TESTER_PROTOCOL_MODBUS_MASTER
     ESP_LOGI(TAG, "starting Modbus TCP Master");
-    modbus_tcp_master_init();
+    modbus_tcp_master_init(netif);
     return modbus_tcp_master_start();
 #elif CONFIG_ESP_TESTER_PROTOCOL_MODBUS_RTU
     ESP_LOGI(TAG, "starting Modbus RTU Slave");
