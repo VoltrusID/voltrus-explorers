@@ -692,8 +692,7 @@ static int process_message(uint8_t *rx, int rx_len, struct sockaddr_in *src_addr
                         /* Build result for this property: PropertyIdentifier(context 2) + opening tag 4 + value + closing tag 4 */
                         tx_pos += encode_context_tag(&tx[tx_pos], 2, 1);
                         tx[tx_pos++] = prop_id & 0xFF;
-                        tx_pos += 0x4A; /* placeholder: context tag 4, opening */
-                        tx[tx_pos - 1] = 0x4A;
+                        tx[tx_pos++] = 0x4E; /* context tag 4, opening, length 1 */
 
                         /* Encode property value */
                         if (obj_type == OBJ_DEVICE) {

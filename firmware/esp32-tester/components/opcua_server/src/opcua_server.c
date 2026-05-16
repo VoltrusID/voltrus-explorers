@@ -569,6 +569,7 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
 /* ---- Write Service ---- */
 static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) {
     int wp = 8;
+    int32_t num_writes = 0;
     put_u32(&resp[wp], get_u32(&req[8])); wp += 4;  /* SecureChannelId */
     put_u32(&resp[wp], get_u32(&req[12])); wp += 4; /* TokenId */
     put_u32(&resp[wp], get_u32(&req[16]) + 1); wp += 4; /* SequenceNumber */
@@ -609,15 +610,11 @@ static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) 
     if (rp < req_len) { if (req[rp] == 0x00) rp += 1; }
 
     /* NodesToWrite array */
-    int32_t num_writes = 0;
     if (rp + 4 <= req_len) {
         num_writes = (int32_t)get_u32(&req[rp]); rp += 4;
     }
     if (num_writes <= 0) num_writes = 0;
     if (num_writes > NUM_NODES) num_writes = NUM_NODES;
-
-    /* Results array */
-    put_u32(&resp[wp], num_writes); wp += 4;
 
     for (int n = 0; n < num_writes && rp + 2 <= req_len; n++) {
         uint32_t target_node = 0;
@@ -700,6 +697,8 @@ static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) 
     }
 
 done:
+    /* Results array (written here to cover early-exit paths) */
+    put_u32(&resp[wp], num_writes); wp += 4;
     /* DiagnosticInfos: empty */
     put_u32(&resp[wp], (uint32_t)-1); wp += 4;
 
@@ -751,7 +750,7 @@ static int build_browse_response(const uint8_t *req, int req_len, uint8_t *resp)
         /* Use FourByte ExpandedNodeId: 0x01 for four-byte node id encoding */
         /* ExpandedNodeId encoding: bits 0-1 = node id type, bit 7 = has namespace uri, bit 6 = has server index */
         resp[wp++] = 0x01; /* FourByte encoding, no namespace uri, no server index */
-        put_u16(&resp[wp], nodes[i].ns); wp += 2; /* namespace index */
+        resp[wp++] = (uint8_t)nodes[i].ns; /* namespace index (1 byte in FourByte) */
         put_u16(&resp[wp], (uint16_t)nodes[i].node_id); wp += 2; /* identifier */
         /* BrowseName (QualifiedName): namespace(u16) + name(string) */
         put_u16(&resp[wp], nodes[i].ns); wp += 2;
