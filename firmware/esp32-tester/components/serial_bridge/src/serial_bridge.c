@@ -11,8 +11,8 @@ static const char *TAG = "serial_bridge";
 
 #define UART0_NUM   UART_NUM_0
 #define UART2_NUM   UART_NUM_2
-#define BUF_SIZE    256
-#define RD_BUF_SIZE 256
+#define BUF_SIZE    1024
+#define RD_BUF_SIZE 1024
 #define UART2_TX    CONFIG_SERIAL_BRIDGE_TX_PIN
 #define UART2_RX    CONFIG_SERIAL_BRIDGE_RX_PIN
 #define DE_PIN      CONFIG_SERIAL_BRIDGE_DE_PIN
@@ -103,7 +103,7 @@ esp_err_t serial_bridge_init(void) {
 
     /* Install UART driver for UART2 with event queue */
     QueueHandle_t uart2_queue;
-    ret = uart_driver_install(UART2_NUM, RD_BUF_SIZE * 2, 0, 20, &uart2_queue, 0);
+    ret = uart_driver_install(UART2_NUM, 2048, 0, 20, &uart2_queue, 0);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UART2 driver install failed: %s", esp_err_to_name(ret));
         return ret;
@@ -115,7 +115,7 @@ esp_err_t serial_bridge_init(void) {
 
     /* Install UART driver for UART0 if not already installed */
     if (!uart_is_driver_installed(UART0_NUM)) {
-        ret = uart_driver_install(UART0_NUM, RD_BUF_SIZE * 2, 0, 0, NULL, 0);
+        ret = uart_driver_install(UART0_NUM, 2048, 0, 0, NULL, 0);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "UART0 driver install failed: %s", esp_err_to_name(ret));
             return ret;

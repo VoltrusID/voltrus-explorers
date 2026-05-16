@@ -24,14 +24,17 @@ static const char *TAG = "dnp3_outstation";
 #define DNP3_CRC_SIZE 2
 
 /* Data link function codes */
-#define DL_CONFIRMED_USER_DATA 0x44
-#define DL_UNCONFIRMED_USER_DATA 0x40
+#define DL_RESET_LINK 0x00
+#define DL_CONFIRMED_USER_DATA 0x04
+#define DL_UNCONFIRMED_USER_DATA 0x00
+#define DL_ACK 0x00
 
 /* Application function codes */
 #define FC_READ 0x01
 #define FC_WRITE 0x02
 #define FC_DIRECT_OPERATE 0x05
 #define FC_DIRECT_OPERATE_NR 0x06
+#define FC_RESPONSE 0x81
 
 /* Object group/variation IDs */
 #define GROUP_BINARY_INPUT  1
@@ -170,10 +173,9 @@ static int build_response(uint8_t *resp, int app_data_len) {
     /* Set header */
     resp[0] = DNP3_START_BYTE0;
     resp[1] = DNP3_START_BYTE1;
-    resp[2] = app_data_len; /* data length */
-    resp[3] = 0x44; /* control: DIR=1, PRM=1, FCB=0, FCV=0, FC=0x04 (confirmed user data from outstation) */
-    /* Actually control byte: bit7=DIR, bit6=PRM, bit5=FCB, bit4=FCV, bits3-0=FC */
-    resp[3] = 0xC4; /* DIR=1, PRM=1, FCB=0, FCV=0, FC=0x04 */
+    resp[2] = 5 + app_data_len; /* data length: control(1) + dest(2) + src(2) + app data */
+    /* Control byte: DIR=1, PRM=0 (secondary/outstation), FCB=0, FCV=0, DFC=0, FC=0x04 */
+    resp[3] = 0x84; /* DIR=1, PRM=0, DFC=0, FC=0x04 (Confirmed User Data from outstation) */
     resp[4] = 0x01; /* destination address low byte (master = 1) */
     resp[5] = 0x00; /* destination high */
     resp[6] = OUTSTATION_ADDR & 0xFF; /* source low */
@@ -212,7 +214,7 @@ static int handle_read_request(const uint8_t *req_data, int req_data_len,
     resp_app[wp++] = 0xC0 | seq; /* FIR|FIN|CON=0, SEQ */
 
     /* Response FC */
-    resp_app[wp++] = FC_READ;
+    resp_app[wp++] = FC_RESPONSE;
 
     /* Internal Indications (IIN) */
     resp_app[wp++] = 0x00; /* IIN byte 1 */
@@ -434,6 +436,25 @@ static int process_frame(const uint8_t *frame, int frame_len, uint8_t *resp) {
 
     ESP_LOGI(TAG, "Frame: ctrl=0x%02X func=%u src=%u dest=%u app_len=%d",
              ctrl, func_code, src_addr, dest_addr, app_data_len);
+
+    /* Handle link reset (FC=0 from master) */
+    if (func_code == DL_RESET_LINK) {
+        ESP_LOGI(TAG, "Link reset received from %u, sending ACK", src_addr);
+        /* Build link ACK response: header only, no app data */
+        resp[0] = DNP3_START_BYTE0;
+        resp[1] = DNP3_START_BYTE1;
+        resp[2] = 5; /* data length: control(1) + dest(2) + src(2), no app data */
+        resp[3] = 0x80; /* DIR=1, PRM=0, FC=0x00 (ACK) */
+        resp[4] = src_low;   /* destination = master (sender of reset) */
+        resp[5] = src_high;
+        resp[6] = OUTSTATION_ADDR & 0xFF; /* source = us */
+        resp[7] = (OUTSTATION_ADDR >> 8) & 0xFF;
+        /* Header CRC */
+        uint16_t ack_crc = dnp3_crc16(resp, 8);
+        resp[8] = ack_crc & 0xFF;
+        resp[9] = (ack_crc >> 8) & 0xFF;
+        return 10;
+    }
 
     if (func_code == DL_CONFIRMED_USER_DATA && app_data_len >= 2) {
         uint8_t app_fc = app_data[1]; /* function code after AC byte */

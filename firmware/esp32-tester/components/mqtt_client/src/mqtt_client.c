@@ -44,7 +44,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                  event->data_len, event->data);
 
         /* Handle esp32/control/relay/<ch> */
-        if (event->topic_len > 20 && strncmp(event->topic, "esp32/control/relay/", 20) == 0) {
+        if (event->topic_len == 21 && strncmp(event->topic, "esp32/control/relay/", 20) == 0) {
             int ch = event->topic[20] - '0';
             if (ch >= 0 && ch < 6) {
                 bool on = (event->data_len >= 2 && strncmp(event->data, "ON", 2) == 0);
@@ -63,6 +63,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             char buf[16] = {0};
             int cplen = event->data_len < 15 ? event->data_len : 15;
             memcpy(buf, event->data, cplen);
+            buf[cplen] = '\0';
             int r = 0, g = 0, b = 0;
             char *tok = buf;
             r = atoi(tok);

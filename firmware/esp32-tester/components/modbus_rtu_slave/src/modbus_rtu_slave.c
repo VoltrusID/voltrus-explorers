@@ -5,6 +5,7 @@
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "mbcontroller.h"
 #include <string.h>
 
@@ -25,6 +26,7 @@ static uint16_t input_regs[NUM_REGISTERS];
 static uint8_t coils[4];
 static uint8_t discrete_inputs[4];
 static bool running = false;
+static SemaphoreHandle_t reg_mutex;
 
 #define MB_WRITE_MASK (MB_EVENT_HOLDING_REG_WR | MB_EVENT_COILS_WR)
 #define MB_RW_MASK    (MB_WRITE_MASK | MB_EVENT_HOLDING_REG_RD | MB_EVENT_INPUT_REG_RD \
@@ -49,11 +51,18 @@ static void apply_coil_change(void) {
 
 esp_err_t modbus_rtu_slave_init(void) {
     memset(holding_regs, 0, sizeof(holding_regs));
+    memset(input_regs, 0, sizeof(input_regs));
     memset(coils, 0, sizeof(coils));
     memset(discrete_inputs, 0, sizeof(discrete_inputs));
 
     board_init();
     holding_regs[1] = 123;
+
+    reg_mutex = xSemaphoreCreateMutex();
+    if (reg_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create reg_mutex");
+        return ESP_ERR_NO_MEM;
+    }
 
     void *slave_handler = NULL;
     esp_err_t err = mbc_slave_init(MB_PORT_SERIAL_SLAVE, &slave_handler);
@@ -139,10 +148,22 @@ static void data_update_task(void *arg) {
     uint16_t counter = 0;
     while (running) {
         counter++;
+
+        xSemaphoreTake(reg_mutex, portMAX_DELAY);
         holding_regs[0] = counter;
         holding_regs[1] = (uint16_t)(esp_random() % 1000);
         memcpy(discrete_inputs, coils, sizeof(coils));
-        memcpy(input_regs, holding_regs, sizeof(holding_regs));
+
+        // Only copy sensor-like data to input registers:
+        //   counter (0), random (1), and general purpose (14-99).
+        // Do NOT mirror control registers: buzzer (10), RGB (11-13).
+        input_regs[0] = holding_regs[0];
+        input_regs[1] = holding_regs[1];
+        for (int i = 14; i < NUM_REGISTERS; i++) {
+            input_regs[i] = holding_regs[i];
+        }
+        xSemaphoreGive(reg_mutex);
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(NULL);
@@ -151,5 +172,18 @@ static void data_update_task(void *arg) {
 esp_err_t modbus_rtu_slave_start(void) {
     xTaskCreate(event_task, "mb_rtu_evt", 4096, NULL, tskIDLE_PRIORITY + 5, NULL);
     xTaskCreate(data_update_task, "mb_rtu_data", 2048, NULL, tskIDLE_PRIORITY + 3, NULL);
+    return ESP_OK;
+}
+
+esp_err_t modbus_rtu_slave_stop(void) {
+    running = false;
+    // Allow tasks a chance to observe `running == false` and exit
+    vTaskDelay(pdMS_TO_TICKS(200));
+    mbc_slave_destroy();
+    if (reg_mutex != NULL) {
+        vSemaphoreDelete(reg_mutex);
+        reg_mutex = NULL;
+    }
+    ESP_LOGI(TAG, "Modbus RTU Slave stopped");
     return ESP_OK;
 }

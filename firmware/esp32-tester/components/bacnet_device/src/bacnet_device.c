@@ -36,6 +36,7 @@ static const char *TAG = "bacnet_device";
 
 /* BACnet Confirmed Services */
 #define SERVICE_READ_PROPERTY 0x0C
+#define SERVICE_READ_PROPERTY_MULTIPLE 0x0E
 #define SERVICE_WHO_IS 0x08
 
 /* BACnet Unconfirmed Services */
@@ -411,10 +412,7 @@ static int process_message(uint8_t *rx, int rx_len, struct sockaddr_in *src_addr
     uint8_t bvlc_func = rx[1];
     uint16_t bvlc_len = ((uint16_t)rx[2] << 8) | rx[3];
 
-    if (bvlc_func == BVLC_ORIG_BROADCAST || bvlc_func == BVLC_FORWARDED) {
-        return 0; /* ignore broadcast and forwarded */
-    }
-    if (bvlc_func != BVLC_ORIG_UNICAST) {
+    if (bvlc_func != BVLC_ORIG_UNICAST && bvlc_func != BVLC_ORIG_BROADCAST && bvlc_func != BVLC_FORWARDED) {
         return 0;
     }
 
@@ -459,8 +457,37 @@ static int process_message(uint8_t *rx, int rx_len, struct sockaddr_in *src_addr
         /* Unconfirmed request */
 
         if (apdu_service == SERVICE_WHO_IS) {
-            ESP_LOGI(TAG, "Received Who-Is, sending I-Am");
-            return build_i_am(tx);
+            /* Parse optional device-instance-range from Who-Is to check if we should respond */
+            int whois_payload_start = npdu_start + 1;
+            if (whois_payload_start < rx_len) {
+                uint8_t tag_num;
+                bool is_ctx;
+                uint32_t tlen;
+                int consumed = decode_tag_info(&rx[whois_payload_start], rx_len - whois_payload_start, &tag_num, &is_ctx, &tlen);
+                if (consumed > 0 && is_ctx && tag_num == 0 && tlen <= 4) {
+                    /* There is a device instance range low */
+                    uint32_t low = decode_unsigned(&rx[whois_payload_start + consumed], tlen);
+                    int next_pos = whois_payload_start + consumed + tlen;
+                    consumed = decode_tag_info(&rx[next_pos], rx_len - next_pos, &tag_num, &is_ctx, &tlen);
+                    if (consumed > 0 && is_ctx && tag_num == 1 && tlen <= 4) {
+                        uint32_t high = decode_unsigned(&rx[next_pos + consumed], tlen);
+                        if (DEVICE_ID < low || DEVICE_ID > high) {
+                            ESP_LOGI(TAG, "Who-Is range %lu-%lu does not match device %d, ignoring",
+                                     (unsigned long)low, (unsigned long)high, DEVICE_ID);
+                            return 0;
+                        }
+                    }
+                }
+            }
+            ESP_LOGI(TAG, "Received Who-Is, sending I-Am to %s:%d",
+                     inet_ntoa(src_addr->sin_addr), ntohs(src_addr->sin_port));
+            int resp_len = build_i_am(tx);
+            /* Override BVLC to unicast back to sender instead of broadcast */
+            tx[1] = BVLC_ORIG_UNICAST;
+            uint16_t total = resp_len;
+            tx[2] = (total >> 8) & 0xFF;
+            tx[3] = total & 0xFF;
+            return resp_len;
         }
     } else if (apdu_type == BACNET_CONFIRMED_REQUEST) {
         /* Confirmed request: PDU type(1) + MaxSegs(1) + MaxApdu(1) + InvokeID(1) + Service(1+) */
@@ -520,6 +547,232 @@ static int process_message(uint8_t *rx, int rx_len, struct sockaddr_in *src_addr
             }
 
             return build_read_property_ack(tx, invoke_id, obj_type, obj_inst, prop_id, rx, rx_len);
+        } else if (service_choice == SERVICE_READ_PROPERTY_MULTIPLE) {
+            /* ReadPropertyMultiple: list of ReadAccessSpecification */
+            int rp = service_header + 4;
+            int tx_pos = 0;
+
+            /* Build Complex ACK header in tx buffer */
+            /* BVLC header */
+            tx[tx_pos++] = BVLC_TYPE;
+            tx[tx_pos++] = BVLC_ORIG_UNICAST;
+            int bvlc_len_pos = tx_pos;
+            tx_pos += 2;
+
+            /* NPDU */
+            tx[tx_pos++] = 0x01; /* version */
+            tx[tx_pos++] = 0x00; /* control */
+
+            /* APDU: Complex ACK for ReadPropertyMultiple */
+            tx[tx_pos++] = BACNET_COMPLEX_ACK | SERVICE_READ_PROPERTY_MULTIPLE;
+            tx[tx_pos++] = invoke_id;
+
+            /* Parse each ReadAccessSpecification: ObjectIdentifier(context 0) + list of PropertyReference */
+            while (rp + 2 < rx_len && tx_pos < TX_BUFFER_SIZE - 64) {
+                uint8_t tag_num;
+                bool is_ctx;
+                uint32_t tlen;
+
+                /* Object Identifier context tag 0 */
+                int consumed = decode_tag_info(&rx[rp], rx_len - rp, &tag_num, &is_ctx, &tlen);
+                if (consumed < 0) break;
+                rp += consumed;
+                if (tag_num != 0 || !is_ctx || tlen != 4) break;
+
+                uint16_t obj_type;
+                uint32_t obj_inst;
+                decode_object_id(&rx[rp], &obj_type, &obj_inst);
+                rp += 4;
+
+                /* Validate object */
+                bool obj_valid = false;
+                if (obj_type == OBJ_DEVICE && obj_inst == DEVICE_ID) obj_valid = true;
+                else if (obj_type == OBJ_ANALOG_VALUE && obj_inst >= 1 && obj_inst <= NUM_AV) obj_valid = true;
+                else if (obj_type == OBJ_BINARY_VALUE && obj_inst >= 1 && obj_inst <= NUM_BV) obj_valid = true;
+
+                /* Write ReadAccessResult header: ObjectIdentifier(context 0) */
+                tx_pos += encode_context_tag(&tx[tx_pos], 0, 4);
+                uint32_t oid = ((uint32_t)obj_type << 22) | (obj_inst & 0x3FFFFF);
+                tx[tx_pos++] = (oid >> 24) & 0xFF;
+                tx[tx_pos++] = (oid >> 16) & 0xFF;
+                tx[tx_pos++] = (oid >> 8) & 0xFF;
+                tx[tx_pos++] = oid & 0xFF;
+
+                /* Opening tag for list of results (context 1) */
+                tx[tx_pos++] = 0x1A; /* context tag 1, opening */
+
+                if (!obj_valid) {
+                    /* Unknown object: return error for each requested property */
+                    /* Read property list: context tag 0 opening */
+                    while (rp + 1 < rx_len) {
+                        uint8_t ptag;
+                        bool pctx;
+                        uint32_t plen;
+                        int pc = decode_tag_info(&rx[rp], rx_len - rp, &ptag, &pctx, &plen);
+                        if (pc < 0) break;
+                        if (ptag == 0 && pctx) {
+                            /* Opening tag for property reference list */
+                            rp += pc;
+                            continue;
+                        }
+                        if (ptag == 1 && pctx) {
+                            /* Closing tag for property reference list */
+                            rp += pc;
+                            break;
+                        }
+                        if (ptag == 0 && !pctx) {
+                            /* Property identifier */
+                            uint32_t pid = decode_unsigned(&rx[rp + pc], plen);
+                            rp += pc + plen;
+                            /* Check for optional array index */
+                            if (rp < rx_len) {
+                                uint8_t atag; bool actx; uint32_t alen;
+                                int ac = decode_tag_info(&rx[rp], rx_len - rp, &atag, &actx, &alen);
+                                if (ac > 0 && atag == 1 && actx) {
+                                    rp += ac + alen;
+                                }
+                            }
+                            /* Write error result: PropertyIdentifier(context 2) + opening tag 4 + error + closing tag 4 */
+                            tx_pos += encode_context_tag(&tx[tx_pos], 2, 1);
+                            tx[tx_pos++] = pid & 0xFF;
+                            tx[tx_pos++] = 0x4A; /* context tag 4, opening */
+                            /* Error class = OBJECT (1), Error code = UNKNOWN_OBJECT (0x20) */
+                            tx_pos += encode_app_unsigned(&tx[tx_pos], 1);
+                            tx_pos += encode_app_unsigned(&tx[tx_pos], ERROR_UNKNOWN_OBJECT);
+                            tx[tx_pos++] = 0x4B; /* context tag 4, closing */
+                            continue;
+                        }
+                        break;
+                    }
+                } else {
+                    /* Valid object: parse property references and return values */
+                    /* The property list starts with opening tag 0 */
+                    consumed = decode_tag_info(&rx[rp], rx_len - rp, &tag_num, &is_ctx, &tlen);
+                    if (consumed > 0 && tag_num == 0 && is_ctx && tlen == 0 && (rx[rp] & 0x07) == 0x06) {
+                        /* Opening tag */
+                        rp += consumed;
+                    }
+
+                    while (rp + 1 < rx_len && tx_pos < TX_BUFFER_SIZE - 64) {
+                        consumed = decode_tag_info(&rx[rp], rx_len - rp, &tag_num, &is_ctx, &tlen);
+                        if (consumed < 0) break;
+
+                        /* Check for closing tag (end of property list for this object) */
+                        if (tag_num == 1 && is_ctx && tlen == 0 && (rx[rp] & 0x07) == 0x07) {
+                            rp += consumed;
+                            break;
+                        }
+
+                        /* Check for next object (context tag 0) - another ReadAccessSpecification */
+                        if (tag_num == 0 && is_ctx) {
+                            break;
+                        }
+
+                        /* Property identifier (application tag) */
+                        uint32_t prop_id = 0;
+                        if (!is_ctx) {
+                            /* Application-tagged property identifier */
+                            prop_id = decode_unsigned(&rx[rp + consumed], tlen);
+                            rp += consumed + tlen;
+
+                            /* Check for optional property array index */
+                            if (rp < rx_len) {
+                                uint8_t atag; bool actx; uint32_t alen;
+                                int ac = decode_tag_info(&rx[rp], rx_len - rp, &atag, &actx, &alen);
+                                if (ac > 0 && atag == 1 && actx) {
+                                    /* Array index present */
+                                    rp += ac + alen;
+                                }
+                            }
+                        } else {
+                            rp += consumed + tlen;
+                            continue;
+                        }
+
+                        /* Build result for this property: PropertyIdentifier(context 2) + opening tag 4 + value + closing tag 4 */
+                        tx_pos += encode_context_tag(&tx[tx_pos], 2, 1);
+                        tx[tx_pos++] = prop_id & 0xFF;
+                        tx_pos += 0x4A; /* placeholder: context tag 4, opening */
+                        tx[tx_pos - 1] = 0x4A;
+
+                        /* Encode property value */
+                        if (obj_type == OBJ_DEVICE) {
+                            switch (prop_id) {
+                            case PROP_OBJECT_IDENTIFIER:
+                                tx_pos += encode_app_object_id(&tx[tx_pos], OBJ_DEVICE, DEVICE_ID);
+                                break;
+                            case PROP_OBJECT_NAME:
+                                tx_pos += encode_app_string(&tx[tx_pos], "ESP32-BACnet");
+                                break;
+                            case PROP_VENDOR_ID:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 999);
+                                break;
+                            case PROP_MODEL_NAME:
+                                tx_pos += encode_app_string(&tx[tx_pos], "ESP32 Tester");
+                                break;
+                            case PROP_SYSTEM_STATUS:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 0);
+                                break;
+                            case PROP_DESCRIPTION:
+                                tx_pos += encode_app_string(&tx[tx_pos], "ESP32 BACnet/IP Tester Device");
+                                break;
+                            case PROP_OBJECT_LIST:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 1 + NUM_AV + NUM_BV);
+                                break;
+                            default:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 0);
+                                break;
+                            }
+                        } else if (obj_type == OBJ_ANALOG_VALUE) {
+                            int idx = (int)obj_inst - 1;
+                            if (idx < 0 || idx >= NUM_AV) idx = 0;
+                            switch (prop_id) {
+                            case PROP_OBJECT_IDENTIFIER:
+                                tx_pos += encode_app_object_id(&tx[tx_pos], OBJ_ANALOG_VALUE, obj_inst);
+                                break;
+                            case PROP_OBJECT_NAME:
+                                tx_pos += encode_app_string(&tx[tx_pos], av[idx].name);
+                                break;
+                            case PROP_PRESENT_VALUE:
+                                tx_pos += encode_app_real(&tx[tx_pos], av[idx].value);
+                                break;
+                            default:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 0);
+                                break;
+                            }
+                        } else if (obj_type == OBJ_BINARY_VALUE) {
+                            int idx = (int)obj_inst - 1;
+                            if (idx < 0 || idx >= NUM_BV) idx = 0;
+                            switch (prop_id) {
+                            case PROP_OBJECT_IDENTIFIER:
+                                tx_pos += encode_app_object_id(&tx[tx_pos], OBJ_BINARY_VALUE, obj_inst);
+                                break;
+                            case PROP_OBJECT_NAME:
+                                tx_pos += encode_app_string(&tx[tx_pos], bv[idx].name);
+                                break;
+                            case PROP_PRESENT_VALUE:
+                                tx_pos += encode_app_boolean(&tx[tx_pos], bv[idx].value);
+                                break;
+                            default:
+                                tx_pos += encode_app_unsigned(&tx[tx_pos], 0);
+                                break;
+                            }
+                        }
+
+                        tx[tx_pos++] = 0x4B; /* context tag 4, closing */
+                    }
+                }
+
+                /* Closing tag for list of results (context 1) */
+                tx[tx_pos++] = 0x1B; /* context tag 1, closing */
+            }
+
+            /* Update BVLC length */
+            uint16_t total_len = tx_pos;
+            tx[bvlc_len_pos] = (total_len >> 8) & 0xFF;
+            tx[bvlc_len_pos + 1] = total_len & 0xFF;
+
+            return tx_pos;
         }
     }
 

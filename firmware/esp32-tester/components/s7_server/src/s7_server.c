@@ -101,8 +101,9 @@ static int handle_cotp_cr(const uint8_t *req, int req_len, uint8_t *resp)
     }
 
     /* Build TPKT + COTP CC */
-    int cc_len = 6; /* src-ref(2) + dst-ref(2) + class(1) + opt(1) */
-    int tpkt_total = TPKT_HEADER_SIZE + cc_len;
+    /* COTP CC: type(1) + dst-ref(2) + src-ref(2) + class(1) = 6 bytes after LI */
+    int cc_data_len = 6;
+    int tpkt_total = TPKT_HEADER_SIZE + 1 + cc_data_len; /* TPKT(4) + LI(1) + data(6) */
 
     /* TPKT */
     resp[0] = 0x03;
@@ -110,7 +111,7 @@ static int handle_cotp_cr(const uint8_t *req, int req_len, uint8_t *resp)
     put_u16_be(&resp[2], tpkt_total);
 
     /* COTP CC */
-    resp[4] = cc_len - 1; /* header length excluding this byte */
+    resp[4] = cc_data_len; /* LI = 6 */
     resp[5] = COTP_CC;
     put_u16_be(&resp[6], 0x0001); /* dst-ref */
     put_u16_be(&resp[8], 0x0001); /* src-ref */
@@ -159,11 +160,11 @@ static bool parse_s7_any(const uint8_t *p, uint8_t *area, uint8_t *transport_siz
 /* Build S7 Read Var response */
 static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *resp_s7)
 {
-    if (req_len < 14) return 0;
+    if (req_len < 12) return 0;
 
-    uint8_t num_items = req[13]; /* parameter: item count */
+    uint8_t num_items = req[11]; /* parameter: item count */
     int param_len = 2; /* function code + item count */
-    int data_offset = 14; /* after S7 header(12) + param(2) */
+    int data_offset = 12; /* after S7 header(10) + param(2) */
 
     /* Calculate data length needed for response */
     int resp_data_len = 1; /* error code byte */
@@ -176,19 +177,14 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
         parse_s7_any(&req[data_offset], &area, &ts, &db_num, &byte_off, &item_len);
         data_offset += 12; /* S7 Any is 12 bytes (but we index from item start) */
 
-        /* Fix: S7 Any is actually read from offset +1 because the first byte
-           after param_len is the item spec type (0x12 for S7 Any).
-           Let's re-parse properly. */
         (void)ts;
         (void)db_num;
 
         int byte_count = item_len;
-
-        /* For word type, item_len is in elements (words), each word = 2 bytes */
         resp_data_len += 1 + byte_count; /* return code + data */
     }
 
-    /* S7 header (12 bytes) */
+    /* S7 Ack_Data header (12 bytes) */
     resp_s7[0] = 0x32;
     resp_s7[1] = S7_MSG_TYPE_ACK_DATA;
     put_u16_be(&resp_s7[2], 0x0000);
@@ -204,11 +200,9 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
 
     /* Data */
     int out_offset = 14;
-    data_offset = 14; /* reset to first item */
+    data_offset = 12; /* reset to first item in request */
 
     for (int i = 0; i < num_items && data_offset + 12 <= req_len; i++) {
-        /* Item spec: type(1) + transport_size(1) + length(2) + db_number(2) + area(1) + address(3) */
-        /* Skip item spec type byte */
         uint8_t ts_raw = req[data_offset + 1];
         uint16_t item_len = get_u16_be(&req[data_offset + 2]);
         uint16_t db_num = get_u16_be(&req[data_offset + 4]);
@@ -218,7 +212,6 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
                               req[data_offset + 9]) >> 3;
 
         int byte_count = item_len;
-        /* For word/int types, item_len is count of words */
         if (ts_raw == S7_TS_WORD) {
             byte_count = item_len * 2;
         }
@@ -247,13 +240,13 @@ static int build_read_var_response(const uint8_t *req, int req_len, uint8_t *res
 /* Build S7 Write Var response */
 static int build_write_var_response(const uint8_t *req, int req_len, uint8_t *resp_s7)
 {
-    if (req_len < 14) return 0;
+    if (req_len < 12) return 0;
 
-    uint8_t num_items = req[13];
+    uint8_t num_items = req[11];
     int param_len = 2;
     int resp_data_len = 1 + num_items; /* error byte + return code per item */
 
-    /* S7 header (12 bytes) */
+    /* S7 Ack_Data header (12 bytes) */
     resp_s7[0] = 0x32;
     resp_s7[1] = S7_MSG_TYPE_ACK_DATA;
     put_u16_be(&resp_s7[2], 0x0000);
@@ -268,7 +261,7 @@ static int build_write_var_response(const uint8_t *req, int req_len, uint8_t *re
     resp_s7[13] = num_items;
 
     /* Parse request items and perform writes */
-    int data_offset = 14; /* after header(12) + param(2) */
+    int data_offset = 12; /* after header(10) + param(2) */
     int out_offset = 14;
 
     for (int i = 0; i < num_items && data_offset + 12 <= req_len; i++) {
@@ -326,11 +319,12 @@ static int build_write_var_response(const uint8_t *req, int req_len, uint8_t *re
 /* Process a complete S7 PDU */
 static int process_s7_pdu(const uint8_t *pdu, int pdu_len, uint8_t *resp_pdu)
 {
-    if (pdu_len < 12) return 0;
+    if (pdu_len < 10) return 0;
     if (pdu[0] != 0x32) return 0; /* not S7 protocol */
 
     uint8_t msg_type = pdu[1];
-    uint8_t func_code = pdu[12]; /* first byte of parameter */
+    /* Job/Ack/UserData have 10-byte header; param starts at byte 10 */
+    uint8_t func_code = pdu[10];
 
     if (msg_type == S7_MSG_TYPE_JOB) {
         switch (func_code) {
@@ -339,17 +333,17 @@ static int process_s7_pdu(const uint8_t *pdu, int pdu_len, uint8_t *resp_pdu)
             return build_setup_comm_response(pdu, resp_pdu);
 
         case S7_FC_READ_VAR:
-            ESP_LOGI(TAG, "S7 Read Var request (%d items)", pdu[13]);
+            ESP_LOGI(TAG, "S7 Read Var request (%d items)", pdu[11]);
             return build_read_var_response(pdu, pdu_len, resp_pdu);
 
         case S7_FC_WRITE_VAR:
-            ESP_LOGI(TAG, "S7 Write Var request (%d items)", pdu[13]);
+            ESP_LOGI(TAG, "S7 Write Var request (%d items)", pdu[11]);
             return build_write_var_response(pdu, pdu_len, resp_pdu);
 
         default:
             ESP_LOGW(TAG, "S7 unknown function: 0x%02X", func_code);
-            /* Build error response */
-            memcpy(resp_pdu, pdu, 12);
+            /* Build error response (Ack_Data with 12-byte header) */
+            memcpy(resp_pdu, pdu, 10);
             resp_pdu[1] = S7_MSG_TYPE_ACK_DATA;
             put_u16_be(&resp_pdu[6], 0);
             put_u16_be(&resp_pdu[8], 0);
@@ -359,7 +353,14 @@ static int process_s7_pdu(const uint8_t *pdu, int pdu_len, uint8_t *resp_pdu)
         }
     }
 
-    return 0;
+    /* Build error response for unhandled message types (e.g. User Data 0x07) */
+    memcpy(resp_pdu, pdu, 10);
+    resp_pdu[1] = S7_MSG_TYPE_ACK_DATA;
+    put_u16_be(&resp_pdu[6], 0);
+    put_u16_be(&resp_pdu[8], 0);
+    resp_pdu[10] = 0x81;
+    resp_pdu[11] = 0x00;
+    return 12;
 }
 
 static void handle_client(int client_fd)

@@ -3,26 +3,30 @@
 #include "board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 static const char *TAG = "opcua_server";
 
 #define TCP_PORT CONFIG_OPCUA_SERVER_PORT
 #define MAX_CLIENTS 3
 #define RX_BUFFER_SIZE 2048
-#define TX_BUFFER_SIZE 2048
+#define TX_BUFFER_SIZE 4096
 
 /* OPC UA Node IDs */
 #define NS0 0
+#define NS1 1  /* Custom namespace for application nodes */
 
 /* Node definitions */
 typedef struct {
     uint32_t node_id;
+    uint16_t ns;          /* namespace index */
     const char *name;
     uint8_t  type;       /* 0=UInt32, 1=Double, 2=Boolean, 3=UInt16 */
     uint32_t val_u32;
@@ -35,6 +39,8 @@ typedef struct {
 #define NUM_NODES 13
 static opcua_node_t nodes[NUM_NODES];
 static bool running = false;
+static SemaphoreHandle_t nodes_mutex = NULL;
+static atomic_int active_client_count = 0;
 
 /* ---- Little-endian helpers ---- */
 static void put_u16(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; }
@@ -155,6 +161,253 @@ static int build_opn_response(const uint8_t *req, int req_len, uint8_t *resp) {
     return wp;
 }
 
+/* ---- String helper: write length-prefixed string ---- */
+static int write_string(uint8_t *p, const char *s) {
+    uint32_t len = (uint32_t)strlen(s);
+    put_u32(p, len); p += 4;
+    memcpy(p, s, len);
+    return 4 + (int)len;
+}
+
+/* ---- GetEndpoints Service (428) ---- */
+static int build_get_endpoints_response(const uint8_t *req, int req_len, uint8_t *resp) {
+    int wp = 8;
+    put_u32(&resp[wp], get_u32(&req[8])); wp += 4;  /* SecureChannelId */
+    put_u32(&resp[wp], get_u32(&req[12])); wp += 4;  /* TokenId */
+    put_u32(&resp[wp], get_u32(&req[16]) + 1); wp += 4; /* SequenceNumber */
+    put_u32(&resp[wp], get_u32(&req[20])); wp += 4;  /* RequestId */
+
+    /* GetEndpointsResponse = 431 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x00;
+    put_u16(&resp[wp], 431); wp += 2;
+
+    /* ResponseHeader */
+    int rp = 24;
+    if (rp < req_len) {
+        uint8_t enc = req[rp++];
+        if (enc == 0x00) rp++;
+        else if (enc == 0x01) rp += 3;
+        else rp += 7;
+    }
+    /* Timestamp */
+    put_u32(&resp[wp], 0); wp += 4; put_u32(&resp[wp], 0); wp += 4;
+    /* RequestHandle */
+    uint32_t req_handle = 0;
+    if (rp + 4 <= req_len) { req_handle = get_u32(&req[rp]); }
+    put_u32(&resp[wp], req_handle); wp += 4;
+    /* ServiceResult = Good */
+    put_u32(&resp[wp], 0); wp += 4;
+    /* Diagnostics empty */
+    resp[wp++] = 0x00;
+    /* StringTable empty */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* AdditionalHeader empty */
+    resp[wp++] = 0x00;
+
+    /* Endpoints array: 1 endpoint */
+    put_u32(&resp[wp], 1); wp += 4;
+
+    /* Build endpoint URL */
+    char endpoint_url[64];
+    snprintf(endpoint_url, sizeof(endpoint_url), "opc.tcp://%s:4840", "0.0.0.0");
+
+    /* EndpointDescription */
+    /* EndpointUrl (string) */
+    wp += write_string(&resp[wp], endpoint_url);
+
+    /* Server ApplicationDescription */
+    /* ApplicationUri */
+    wp += write_string(&resp[wp], "urn:esp32:opcua:server");
+    /* ProductUri */
+    wp += write_string(&resp[wp], "urn:esp32:opcua:product");
+    /* ApplicationName (LocalizedText): encoding + locale + text */
+    resp[wp++] = 0x02; /* has text */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4; /* null locale */
+    wp += write_string(&resp[wp], "ESP32 OPC UA Server");
+    /* ApplicationType (enum u32) = 1 (Server) */
+    put_u32(&resp[wp], 1); wp += 4;
+    /* GatewayServerUri: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* DiscoveryProfileUri: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* DiscoveryUrls array: empty (-1) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* ServerCertificate: null (no certificate for None policy) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* MessageSecurityMode (enum u32) = 1 (None) */
+    put_u32(&resp[wp], 1); wp += 4;
+
+    /* SecurityPolicyUri (string) */
+    wp += write_string(&resp[wp], "http://opcfoundation.org/UA/SecurityPolicy#None");
+
+    /* UserIdentityTokens array: 2 tokens (Anonymous + UsernamePassword) */
+    put_u32(&resp[wp], 2); wp += 4;
+
+    /* Token 0: Anonymous */
+    /* PolicyId */
+    wp += write_string(&resp[wp], "anonymous");
+    /* TokenType (enum u32) = 0 (Anonymous) */
+    put_u32(&resp[wp], 0); wp += 4;
+    /* IssuedTokenType: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* IssuerEndpointUrl: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* SecurityPolicyUri: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* Token 1: Username/Password */
+    /* PolicyId */
+    wp += write_string(&resp[wp], "username");
+    /* TokenType (enum u32) = 1 (Username) */
+    put_u32(&resp[wp], 1); wp += 4;
+    /* IssuedTokenType: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* IssuerEndpointUrl: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* SecurityPolicyUri: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* TransportProfileUri (string) */
+    wp += write_string(&resp[wp], "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary");
+
+    /* SecurityLevel (byte) */
+    resp[wp++] = 0;
+
+    /* Set message header */
+    resp[0] = 'M'; resp[1] = 'S'; resp[2] = 'G'; resp[3] = 'F';
+    put_u32(&resp[4], wp);
+    return wp;
+}
+
+/* ---- CreateSession Service (461) ---- */
+static int build_create_session_response(const uint8_t *req, int req_len, uint8_t *resp) {
+    int wp = 8;
+    put_u32(&resp[wp], get_u32(&req[8])); wp += 4;  /* SecureChannelId */
+    put_u32(&resp[wp], get_u32(&req[12])); wp += 4;  /* TokenId */
+    put_u32(&resp[wp], get_u32(&req[16]) + 1); wp += 4; /* SequenceNumber */
+    put_u32(&resp[wp], get_u32(&req[20])); wp += 4;  /* RequestId */
+
+    /* CreateSessionResponse = 464 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x00;
+    put_u16(&resp[wp], 464); wp += 2;
+
+    /* Parse request for RequestHandle */
+    int rp = 24;
+    if (rp < req_len) {
+        uint8_t enc = req[rp++];
+        if (enc == 0x00) rp++;
+        else if (enc == 0x01) rp += 3;
+        else rp += 7;
+    }
+    uint32_t req_handle = 0;
+    if (rp + 4 <= req_len) { req_handle = get_u32(&req[rp]); }
+
+    /* ResponseHeader */
+    put_u32(&resp[wp], 0); wp += 4; put_u32(&resp[wp], 0); wp += 4; /* Timestamp */
+    put_u32(&resp[wp], req_handle); wp += 4; /* RequestHandle */
+    put_u32(&resp[wp], 0); wp += 4; /* ServiceResult = Good */
+    resp[wp++] = 0x00; /* Diagnostics empty */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4; /* StringTable empty */
+    resp[wp++] = 0x00; /* AdditionalHeader empty */
+
+    /* CreateSessionResponse body */
+
+    /* SessionId (NodeId): FourByte, ns=1, id=1 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x01;
+    put_u16(&resp[wp], 1); wp += 2;
+
+    /* AuthenticationToken (NodeId): FourByte, ns=1, id=100 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x01;
+    put_u16(&resp[wp], 100); wp += 2;
+
+    /* RevisedSessionTimeout (Double) = 120000.0 ms */
+    {
+        double timeout = 120000.0;
+        memcpy(&resp[wp], &timeout, 8); wp += 8;
+    }
+
+    /* ServerNonce: 32 bytes of random data */
+    put_u32(&resp[wp], 32); wp += 4;
+    for (int i = 0; i < 32; i++) {
+        resp[wp++] = (uint8_t)(esp_random() & 0xFF);
+    }
+
+    /* ServerCertificate: null (no cert for SecurityPolicy#None) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* ServerSoftwareCertificates array: empty (-1) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* ServerSignature: null (empty SignatureData) */
+    /* Algorithm: null string */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+    /* Signature: null bytestring */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* MaxRequestMessageSize (u32) */
+    put_u32(&resp[wp], 65536); wp += 4;
+
+    /* Set message header */
+    resp[0] = 'M'; resp[1] = 'S'; resp[2] = 'G'; resp[3] = 'F';
+    put_u32(&resp[4], wp);
+    return wp;
+}
+
+/* ---- ActivateSession Service (467) ---- */
+static int build_activate_session_response(const uint8_t *req, int req_len, uint8_t *resp) {
+    int wp = 8;
+    put_u32(&resp[wp], get_u32(&req[8])); wp += 4;  /* SecureChannelId */
+    put_u32(&resp[wp], get_u32(&req[12])); wp += 4;  /* TokenId */
+    put_u32(&resp[wp], get_u32(&req[16]) + 1); wp += 4; /* SequenceNumber */
+    put_u32(&resp[wp], get_u32(&req[20])); wp += 4;  /* RequestId */
+
+    /* ActivateSessionResponse = 470 */
+    resp[wp++] = 0x01;
+    resp[wp++] = 0x00;
+    put_u16(&resp[wp], 470); wp += 2;
+
+    /* Parse request for RequestHandle */
+    int rp = 24;
+    if (rp < req_len) {
+        uint8_t enc = req[rp++];
+        if (enc == 0x00) rp++;
+        else if (enc == 0x01) rp += 3;
+        else rp += 7;
+    }
+    uint32_t req_handle = 0;
+    if (rp + 4 <= req_len) { req_handle = get_u32(&req[rp]); }
+
+    /* ResponseHeader */
+    put_u32(&resp[wp], 0); wp += 4; put_u32(&resp[wp], 0); wp += 4; /* Timestamp */
+    put_u32(&resp[wp], req_handle); wp += 4; /* RequestHandle */
+    put_u32(&resp[wp], 0); wp += 4; /* ServiceResult = Good */
+    resp[wp++] = 0x00; /* Diagnostics empty */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4; /* StringTable empty */
+    resp[wp++] = 0x00; /* AdditionalHeader empty */
+
+    /* ActivateSessionResponse body */
+
+    /* ServerNonce: null */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* Results array: empty (-1) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* DiagnosticInfos array: empty (-1) */
+    put_u32(&resp[wp], (uint32_t)-1); wp += 4;
+
+    /* Set message header */
+    resp[0] = 'M'; resp[1] = 'S'; resp[2] = 'G'; resp[3] = 'F';
+    put_u32(&resp[4], wp);
+    return wp;
+}
+
 /* ---- Read Service ---- */
 static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
     /* Find the Read request details in the MSG body */
@@ -220,6 +473,9 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
 
     /* Results array length */
     put_u32(&resp[wp], num_nodes); wp += 4;
+
+    /* Take mutex before reading node values */
+    if (nodes_mutex) xSemaphoreTake(nodes_mutex, portMAX_DELAY);
 
     /* For each node, try to parse and return data */
     for (int n = 0; n < num_nodes && rp + 2 <= req_len; n++) {
@@ -297,6 +553,9 @@ static int build_read_response(const uint8_t *req, int req_len, uint8_t *resp) {
             put_u32(&resp[wp], 0x80340000); wp += 4; /* BadNodeIdUnknown */
         }
     }
+
+    /* Release mutex after reading node values */
+    if (nodes_mutex) xSemaphoreGive(nodes_mutex);
 
     /* DiagnosticInfos array: empty */
     put_u32(&resp[wp], (uint32_t)-1); wp += 4;
@@ -385,6 +644,8 @@ static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) 
         if (dv_encoding & 0x01) { /* HasValue */
             if (rp < req_len) {
                 uint8_t var_type = req[rp++];
+                /* Take mutex before modifying node values */
+                if (nodes_mutex) xSemaphoreTake(nodes_mutex, portMAX_DELAY);
                 /* Find node and apply write */
                 opcua_node_t *node = NULL;
                 for (int i = 0; i < NUM_NODES; i++) {
@@ -424,6 +685,7 @@ static int build_write_response(const uint8_t *req, int req_len, uint8_t *resp) 
                         break;
                     }
                 }
+                if (nodes_mutex) xSemaphoreGive(nodes_mutex);
                 put_u32(&resp[wp], 0); wp += 4; /* Good */
             } else {
                 put_u32(&resp[wp], 0x80340000); wp += 4; /* BadNodeIdUnknown */
@@ -485,8 +747,14 @@ static int build_browse_response(const uint8_t *req, int req_len, uint8_t *resp)
         resp[wp++] = 0x23; /* Organizes = 35 */
         /* IsForward (Boolean) */
         resp[wp++] = 0x01; /* true */
+        /* Target NodeId (ExpandedNodeId): encoding byte + namespace + id + namespace uri + server index */
+        /* Use FourByte ExpandedNodeId: 0x01 for four-byte node id encoding */
+        /* ExpandedNodeId encoding: bits 0-1 = node id type, bit 7 = has namespace uri, bit 6 = has server index */
+        resp[wp++] = 0x01; /* FourByte encoding, no namespace uri, no server index */
+        put_u16(&resp[wp], nodes[i].ns); wp += 2; /* namespace index */
+        put_u16(&resp[wp], (uint16_t)nodes[i].node_id); wp += 2; /* identifier */
         /* BrowseName (QualifiedName): namespace(u16) + name(string) */
-        put_u16(&resp[wp], NS0); wp += 2;
+        put_u16(&resp[wp], nodes[i].ns); wp += 2;
         uint8_t name_len = (uint8_t)strlen(nodes[i].name);
         put_u32(&resp[wp], name_len); wp += 4;
         memcpy(&resp[wp], nodes[i].name, name_len); wp += name_len;
@@ -494,7 +762,7 @@ static int build_browse_response(const uint8_t *req, int req_len, uint8_t *resp)
         resp[wp++] = 0x02; /* has text */
         put_u32(&resp[wp], name_len); wp += 4;
         memcpy(&resp[wp], nodes[i].name, name_len); wp += name_len;
-        /* NodeClass (Enum u32) = 1 (Object) for variable nodes, but 2 (Variable) is more correct */
+        /* NodeClass (Enum u32) = 2 (Variable) */
         put_u32(&resp[wp], 2); wp += 4; /* Variable */
         /* TypeDefinition (ExpandedNodeId): TwoByte */
         resp[wp++] = 0x00;
@@ -538,6 +806,12 @@ static int handle_msg(const uint8_t *req, int req_len, uint8_t *resp) {
         return build_browse_response(req, req_len, resp);
     case 673: /* Write */
         return build_write_response(req, req_len, resp);
+    case 428: /* GetEndpoints */
+        return build_get_endpoints_response(req, req_len, resp);
+    case 461: /* CreateSession */
+        return build_create_session_response(req, req_len, resp);
+    case 467: /* ActivateSession */
+        return build_activate_session_response(req, req_len, resp);
     default:
         ESP_LOGW(TAG, "Unhandled OPC UA service: %u", service_id);
         return 0;
@@ -570,7 +844,7 @@ static void handle_client(int client_fd) {
             if (r < remaining) break;
         }
 
-        ESP_LOGI(TAG, "Received %c%c%c msg_size=%lu", rx_buf[0], rx_buf[1], rx_buf[2], (unsigned long)msg_size);
+        ESP_LOGI(TAG, "Received %c%c%c msg_size=%u", rx_buf[0], rx_buf[1], rx_buf[2], (unsigned)msg_size);
 
         int resp_len = 0;
         if (rx_buf[0] == 'H' && rx_buf[1] == 'E' && rx_buf[2] == 'L') {
@@ -597,6 +871,9 @@ static void handle_client(int client_fd) {
 /* ---- Data update task ---- */
 static void data_update_task(void *arg) {
     while (running) {
+        /* Take mutex before modifying node values */
+        if (nodes_mutex) xSemaphoreTake(nodes_mutex, portMAX_DELAY);
+
         /* Counter auto-increment */
         nodes[0].val_u32++;
 
@@ -616,8 +893,25 @@ static void data_update_task(void *arg) {
             nodes[4 + i].val_bool = board_get_relay(i);
         }
 
+        /* Release mutex after modifying node values */
+        if (nodes_mutex) xSemaphoreGive(nodes_mutex);
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    vTaskDelete(NULL);
+}
+
+/* ---- Client task wrapper for multi-threaded handling ---- */
+static void client_task_wrapper(void *arg) {
+    int *fd_ptr = (int *)arg;
+    int client_fd = *fd_ptr;
+    free(fd_ptr);
+
+    handle_client(client_fd);
+
+    atomic_fetch_sub(&active_client_count, 1);
+    ESP_LOGI(TAG, "client disconnected, active clients: %d", atomic_load(&active_client_count));
+
     vTaskDelete(NULL);
 }
 
@@ -662,9 +956,34 @@ static void tcp_server_task(void *arg) {
             if (running) ESP_LOGE(TAG, "accept failed: errno %d", errno);
             break;
         }
-        ESP_LOGI(TAG, "client connected from %s:%d",
-                 inet_ntoa(source_addr.sin_addr), ntohs(source_addr.sin_port));
-        handle_client(client_fd);
+
+        int current = atomic_load(&active_client_count);
+        if (current >= MAX_CLIENTS) {
+            ESP_LOGW(TAG, "max clients (%d) reached, rejecting connection from %s:%d",
+                     MAX_CLIENTS, inet_ntoa(source_addr.sin_addr), ntohs(source_addr.sin_port));
+            close(client_fd);
+            continue;
+        }
+
+        ESP_LOGI(TAG, "client connected from %s:%d (active: %d)",
+                 inet_ntoa(source_addr.sin_addr), ntohs(source_addr.sin_port), current + 1);
+
+        int *fd_ptr = malloc(sizeof(int));
+        if (!fd_ptr) {
+            ESP_LOGE(TAG, "malloc failed for client fd");
+            close(client_fd);
+            continue;
+        }
+        *fd_ptr = client_fd;
+
+        atomic_fetch_add(&active_client_count, 1);
+        if (xTaskCreate(client_task_wrapper, "opcua_cli", 8192, fd_ptr,
+                        tskIDLE_PRIORITY + 4, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "failed to create client task");
+            atomic_fetch_sub(&active_client_count, 1);
+            free(fd_ptr);
+            close(client_fd);
+        }
     }
 
     close(listen_fd);
@@ -675,53 +994,68 @@ static void tcp_server_task(void *arg) {
 esp_err_t opcua_server_init(void) {
     memset(nodes, 0, sizeof(nodes));
 
-    /* Node 1: Counter */
+    /* Create mutex for protecting nodes array (C5) */
+    nodes_mutex = xSemaphoreCreateMutex();
+    if (!nodes_mutex) {
+        ESP_LOGE(TAG, "failed to create nodes mutex");
+        return ESP_FAIL;
+    }
+
+    /* Node 1: Counter (ns=1) */
     nodes[0].node_id = 1;
+    nodes[0].ns = NS1;
     nodes[0].name = "Counter";
     nodes[0].type = 0; /* UInt32 */
     nodes[0].val_u32 = 0;
 
-    /* Node 2: Temperature */
+    /* Node 2: Temperature (ns=1) */
     nodes[1].node_id = 2;
+    nodes[1].ns = NS1;
     nodes[1].name = "Temperature";
     nodes[1].type = 1; /* Double */
     nodes[1].val_dbl = 25.0;
 
-    /* Node 3: Status */
+    /* Node 3: Status (ns=1) */
     nodes[2].node_id = 3;
+    nodes[2].ns = NS1;
     nodes[2].name = "Status";
     nodes[2].type = 2; /* Boolean */
     nodes[2].val_bool = false;
 
-    /* Nodes 4-9: Relay1-6 */
+    /* Nodes 4-9: Relay1-6 (ns=1) */
     static const char *relay_names[6] = {"Relay1", "Relay2", "Relay3", "Relay4", "Relay5", "Relay6"};
     for (int i = 0; i < 6; i++) {
         nodes[4 + i].node_id = 4 + i;
+        nodes[4 + i].ns = NS1;
         nodes[4 + i].name = relay_names[i];
         nodes[4 + i].type = 2; /* Boolean */
         nodes[4 + i].val_bool = false;
     }
 
-    /* Node 10: Buzzer */
+    /* Node 10: Buzzer (ns=1) */
     nodes[10].node_id = 10;
+    nodes[10].ns = NS1;
     nodes[10].name = "Buzzer";
     nodes[10].type = 2; /* Boolean */
     nodes[10].val_bool = false;
 
-    /* Node 11: RGB_R */
+    /* Node 11: RGB_R (ns=1) */
     nodes[11].node_id = 11;
+    nodes[11].ns = NS1;
     nodes[11].name = "RGB_R";
     nodes[11].type = 3; /* UInt16 */
     nodes[11].val_u16 = 0;
 
-    /* Node 12: RGB_G */
+    /* Node 12: RGB_G (ns=1) */
     nodes[12].node_id = 12;
+    nodes[12].ns = NS1;
     nodes[12].name = "RGB_G";
     nodes[12].type = 3; /* UInt16 */
     nodes[12].val_u16 = 0;
 
-    /* Node 13: RGB_B */
+    /* Node 13: RGB_B (ns=1) */
     nodes[13].node_id = 13;
+    nodes[13].ns = NS1;
     nodes[13].name = "RGB_B";
     nodes[13].type = 3; /* UInt16 */
     nodes[13].val_u16 = 0;
