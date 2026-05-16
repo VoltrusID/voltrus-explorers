@@ -27,6 +27,8 @@ static uint8_t coils[4];
 static uint8_t discrete_inputs[4];
 static bool running = false;
 static SemaphoreHandle_t reg_mutex;
+static TaskHandle_t event_task_handle = NULL;
+static TaskHandle_t data_task_handle = NULL;
 
 #define MB_WRITE_MASK (MB_EVENT_HOLDING_REG_WR | MB_EVENT_COILS_WR)
 #define MB_RW_MASK    (MB_WRITE_MASK | MB_EVENT_HOLDING_REG_RD | MB_EVENT_INPUT_REG_RD \
@@ -131,13 +133,19 @@ static void event_task(void *arg) {
         if (err != ESP_OK) continue;
 
         if (reg_info.type & MB_EVENT_COILS_WR) {
-            apply_coil_change();
+            if (xSemaphoreTake(reg_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                apply_coil_change();
+                xSemaphoreGive(reg_mutex);
+            }
         }
         if (reg_info.type & MB_EVENT_HOLDING_REG_WR) {
             uint16_t offset = reg_info.mb_offset;
             uint16_t count = reg_info.size; // size is already in registers
-            for (int i = 0; i < count && (offset + i) < NUM_REGISTERS; i++) {
-                apply_register_write(offset + i, holding_regs[offset + i]);
+            if (xSemaphoreTake(reg_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                for (int i = 0; i < count && (offset + i) < NUM_REGISTERS; i++) {
+                    apply_register_write(offset + i, holding_regs[offset + i]);
+                }
+                xSemaphoreGive(reg_mutex);
             }
         }
     }
@@ -146,7 +154,13 @@ static void event_task(void *arg) {
 
 static void data_update_task(void *arg) {
     uint16_t counter = 0;
+    int tick = 0;
     while (running) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (!running) break;
+        tick++;
+        if (tick < 10) continue;
+        tick = 0;
         counter++;
 
         xSemaphoreTake(reg_mutex, portMAX_DELAY);
@@ -163,23 +177,33 @@ static void data_update_task(void *arg) {
             input_regs[i] = holding_regs[i];
         }
         xSemaphoreGive(reg_mutex);
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelete(NULL);
 }
 
 esp_err_t modbus_rtu_slave_start(void) {
-    xTaskCreate(event_task, "mb_rtu_evt", 4096, NULL, tskIDLE_PRIORITY + 5, NULL);
-    xTaskCreate(data_update_task, "mb_rtu_data", 2048, NULL, tskIDLE_PRIORITY + 3, NULL);
+    xTaskCreate(event_task, "mb_rtu_evt", 4096, NULL, tskIDLE_PRIORITY + 5, &event_task_handle);
+    xTaskCreate(data_update_task, "mb_rtu_data", 2048, NULL, tskIDLE_PRIORITY + 3, &data_task_handle);
     return ESP_OK;
 }
 
 esp_err_t modbus_rtu_slave_stop(void) {
     running = false;
-    // Allow tasks a chance to observe `running == false` and exit
-    vTaskDelay(pdMS_TO_TICKS(200));
+    // Allow tasks to observe running==false; data_update_task checks every 100ms
+    vTaskDelay(pdMS_TO_TICKS(500));
+    // mbc_slave_destroy unblocks mbc_slave_check_event in event_task
     mbc_slave_destroy();
+    // Wait for tasks to finish exiting
+    vTaskDelay(pdMS_TO_TICKS(200));
+    // Force-delete any task that still hasn't exited
+    if (event_task_handle != NULL && eTaskGetState(event_task_handle) != eDeleted) {
+        vTaskDelete(event_task_handle);
+    }
+    if (data_task_handle != NULL && eTaskGetState(data_task_handle) != eDeleted) {
+        vTaskDelete(data_task_handle);
+    }
+    event_task_handle = NULL;
+    data_task_handle = NULL;
     if (reg_mutex != NULL) {
         vSemaphoreDelete(reg_mutex);
         reg_mutex = NULL;

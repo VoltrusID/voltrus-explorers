@@ -174,8 +174,8 @@ static int build_response(uint8_t *resp, int app_data_len) {
     resp[0] = DNP3_START_BYTE0;
     resp[1] = DNP3_START_BYTE1;
     resp[2] = 5 + app_data_len; /* data length: control(1) + dest(2) + src(2) + app data */
-    /* Control byte: DIR=1, PRM=0 (secondary/outstation), FCB=0, FCV=0, DFC=0, FC=0x04 */
-    resp[3] = 0x84; /* DIR=1, PRM=0, DFC=0, FC=0x04 (Confirmed User Data from outstation) */
+    /* Control byte: DIR=1, PRM=1 (outstation acts as primary for this frame), FCB=0, FCV=0, DFC=0, FC=0x04 */
+    resp[3] = 0xC4; /* DIR=1, PRM=1, FC=0x04 (Confirmed User Data - FC=4 requires PRM=1 per IEEE 1815) */
     resp[4] = 0x01; /* destination address low byte (master = 1) */
     resp[5] = 0x00; /* destination high */
     resp[6] = OUTSTATION_ADDR & 0xFF; /* source low */
@@ -468,11 +468,8 @@ static int process_frame(const uint8_t *frame, int frame_len, uint8_t *resp) {
         }
 
         if (resp_app_len > 0) {
-            /* Set response header: DIR=1(outstation->master), PRM=1, FCV=0, FC=confirm(0x00) or response data */
-            /* Actually for response: DIR=1, PRM=0 (from outstation) */
-            /* Control: DIR=1, PRM=0, FCB=0, FCV=0, DFC=0, FC=0x00 (ACK) */
-            /* Wait - for outstation response with data: DIR=1, PRM=1, FC=confirmed user data(0x04) */
-            /* build_response sets the header, we provide app data starting at resp[10] */
+            /* build_response sets the header with DIR=1, PRM=1, FC=0x04.
+             * The outstation acts as primary for app-data frames per IEEE 1815. */
             memcpy(&resp[10], resp_app, resp_app_len);
             return build_response(resp, resp_app_len);
         }
