@@ -5,4 +5,5 @@ idf_component_register(
              modbus_tcp_slave modbus_tcp_master modbus_rtu_slave
              mqtt_client s7_server enip_server opcua_server
              bacnet_device dnp3_outstation serial_bridge
+             plc_runtime
 )

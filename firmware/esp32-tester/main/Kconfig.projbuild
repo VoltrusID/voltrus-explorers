@@ -26,6 +26,8 @@ config ESP_TESTER_PROTOCOL_DNP3
     bool "DNP3 Outstation"
 config ESP_TESTER_PROTOCOL_SERIAL
     bool "Serial Bridge"
+config ESP_TESTER_PROTOCOL_PLC_RUNTIME
+    bool "PLC Runtime"
 endchoice
 
 menu "WiFi Configuration"
