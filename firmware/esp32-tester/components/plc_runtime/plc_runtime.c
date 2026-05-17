@@ -276,6 +276,53 @@ esp_err_t plc_runtime_unforce_variable(uint32_t var_index) {
     return ESP_OK;
 }
 
+int plc_runtime_get_variables_json(char *buf, int buf_len) {
+    xSemaphoreTakeRecursive(s_runtime.mutex, portMAX_DELAY);
+
+    int pos = 0;
+    buf[pos++] = '{';
+
+    plc_vm_t *vm = &s_runtime.vm;
+    for (uint32_t i = 0; i < vm->variable_count; i++) {
+        if (i > 0) buf[pos++] = ',';
+
+        const char *name = plc_vm_get_variable_name(vm, i);
+        plc_value_t *val = &vm->variables[i];
+
+        // Write "name":
+        pos += snprintf(buf + pos, buf_len - pos, "\"%s\":", name ? name : "");
+
+        // Convert value to number based on type
+        double num_val = 0;
+        switch (val->type) {
+            case PLC_TYPE_BOOL:   num_val = val->bool_val ? 1.0 : 0.0; break;
+            case PLC_TYPE_BYTE:   num_val = val->byte_val; break;
+            case PLC_TYPE_INT:    num_val = val->int_val; break;
+            case PLC_TYPE_DINT:   num_val = val->dint_val; break;
+            case PLC_TYPE_REAL:   num_val = val->real_val; break;
+            case PLC_TYPE_TIME:   num_val = val->time_val; break;
+            case PLC_TYPE_WORD:   num_val = val->word_val; break;
+            case PLC_TYPE_DWORD:  num_val = val->dword_val; break;
+            case PLC_TYPE_STRING: num_val = val->str_idx; break;
+            default: break;
+        }
+
+        if (val->type == PLC_TYPE_REAL) {
+            pos += snprintf(buf + pos, buf_len - pos, "%.6g", num_val);
+        } else {
+            pos += snprintf(buf + pos, buf_len - pos, "%.0f", num_val);
+        }
+
+        if (pos >= buf_len - 32) break; // prevent overflow
+    }
+
+    buf[pos++] = '}';
+    buf[pos] = '\0';
+
+    xSemaphoreGiveRecursive(s_runtime.mutex);
+    return pos;
+}
+
 // --- Scan cycle task (runs on Core 1) ---
 
 static void plc_scan_task(void *arg) {

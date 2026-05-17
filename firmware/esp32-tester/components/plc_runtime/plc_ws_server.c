@@ -5,7 +5,9 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
+#include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <inttypes.h>
 
 #ifdef CONFIG_HTTPD_WS_SUPPORT
@@ -32,6 +34,10 @@ static struct {
 static esp_err_t ws_handler(httpd_req_t *req);
 static esp_err_t deploy_post_handler(httpd_req_t *req);
 static void handle_ws_command(const uint8_t *data, uint32_t len, httpd_handle_t server, int fd);
+static esp_err_t health_get_handler(httpd_req_t *req);
+static esp_err_t state_get_handler(httpd_req_t *req);
+static esp_err_t variables_get_handler(httpd_req_t *req);
+static esp_err_t variable_write_handler(httpd_req_t *req);
 
 // --- HTTP POST /api/deploy ---
 
@@ -172,6 +178,104 @@ static void handle_ws_command(const uint8_t *data, uint32_t len, httpd_handle_t 
     }
 }
 
+// --- REST API handlers ---
+
+// GET /api/health
+static esp_err_t health_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"status\":\"ok\"}");
+    return ESP_OK;
+}
+
+// GET /api/state
+static esp_err_t state_get_handler(httpd_req_t *req) {
+    plc_runtime_status_t status = plc_runtime_get_status();
+
+    const char *state_str = "stopped";
+    switch (status.state) {
+        case PLC_STATE_RUNNING: state_str = "running"; break;
+        case PLC_STATE_PAUSED:  state_str = "paused"; break;
+        case PLC_STATE_ERROR:   state_str = "error"; break;
+        default: break;
+    }
+
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf),
+        "{\"state\":\"%s\",\"cycle_count\":%" PRIu32 ","
+        "\"scan_time_us\":%" PRIu32 ",\"max_scan_time_us\":%" PRIu32 "}",
+        state_str, status.cycle_count, status.scan_time_us, status.max_scan_time_us);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, len);
+    return ESP_OK;
+}
+
+// GET /api/variables
+static esp_err_t variables_get_handler(httpd_req_t *req) {
+    char buf[4096];
+    int len = plc_runtime_get_variables_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, len);
+    return ESP_OK;
+}
+
+// POST /api/variables/<name>
+static esp_err_t variable_write_handler(httpd_req_t *req) {
+    // Extract variable name from URI: /api/variables/<name>
+    const char *uri = req->uri;
+    const char *name_start = uri + strlen("/api/variables/");
+    char var_name[PLC_MAX_NAME_LEN] = {0};
+    int i = 0;
+    while (*name_start && *name_start != '?' && i < (int)sizeof(var_name) - 1) {
+        var_name[i++] = *name_start++;
+    }
+
+    if (i == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing variable name");
+        return ESP_FAIL;
+    }
+
+    // Read JSON body: {"value": <number>}
+    int content_len = req->content_len;
+    if (content_len <= 0 || content_len > 256) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid body");
+        return ESP_FAIL;
+    }
+
+    char body[257];
+    int received = httpd_req_recv(req, body, content_len);
+    if (received != content_len) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Incomplete body");
+        return ESP_FAIL;
+    }
+    body[received] = '\0';
+
+    // Parse value from JSON (simple extraction: find "value" key)
+    double value = 0;
+    char *val_str = strstr(body, "\"value\"");
+    if (val_str) {
+        val_str = strchr(val_str + 7, ':');
+        if (val_str) {
+            value = atof(val_str + 1);
+        }
+    }
+
+    // Force variable by name
+    plc_value_t force_val = {
+        .type = PLC_TYPE_DINT,
+        .dint_val = (int32_t)value,
+    };
+    esp_err_t ret = plc_runtime_force_variable_by_name(var_name, &force_val);
+
+    httpd_resp_set_type(req, "application/json");
+    if (ret == ESP_OK) {
+        httpd_resp_sendstr(req, "{\"success\":true}");
+    } else {
+        httpd_resp_sendstr(req, "{\"success\":false,\"error\":\"Variable not found\"}");
+    }
+    return ESP_OK;
+}
+
 // --- URI registration ---
 
 static const httpd_uri_t ws_uri = {
@@ -186,6 +290,34 @@ static const httpd_uri_t deploy_uri = {
     .uri        = "/api/deploy",
     .method     = HTTP_POST,
     .handler    = deploy_post_handler,
+    .user_ctx   = NULL,
+};
+
+static const httpd_uri_t health_uri = {
+    .uri        = "/api/health",
+    .method     = HTTP_GET,
+    .handler    = health_get_handler,
+    .user_ctx   = NULL,
+};
+
+static const httpd_uri_t state_uri = {
+    .uri        = "/api/state",
+    .method     = HTTP_GET,
+    .handler    = state_get_handler,
+    .user_ctx   = NULL,
+};
+
+static const httpd_uri_t variables_uri = {
+    .uri        = "/api/variables",
+    .method     = HTTP_GET,
+    .handler    = variables_get_handler,
+    .user_ctx   = NULL,
+};
+
+static const httpd_uri_t variable_write_uri = {
+    .uri        = "/api/variables/*",
+    .method     = HTTP_POST,
+    .handler    = variable_write_handler,
     .user_ctx   = NULL,
 };
 
@@ -214,13 +346,37 @@ esp_err_t plc_ws_server_init(httpd_handle_t server) {
         return ret;
     }
 
+    ret = httpd_register_uri_handler(server, &health_uri);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to register health handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = httpd_register_uri_handler(server, &state_uri);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to register state handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = httpd_register_uri_handler(server, &variables_uri);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to register variables handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = httpd_register_uri_handler(server, &variable_write_uri);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "failed to register variable write handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
     s_ws.client_count = 0;
     for (int i = 0; i < PLC_WS_MAX_CLIENTS; i++) {
         s_ws.client_fds[i] = -1;
     }
     s_ws.initialized = true;
 
-    ESP_LOGI(TAG, "WS server initialized (ws://*/ws/plc, POST /api/deploy)");
+    ESP_LOGI(TAG, "WS server initialized (ws://*/ws/plc, /api/deploy, /api/health, /api/state, /api/variables)");
     return ESP_OK;
 }
 

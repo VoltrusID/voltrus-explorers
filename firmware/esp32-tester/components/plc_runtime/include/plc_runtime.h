@@ -100,3 +100,12 @@ esp_err_t plc_runtime_unforce_variable(uint32_t var_index);
  * Unforce a variable by name. Thread-safe (takes runtime mutex).
  */
 esp_err_t plc_runtime_unforce_variable_by_name(const char *name);
+
+/**
+ * Build a JSON object string of all variable name→value pairs.
+ * Thread-safe (takes runtime mutex).
+ * @param buf     Output buffer for JSON string
+ * @param buf_len Size of output buffer
+ * @return Number of bytes written (excluding null terminator)
+ */
+int plc_runtime_get_variables_json(char *buf, int buf_len);
