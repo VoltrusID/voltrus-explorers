@@ -58,6 +58,9 @@ typedef enum {
 // Breakpoint set (compact bitmap for up to PLC_MAX_INSTRUCTIONS)
 #define PLC_BP_BITMAP_SIZE ((PLC_MAX_INSTRUCTIONS + 31) / 32)
 
+// Forced variable set (bitmap for up to PLC_MAX_VARIABLES)
+#define PLC_FORCED_BITMAP_SIZE ((PLC_MAX_VARIABLES + 31) / 32)
+
 // Main VM struct
 typedef struct plc_vm {
     // Execution state
@@ -97,6 +100,9 @@ typedef struct plc_vm {
 
     // Breakpoints (bitmap)
     uint32_t breakpoints[PLC_BP_BITMAP_SIZE];
+
+    // Forced variables (bitmap — when set, StoreVar is skipped for that slot)
+    uint32_t forced_vars[PLC_FORCED_BITMAP_SIZE];
 
     // Single-step mode
     bool single_step;
@@ -152,6 +158,8 @@ esp_err_t plc_vm_set_variable(plc_vm_t *vm, uint32_t index, const plc_value_t *v
  * Force a variable value (same as set, but marks as forced).
  */
 esp_err_t plc_vm_force_variable(plc_vm_t *vm, uint32_t index, const plc_value_t *val);
+esp_err_t plc_vm_unforce_variable(plc_vm_t *vm, uint32_t index);
+bool plc_vm_is_variable_forced(const plc_vm_t *vm, uint32_t index);
 
 /**
  * Set/clear breakpoint at instruction index.

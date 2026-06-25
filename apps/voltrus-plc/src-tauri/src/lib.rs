@@ -11,6 +11,7 @@ mod commands {
 }
 
 use state::*;
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -31,6 +32,8 @@ pub fn run() {
             target: TargetState {
                 ip: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                ws_sink: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                target_kind: std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::TargetKind::WebSocket)),
             },
         })
         .invoke_handler(tauri::generate_handler![
@@ -79,6 +82,15 @@ pub fn run() {
             commands::target::target_step,
             commands::target::target_status,
             commands::target::register_scada_device,
+            commands::target::scan_mdns_targets,
+            commands::target::set_remote_breakpoint,
+            commands::target::clear_remote_breakpoint,
+            commands::target::get_target_kind,
+            commands::target::set_target_kind,
+            commands::target::deploy_via_grpc,
+            commands::target::grpc_start,
+            commands::target::grpc_stop,
+            commands::target::grpc_step,
         ])
         .setup(|app| {
             #[cfg(desktop)]
@@ -87,6 +99,16 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_process::init())?;
                 app.handle().plugin(tauri_plugin_dialog::init())?;
                 app.handle().plugin(tauri_plugin_fs::init())?;
+                app.handle().plugin(tauri_plugin_deep_link::init())?;
+
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let _ = app.deep_link().register("voltrus-plc");
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    if let Some(url) = event.urls().first() {
+                        let _ = handle.emit("deep-link", url.to_string());
+                    }
+                });
             }
             Ok(())
         })

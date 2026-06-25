@@ -1,0 +1,1 @@
+[     271ms] [ERROR] Subresource Integrity: The resource 'https://assets.onedollarstats.com/stonks.js' has an integrity attribute, but the resource requires the request to be CORS enabled to check the integrity, and it is not. The resource has been blocked because the integrity cannot be enforced. @ http://localhost:8088/voltrus-plc/:0

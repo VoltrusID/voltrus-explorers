@@ -419,6 +419,58 @@ esp_err_t plc_ws_push_variables(plc_vm_t *vm) {
     return ESP_OK;
 }
 
+esp_err_t plc_ws_push_status(void) {
+    if (!s_ws.initialized || !s_ws.encode_buf || s_ws.client_count == 0) {
+        return ESP_OK;
+    }
+
+    plc_runtime_status_t status = plc_runtime_get_status();
+
+    uint8_t state_code = 0;
+    switch (status.state) {
+        case PLC_STATE_RUNNING: state_code = 1; break;
+        case PLC_STATE_PAUSED:  state_code = 2; break;
+        case PLC_STATE_ERROR:   state_code = 3; break;
+        default: break;
+    }
+
+    uint32_t frame_len = 0;
+    esp_err_t ret = plc_flatbuf_encode_status(
+        state_code, (uint32_t)status.cycle_count,
+        status.scan_time_us, status.max_scan_time_us,
+        status.variable_count, s_ws.encode_buf, PLC_FLATBUF_MAX_FRAME, &frame_len);
+    if (ret != ESP_OK || frame_len == 0) {
+        return ret;
+    }
+
+    httpd_ws_frame_t ws_pkt;
+    memset(&ws_pkt, 0, sizeof(ws_pkt));
+    ws_pkt.payload = s_ws.encode_buf;
+    ws_pkt.len = frame_len;
+    ws_pkt.type = HTTPD_WS_TYPE_BINARY;
+    ws_pkt.final = true;
+
+    for (int i = 0; i < s_ws.client_count; i++) {
+        if (s_ws.client_fds[i] >= 0) {
+            ret = httpd_ws_send_frame_async(s_ws.server, s_ws.client_fds[i], &ws_pkt);
+            if (ret != ESP_OK) {
+                s_ws.client_fds[i] = -1;
+            }
+        }
+    }
+
+    // Compact client list
+    int write_idx = 0;
+    for (int i = 0; i < s_ws.client_count; i++) {
+        if (s_ws.client_fds[i] >= 0) {
+            s_ws.client_fds[write_idx++] = s_ws.client_fds[i];
+        }
+    }
+    s_ws.client_count = write_idx;
+
+    return ESP_OK;
+}
+
 #else  // !CONFIG_HTTPD_WS_SUPPORT
 
 // Stub implementations when WebSocket support is not enabled
@@ -429,6 +481,10 @@ esp_err_t plc_ws_server_init(httpd_handle_t server) {
 }
 
 esp_err_t plc_ws_push_variables(plc_vm_t *vm) {
+    return ESP_OK;
+}
+
+esp_err_t plc_ws_push_status(void) {
     return ESP_OK;
 }
 

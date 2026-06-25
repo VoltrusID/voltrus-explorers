@@ -1,0 +1,19 @@
+[package]
+name = "mt-stc-wasm"
+version.workspace = true
+edition.workspace = true
+description = "WASM build of the Voltrus ST compiler for web demos"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mt-stc = { path = "../mt-stc" }
+mt-plc-types = { path = "../mt-plc-types" }
+wasm-bindgen = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dependencies.web-sys]
+version = "0.3"
+features = ["console"]

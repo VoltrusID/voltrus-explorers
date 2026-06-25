@@ -1,0 +1,21 @@
+[package]
+name = "mt-plc-runtime"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mt-plc-types = { path = "../mt-plc-types" }
+mt-modbus = { path = "../mt-modbus" }
+mt-protocol = { path = "../mt-protocol" }
+mt-opcua = { path = "../mt-opcua" }
+mt-s7 = { path = "../mt-s7" }
+mt-mqtt = { path = "../mt-mqtt" }
+mt-enip = { path = "../mt-enip" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rumqttc = "0.24"
+
+[dev-dependencies]
+mt-stc = { path = "../mt-stc" }

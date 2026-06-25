@@ -1,5 +1,10 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use futures::stream::SplitSink;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::MaybeTlsStream;
+use tokio::net::TcpStream;
 
 use crate::commands::compile::Diagnostic;
 use crate::commands::io::IoDriverConfig;
@@ -21,9 +26,23 @@ pub struct IoState {
     pub config: Arc<Mutex<Option<IoDriverConfig>>>,
 }
 
+pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum TargetKind {
+    WebSocket,
+    Grpc,
+}
+
+impl Default for TargetKind {
+    fn default() -> Self { Self::WebSocket }
+}
+
 pub struct TargetState {
     pub ip: Arc<Mutex<Option<String>>>,
     pub connected: Arc<std::sync::atomic::AtomicBool>,
+    pub ws_sink: Arc<Mutex<Option<WsSink>>>,
+    pub target_kind: Arc<Mutex<TargetKind>>,
 }
 
 pub struct AppState {

@@ -1,6 +1,7 @@
+use std::sync::Arc;
 use crate::state::AppState;
 use futures::{SinkExt, StreamExt};
-use mt_plc_types::{serialize_bytecode, IoMapping};
+use mt_plc_types::{serialize_bytecode, IoMapping, IoProtocol, IoType};
 use tauri::Emitter;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -28,12 +29,64 @@ pub struct ScadaRegistration {
     pub interval_ms: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct DiscoveredTarget {
+    pub name: String,
+    pub ip: String,
+    pub port: u16,
+}
+
+/// Scan for Voltrus Runtime devices on the local network via mDNS.
+#[tauri::command]
+pub async fn scan_mdns_targets() -> Result<Vec<DiscoveredTarget>, String> {
+    let daemon = mdns_sd::ServiceDaemon::new()
+        .map_err(|e| format!("mDNS init failed: {e}"))?;
+    let receiver = daemon.browse("_voltrus-runtime._tcp.local.")
+        .map_err(|e| format!("mDNS browse failed: {e}"))?;
+
+    let mut targets: Vec<DiscoveredTarget> = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(3);
+
+    loop {
+        match tokio::time::timeout_at(deadline, receiver.recv_async()).await {
+            Ok(Ok(event)) => match event {
+                mdns_sd::ServiceEvent::ServiceResolved(info) => {
+                    let name = info.get_fullname().to_string();
+                    for addr in info.get_addresses() {
+                        targets.push(DiscoveredTarget {
+                            name: name.clone(),
+                            ip: addr.to_string(),
+                            port: info.get_port(),
+                        });
+                    }
+                }
+                mdns_sd::ServiceEvent::SearchStarted(_) | mdns_sd::ServiceEvent::ServiceFound(_, _) => {}
+                _ => {}
+            },
+            Ok(Err(_)) | Err(_) => break,
+        }
+    }
+    let _ = daemon.stop_browse("_voltrus-runtime._tcp.local.");
+    Ok(targets)
+}
+
+/// Frontend I/O mapping format (string-based, from project file).
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct FrontendIoMapping {
+    pub variable: String,
+    pub direction: String,
+    pub address: String,
+    pub driver_id: String,
+    #[serde(default)]
+    pub protocol_address: String,
+}
+
 /// Deploy compiled bytecode to a remote ESP32 target via HTTP POST.
 #[tauri::command]
 pub async fn deploy_to_target(
     state: tauri::State<'_, AppState>,
     ip: String,
-    io_mappings: Option<Vec<IoMapping>>,
+    io_mappings: Option<Vec<FrontendIoMapping>>,
 ) -> Result<DeployResult, String> {
     let module = {
         let compiler = state.compiler.lock().await;
@@ -43,7 +96,13 @@ pub async fn deploy_to_target(
             .ok_or("No compiled program. Click Build first.")?
     };
 
-    let mappings = io_mappings.unwrap_or_default();
+    let mappings = match io_mappings {
+        Some(ref frontend) if !frontend.is_empty() => {
+            resolve_mappings(frontend, &module.variable_slots)
+        }
+        _ => auto_gpio_mappings(&module.variable_slots),
+    };
+
     let bytecode = serialize_bytecode(&module, &mappings)
         .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
 
@@ -83,7 +142,7 @@ pub async fn deploy_to_target(
 }
 
 /// Connect to ESP32 WebSocket for live variable streaming.
-/// Spawns a background reader task that emits `watch-update` events.
+/// Splits the connection into a persistent sink (for commands) and a reader task (for events).
 #[tauri::command]
 pub async fn target_connect(
     app: tauri::AppHandle,
@@ -92,9 +151,19 @@ pub async fn target_connect(
 ) -> Result<(), String> {
     let url = format!("ws://{ip}/ws/plc");
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+    let ws = tokio_tungstenite::connect_async(&url)
         .await
-        .map_err(|e| format!("WebSocket connection failed: {e}"))?;
+        .map_err(|e| format!("WebSocket connection failed: {e}"))?
+        .0;
+
+    // Split into sink (for sending commands) and stream (for receiving events)
+    let (sink, stream) = ws.split();
+
+    // Store sink in state for persistent command channel
+    {
+        let mut ws_sink = state.target.ws_sink.lock().await;
+        *ws_sink = Some(sink);
+    }
 
     // Store IP
     {
@@ -107,11 +176,13 @@ pub async fn target_connect(
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
     let connected = state.target.connected.clone();
+    let ws_sink = state.target.ws_sink.clone();
 
     // Background reader: parse ESP32 binary frames and emit Tauri events
     let app_handle = app.clone();
     tokio::spawn(async move {
-        while let Some(msg) = ws.next().await {
+        let mut stream = stream;
+        while let Some(msg) = stream.next().await {
             if !connected.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
@@ -153,10 +224,14 @@ pub async fn target_connect(
                 }
                 Ok(Message::Close(_)) => {
                     connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                    let mut sink_guard = ws_sink.lock().await;
+                    *sink_guard = None;
                     break;
                 }
                 Err(_) => {
                     connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                    let mut sink_guard = ws_sink.lock().await;
+                    *sink_guard = None;
                     break;
                 }
                 _ => {}
@@ -180,59 +255,37 @@ pub async fn target_disconnect(state: tauri::State<'_, AppState>) -> Result<(), 
         .connected
         .store(false, std::sync::atomic::Ordering::SeqCst);
     {
-        let mut ip = state.target.ip.lock().await;
-        *ip = None;
+        let mut sink = state.target.ws_sink.lock().await;
+        if let Some(mut s) = sink.take() {
+            let _ = s.close().await;
+        }
     }
     Ok(())
 }
 
-/// Start the remote runtime via WebSocket.
+/// Start the remote runtime via the persistent WebSocket sink.
 #[tauri::command]
 pub async fn target_start(
     state: tauri::State<'_, AppState>,
     cycle_ms: u32,
 ) -> Result<(), String> {
-    let ip = state
-        .target
-        .ip
-        .lock()
-        .await
-        .clone()
-        .ok_or("Not connected to target")?;
-
     // [0x04] [4B cycle_time_ms LE]
     let mut payload = vec![0x04u8];
     payload.extend_from_slice(&cycle_ms.to_le_bytes());
 
-    send_ws_command(&ip, &payload).await
+    send_via_sink(&state.target.ws_sink, &payload).await
 }
 
-/// Stop the remote runtime via WebSocket.
+/// Stop the remote runtime via the persistent WebSocket sink.
 #[tauri::command]
 pub async fn target_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let ip = state
-        .target
-        .ip
-        .lock()
-        .await
-        .clone()
-        .ok_or("Not connected to target")?;
-
-    send_ws_command(&ip, &[0x05]).await
+    send_via_sink(&state.target.ws_sink, &[0x05]).await
 }
 
-/// Step the remote runtime via WebSocket.
+/// Step the remote runtime via the persistent WebSocket sink.
 #[tauri::command]
 pub async fn target_step(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let ip = state
-        .target
-        .ip
-        .lock()
-        .await
-        .clone()
-        .ok_or("Not connected to target")?;
-
-    send_ws_command(&ip, &[0x06]).await
+    send_via_sink(&state.target.ws_sink, &[0x06]).await
 }
 
 /// Get current target connection status.
@@ -273,7 +326,11 @@ pub async fn register_scada_device(
     registration: ScadaRegistration,
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
-    let url = format!("{}/api/v1/voltrus-plc/devices", registration.scada_url.trim_end_matches('/'));
+    let base = registration.scada_url.trim_end_matches('/');
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Err("SCADA URL must start with http:// or https://".into());
+    }
+    let url = format!("{base}/api/v1/voltrus-plc/devices");
 
     let payload = serde_json::json!({
         "name": registration.device_name,
@@ -300,6 +357,114 @@ pub async fn register_scada_device(
         let body = resp.text().await.unwrap_or_default();
         Err(format!("SCADA registration failed (HTTP {status}): {body}"))
     }
+}
+
+/// Set a breakpoint on the remote target via WebSocket.
+#[tauri::command]
+pub async fn set_remote_breakpoint(
+    state: tauri::State<'_, AppState>,
+    line: u32,
+) -> Result<(), String> {
+    let mut payload = vec![0x09]; // MSG_SET_BREAKPOINT
+    payload.extend_from_slice(&line.to_le_bytes());
+    send_via_sink(&state.target.ws_sink, &payload).await
+}
+
+/// Clear a breakpoint on the remote target via WebSocket.
+#[tauri::command]
+pub async fn clear_remote_breakpoint(
+    state: tauri::State<'_, AppState>,
+    line: u32,
+) -> Result<(), String> {
+    let mut payload = vec![0x0A]; // MSG_CLEAR_BREAKPOINT
+    payload.extend_from_slice(&line.to_le_bytes());
+    send_via_sink(&state.target.ws_sink, &payload).await
+}
+
+/// Get/set the target kind (WebSocket for ESP32, gRPC for Linux).
+#[tauri::command]
+pub async fn get_target_kind(state: tauri::State<'_, AppState>) -> Result<crate::state::TargetKind, String> {
+    let kind = state.target.target_kind.lock().await;
+    Ok(kind.clone())
+}
+
+#[tauri::command]
+pub async fn set_target_kind(
+    state: tauri::State<'_, AppState>,
+    kind: crate::state::TargetKind,
+) -> Result<(), String> {
+    *state.target.target_kind.lock().await = kind;
+    Ok(())
+}
+
+/// Deploy compiled bytecode to a Linux target via gRPC.
+#[tauri::command]
+pub async fn deploy_via_grpc(
+    state: tauri::State<'_, AppState>,
+    addr: String,
+) -> Result<DeployResult, String> {
+    let module = {
+        let compiler = state.compiler.lock().await;
+        compiler.last_module.clone()
+    };
+
+    let module = module.ok_or("No compiled program. Build first.")?;
+    let bytecode = serialize_bytecode(&module, &[])
+        .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
+
+    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
+        .await
+        .map_err(|e| format!("gRPC connection to {addr} failed: {e}"))?;
+
+    let resp = client.deploy(&bytecode, None::<&str>)
+        .await
+        .map_err(|e| format!("gRPC deploy failed: {e}"))?;
+
+    let msg = if resp.error_message.is_empty() {
+        "Deployed via gRPC".into()
+    } else {
+        resp.error_message
+    };
+
+    Ok(DeployResult {
+        success: resp.success,
+        message: msg,
+        byte_count: Some(bytecode.len()),
+    })
+}
+
+/// Start the remote runtime via gRPC.
+#[tauri::command]
+pub async fn grpc_start(
+    addr: String,
+    cycle_ms: u32,
+) -> Result<String, String> {
+    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
+        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+    let config = serde_json::json!({"scan_cycle_ms": cycle_ms}).to_string();
+    let resp = client.start(Some(config.as_str())).await
+        .map_err(|e| format!("gRPC start failed: {e}"))?;
+    Ok(format!("{:?}", resp.status))
+}
+
+/// Stop the remote runtime via gRPC.
+#[tauri::command]
+pub async fn grpc_stop(addr: String) -> Result<String, String> {
+    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
+        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+    let resp = client.stop().await
+        .map_err(|e| format!("gRPC stop failed: {e}"))?;
+    Ok(format!("{:?}", resp.status))
+}
+
+/// Step the remote runtime via gRPC.
+#[tauri::command]
+pub async fn grpc_step(addr: String) -> Result<String, String> {
+    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
+        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+    let resp = client.step().await
+        .map_err(|e| format!("gRPC step failed: {e}"))?;
+    Ok(format!("{:?}", resp.status))
 }
 
 // ── Internal helpers ──
@@ -448,19 +613,21 @@ fn parse_error_msg(data: &[u8]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&data[2..2 + msg_len]).into_owned())
 }
 
-/// Send a binary command via a short-lived WebSocket connection.
-async fn send_ws_command(ip: &str, payload: &[u8]) -> Result<(), String> {
-    let url = format!("ws://{ip}/ws/plc");
-    let (mut ws, _) = tokio_tungstenite::connect_async(&url)
-        .await
-        .map_err(|e| format!("Command failed: {e}"))?;
-
+/// Send a binary command through the persistent WebSocket sink.
+async fn send_via_sink(
+    ws_sink: &Arc<tokio::sync::Mutex<Option<crate::state::WsSink>>>,
+    payload: &[u8],
+) -> Result<(), String> {
     use futures::SinkExt;
-    ws.send(Message::Binary(payload.to_vec().into()))
+    let mut sink_guard = ws_sink.lock().await;
+    let sink: &mut crate::state::WsSink = sink_guard
+        .as_mut()
+        .ok_or("Not connected to target")?;
+
+    sink.send(Message::Binary(payload.to_vec().into()))
         .await
         .map_err(|e| format!("Send failed: {e}"))?;
 
-    let _ = ws.close(None).await;
     Ok(())
 }
 
@@ -474,4 +641,150 @@ async fn fetch_runtime_state(ip: &str) -> Result<RemoteState, String> {
     resp.json()
         .await
         .map_err(|e| format!("State parse failed: {e}"))
+}
+
+/// Value type tag + raw u32 for remote force commands.
+pub struct RemoteForceValue {
+    pub type_tag: u8,
+    pub raw: u32,
+}
+
+impl RemoteForceValue {
+    pub fn from_json(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Bool(b) => Self { type_tag: 0, raw: if *b { 1 } else { 0 } },
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Self { type_tag: 3, raw: (i as i32) as u32 }
+                } else if let Some(f) = n.as_f64() {
+                    Self { type_tag: 4, raw: (f as f32).to_bits() }
+                } else {
+                    Self { type_tag: 3, raw: 0 }
+                }
+            }
+            _ => Self { type_tag: 3, raw: 0 },
+        }
+    }
+}
+
+/// Build a FORCE command payload.
+/// Format: [0x02] [2B name_len] [name_bytes] [1B type] [4B value]
+fn build_force_payload(name: &str, val: &RemoteForceValue) -> Vec<u8> {
+    let name_bytes = name.as_bytes();
+    let name_len = name_bytes.len() as u16;
+    let mut payload = vec![0x02u8];
+    payload.extend_from_slice(&name_len.to_le_bytes());
+    payload.extend_from_slice(name_bytes);
+    payload.push(val.type_tag);
+    payload.extend_from_slice(&val.raw.to_le_bytes());
+    payload
+}
+
+/// Build an UNFORCE command payload.
+/// Format: [0x03] [2B name_len] [name_bytes]
+fn build_unforce_payload(name: &str) -> Vec<u8> {
+    let name_bytes = name.as_bytes();
+    let name_len = name_bytes.len() as u16;
+    let mut payload = vec![0x03u8];
+    payload.extend_from_slice(&name_len.to_le_bytes());
+    payload.extend_from_slice(name_bytes);
+    payload
+}
+
+/// Send a FORCE command via the persistent WebSocket sink.
+pub async fn send_remote_force(
+    ws_sink: &Arc<tokio::sync::Mutex<Option<crate::state::WsSink>>>,
+    name: &str,
+    val: &RemoteForceValue,
+) -> Result<(), String> {
+    let payload = build_force_payload(name, val);
+    send_via_sink(ws_sink, &payload).await
+}
+
+/// Send an UNFORCE command via the persistent WebSocket sink.
+pub async fn send_remote_unforce(
+    ws_sink: &Arc<tokio::sync::Mutex<Option<crate::state::WsSink>>>,
+    name: &str,
+) -> Result<(), String> {
+    let payload = build_unforce_payload(name);
+    send_via_sink(ws_sink, &payload).await
+}
+
+/// Resolve frontend string-based mappings to index-based bytecode mappings.
+fn resolve_mappings(
+    frontend: &[FrontendIoMapping],
+    variable_slots: &[(String, mt_plc_types::PlcValue)],
+) -> Vec<IoMapping> {
+    frontend
+        .iter()
+        .filter_map(|fm| {
+            let variable_index = variable_slots
+                .iter()
+                .position(|(name, _)| name == &fm.variable)? as u32;
+
+            let io_type = match fm.direction.as_str() {
+                "input" => IoType::Input,
+                _ => IoType::Output,
+            };
+
+            let protocol = match fm.driver_id.as_str() {
+                "modbus" => IoProtocol::Modbus,
+                "s7" => IoProtocol::S7,
+                "enip" => IoProtocol::Enip,
+                "gpio" => IoProtocol::Gpio,
+                "mqtt" => IoProtocol::Mqtt,
+                "opcua" => IoProtocol::Opcua,
+                _ => IoProtocol::None,
+            };
+
+            let address: u32 = fm.address.parse().unwrap_or(0);
+
+            Some(IoMapping {
+                variable_index,
+                io_type,
+                protocol,
+                address,
+            })
+        })
+        .collect()
+}
+
+/// Auto-create GPIO I/O mappings for known ESP32 variable names.
+/// Waveshare ESP32-S3-Relay-6ch board:
+///   relay0-5 → GPIO 1, 2, 41, 42, 45, 46 (via board_set_relay)
+///   buzzer   → GPIO 21 (LEDC PWM via board_set_buzzer)
+///   red/green/blue → GPIO 38 (WS2812 via board_set_rgb)
+///
+/// Address indices in I/O bridge: 0-5=relay, 6=buzzer, 7=red, 8=green, 9=blue
+fn auto_gpio_mappings(variable_slots: &[(String, mt_plc_types::PlcValue)]) -> Vec<IoMapping> {
+    use mt_plc_types::{IoMapping, IoProtocol, IoType};
+
+    let mut mappings = Vec::new();
+    for (i, (name, _)) in variable_slots.iter().enumerate() {
+        let (io_type, address) = match name.as_str() {
+            // Relays: relay0-relay5 → I/O bridge index 0-5
+            n if n.starts_with("relay") && n[5..].parse::<u32>().is_ok() => {
+                let idx: u32 = n[5..].parse().unwrap();
+                if idx < 6 {
+                    (IoType::Output, idx)
+                } else {
+                    continue;
+                }
+            }
+            // Buzzer → I/O bridge index 6
+            "buzzer" => (IoType::Output, 6),
+            // RGB LED → I/O bridge index 7 (red), 8 (green), 9 (blue)
+            "red" => (IoType::Output, 7),
+            "green" => (IoType::Output, 8),
+            "blue" => (IoType::Output, 9),
+            _ => continue,
+        };
+        mappings.push(IoMapping {
+            variable_index: i as u32,
+            io_type,
+            protocol: IoProtocol::Gpio,
+            address,
+        });
+    }
+    mappings
 }

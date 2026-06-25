@@ -1,0 +1,98 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: Voltrus PLC
+    - button "☀" [ref=e6] [cursor=pointer]
+    - button "Open Folder" [ref=e7] [cursor=pointer]
+    - button "New File" [ref=e8] [cursor=pointer]
+    - button "Examples" [ref=e9] [cursor=pointer]
+    - button "Save" [ref=e10] [cursor=pointer]
+    - button "Open" [ref=e11] [cursor=pointer]
+    - button "Build" [ref=e13] [cursor=pointer]
+    - button "Test Gen" [ref=e14] [cursor=pointer]
+    - button "Run" [disabled] [ref=e15] [cursor=pointer]
+    - button "Step" [ref=e16] [cursor=pointer]
+    - button "Continue" [ref=e18] [cursor=pointer]
+    - button "Step Into" [ref=e19] [cursor=pointer]
+    - button "Check Updates" [ref=e20] [cursor=pointer]
+    - generic [ref=e23]: STOPPED
+  - generic [ref=e24]:
+    - generic [ref=e25]:
+      - generic [ref=e26]: Project
+      - list [ref=e27]:
+        - listitem [ref=e28] [cursor=pointer]:
+          - generic [ref=e29]: 📄
+          - generic [ref=e30]: Main.st
+    - generic [ref=e32]:
+      - button "Main.st x" [ref=e34] [cursor=pointer]:
+        - text: Main.st
+        - generic [ref=e35]: x
+      - generic [ref=e39]:
+        - generic [ref=e41]:
+          - generic [ref=e42]: "1"
+          - generic [ref=e43]: "2"
+          - generic [ref=e44]: "3"
+          - generic [ref=e45]: "4"
+          - generic [ref=e46]: "5"
+          - generic [ref=e47]: "6"
+          - generic [ref=e48]: "7"
+          - generic [ref=e49]: "8"
+          - generic [ref=e50]: "9"
+          - generic [ref=e51]: "10"
+          - generic [ref=e52]: "11"
+          - generic [ref=e53]: "12"
+          - generic [ref=e54]: "13"
+          - generic [ref=e55]: "14"
+        - textbox [ref=e62]:
+          - generic [ref=e63]: PROGRAM Main
+          - generic [ref=e64]: VAR
+          - generic [ref=e65]: "counter : INT := 0;"
+          - generic [ref=e66]: "enable : BOOL := TRUE;"
+          - generic [ref=e67]: END_VAR
+          - generic [ref=e69]: IF enable THEN
+          - generic [ref=e70]: counter := counter + 1;
+          - generic [ref=e71]: END_IF;
+          - generic [ref=e73]: IF counter > 100 THEN
+          - generic [ref=e74]: counter := 0;
+          - generic [ref=e75]: END_IF;
+          - generic [ref=e76]: END_PROGRAM
+    - generic [ref=e78]:
+      - generic [ref=e79]:
+        - button "Watch" [ref=e80] [cursor=pointer]
+        - button "I/O" [ref=e81] [cursor=pointer]
+        - button "Target" [ref=e82] [cursor=pointer]
+        - button "AI" [ref=e83] [cursor=pointer]
+      - generic [ref=e84]: Runtime
+      - generic [ref=e85]:
+        - generic [ref=e86]:
+          - generic [ref=e87]: "State:"
+          - generic [ref=e88]: STOPPED
+        - generic [ref=e89]:
+          - generic [ref=e90]: "Cycles:"
+          - generic [ref=e91]: "0"
+        - generic [ref=e92]:
+          - generic [ref=e93]: "Scan:"
+          - spinbutton [ref=e94]: "10"
+          - generic [ref=e95]: ms
+        - generic [ref=e96]:
+          - generic [ref=e97]: "Watchdog:"
+          - spinbutton [ref=e98]: "1000"
+          - generic [ref=e99]: ms
+      - generic [ref=e100]: Watch Table
+      - table [ref=e101]:
+        - rowgroup [ref=e102]:
+          - row "Variable Type Value" [ref=e103]:
+            - columnheader "Variable" [ref=e104]
+            - columnheader "Type" [ref=e105]
+            - columnheader "Value" [ref=e106]
+            - columnheader [ref=e107]
+        - rowgroup [ref=e108]:
+          - row "Start runtime to watch variables" [ref=e109]:
+            - cell "Start runtime to watch variables" [ref=e110]
+  - generic [ref=e112]:
+    - generic [ref=e113]:
+      - button "Diagnostics" [ref=e114] [cursor=pointer]
+      - button "Runtime Log" [ref=e115] [cursor=pointer]
+      - button "Output" [ref=e116] [cursor=pointer]
+      - button "Timing" [ref=e117] [cursor=pointer]
+      - button "Histogram" [ref=e118] [cursor=pointer]
+    - generic [ref=e119]: No diagnostics

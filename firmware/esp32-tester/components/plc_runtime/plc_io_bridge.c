@@ -1,5 +1,6 @@
 #include "plc_io_bridge.h"
 #include "plc_vm.h"
+#include "board.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include <string.h>
@@ -7,13 +8,15 @@
 
 static const char *TAG = "plc_io_bridge";
 
-// GPIO pins available on ESP32-S3 for I/O (adjust per board)
-#define PLC_GPIO_MAX  16
-static const gpio_num_t s_gpio_pins[PLC_GPIO_MAX] = {
-    GPIO_NUM_1,  GPIO_NUM_2,  GPIO_NUM_3,  GPIO_NUM_4,
-    GPIO_NUM_5,  GPIO_NUM_6,  GPIO_NUM_7,  GPIO_NUM_8,
-    GPIO_NUM_9,  GPIO_NUM_10, GPIO_NUM_11, GPIO_NUM_12,
-    GPIO_NUM_13, GPIO_NUM_14, GPIO_NUM_15, GPIO_NUM_16,
+// Waveshare ESP32-S3-Relay-6ch pin mapping
+// Index 0-5: relays (GPIO 1, 2, 41, 42, 45, 46)
+// Index 6:   buzzer (GPIO 21, LEDC PWM)
+// Index 7-9: RGB virtual channels (GPIO 38, WS2812 via RMT)
+#define PLC_GPIO_PIN_COUNT  8
+#define PLC_GPIO_MAX_ADDRESSES  10
+static const gpio_num_t s_gpio_pins[PLC_GPIO_PIN_COUNT] = {
+    GPIO_NUM_1,  GPIO_NUM_2,  GPIO_NUM_41, GPIO_NUM_42,
+    GPIO_NUM_45, GPIO_NUM_46, GPIO_NUM_21, GPIO_NUM_38,
 };
 
 // Current I/O mapping configuration
@@ -24,12 +27,10 @@ esp_err_t plc_io_bridge_init(void) {
     s_mapping_count = 0;
     memset(s_mappings, 0, sizeof(s_mappings));
 
-    // Configure all GPIO pins as inactive (will be configured per-mapping)
-    for (int i = 0; i < PLC_GPIO_MAX; i++) {
-        gpio_reset_pin(s_gpio_pins[i]);
-    }
+    // Initialize board peripherals (relays, buzzer PWM, RGB WS2812)
+    board_init();
 
-    ESP_LOGI(TAG, "I/O bridge initialized");
+    ESP_LOGI(TAG, "I/O bridge initialized (Waveshare ESP32-S3-Relay-6ch)");
     return ESP_OK;
 }
 
@@ -41,24 +42,13 @@ esp_err_t plc_io_bridge_configure(const plc_io_mapping_t *mappings, uint32_t cou
     memcpy(s_mappings, mappings, count * sizeof(plc_io_mapping_t));
     s_mapping_count = count;
 
-    // Configure GPIO pins based on mappings
+    // Board peripherals already initialized by board_init() in plc_io_bridge_init()
     for (uint32_t i = 0; i < count; i++) {
         const plc_io_mapping_t *m = &s_mappings[i];
-        if (m->protocol == PLC_IO_PROTO_GPIO) {
-            uint32_t pin_idx = m->address;
-            if (pin_idx < PLC_GPIO_MAX) {
-                gpio_num_t pin = s_gpio_pins[pin_idx];
-                if (m->io_type == PLC_IO_INPUT) {
-                    gpio_set_direction(pin, GPIO_MODE_INPUT);
-                    gpio_set_pull_mode(pin, GPIO_PULLUP_ONLY);
-                } else {
-                    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-                    gpio_set_level(pin, 0);
-                }
-                ESP_LOGI(TAG, "GPIO%" PRIu32 " configured as %s (pin=%d, var=%" PRIu32 ")",
-                         pin_idx, m->io_type == PLC_IO_INPUT ? "input" : "output",
-                         pin, m->variable_index);
-            }
+        if (m->protocol == PLC_IO_PROTO_GPIO && m->address < PLC_GPIO_MAX_ADDRESSES) {
+            ESP_LOGI(TAG, "Mapping var%" PRIu32 " → I/O idx %" PRIu32 " (%s)",
+                     m->variable_index, m->address,
+                     m->io_type == PLC_IO_INPUT ? "input" : "output");
         }
     }
 
@@ -79,7 +69,7 @@ esp_err_t plc_io_bridge_read_inputs(plc_vm_t *vm) {
         switch (m->protocol) {
             case PLC_IO_PROTO_GPIO: {
                 uint32_t pin_idx = m->address;
-                if (pin_idx < PLC_GPIO_MAX) {
+                if (pin_idx < PLC_GPIO_PIN_COUNT) {
                     val.bool_val = (gpio_get_level(s_gpio_pins[pin_idx]) != 0);
                 }
                 break;
@@ -107,33 +97,70 @@ esp_err_t plc_io_bridge_read_inputs(plc_vm_t *vm) {
 esp_err_t plc_io_bridge_write_outputs(plc_vm_t *vm) {
     if (!vm || !vm->variables) return ESP_ERR_INVALID_ARG;
 
+    // Track RGB components across mappings for a single board_set_rgb() call
+    static uint8_t rgb_r = 0, rgb_g = 0, rgb_b = 0;
+    static bool rgb_dirty = false;
+    rgb_dirty = false;
+
     for (uint32_t i = 0; i < s_mapping_count; i++) {
         const plc_io_mapping_t *m = &s_mappings[i];
         if (m->io_type != PLC_IO_OUTPUT) continue;
         if (m->variable_index >= vm->variable_count) continue;
 
         plc_value_t val = vm->variables[m->variable_index];
+        int ival = plc_value_to_int(&val);
         bool output = plc_value_to_bool(&val);
 
         switch (m->protocol) {
             case PLC_IO_PROTO_GPIO: {
                 uint32_t pin_idx = m->address;
-                if (pin_idx < PLC_GPIO_MAX) {
-                    gpio_set_level(s_gpio_pins[pin_idx], output ? 1 : 0);
+                if (pin_idx < 6) {
+                    // Relay 0-5 (GPIO 1, 2, 41, 42, 45, 46)
+                    board_set_relay(pin_idx, output);
+                } else if (pin_idx == 6) {
+                    // Buzzer (GPIO 21, LEDC PWM)
+                    board_set_buzzer(output);
+                } else if (pin_idx == 7) {
+                    // RGB red component (GPIO 38, WS2812)
+                    rgb_r = (uint8_t)(ival & 0xFF);
+                    rgb_dirty = true;
                 }
                 break;
             }
+            // RGB green/blue use virtual addresses 8,9 — handled below
             case PLC_IO_PROTO_MODBUS:
             case PLC_IO_PROTO_S7:
             case PLC_IO_PROTO_ENIP:
             case PLC_IO_PROTO_OPCUA:
             case PLC_IO_PROTO_MQTT:
-                // Protocol driver writes would go here
                 break;
 
             default:
                 break;
         }
+    }
+
+    // Check for green/blue mappings (stored as separate virtual mappings)
+    for (uint32_t i = 0; i < s_mapping_count; i++) {
+        const plc_io_mapping_t *m = &s_mappings[i];
+        if (m->io_type != PLC_IO_OUTPUT) continue;
+        if (m->variable_index >= vm->variable_count) continue;
+        if (m->protocol != PLC_IO_PROTO_GPIO) continue;
+        if (m->address == 8) {
+            // RGB green
+            plc_value_t val = vm->variables[m->variable_index];
+            rgb_g = (uint8_t)(plc_value_to_int(&val) & 0xFF);
+            rgb_dirty = true;
+        } else if (m->address == 9) {
+            // RGB blue
+            plc_value_t val = vm->variables[m->variable_index];
+            rgb_b = (uint8_t)(plc_value_to_int(&val) & 0xFF);
+            rgb_dirty = true;
+        }
+    }
+
+    if (rgb_dirty) {
+        board_set_rgb(rgb_r, rgb_g, rgb_b);
     }
 
     return ESP_OK;

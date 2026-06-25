@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { useStore } from "../../store";
+import type { DiscoveredTarget } from "../../types";
+import "./ToggleGroup.css";
 
 const TARGET_PRESETS = [
   { label: "192.168.1.100", ip: "192.168.1.100" },
@@ -15,37 +18,48 @@ export default function TargetPanel() {
   const setScadaUrl = useStore((s) => s.setScadaUrl);
   const executionMode = useStore((s) => s.executionMode);
   const setExecutionMode = useStore((s) => s.setExecutionMode);
-  const runtimeState = useStore((s) => s.runtimeState);
-  const cycleCount = useStore((s) => s.cycleCount);
-  const lastCycleMs = useStore((s) => s.lastCycleMs);
-  const scanCycleMs = useStore((s) => s.scanCycleMs);
 
   const targetConnect = useStore((s) => s.targetConnect);
   const targetDisconnect = useStore((s) => s.targetDisconnect);
   const targetDeploy = useStore((s) => s.targetDeploy);
-  const targetRun = useStore((s) => s.targetRun);
-  const targetStop = useStore((s) => s.targetStop);
-  const targetStep = useStore((s) => s.targetStep);
   const connectScada = useStore((s) => s.connectScada);
 
+  const discoveredTargets = useStore((s) => s.discoveredTargets);
+  const scanningTargets = useStore((s) => s.scanningTargets);
+  const scanTargets = useStore((s) => s.scanTargets);
+  const targetKind = useStore((s) => s.targetKind);
+  const setTargetKind = useStore((s) => s.setTargetKind);
+
   const isRemote = executionMode === "remote";
+  const [connecting, setConnecting] = useState(false);
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      if (targetConnected) {
+        await targetDisconnect();
+      } else {
+        await targetConnect();
+      }
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 0" }}>
       {/* Execution Mode */}
       <div className="io-section">
         <div className="io-label">Execution Mode</div>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div className="toggle-group">
           <button
-            className={`bottom-tab ${!isRemote ? "active" : ""}`}
-            style={{ flex: 1, fontSize: 11 }}
+            className={`toggle-group-btn ${!isRemote ? "active" : ""}`}
             onClick={() => setExecutionMode("local")}
           >
             Local
           </button>
           <button
-            className={`bottom-tab ${isRemote ? "active" : ""}`}
-            style={{ flex: 1, fontSize: 11 }}
+            className={`toggle-group-btn ${isRemote ? "active" : ""}`}
             onClick={() => setExecutionMode("remote")}
           >
             Remote
@@ -56,6 +70,22 @@ export default function TargetPanel() {
       {/* Target Connection */}
       <div className="io-section">
         <div className="io-label">Target Device</div>
+        <div className="toggle-group" style={{ marginBottom: 4 }}>
+          <button
+            className={`toggle-group-btn ${targetKind === "websocket" ? "active" : ""}`}
+            onClick={() => setTargetKind("websocket")}
+            style={{ fontSize: 10, padding: "2px 4px" }}
+          >
+            ESP32 (WS)
+          </button>
+          <button
+            className={`toggle-group-btn ${targetKind === "grpc" ? "active" : ""}`}
+            onClick={() => setTargetKind("grpc")}
+            style={{ fontSize: 10, padding: "2px 4px" }}
+          >
+            Linux (gRPC)
+          </button>
+        </div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <input
             type="text"
@@ -71,36 +101,62 @@ export default function TargetPanel() {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: targetConnected ? "#4ade80" : "#666",
+              background: targetConnected ? "var(--accent)" : "var(--text-muted)",
               flexShrink: 0,
             }}
           />
         </div>
         <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-          {TARGET_PRESETS.map((p) => (
-            <button
-              key={p.ip}
-              className="io-btn"
-              style={{ fontSize: 10, padding: "2px 6px" }}
-              onClick={() => setTargetIp(p.ip)}
-              disabled={targetConnected}
-            >
-              {p.label}
-            </button>
-          ))}
+          <button
+            className="io-btn"
+            style={{ fontSize: 10, padding: "2px 6px", flex: 1 }}
+            onClick={scanTargets}
+            disabled={scanningTargets || targetConnected}
+          >
+            {scanningTargets ? "Scanning..." : "Scan Network"}
+          </button>
         </div>
+        {discoveredTargets.length > 0 && !targetConnected && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
+            {discoveredTargets.map((t, i) => (
+              <button
+                key={i}
+                className="io-btn"
+                style={{ fontSize: 10, padding: "2px 6px", textAlign: "left" }}
+                onClick={() => setTargetIp(t.ip)}
+              >
+                {t.name.split(".")[0]} ({t.ip})
+              </button>
+            ))}
+          </div>
+        )}
+        {discoveredTargets.length === 0 && !scanningTargets && !targetConnected && (
+          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+            {TARGET_PRESETS.map((p) => (
+              <button
+                key={p.ip}
+                className="io-btn"
+                style={{ fontSize: 10, padding: "2px 6px" }}
+                onClick={() => setTargetIp(p.ip)}
+                disabled={targetConnected}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           className="io-btn"
           style={{
             width: "100%",
             marginTop: 6,
-            background: targetConnected ? "#991b1b" : "#1d4ed8",
+            background: targetConnected ? "var(--danger)" : "var(--accent)",
             color: "#fff",
           }}
-          onClick={targetConnected ? targetDisconnect : targetConnect}
-          disabled={!isRemote || !targetIp.trim()}
+          onClick={handleConnect}
+          disabled={!targetIp.trim() || connecting}
         >
-          {targetConnected ? "Disconnect" : "Connect"}
+          {connecting ? "Connecting..." : targetConnected ? "Disconnect" : "Connect"}
         </button>
       </div>
 
@@ -111,7 +167,7 @@ export default function TargetPanel() {
           className="io-btn"
           style={{
             width: "100%",
-            background: targetConnected ? "#15803d" : "#333",
+            background: targetConnected ? "var(--accent)" : "var(--border)",
             color: "#fff",
           }}
           onClick={targetDeploy}
@@ -120,35 +176,6 @@ export default function TargetPanel() {
           {targetDeploying ? "Deploying..." : "Build & Deploy"}
         </button>
       </div>
-
-      {/* Remote Runtime Controls */}
-      {isRemote && targetConnected && (
-        <div className="io-section">
-          <div className="io-label">Runtime Controls</div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <button
-              className="io-btn"
-              style={{
-                flex: 1,
-                background: runtimeState === "running" ? "#15803d" : "#1d4ed8",
-                color: "#fff",
-              }}
-              onClick={runtimeState === "running" ? targetStop : targetRun}
-            >
-              {runtimeState === "running" ? "Stop" : "Run"}
-            </button>
-            <button className="io-btn" style={{ flex: 1 }} onClick={targetStep}>
-              Step
-            </button>
-          </div>
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
-            State: {runtimeState} | Cycles: {cycleCount} | Last: {lastCycleMs.toFixed(1)}ms
-          </div>
-          <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-            Cycle: {scanCycleMs}ms
-          </div>
-        </div>
-      )}
 
       {/* SCADA Connection */}
       <div className="io-section">
@@ -166,7 +193,7 @@ export default function TargetPanel() {
           style={{
             width: "100%",
             marginTop: 6,
-            background: targetConnected ? "#7c3aed" : "#333",
+            background: "#7c3aed",
             color: "#fff",
           }}
           onClick={connectScada}

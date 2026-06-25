@@ -1,0 +1,63 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "Voltrus PLC",
+  "version": "2.0.0",
+  "identifier": "com.joyodigitama.voltrus-plc",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1440",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm --filter voltrus-plc build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Voltrus PLC",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwNzZDNjBCMTFFMDRGQ0UKUldUT1QrQVJDOFoyTVBsUXVsSlRlaTZGdUdvYTdkK0lzcUxOUktlTmpRemVqSitpL3p2Ulh0c3IK",
+      "endpoints": [
+        "https://dl-voltrus-plc.voltrus.id/update/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "voltrus-plc"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. All rights reserved.",
+    "shortDescription": "IEC 61131-3 Structured Text editor and softPLC runtime",
+    "longDescription": "Write Structured Text programs, compile, simulate, and run them as a softPLC on your Mac. Connect to real devices via Modbus, OPC-UA, and S7 protocols.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

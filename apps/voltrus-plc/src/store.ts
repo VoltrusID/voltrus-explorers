@@ -12,19 +12,15 @@ import type {
   LogEntry,
   IoDriverConfig,
   IoMapping,
+  CompiledVariable,
   SampleTemplate,
   ProjectFile,
   TargetStatus,
   DeployResult,
   ScadaRegistration,
+  DiscoveredTarget,
+  TargetKind,
 } from "./types";
-
-export interface CodeValidation {
-  code: string;
-  result: CompileResult | null;
-  validating: boolean;
-  validated: boolean;
-}
 
 interface AppState {
   // Theme
@@ -41,10 +37,16 @@ interface AppState {
   setActiveFile: (index: number) => void;
   updateFileContent: (index: number, content: string) => void;
   newFile: (name: string, pouType: string) => Promise<void>;
+  newFbdFile: (name: string) => void;
   saveFile: (index: number) => Promise<void>;
   openProjectDir: () => Promise<void>;
   refreshProjectFiles: () => Promise<void>;
   loadSampleTemplate: (template: SampleTemplate) => void;
+  loadFbdSample: (sample: { name: string; program: unknown }) => void;
+  newLdFile: (name: string) => void;
+  loadLdSample: (sample: { name: string; program: unknown }) => void;
+  newSfcFile: (name: string) => void;
+  loadSfcSample: (sample: { name: string; program: unknown }) => void;
 
   // Compilation
   compiling: boolean;
@@ -76,12 +78,31 @@ interface AppState {
   // I/O
   ioDriver: IoDriverConfig | null;
   ioMappings: IoMapping[];
+  compiledVariables: CompiledVariable[];
+  addIoMapping: (mapping: IoMapping) => void;
+  updateIoMapping: (index: number, mapping: IoMapping) => void;
+  removeIoMapping: (index: number) => void;
+  clearIoMappings: () => void;
+  autoMapGpio: () => void;
 
   // Bottom panel
-  bottomTab: "diagnostics" | "log" | "output" | "timing" | "histogram";
-  setBottomTab: (tab: "diagnostics" | "log" | "output" | "timing" | "histogram") => void;
+  bottomTab: "diagnostics" | "log" | "output" | "timing" | "histogram" | "search" | "simulation";
+  setBottomTab: (tab: "diagnostics" | "log" | "output" | "timing" | "histogram" | "search" | "simulation") => void;
   log: LogEntry[];
   addLog: (direction: LogEntry["direction"], message: string) => void;
+
+  // Simulation
+  simulationInputs: Map<string, boolean>;
+  toggleSimulationInput: (name: string) => void;
+  resetSimulationInputs: () => void;
+
+  // Search
+  searchQuery: string;
+  searchUseRegex: boolean;
+  searchResults: Array<{ file: string; line: number; col: number; text: string }>;
+  setSearchQuery: (q: string) => void;
+  setSearchUseRegex: (r: boolean) => void;
+  searchAllFiles: () => void;
 
   // AI Chat
   aiMessages: ChatMessage[];
@@ -97,8 +118,8 @@ interface AppState {
   setOllamaEndpoint: (e: string) => void;
   aiApiKey: string;
   setAiApiKey: (k: string) => void;
-  rightPanelTab: "watch" | "io" | "ai" | "target";
-  setRightPanelTab: (t: "watch" | "io" | "ai" | "target") => void;
+  rightPanelTab: "watch" | "io" | "ai" | "target" | "refs";
+  setRightPanelTab: (t: "watch" | "io" | "ai" | "target" | "refs") => void;
 
   // Target (remote ESP32)
   targetIp: string;
@@ -106,6 +127,10 @@ interface AppState {
   targetDeploying: boolean;
   scadaUrl: string;
   executionMode: "local" | "remote";
+  discoveredTargets: DiscoveredTarget[];
+  scanningTargets: boolean;
+  targetKind: TargetKind;
+  setTargetKind: (kind: TargetKind) => void;
   setTargetIp: (ip: string) => void;
   setScadaUrl: (url: string) => void;
   setExecutionMode: (mode: "local" | "remote") => void;
@@ -116,10 +141,15 @@ interface AppState {
   targetStop: () => Promise<void>;
   targetStep: () => Promise<void>;
   connectScada: () => Promise<void>;
+  scanTargets: () => Promise<void>;
+
+  // Cross-reference
+  xrefVariable: string;
+  xrefResults: Array<{ file: string; line: number; context: string; kind: "read" | "write" | "declare" }>;
+  setXrefVariable: (v: string) => void;
+  findReferences: () => void;
 
   // AI Features
-  aiCodeValidations: Map<string, CodeValidation>;
-  validateAiCode: (code: string) => Promise<CompileResult | null>;
   sendAiErrorFix: (diagnostic: Diagnostic) => void;
   sendAiTestGeneration: () => void;
 
@@ -131,6 +161,12 @@ interface AppState {
   debugState: "running" | "paused" | "stopped";
   setDebugState: (s: "running" | "paused" | "stopped") => void;
   setCurrentExecutionLine: (line: number | null) => void;
+
+  // Undo/Redo
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
 
   // Project serialization
   projectPath: string | null;
@@ -155,6 +191,36 @@ END_VAR
         counter := 0;
     END_IF;
 END_PROGRAM`;
+
+// Waveshare ESP32-S3-Relay-6ch auto-map: variable name → GPIO address index
+const GPIO_AUTO_MAP: Record<string, number> = {
+  relay0: 0, relay1: 1, relay2: 2, relay3: 3, relay4: 4, relay5: 5,
+  buzzer: 6, red: 7, green: 8, blue: 9,
+  led: 0, onboard_led: 0, coil0: 0,
+};
+
+// Undo/Redo infrastructure
+type UndoableState = Pick<AppState, "ioMappings" | "watchedVariables" | "scanCycleMs" | "maxCycleMs" | "breakpoints">;
+const MAX_UNDO = 50;
+const undoStack: UndoableState[] = [];
+const redoStack: UndoableState[] = [];
+
+function snapshotUndoable(state: AppState): UndoableState {
+  return {
+    ioMappings: JSON.parse(JSON.stringify(state.ioMappings)),
+    watchedVariables: JSON.parse(JSON.stringify(state.watchedVariables)),
+    scanCycleMs: state.scanCycleMs,
+    maxCycleMs: state.maxCycleMs,
+    breakpoints: [...state.breakpoints],
+  };
+}
+
+function pushUndo(state: AppState) {
+  undoStack.push(snapshotUndoable(state));
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack.length = 0;
+  useStore.setState({ canUndo: true, canRedo: false });
+}
 
 export const useStore = create<AppState>((set, get) => ({
   // Theme
@@ -233,6 +299,23 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  newFbdFile: (name: string) => {
+    const { openFiles } = get();
+    const fileName = name.endsWith(".fbd") ? name : `${name}.fbd`;
+    const content = JSON.stringify({
+      version: "1.0",
+      programName: name.replace(/\.fbd$/, ""),
+      declarations: [],
+      nodes: [],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    }, null, 2);
+    set({
+      openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
+      activeFileIndex: openFiles.length,
+    });
+  },
+
   saveFile: async (index) => {
     const { openFiles } = get();
     const file = openFiles[index];
@@ -285,7 +368,68 @@ export const useStore = create<AppState>((set, get) => ({
     });
   },
 
-  // Compilation
+  loadFbdSample: (sample: { name: string; program: unknown }) => {
+    const { openFiles } = get();
+    const fileName = `${sample.name.replace(/\s+/g, "")}.fbd`;
+    const content = JSON.stringify(sample.program, null, 2);
+    set({
+      openFiles: [
+        ...openFiles,
+        { name: fileName, path: fileName, content, modified: false },
+      ],
+      activeFileIndex: openFiles.length,
+    });
+  },
+
+  newLdFile: (name: string) => {
+    const { openFiles } = get();
+    const fileName = name.endsWith(".ld") ? name : `${name}.ld`;
+    const content = JSON.stringify({
+      version: "2.0",
+      programName: name.replace(/\.ld$/, ""),
+      rungs: [],
+    }, null, 2);
+    set({
+      openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
+      activeFileIndex: openFiles.length,
+    });
+  },
+
+  loadLdSample: (sample: { name: string; program: unknown }) => {
+    const { openFiles } = get();
+    const fileName = `${sample.name.replace(/\s+/g, "")}.ld`;
+    const content = JSON.stringify(sample.program, null, 2);
+    set({
+      openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
+      activeFileIndex: openFiles.length,
+    });
+  },
+
+  newSfcFile: (name: string) => {
+    const { openFiles } = get();
+    const fileName = name.endsWith(".sfc") ? name : `${name}.sfc`;
+    const content = JSON.stringify({
+      version: "1.0",
+      programName: name.replace(/\.sfc$/, ""),
+      nodes: [],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    }, null, 2);
+    set({
+      openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
+      activeFileIndex: openFiles.length,
+    });
+  },
+
+  loadSfcSample: (sample: { name: string; program: unknown }) => {
+    const { openFiles } = get();
+    const fileName = `${sample.name.replace(/\s+/g, "")}.sfc`;
+    const content = JSON.stringify(sample.program, null, 2);
+    set({
+      openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
+      activeFileIndex: openFiles.length,
+    });
+  },
   compiling: false,
   lastCompileResult: null,
   diagnostics: [],
@@ -295,21 +439,120 @@ export const useStore = create<AppState>((set, get) => ({
     const file = openFiles[activeFileIndex];
     if (!file) return;
 
+    // Transpile a single file to ST if it's a graphical language
+    async function transpileFile(f: typeof file): Promise<{
+      source: string;
+      fileName: string;
+      diagnostics: Array<{ severity: string; message: string; source: string }>;
+    } | null> {
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      if (ext === "st" || ext === "txt" || !ext) {
+        return { source: f.content, fileName: f.name, diagnostics: [] };
+      }
+
+      const transpilerMap: Record<string, { importPath: string; funcName: string; label: string }> = {
+        fbd: { importPath: "./components/Editor/FbdEditor/transpiler/fbd-to-st", funcName: "transpileFbdToSt", label: "FBD" },
+        ld:  { importPath: "./components/Editor/LdEditor/transpiler/ld-to-st",   funcName: "transpileLdToSt",  label: "LD" },
+        sfc: { importPath: "./components/Editor/SfcEditor/transpiler/sfc-to-st", funcName: "transpileSfcToSt", label: "SFC" },
+      };
+
+      const entry = transpilerMap[ext ?? ""];
+      if (!entry) return { source: f.content, fileName: f.name, diagnostics: [] };
+
+      try {
+        const mod = await import(entry.importPath as any);
+        const transpile = mod[entry.funcName];
+        const program = JSON.parse(f.content);
+        if (!program || typeof program !== "object" || typeof program.programName !== "string") {
+          return {
+            source: "",
+            fileName: f.name,
+            diagnostics: [{ severity: "error", message: `Invalid ${entry.label} diagram: missing required fields`, source: `${ext}-transpiler` }],
+          };
+        }
+        const result = transpile(program);
+        return {
+          source: result.source,
+          fileName: f.name.replace(new RegExp(`\\.${ext}$`), ".st"),
+          diagnostics: result.diagnostics.map((d: any) => ({
+            severity: d.severity,
+            message: d.message,
+            source: `${ext}-transpiler`,
+          })),
+        };
+      } catch (e) {
+        return {
+          source: "",
+          fileName: f.name,
+          diagnostics: [{ severity: "error", message: `${entry.label} parse error: ${e}`, source: `${ext}-transpiler` }],
+        };
+      }
+    }
+
+    // Transpile ALL files in the project
+    const allDiagnostics: Array<{ severity: string; message: string; source: string }> = [];
+    let mainSource = file.content;
+    let mainFileName = file.name;
+
+    // Transpile active file
+    const mainResult = await transpileFile(file);
+    if (mainResult) {
+      mainSource = mainResult.source;
+      mainFileName = mainResult.fileName;
+      allDiagnostics.push(...mainResult.diagnostics);
+    }
+
+    // Transpile extra files (mixed-language support)
+    const extraSources: [string, string][] = [];
+    for (let i = 0; i < openFiles.length; i++) {
+      if (i === activeFileIndex) continue;
+      const extraResult = await transpileFile(openFiles[i]);
+      if (extraResult) {
+        extraSources.push([extraResult.fileName, extraResult.source]);
+        allDiagnostics.push(...extraResult.diagnostics);
+      }
+    }
+
+    // Check for transpiler errors across all files
+    const transpileErrors = allDiagnostics.filter((d) => d.severity === "error");
+    if (transpileErrors.length > 0) {
+      set({
+        compiling: false,
+        diagnostics: transpileErrors.map((d) => ({
+          severity: d.severity as "error",
+          message: d.message,
+          line: 0, col: 0, end_line: 0, end_col: 0, source: d.source,
+        })),
+      });
+      get().addLog("system", `Transpile failed: ${transpileErrors.length} errors`);
+      return;
+    }
+
+    const transpileWarnings = allDiagnostics.filter((d) => d.severity === "warning");
+
     set({ compiling: true });
     try {
-      const extraSources: [string, string][] = openFiles
-        .filter((_, i) => i !== activeFileIndex)
-        .map((f) => [f.name, f.content]);
       const result = await invoke<CompileResult>("compile_source", {
-        source: file.content,
-        fileName: file.name,
+        source: mainSource,
+        fileName: mainFileName,
         extraSources: extraSources.length > 0 ? extraSources : undefined,
       });
       set({
         compiling: false,
         lastCompileResult: result,
-        diagnostics: result.diagnostics,
-        bottomTab: result.success ? "output" : "diagnostics",
+        diagnostics: [
+          ...transpileWarnings.map((d) => ({
+            severity: d.severity as "warning",
+            message: d.message,
+            line: 0, col: 0, end_line: 0, end_col: 0, source: d.source,
+          })),
+          ...result.diagnostics,
+        ],
+        compiledVariables: result.success && result.module
+          ? result.module.variable_slots
+              .map(([name, _val], i) => ({ name: String(name), type_name: "", index: i }))
+              .filter((v) => !v.name.includes(".") && !v.name.includes("["))
+          : [],
       });
       get().addLog(
         "system",
@@ -333,6 +576,9 @@ export const useStore = create<AppState>((set, get) => ({
   cycleHistory: [],
 
   plcRun: async () => {
+    if (get().executionMode === "remote" && get().targetConnected) {
+      return get().targetRun();
+    }
     try {
       await invoke("plc_run", {
         config: { scan_cycle_ms: get().scanCycleMs, max_cycle_ms: get().maxCycleMs },
@@ -345,15 +591,21 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   plcStop: async () => {
+    if (get().executionMode === "remote" && get().targetConnected) {
+      return get().targetStop();
+    }
     try {
       await invoke("plc_stop");
-      set({ runtimeState: "stopped" });
+      set({ runtimeState: "stopped", simulationInputs: new Map() });
     } catch (e) {
       get().addLog("system", `Stop error: ${e}`);
     }
   },
 
   plcStep: async () => {
+    if (get().executionMode === "remote" && get().targetConnected) {
+      return get().targetStep();
+    }
     try {
       await invoke("plc_step");
     } catch (e) {
@@ -361,14 +613,15 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  setScanCycle: (ms) => set({ scanCycleMs: ms }),
-  setMaxCycle: (ms) => set({ maxCycleMs: ms }),
+  setScanCycle: (ms) => { pushUndo(get()); set({ scanCycleMs: ms }); },
+  setMaxCycle: (ms) => { pushUndo(get()); set({ maxCycleMs: ms }); },
 
   // Watch
   watchedVariables: [],
   addWatch: (name) => {
     const { watchedVariables } = get();
     if (watchedVariables.some((v) => v.name === name)) return;
+    pushUndo(get());
     set({
       watchedVariables: [
         ...watchedVariables,
@@ -377,6 +630,7 @@ export const useStore = create<AppState>((set, get) => ({
     });
   },
   removeWatch: (index) => {
+    pushUndo(get());
     const { watchedVariables } = get();
     set({ watchedVariables: watchedVariables.filter((_, i) => i !== index) });
   },
@@ -401,15 +655,125 @@ export const useStore = create<AppState>((set, get) => ({
   // I/O
   ioDriver: null,
   ioMappings: [],
+  compiledVariables: [],
+
+  addIoMapping: (mapping) => {
+    const { ioMappings } = get();
+    if (ioMappings.some((m) => m.variable === mapping.variable)) return;
+    pushUndo(get());
+    set({ ioMappings: [...ioMappings, mapping] });
+  },
+
+  updateIoMapping: (index, mapping) => {
+    const { ioMappings } = get();
+    pushUndo(get());
+    set({ ioMappings: ioMappings.map((m, i) => (i === index ? mapping : m)) });
+  },
+
+  removeIoMapping: (index) => {
+    pushUndo(get());
+    set({ ioMappings: get().ioMappings.filter((_, i) => i !== index) });
+  },
+
+  clearIoMappings: () => { pushUndo(get()); set({ ioMappings: [] }); },
+
+  autoMapGpio: () => {
+    const { compiledVariables, ioMappings } = get();
+    const mapped = new Set(ioMappings.map((m) => m.variable));
+    const newMappings: IoMapping[] = [];
+    for (const v of compiledVariables) {
+      if (mapped.has(v.name)) continue;
+      const match = GPIO_AUTO_MAP[v.name];
+      if (match) {
+        newMappings.push({
+          variable: v.name,
+          direction: "output",
+          address: String(match),
+          driver_id: "gpio",
+          protocol_address: `GPIO${match}`,
+        });
+        mapped.add(v.name);
+      }
+    }
+    if (newMappings.length > 0) {
+      pushUndo(get());
+      set({ ioMappings: [...ioMappings, ...newMappings] });
+    }
+  },
 
   // Bottom panel
   bottomTab: "diagnostics",
   setBottomTab: (tab) => set({ bottomTab: tab }),
   log: [],
+
+  // Simulation
+  simulationInputs: new Map(),
+  toggleSimulationInput: (name) => {
+    const { simulationInputs, forceVariable, unforceVariable } = get();
+    const next = new Map(simulationInputs);
+    if (next.has(name)) {
+      next.delete(name);
+      unforceVariable(name).catch(() => {
+        const reverted = new Map(get().simulationInputs);
+        reverted.set(name, true);
+        set({ simulationInputs: reverted });
+      });
+    } else {
+      next.set(name, true);
+      forceVariable(name, "TRUE").catch(() => {
+        const reverted = new Map(get().simulationInputs);
+        reverted.delete(name);
+        set({ simulationInputs: reverted });
+      });
+    }
+    set({ simulationInputs: next });
+  },
+  resetSimulationInputs: () => {
+    const { simulationInputs, unforceVariable } = get();
+    for (const name of simulationInputs.keys()) {
+      unforceVariable(name);
+    }
+    set({ simulationInputs: new Map() });
+  },
+
+  searchQuery: "",
+  searchUseRegex: false,
+  searchResults: [],
+  setSearchQuery: (q) => set({ searchQuery: q }),
+  setSearchUseRegex: (r) => set({ searchUseRegex: r }),
+  searchAllFiles: () => {
+    const { openFiles, searchQuery, searchUseRegex } = get();
+    if (!searchQuery.trim()) {
+      set({ searchResults: [] });
+      return;
+    }
+    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = searchUseRegex ? searchQuery : escaped;
+    try {
+      const re = new RegExp(pattern, "gi");
+      const results: Array<{ file: string; line: number; col: number; text: string }> = [];
+      for (const file of openFiles) {
+        const lines = file.content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          re.lastIndex = 0;
+          let match;
+          while ((match = re.exec(lines[i])) !== null) {
+            results.push({ file: file.name, line: i + 1, col: match.index + 1, text: lines[i].trim() });
+            if (results.length > 200) break;
+          }
+          if (results.length > 200) break;
+        }
+        if (results.length > 200) break;
+      }
+      set({ searchResults: results });
+    } catch {
+      set({ searchResults: [] });
+    }
+  },
   addLog: (direction, message) => {
     set({
       log: [
-        ...get().log,
+        ...get().log.slice(-999),
         {
           direction,
           message,
@@ -421,7 +785,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   // AI Chat
   aiMessages: [],
-  addAiMessage: (msg) => set({ aiMessages: [...get().aiMessages, msg] }),
+  addAiMessage: (msg) => set({ aiMessages: [...get().aiMessages.slice(-100), msg] }),
   clearAiMessages: () => set({ aiMessages: [] }),
   aiProvider: "claude",
   setAiProvider: (p) => set({ aiProvider: p }),
@@ -442,9 +806,26 @@ export const useStore = create<AppState>((set, get) => ({
   targetDeploying: false,
   scadaUrl: "http://localhost:3000",
   executionMode: "local",
+  discoveredTargets: [],
+  scanningTargets: false,
+  targetKind: "websocket" as TargetKind,
+  setTargetKind: (kind) => {
+    set({ targetKind: kind });
+    invoke("set_target_kind", { kind: kind === "grpc" ? "Grpc" : "WebSocket" }).catch(() => {});
+  },
   setTargetIp: (ip) => set({ targetIp: ip }),
   setScadaUrl: (url) => set({ scadaUrl: url }),
-  setExecutionMode: (mode) => set({ executionMode: mode }),
+  setExecutionMode: (mode) => {
+    const { runtimeState, targetConnected } = get();
+    if (mode === "remote" && runtimeState === "running") {
+      invoke("plc_stop").catch(() => {});
+      set({ runtimeState: "stopped", simulationInputs: new Map() });
+    }
+    if (mode === "local" && targetConnected) {
+      get().targetStop();
+    }
+    set({ executionMode: mode });
+  },
 
   targetConnect: async () => {
     const ip = get().targetIp.trim();
@@ -481,20 +862,30 @@ export const useStore = create<AppState>((set, get) => ({
         set({ targetDeploying: false });
         return;
       }
-      const deployResult = await invoke<DeployResult>("deploy_to_target", {
-        ip,
-        ioMappings: get().ioMappings.map((m, i) => ({
-          variable_index: i,
-          io_type: m.direction === "input" ? 0 : 1,
-          protocol: 0,
-          address: parseInt(m.address.replace(/[^0-9]/g, "")) || 0,
-        })),
-      });
-      if (deployResult.success) {
-        get().addLog("system", `Deployed ${deployResult.byte_count} bytes to ${ip}`);
-      } else {
-        get().addLog("system", `Deploy failed: ${deployResult.message}`);
+
+      // Deploy with retry (3 attempts)
+      let lastError: string | null = null;
+      const isGrpc = get().targetKind === "grpc";
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const deployResult = isGrpc
+            ? await invoke<DeployResult>("deploy_via_grpc", { addr: `http://${ip}:50051` })
+            : await invoke<DeployResult>("deploy_to_target", { ip, ioMappings: get().ioMappings });
+          if (deployResult.success) {
+            get().addLog("system", `Deployed ${deployResult.byte_count} bytes to ${ip}`);
+            set({ targetDeploying: false });
+            return;
+          }
+          lastError = deployResult.message;
+        } catch (e) {
+          lastError = String(e);
+        }
+        if (attempt < 3) {
+          get().addLog("system", `Deploy attempt ${attempt} failed, retrying...`);
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+        }
       }
+      get().addLog("system", `Deploy failed after 3 attempts: ${lastError}`);
     } catch (e) {
       get().addLog("system", `Deploy error: ${e}`);
     }
@@ -502,6 +893,14 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   targetRun: async () => {
+    if (get().targetKind === "grpc") {
+      try {
+        const addr = `http://${get().targetIp.trim()}:50051`;
+        await invoke("grpc_start", { addr, cycleMs: get().scanCycleMs });
+        get().addLog("system", "Remote runtime started (gRPC)");
+      } catch (e) { get().addLog("system", `gRPC start failed: ${e}`); }
+      return;
+    }
     try {
       await invoke("target_start", { cycleMs: get().scanCycleMs });
       get().addLog("system", "Remote runtime started");
@@ -511,6 +910,14 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   targetStop: async () => {
+    if (get().targetKind === "grpc") {
+      try {
+        const addr = `http://${get().targetIp.trim()}:50051`;
+        await invoke("grpc_stop", { addr });
+        get().addLog("system", "Remote runtime stopped (gRPC)");
+      } catch (e) { get().addLog("system", `gRPC stop failed: ${e}`); }
+      return;
+    }
     try {
       await invoke("target_stop");
       get().addLog("system", "Remote runtime stopped");
@@ -520,6 +927,13 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   targetStep: async () => {
+    if (get().targetKind === "grpc") {
+      try {
+        const addr = `http://${get().targetIp.trim()}:50051`;
+        await invoke("grpc_step", { addr });
+      } catch (e) { get().addLog("system", `gRPC step failed: ${e}`); }
+      return;
+    }
     try {
       await invoke("target_step");
     } catch (e) {
@@ -530,45 +944,91 @@ export const useStore = create<AppState>((set, get) => ({
   connectScada: async () => {
     const scadaUrl = get().scadaUrl.trim();
     const targetIp = get().targetIp.trim();
-    if (!scadaUrl || !targetIp) return;
-    try {
-      const registration: ScadaRegistration = {
-        scada_url: scadaUrl,
-        device_name: `ESP32-${targetIp}`,
-        device_url: targetIp,
-        transport: "websocket",
-        interval_ms: get().scanCycleMs,
-      };
-      const result = await invoke("register_scada_device", { registration });
-      get().addLog("system", `Registered in SCADA: ${JSON.stringify(result)}`);
-    } catch (e) {
-      get().addLog("system", `SCADA registration failed: ${e}`);
+    if (!scadaUrl || !targetIp || !get().targetConnected) return;
+
+    const registration: ScadaRegistration = {
+      scada_url: scadaUrl,
+      device_name: `ESP32-${targetIp}`,
+      device_url: `ws://${targetIp}/ws/plc`,
+      transport: "websocket",
+      interval_ms: 1000,
+    };
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const result = await invoke("register_scada_device", { registration });
+        get().addLog("system", `Registered in SCADA: ${JSON.stringify(result)}`);
+        return;
+      } catch (e) {
+        if (attempt < 3) {
+          get().addLog("system", `SCADA registration attempt ${attempt} failed, retrying...`);
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        } else {
+          get().addLog("system", `SCADA registration failed after 3 attempts: ${e}`);
+        }
+      }
     }
   },
 
-  // AI Features
-  aiCodeValidations: new Map(),
-  validateAiCode: async (code: string) => {
+  scanTargets: async () => {
+    set({ scanningTargets: true });
     try {
-      const result = await invoke<CompileResult>("compile_source", {
-        source: code,
-        fileName: "AI_Generated.st",
-      });
-      const { aiCodeValidations } = get();
-      const newMap = new Map(aiCodeValidations);
-      newMap.set(code, {
-        code,
-        result,
-        validating: false,
-        validated: true,
-      });
-      set({ aiCodeValidations: newMap });
-      return result;
+      const targets = await invoke<DiscoveredTarget[]>("scan_mdns_targets");
+      set({ discoveredTargets: targets });
+      if (targets.length > 0) {
+        get().addLog("system", `Found ${targets.length} device(s) on network`);
+      } else {
+        get().addLog("system", "No devices found on network");
+      }
     } catch (e) {
-      get().addLog("system", `AI validation failed: ${e}`);
-      return null;
+      get().addLog("system", `mDNS scan failed: ${e}`);
+      set({ discoveredTargets: [] });
     }
+    set({ scanningTargets: false });
   },
+
+  // AI Features
+  xrefVariable: "",
+  xrefResults: [],
+  setXrefVariable: (v) => set({ xrefVariable: v }),
+  findReferences: () => {
+    const { openFiles, xrefVariable } = get();
+    if (!xrefVariable.trim()) {
+      set({ xrefResults: [] });
+      return;
+    }
+    const varName = xrefVariable.trim();
+    const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const results: Array<{ file: string; line: number; context: string; kind: "read" | "write" | "declare" }> = [];
+    const anyRe = new RegExp(`\\b${escaped}\\b`, "g");
+    const declareRe = new RegExp(`\\b${escaped}\\b\\s*:(?!=)`); // colon not followed by = (not :=)
+    const lhsWriteRe = new RegExp(`(?:^|[,;])\\s*\\b${escaped}\\b\\s*:=`); // var on LHS of :=
+    for (const file of openFiles) {
+      const lines = file.content.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!anyRe.test(line)) continue;
+        anyRe.lastIndex = 0;
+        if (declareRe.test(line)) {
+          results.push({ file: file.name, line: i + 1, context: line.trim(), kind: "declare" });
+          continue; // declaration lines aren't also reads/writes
+        }
+        if (lhsWriteRe.test(line)) {
+          results.push({ file: file.name, line: i + 1, context: line.trim(), kind: "write" });
+        }
+        // Check for reads: count all occurrences minus the LHS write occurrence
+        const allMatches = line.match(anyRe);
+        const writeCount = lhsWriteRe.test(line) ? 1 : 0;
+        if (allMatches && allMatches.length > writeCount) {
+          results.push({ file: file.name, line: i + 1, context: line.trim(), kind: "read" });
+        }
+        if (results.length > 100) break;
+      }
+      if (results.length > 100) break;
+    }
+    set({ xrefResults: results });
+  },
+
   sendAiErrorFix: (diagnostic: Diagnostic) => {
     const { openFiles, activeFileIndex } = get();
     const source = openFiles[activeFileIndex]?.content ?? "";
@@ -618,20 +1078,55 @@ Format as a structured test plan.`;
 
   // Debug
   breakpoints: [],
-  addBreakpoint: (line) =>
-    set((s) => ({
-      breakpoints: s.breakpoints.includes(line)
-        ? s.breakpoints
-        : [...s.breakpoints, line].sort((a, b) => a - b),
-    })),
-  removeBreakpoint: (line) =>
-    set((s) => ({
-      breakpoints: s.breakpoints.filter((l) => l !== line),
-    })),
+  addBreakpoint: (line) => {
+    const s = get();
+    if (s.breakpoints.includes(line)) return;
+    pushUndo(s);
+    if (s.executionMode === "remote" && s.targetConnected) {
+      invoke("set_remote_breakpoint", { line }).catch((e) =>
+        get().addLog("system", `Remote breakpoint set failed: ${e}`)
+      );
+    }
+    set({ breakpoints: [...s.breakpoints, line].sort((a, b) => a - b) });
+  },
+  removeBreakpoint: (line) => {
+    pushUndo(get());
+    const s = get();
+    if (s.executionMode === "remote" && s.targetConnected) {
+      invoke("clear_remote_breakpoint", { line }).catch((e) =>
+        get().addLog("system", `Remote breakpoint clear failed: ${e}`)
+      );
+    }
+    set((s) => ({ breakpoints: s.breakpoints.filter((l) => l !== line) }));
+  },
   currentExecutionLine: null,
   debugState: "stopped",
   setDebugState: (s) => set({ debugState: s }),
   setCurrentExecutionLine: (line) => set({ currentExecutionLine: line }),
+
+  // Undo/Redo
+  canUndo: false,
+  canRedo: false,
+  undo: () => {
+    if (undoStack.length === 0) return;
+    redoStack.push(snapshotUndoable(get()));
+    const snapshot = undoStack.pop()!;
+    set({
+      ...snapshot,
+      canUndo: undoStack.length > 0,
+      canRedo: true,
+    });
+  },
+  redo: () => {
+    if (redoStack.length === 0) return;
+    undoStack.push(snapshotUndoable(get()));
+    const snapshot = redoStack.pop()!;
+    set({
+      ...snapshot,
+      canUndo: true,
+      canRedo: redoStack.length > 0,
+    });
+  },
 
   // Project serialization
   projectPath: null,
@@ -653,7 +1148,6 @@ Format as a structured test plan.`;
       ai_settings: {
         provider: s.aiProvider,
         model: s.aiModel,
-        streaming: s.aiStreaming,
         ollama_endpoint: s.ollamaEndpoint,
       },
       watch_list: s.watchedVariables.map((v) => v.name),
@@ -661,6 +1155,7 @@ Format as a structured test plan.`;
       target_ip: s.targetIp || undefined,
       scada_url: s.scadaUrl || undefined,
       execution_mode: s.executionMode,
+      target_kind: s.targetKind,
       created_at: new Date().toISOString(),
     };
   },
@@ -679,16 +1174,18 @@ Format as a structured test plan.`;
       ),
       ioDriver: p.io_config,
       ioMappings: p.io_mappings || [],
+      compiledVariables: [],
       scanCycleMs: p.scan_cycle_ms || 10,
       maxCycleMs: p.max_cycle_ms || 1000,
       aiProvider: (p.ai_settings?.provider || "claude") as "claude" | "ollama",
       aiModel: p.ai_settings?.model || "claude-sonnet-4-6",
-      aiStreaming: p.ai_settings?.streaming || false,
+      aiStreaming: false,
       ollamaEndpoint: p.ai_settings?.ollama_endpoint || "localhost:11434",
       breakpoints: p.breakpoints?.[0]?.[1] || [],
       targetIp: p.target_ip || "",
       scadaUrl: p.scada_url || "http://localhost:3000",
-      executionMode: p.execution_mode || "local",
+      executionMode: "local",
+      targetKind: (p as any).target_kind === "grpc" ? "grpc" : "websocket",
       watchedVariables: [],
       diagnostics: [],
       log: [],
@@ -751,6 +1248,14 @@ Format as a structured test plan.`;
 let unlistenWatch: UnlistenFn | null = null;
 let unlistenState: UnlistenFn | null = null;
 
+let unlistenDisconnect: UnlistenFn | null = null;
+
+export function clearUndoHistory() {
+  undoStack.length = 0;
+  redoStack.length = 0;
+  useStore.setState({ canUndo: false, canRedo: false });
+}
+
 export async function setupRuntimeListeners() {
   if (unlistenWatch) return; // Already set up
 
@@ -767,9 +1272,40 @@ export async function setupRuntimeListeners() {
       avgCycleMs: info.avg_cycle_ms,
       maxCycleMs: info.max_cycle_ms,
       cycleHistory: info.cycle_history || [],
+      ...(info.state === "stopped" ? { simulationInputs: new Map() } : {}),
     });
     if (info.state === "error" && info.error_message) {
       useStore.getState().addLog("system", `Runtime error: ${info.error_message}`);
+    }
+  });
+
+  unlistenDisconnect = await listen<{ ip: string }>("target-disconnected", async (event) => {
+    const wasConnected = useStore.getState().targetConnected;
+    useStore.setState({
+      targetConnected: false,
+      runtimeState: "stopped",
+    });
+    useStore.getState().addLog("system", "Target device disconnected");
+
+    // Auto-reconnect with exponential backoff (3 attempts)
+    if (wasConnected) {
+      const ip = useStore.getState().targetIp.trim();
+      if (ip) {
+        useStore.getState().addLog("system", `Attempting to reconnect to ${ip}...`);
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+          try {
+            await invoke("target_connect", { ip });
+            useStore.setState({ targetConnected: true });
+            useStore.getState().addLog("system", `Reconnected to ${ip} (attempt ${attempt})`);
+            return;
+          } catch {
+            useStore.getState().addLog("system", `Reconnect attempt ${attempt} failed`);
+          }
+        }
+        useStore.getState().addLog("system", `Auto-reconnect to ${ip} failed after 3 attempts`);
+        useStore.setState({ executionMode: "local" });
+      }
     }
   });
 }
@@ -777,8 +1313,10 @@ export async function setupRuntimeListeners() {
 export async function teardownRuntimeListeners() {
   unlistenWatch?.();
   unlistenState?.();
+  unlistenDisconnect?.();
   unlistenWatch = null;
   unlistenState = null;
+  unlistenDisconnect = null;
 }
 
 function parseForceValue(input: string): unknown {

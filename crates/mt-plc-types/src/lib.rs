@@ -1,5 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+/// CRC-32 matching ESP32 ROM `crc32_le` with the `~init/~result` convention.
+/// Net effect: raw reflected CRC with init=0, no final XOR.
+pub fn crc32_le(data: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = generate_crc32_table();
+    let mut crc: u32 = 0;
+    for &b in data {
+        crc = TABLE[((crc ^ b as u32) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc
+}
+
+const fn generate_crc32_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } else {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i] = crc;
+        i += 1;
+    }
+    table
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Opcode {
@@ -364,7 +395,9 @@ pub fn serialize_bytecode(
     let name_count = name_constants.len() as u32;
 
     // Pre-calculate body size
-    let body_size = 22 // header
+    // Header is 24 bytes: matches C struct with 2-byte padding after uint16_t version
+    // for uint32_t alignment on ESP32 (Xtensa).
+    let body_size = 24 // header (with alignment padding)
         + instr_count as usize * 6
         + var_count as usize * 5
         + module.variable_slots.iter().map(|(n, _)| 1 + n.len().min(PLC_MAX_NAME_LEN - 1)).sum::<usize>()
@@ -374,9 +407,10 @@ pub fn serialize_bytecode(
 
     let mut buf = Vec::with_capacity(body_size);
 
-    // --- Header (22 bytes) ---
+    // --- Header (24 bytes: 4+2+2pad+4+4+4+4, matching C struct layout) ---
     buf.extend_from_slice(&PLC_BYTECODE_MAGIC.to_le_bytes());
     buf.extend_from_slice(&PLC_BYTECODE_VERSION.to_le_bytes());
+    buf.extend_from_slice(&[0u8; 2]); // alignment padding after uint16_t
     buf.extend_from_slice(&instr_count.to_le_bytes());
     buf.extend_from_slice(&var_count.to_le_bytes());
     buf.extend_from_slice(&io_count.to_le_bytes());
@@ -421,7 +455,7 @@ pub fn serialize_bytecode(
     }
 
     // --- CRC32 (4 bytes) ---
-    let crc = crc32fast::hash(&buf);
+    let crc = crc32_le(&buf);
     buf.extend_from_slice(&crc.to_le_bytes());
 
     Ok(buf)

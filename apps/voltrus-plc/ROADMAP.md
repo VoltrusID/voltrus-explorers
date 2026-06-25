@@ -10,7 +10,7 @@ and AI-assisted programming.
 
 ---
 
-## v0.1 — MVP (current)
+## v0.1 — MVP
 
 Core editor + compiler + runtime, end-to-end pipeline working.
 
@@ -122,6 +122,7 @@ For engineers using it in production environments.
 | Component | Path |
 |-----------|------|
 | PLC IDE (this project) | `/Users/macbookpro/Documents/JoyoDigitama/MacTools/apps/voltrus-plc` |
+| HMI Designer | `/Users/macbookpro/Documents/JoyoDigitama/MacTools/apps/voltrus-hmi` |
 | SCADA backend | `/Users/macbookpro/Documents/JoyoDigitama/voltrus/voltrus` |
 | ESP32 firmware | `/Users/macbookpro/Documents/JoyoDigitama/MacTools/firmware/esp32-tester` |
 | Landing page (main) | `/Users/macbookpro/Documents/JoyoDigitama/voltrus/voltrus-landing` |
@@ -134,12 +135,16 @@ For engineers using it in production environments.
 
 These unlock premium feel and conversion:
 
-1. **Custom Lezer grammar for IEC ST** — replace StreamLanguage hack, proper tokenization, better autocomplete
+1. ~~**Custom Lezer grammar for IEC ST**~~ ✅ — LRLanguage with proper Lezer grammar, syntax highlighting, autocomplete
 2. ~~**WASM build target for web demo**~~ ✅ — 331KB WASM binary, mt-stc-wasm crate with JS bindings, live demo on landing page
 3. ~~**Fix iecst false-positive "unused variable" warnings**~~ ✅ — filtered in both compile paths
-4. ~~**Test coverage**~~ ✅ — 56 tests (19 compiler + 37 VM): structs, enums, CTUD, direct address, persistence, arrays, strings, math, bitwise, CASE, EXIT/CONTINUE
+4. ~~**Test coverage (backend)**~~ ✅ — 56 tests (19 compiler + 37 VM): structs, enums, CTUD, direct address, persistence, arrays, strings, math, bitwise, CASE, EXIT/CONTINUE
 5. ~~**Improve codegen error messages with source location**~~ ✅ — push_error() helper, all failure points report line/col
 6. ~~**Performance**: profile VM for high-frequency scan cycles~~ ✅ — 3.17M cycles/sec (0.3μs/cycle) in release, 612K/sec in debug. Well under 1ms target.
+7. ~~**Frontend test coverage**~~ ✅ — 23 unit tests (Vitest) + E2E tests (Playwright) for store, editor, compile-run-watch flows
+8. ~~**Persistent WebSocket command channel**~~ ✅ — split sink/stream, stored in TargetState
+9. ~~**Shared PROTOCOLS constant**~~ ✅ — extracted to `src/constants/protocols.ts` with consistent labels and optional defaultPort
+10. ~~**Cross-reference read detection bug**~~ ✅ — fixed LHS/RHS detection: reads on RHS of assignments now correctly detected, declarations no longer match `:=` lines
 
 ## v1.0 — Production Release
 
@@ -155,6 +160,27 @@ Ready for App Store, ready for real work.
 - [ ] App Store submission (deferred — using direct download via CF Worker for now)
 - [x] Landing page with interactive WASM compiler demo (voltrus.id/voltrus-plc/)
 - [x] Direct download via Cloudflare Worker — dl-voltrus-plc.voltrus.id, R2 + D1, auto-update endpoint
+
+---
+
+## v1.0.1 — Stability & UX Polish ✅ Complete
+
+Bug fixes and UX improvements from comprehensive code/UI/flow review.
+
+- [x] **target-disconnected listener** — frontend now detects WebSocket disconnect and resets state (targetConnected, executionMode, runtimeState)
+- [x] **Mode-aware toolbar controls** — Run/Stop/Single Scan dispatch to local or remote runtime based on execution mode
+- [x] **Mode switch stops active runtime** — switching Local↔Remote stops the running runtime to prevent silent background execution
+- [x] **Primary button contrast** — changed from `color: #000` to `#fff` for proper readability on green accent background
+- [x] **Toolbar overflow** — added `overflow-x: auto` so buttons don't clip at narrow window widths
+- [x] **Duplicate CSS fix** — removed redundant `border-right` in `.editor-tab`
+- [x] **Disambiguated Step buttons** — renamed runtime "Step" to "Single Scan" to distinguish from debug "Step Into"
+- [x] **Modal accessibility** — added `role="dialog"`, `aria-modal`, `aria-labelledby`; Escape key dismisses modals
+- [x] **Scan cycle input safety** — added `min={1}` and `max={60000}` to prevent zero/negative/extreme values
+- [x] **Connect loading state** — Target Connect button shows "Connecting..." and disables during attempt
+- [x] **Unbounded log array** — capped at 1000 entries to prevent memory growth
+- [x] **ARIA labels** — added `aria-label` to theme toggle and tab close buttons
+- [x] **Project deserialization** — always resets `executionMode` to `"local"` (can't restore live connections)
+- [x] **Log array capping** — ring buffer approach prevents unbounded memory growth in long sessions
 
 ---
 
@@ -317,9 +343,9 @@ Extract the bytecode VM from the IDE into a standalone-capable library.
   ```
 - [x] **gRPC server** — tonic server wrapping the VM, runs as Linux systemd service
 - [x] **gRPC client** — shared client crate for IDE and SCADA
-- [ ] **FlatBuffers schema** — mirror the protobuf types as FlatBuffers for ESP32 transport
+- [ ] ~~**FlatBuffers schema**~~ — replaced by custom zero-alloc binary encoder in ESP32 firmware (`plc_flatbuf.h/c`), serving the same purpose with lower overhead
 
-### Phase 2: IDE Integration (Deploy & Remote Debug) — In Progress
+### Phase 2: IDE Integration (Deploy & Remote Debug) — Core Complete
 
 - [x] **Bytecode serializer** — `serialize_bytecode()` in `mt-plc-types` converts `CompiledModule` to ESP32 binary format (header + instructions + variables + I/O mappings + CRC32)
 - [x] **Target selection panel** — "Target" tab in right sidebar, manual IP input with quick presets, status LED indicator
@@ -330,9 +356,13 @@ Extract the bytecode VM from the IDE into a standalone-capable library.
 - [x] **Execution mode toggle** — Local/Remote switch in target panel, local VM for offline simulation
 - [x] **SCADA registration** — one-click "Register in SCADA" button sends device + tags to SCADA REST API
 - [x] **ESP32 REST endpoints** — `GET /api/health`, `/api/variables`, `/api/state`, `POST /api/variables/<name>` for SCADA polling compatibility
-- [ ] **Remote breakpoints** — set/clear breakpoints on remote runtime (Linux only — ESP32 has limited debug)
-- [ ] **Target discovery** — mDNS/Bonjour `_voltrus-runtime._tcp` service advertisement
-- [ ] **Linux target support** — gRPC `Deploy()` RPC for Linux runtime deployment
+- [x] **Mode-aware toolbar controls** — Run/Stop/Step dispatch to local or remote runtime based on execution mode; mode switch stops active runtime
+- [x] **Target disconnect detection** — frontend listens for `target-disconnected` events, resets state on network loss
+- [x] **Connect loading state** — Connect button shows "Connecting..." and disables during connection attempt
+- [x] **Remote breakpoints** — set/clear breakpoints on remote runtime (Linux only — ESP32 has limited debug)
+- [x] **Target discovery** — mDNS/Bonjour `_voltrus-runtime._tcp` service advertisement
+- [x] **Linux target support** — gRPC `Deploy()` RPC for Linux runtime deployment
+- [x] **Persistent WS command channel** — reuse streaming WebSocket for commands instead of opening short-lived connections
 
 ### Phase 3: ESP32 Firmware (`firmware/esp32-tester` extension) ✅ Complete
 
@@ -372,8 +402,8 @@ The existing firmware already has all protocol stacks (Modbus, S7, ENIP, MQTT, O
   - `%QW100` → S7 DB write
   - Physical GPIO → relay/LED/buzzer control (already in firmware)
 - [x] **Bytecode validation** — CRC32 (hardware-accelerated `esp_crc32_le`), bounds checking (`CHECK_BOUNDS` macro), magic/version/count validation
-- [ ] **menuconfig integration** — add PLC options: scan cycle time, variable allocation, I/O mappings, WiFi config
-- [ ] **mDNS advertisement** — broadcast `_voltrus-runtime._tcp` so IDE/SCADA auto-discover the device
+- [x] **menuconfig integration** — add PLC options: scan cycle time, variable allocation, I/O mappings, WiFi config
+- [x] **mDNS advertisement** — broadcast `_voltrus-runtime._tcp` so IDE/SCADA auto-discover the device
 
 ### Phase 4: Voltrus SCADA Integration ✅ Core Complete
 
@@ -383,11 +413,11 @@ Connect the SCADA backend to Voltrus devices as native data sources, alongside e
   - Linux runtime: connects via gRPC client (`voltrus_plc::client::PlcRuntimeClient`)
   - ESP32 runtime: connects via WebSocket + FlatBuffers (same logical API)
   - Both expose the same logical API (variable browse, subscribe, write)
-- [ ] **Auto-discovery** — mDNS scan finds Voltrus Runtime instances on the network
+- [x] **Auto-discovery** — mDNS scan finds Voltrus Runtime instances on the network
 - [x] **Variable browsing** — SCADA reads available variables, types, and I/O mappings from runtime
 - [x] **Live data subscription** — subscribe to variable streams via gRPC `WatchVariables` (broadcast channel), populate dashboards and alarms
 - [x] **Write-back** — SCADA writes setpoints/overrides to runtime variables via `ForceVariable` (HMI-style control)
-- [ ] **Deep links** — "Open in PLC Editor" from SCADA launches IDE with the project loaded
+- [x] **Deep links** — "Open in PLC Editor" from SCADA launches IDE with the project loaded
 - [x] **Unified device list** — SCADA shows Voltrus runtimes alongside S7, Modbus, OPC-UA devices
   - `VoltrusPlcDevice` model with tags, runtime state, scan stats
   - REST API endpoints for device CRUD and tag management
@@ -427,7 +457,7 @@ firmware/
 3. ~~**`crates/mt-grpc/`** — proto definitions + build.rs + gRPC server + gRPC client~~ ✅
 4. ~~**`crates/mt-flatbuf/`** — FlatBuffers schema + Rust codegen for ESP32 transport~~ ✅ (custom zero-alloc encoder)
 5. ~~**Linux runtime binary** — standalone `voltrus-runtime` crate wrapping VM + gRPC server + I/O~~ ✅
-6. **IDE target panel** — React UI + Tauri commands for target selection, deploy, remote control
+6. ~~**IDE target panel** — React UI + Tauri commands for target selection, deploy, remote control~~ ✅
 7. ~~**ESP32 `plc_runtime` component** — C VM port + FlatBuffers + WebSocket server + I/O bridge~~ ✅
 8. ~~**SCADA Voltrus driver** — gRPC client + FlatBuffers client as SCADA data source~~ ✅
 
@@ -505,23 +535,23 @@ Pre-configured hardware kit for customers who want "plug and play":
 
 ### Features
 
-- [ ] **Touch-optimized dashboard builder** — drag-and-drop widgets: gauges, charts, buttons, indicators, text displays, sliders
-- [ ] **Variable browser** — connect to PLC runtime (ESP32 or Linux), discover available variables and types
-- [ ] **Real-time data binding** — widgets auto-update via WebSocket subscription
-- [ ] **Write-back controls** — buttons, setpoint inputs, toggle switches that write PLC variables
-- [ ] **Screen navigation** — multi-page HMI with navigation buttons (home, detail, alarms, settings)
-- [ ] **Alarm banner** — persistent top bar showing active alarms with acknowledgment workflow
-- [ ] **Template system** — pre-built HMI templates for common scenarios:
-  - Motor control (start/stop, speed, current, overload status)
-  - Tank level (level gauge, fill/drain valves, alarms)
-  - Conveyor (speed, jam detection, zone status)
-  - Temperature control (setpoint, actual, heater/cooler status)
-- [ ] **Deploy to ESP32** — upload HTML bundle to ESP32 SPIFFS via HTTP POST
-- [ ] **Deploy to RPi5** — SCP + systemd service restart
-- [ ] **Standalone HTML export** — self-contained file, embeds WS client with configurable PLC IP
-- [ ] **Kiosk mode** — full-screen, hide browser chrome, auto-reconnect, watchdog timer
-- [ ] **User roles** — operator (view + basic control), supervisor (all controls), viewer (read-only)
-- [ ] **Multi-language** — operator-facing labels in local language, configurable per screen
+- [x] **Touch-optimized dashboard builder** — drag-and-drop widgets: gauges, charts, buttons, indicators, text displays, sliders
+- [x] **Variable browser** — connect to PLC runtime (ESP32 or Linux), discover available variables and types
+- [x] **Real-time data binding** — widgets auto-update via WebSocket subscription
+- [x] **Write-back controls** — buttons, setpoint inputs, toggle switches that write PLC variables
+- [x] **Screen navigation** — multi-page HMI with navigation buttons (home, detail, alarms, settings)
+- [x] **Alarm banner** — persistent top bar showing active alarms with acknowledgment workflow
+- [x] **Template system** — pre-built HMI templates for common scenarios:
+  - [x] Motor control (start/stop, speed, current, overload status)
+  - [x] Tank level (level gauge, fill/drain valves, alarms)
+  - [x] Conveyor (speed, jam detection, zone status)
+  - [x] Temperature control (setpoint, actual, heater/cooler status)
+- [x] **Deploy to ESP32** — upload HTML bundle to ESP32 SPIFFS via HTTP POST
+- [x] **Deploy to RPi5** — HTTP agent (`mt-hmi-agent`) on target device
+- [x] **Standalone HTML export** — self-contained file, embeds WS client with configurable PLC IP
+- [x] **Kiosk mode** — full-screen, hide browser chrome, auto-reconnect, watchdog timer
+- [x] **User roles** — operator (view + basic control), supervisor (all controls), viewer (read-only)
+- [x] **Multi-language** — operator-facing labels in local language, configurable per screen
 
 ### Integration with Voltrus SCADA
 
@@ -542,16 +572,60 @@ The HMI reuses SCADA infrastructure when available:
 
 ---
 
-## v2.0 — Graphical Languages (Future)
+## v1.3 — Quality & Connectivity ✅ Complete
 
-The "be CODESYS" phase — only after v1.0 proves the concept.
+Polish the IDE for daily professional use and improve remote connectivity.
 
-- [ ] Ladder Diagram (LD) editor — graphical rung editor
-- [ ] Function Block Diagram (FBD) — node-based visual programming
-- [ ] Sequential Function Chart (SFC) — state machine diagrams
-- [ ] Mixed-language projects (ST + LD in same program)
-- [ ] Instruction List (IL) — if anyone still uses it
-- [ ] Simulation mode without real hardware (virtual plant model)
+### IDE Quality
+- [x] **Frontend tests** — 21 unit tests for store logic (file management, search, cross-reference, undo/redo, I/O mappings, serialization)
+- [x] **E2E tests** — Playwright test suite for editor load, toolbar, compile→run→watch flows
+- [x] **Undo/redo for project state** — undo stack (max 50) for I/O mappings, watch list, scan cycle, breakpoints; Cmd+Z/Cmd+Shift+Z shortcuts + toolbar buttons
+- [x] **Cross-reference table** — find all reads/writes of a variable across all open POUs
+- [x] **Project-wide search & replace** — search across all .st files in project, regex support
+- [x] **Error recovery improvements** — auto-reconnect to target on network recovery, retry failed deploys, exponential backoff for SCADA registration
+
+### Remote Connectivity
+- [x] **Persistent WS command channel** — send start/stop/step/force through the existing streaming WebSocket instead of opening short-lived connections (eliminates race conditions and multi-connection ambiguity)
+- [x] **Force/unforce mode awareness** — Rust `force_variable`/`unforce_variable` checks execution mode, not just `target.connected` atomic
+- [x] **Target discovery (mDNS)** — IDE scans for `_voltrus-runtime._tcp` on local network, auto-populates target list
+- [x] **Linux target support** — gRPC `Deploy()` RPC for deploying to RevPi/RPi/Linux IPC; target kind selector (ESP32/Linux) in TargetPanel
+- [x] **Remote breakpoints** — set/clear breakpoints on remote runtime via persistent WS channel (Linux only)
+
+### ESP32 Firmware
+- [x] **menuconfig integration** — expose PLC scan cycle, variable allocation, I/O mapping defaults, mDNS/OTA enable as ESP-IDF menuconfig options
+- [x] **mDNS advertisement** — broadcast `_voltrus-runtime._tcp` for auto-discovery (guard via `CONFIG_VOLTRUS_PLC_MDNS_ENABLE`)
+- [x] **OTA firmware update** — IDE pushes firmware updates to ESP32 via HTTP POST `/api/firmware`, OTA partition table, auto-restart (guard via `CONFIG_VOLTRUS_PLC_OTA_ENABLE`)
+- [x] **WiFi configuration portal** — captive portal (SoftAP `Voltrus-Setup`) for initial WiFi setup; NVS credential storage; fallback from failed STA connection
+
+### SCADA Integration
+- [x] **Auto-discovery review** — reviewed existing SCADA registration + deep link flow; fixed device_url format, interval_ms semantics, URL validation, targetConnected guard
+- [x] **Deep links** — `voltrus-plc://` URL scheme with `scada`, `device`, `ip` params; sets SCADA URL and target IP from SCADA
+
+---
+
+## v2.0 — Graphical Languages
+
+The "be CODESYS" phase — graphical IEC 61131-3 editors alongside ST.
+
+### Function Block Diagram (FBD) ✅ Complete
+
+- [x] React Flow canvas with drag-and-drop from block palette
+- [x] Block library: 25+ blocks (logic, arithmetic, comparison, timers, counters, move, bistable, edge detection)
+- [x] Custom node components (BlockNode, InputPin, OutputPin, TimerNode, CounterNode)
+- [x] Block palette sidebar — grouped by category, draggable cards
+- [x] FBD → ST transpiler — topological sort, cycle detection, FB instance management, temp variable generation
+- [x] `.fbd` file format — JSON schema stored in OpenFile.content
+- [x] EditorRouter — routes `.fbd` files to FBD editor, `.st` to ST editor
+- [x] Compile integration — transpiles FBD to ST before feeding to existing compiler
+- [x] Unit tests — transpiler, topological sort, block library validation (10 tests)
+- [x] New File modal — "FBD DIAGRAM" button
+
+### Future Graphical Languages
+- [x] Ladder Diagram (LD) editor — rung editor with contacts/coils/FB blocks, LD→ST transpiler, parallel branch support, 4 sample programs, F-key hotkeys (8 unit tests)
+- [x] Sequential Function Chart (SFC) — state machine editor with steps/transitions/OR branching/jumps, SFC→ST transpiler, 4 sample programs, F-key hotkeys (14 unit tests)
+- [x] Mixed-language projects (ST + FBD + LD + SFC in same program) — all graphical files transpiled and compiled together
+- [x] Simulation mode — interactive I/O panel with toggle inputs, LED outputs, variable monitoring
+- [ ] ~~Instruction List (IL)~~ — deprecated in IEC 61131-3 Ed3, skipped
 
 ---
 
@@ -614,7 +688,7 @@ The "be CODESYS" phase — only after v1.0 proves the concept.
 | AI-assisted programming | **v0.3** | No | No | CoAgent (Win only) |
 | Modern editor | **CM6** | Legacy | Custom GUI | VS shell |
 | Git-friendly | **Plain-text .st** | Binary (+$) | Binary (API) | XML (noisy) |
-| IEC 61131-3 languages | ST now; LD/FBD/SFC v2.0 | **All 5 + CFC** | All 5 | All 5 + C++ |
+| IEC 61131-3 languages | **ST + LD + FBD + SFC** (v2.0) | **All 5 + CFC** | All 5 | All 5 + C++ |
 | Hardware targets | SoftPLC + **ESP32-S3** + **Linux** (v1.1) | **400+ vendors** | Siemens only | Beckhoff only |
 | Runtime license | **Free ESP32** / **$49–149 Linux** | €50–500/device | €1,500+ | Paid (opaque) |
 | Multi-platform IDE | **macOS + Win + Linux** | Windows only | Windows only | Windows only |

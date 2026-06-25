@@ -92,6 +92,12 @@ export interface IoMapping {
   protocol_address: string;
 }
 
+export interface CompiledVariable {
+  name: string;
+  type_name: string;
+  index: number;
+}
+
 export interface WatchedVar {
   name: string;
   value: unknown;
@@ -119,13 +125,6 @@ export interface ChatMessage {
   content: string;
 }
 
-export interface AiProvider {
-  id: string;
-  name: string;
-  endpoint?: string;
-  models: string[];
-}
-
 export interface ProjectSource {
   name: string;
   path: string;
@@ -136,7 +135,6 @@ export interface ProjectSource {
 export interface ProjectAiSettings {
   provider: string;
   model: string;
-  streaming: boolean;
   ollama_endpoint: string;
 }
 
@@ -176,3 +174,11 @@ export interface ScadaRegistration {
   transport: string;
   interval_ms: number;
 }
+
+export interface DiscoveredTarget {
+  name: string;
+  ip: string;
+  port: number;
+}
+
+export type TargetKind = "websocket" | "grpc";

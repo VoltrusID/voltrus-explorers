@@ -29,6 +29,11 @@ esp_err_t plc_ws_server_init(httpd_handle_t server);
 esp_err_t plc_ws_push_variables(plc_vm_t *vm);
 
 /**
+ * Push runtime status (state, cycle count, scan time) to WebSocket clients.
+ */
+esp_err_t plc_ws_push_status(void);
+
+/**
  * Stop the WebSocket server and clean up.
  */
 void plc_ws_server_stop(void);

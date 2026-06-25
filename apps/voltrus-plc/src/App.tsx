@@ -1,18 +1,23 @@
 import { useState, useEffect } from "react";
 import { useStore } from "./store";
 import { invoke } from "@tauri-apps/api/core";
-import StEditor from "./components/Editor/StEditor";
+import { listen } from "@tauri-apps/api/event";
+import EditorRouter from "./components/Editor/EditorRouter";
 import WatchTable from "./components/Sidebar/WatchTable";
 import RuntimeControls from "./components/Sidebar/RuntimeControls";
 import IoPanel from "./components/Sidebar/IoPanel";
+import IoMappingPanel from "./components/Sidebar/IoMappingPanel";
 import TargetPanel from "./components/Sidebar/TargetPanel";
 import AiChatPanel from "./components/Sidebar/AiChatPanel";
-import AiSettings from "./components/Sidebar/AiSettings";
 import LicensePanel from "./components/Sidebar/LicensePanel";
 import CycleGraph from "./components/Bottom/CycleGraph";
 import Histogram from "./components/Bottom/Histogram";
+import SimulationPanel from "./components/Bottom/SimulationPanel";
 import ResizeHandle from "./components/ResizeHandle";
 import type { SampleTemplate } from "./types";
+import { FBD_SAMPLES } from "./constants/fbd-samples";
+import { LD_SAMPLES } from "./constants/ld-samples";
+import { SFC_SAMPLES } from "./constants/sfc-samples";
 import { checkForUpdates, installUpdate } from "./updater";
 
 export default function App() {
@@ -54,17 +59,20 @@ export default function App() {
     loadProject,
     sendAiErrorFix,
     sendAiTestGeneration,
-    validateAiCode,
+    undo,
+    redo,
   } = useStore();
 
   const [templates, setTemplates] = useState<SampleTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showLicense, setShowLicense] = useState(false);
   const [leftWidth, setLeftWidth] = useState(220);
   const [rightWidth, setRightWidth] = useState(280);
   const [bottomHeight, setBottomHeight] = useState(200);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [targetConnecting, setTargetConnecting] = useState(false);
 
   const activeFile = openFiles[activeFileIndex];
 
@@ -73,11 +81,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const unlisten = listen<string>("deep-link", (event) => {
+      const url = event.payload;
+      try {
+        const parsed = new URL(url);
+        const params = parsed.searchParams;
+        const scada = params.get("scada");
+        const device = params.get("device");
+        const ip = params.get("ip");
+        if (scada) useStore.getState().setScadaUrl(scada);
+        if (ip) useStore.getState().setTargetIp(ip);
+        if (scada && ip) {
+          useStore.getState().addLog("system", `Deep link: connecting to ${scada}, device ${device || ip}`);
+        }
+      } catch {
+        // ignore malformed URLs
+      }
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Skip F-key shortcuts when a graphical editor (.fbd/.ld) is active — those keys are used by the editor
+      const activeFile = openFiles[activeFileIndex];
+      const isGraphicalEditor = activeFile?.name.endsWith(".fbd") || activeFile?.name.endsWith(".ld") || activeFile?.name.endsWith(".sfc");
+      if (isGraphicalEditor && e.key.startsWith("F")) return;
+
+      if (e.key === "Escape") {
+        if (showNewFile) { setShowNewFile(false); return; }
+        if (showTemplates) { setShowTemplates(false); return; }
+        if (showLicense) { setShowLicense(false); return; }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
         saveFile(activeFileIndex);
@@ -93,6 +132,18 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "s") {
         e.preventDefault();
         saveProject();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        setBottomTab("search");
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        redo();
       }
       if (e.key === "F5") {
         e.preventDefault();
@@ -111,7 +162,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeFileIndex, saveFile, compile, setRightPanelTab, setCurrentExecutionLine, setDebugState, saveProject]);
+  }, [activeFileIndex, saveFile, compile, setRightPanelTab, setCurrentExecutionLine, setDebugState, saveProject, showNewFile, showTemplates, showLicense]);
 
   // Listen for breakpoint-hit events from Tauri
   useEffect(() => {
@@ -134,7 +185,7 @@ export default function App() {
   }, [setCurrentExecutionLine, setDebugState]);
 
   const stFiles = projectFiles.filter(
-    (f) => !f.is_dir && (f.name.endsWith(".st") || f.name.endsWith(".txt"))
+    (f) => !f.is_dir && (f.name.endsWith(".st") || f.name.endsWith(".txt") || f.name.endsWith(".fbd") || f.name.endsWith(".ld") || f.name.endsWith(".sfc"))
   );
 
   return (
@@ -146,6 +197,7 @@ export default function App() {
           className="toolbar-btn theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           title="Toggle theme"
+          aria-label="Toggle theme"
         >
           {theme === "dark" ? "\u2600" : "\u263D"}
         </button>
@@ -164,6 +216,9 @@ export default function App() {
         <button className="toolbar-btn" onClick={() => loadProject()} title="Open Project">
           Open
         </button>
+        <span className="toolbar-divider" />
+        <button className="toolbar-btn" onClick={undo} title="Undo (Cmd+Z)">↩</button>
+        <button className="toolbar-btn" onClick={redo} title="Redo (Cmd+Shift+Z)">↪</button>
         <span className="toolbar-divider" />
         <button
           className="toolbar-btn primary"
@@ -193,7 +248,7 @@ export default function App() {
           </button>
         )}
         <button className="toolbar-btn" onClick={() => plcStep()}>
-          Step
+          Single Scan
         </button>
         <span className="toolbar-divider" />
         <button
@@ -256,6 +311,14 @@ export default function App() {
         >
           Check Updates
         </button>
+        <button
+          className="toolbar-btn"
+          style={{ fontSize: 10 }}
+          onClick={() => setShowLicense(true)}
+          title="License"
+        >
+          License
+        </button>
         <div className="runtime-indicator">
           <span className={`runtime-led ${runtimeState}`} />
           <span>{runtimeState.toUpperCase()}</span>
@@ -265,8 +328,8 @@ export default function App() {
       {/* New File Modal */}
       {showNewFile && (
         <div className="modal-overlay" onClick={() => setShowNewFile(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>New File</h3>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title" onClick={(e) => e.stopPropagation()}>
+            <h3 id="new-file-title">New File</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <button className="toolbar-btn" onClick={() => {
                 const store = useStore.getState();
@@ -289,6 +352,27 @@ export default function App() {
               }}>
                 FUNCTION_BLOCK
               </button>
+              <button className="toolbar-btn" onClick={() => {
+                const store = useStore.getState();
+                store.newFbdFile("NewFBD");
+                setShowNewFile(false);
+              }}>
+                FBD DIAGRAM
+              </button>
+              <button className="toolbar-btn" onClick={() => {
+                const store = useStore.getState();
+                store.newLdFile("NewLD");
+                setShowNewFile(false);
+              }}>
+                LADDER DIAGRAM
+              </button>
+              <button className="toolbar-btn" onClick={() => {
+                const store = useStore.getState();
+                store.newSfcFile("NewSFC");
+                setShowNewFile(false);
+              }}>
+                SFC DIAGRAM
+              </button>
             </div>
             <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowNewFile(false)}>
               Cancel
@@ -300,8 +384,8 @@ export default function App() {
       {/* Templates Panel */}
       {showTemplates && (
         <div className="modal-overlay" onClick={() => setShowTemplates(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Example Programs</h3>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="templates-title" onClick={(e) => e.stopPropagation()}>
+            <h3 id="templates-title">Example Programs</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {templates.map((t) => (
                 <button
@@ -319,9 +403,82 @@ export default function App() {
                   </span>
                 </button>
               ))}
+              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
+              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
+                FBD DIAGRAMS
+              </div>
+              {FBD_SAMPLES.map((s) => (
+                <button
+                  key={s.id}
+                  className="toolbar-btn"
+                  style={{ textAlign: "left", display: "block" }}
+                  onClick={() => {
+                    useStore.getState().loadFbdSample(s);
+                    setShowTemplates(false);
+                  }}
+                >
+                  <strong style={{ color: "var(--accent, #7c3aed)" }}>{s.name}</strong>
+                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
+                    {s.category} — {s.description}
+                  </span>
+                </button>
+              ))}
+              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
+              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
+                LADDER DIAGRAMS
+              </div>
+              {LD_SAMPLES.map((s) => (
+                <button
+                  key={s.id}
+                  className="toolbar-btn"
+                  style={{ textAlign: "left", display: "block" }}
+                  onClick={() => {
+                    useStore.getState().loadLdSample(s);
+                    setShowTemplates(false);
+                  }}
+                >
+                  <strong style={{ color: "#10b981" }}>{s.name}</strong>
+                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
+                    {s.category} — {s.description}
+                  </span>
+                </button>
+              ))}
+              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
+              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
+                SFC DIAGRAMS
+              </div>
+              {SFC_SAMPLES.map((s) => (
+                <button
+                  key={s.id}
+                  className="toolbar-btn"
+                  style={{ textAlign: "left", display: "block" }}
+                  onClick={() => {
+                    useStore.getState().loadSfcSample(s);
+                    setShowTemplates(false);
+                  }}
+                >
+                  <strong style={{ color: "#a855f7" }}>{s.name}</strong>
+                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
+                    {s.category} — {s.description}
+                  </span>
+                </button>
+              ))}
             </div>
             <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowTemplates(false)}>
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* License Modal */}
+      {showLicense && (
+        <div className="modal-overlay" onClick={() => setShowLicense(false)}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="license-title" onClick={(e) => e.stopPropagation()} style={{ minWidth: 360, maxWidth: 420 }}>
+            <h3 id="license-title">License</h3>
+            <LicensePanel />
+            <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowLicense(false)}>
+              Close
             </button>
           </div>
         </div>
@@ -373,7 +530,7 @@ export default function App() {
                   onClick={() => setActiveFile(i)}
                 >
                   <span className="icon">
-                    {file.modified ? "\u25CF" : "\u{1F4C4}"}
+                    {file.modified ? <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="var(--accent)" /></svg> : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 1h5l4 4v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" /><polyline points="9 1 9 5 13 5" /></svg>}
                   </span>
                   <span>{file.name}</span>
                 </li>
@@ -400,6 +557,8 @@ export default function App() {
                 {file.name}
                 <span
                   className="close-btn"
+                  role="button"
+                  aria-label={`Close ${file.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     closeFile(i);
@@ -412,9 +571,10 @@ export default function App() {
           </div>
           <div className="editor-container">
             {activeFile ? (
-              <StEditor
+              <EditorRouter
                 key={activeFile.path}
-                value={activeFile.content}
+                filePath={activeFile.path}
+                content={activeFile.content}
                 onChange={(value) => updateFileContent(activeFileIndex, value)}
               />
             ) : (
@@ -433,47 +593,48 @@ export default function App() {
         {/* Right sidebar: tabs for Watch, I/O, Target, AI */}
         <div className="sidebar-right" style={{ width: rightWidth }}>
           <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-            {(["watch", "io", "target", "ai"] as const).map((tab) => (
+            {(["watch", "io", "target", "ai", "refs"] as const).map((tab) => (
               <button
                 key={tab}
                 className={`bottom-tab ${rightPanelTab === tab ? "active" : ""}`}
                 style={{ flex: 1, justifyContent: "center" }}
                 onClick={() => setRightPanelTab(tab)}
               >
-                {tab === "watch" ? "Watch" : tab === "io" ? "I/O" : tab === "target" ? "Target" : "AI"}
+                {tab === "watch" ? "Watch" : tab === "io" ? "I/O" : tab === "target" ? "Target" : tab === "ai" ? "AI" : "Refs"}
               </button>
             ))}
           </div>
           {rightPanelTab === "watch" && (
-            <>
+            <div style={{ flex: 1, overflow: "auto" }}>
               <div className="sidebar-header">Runtime</div>
               <RuntimeControls />
               <div className="sidebar-header">Watch Table</div>
               <WatchTable />
-            </>
+            </div>
           )}
           {rightPanelTab === "io" && (
-            <>
+            <div style={{ flex: 1, overflow: "auto" }}>
               <div className="sidebar-header">I/O Driver</div>
               <IoPanel />
-            </>
+              <div className="sidebar-header">I/O Mappings</div>
+              <IoMappingPanel />
+            </div>
           )}
           {rightPanelTab === "target" && (
-            <>
+            <div style={{ flex: 1, overflow: "auto" }}>
               <div className="sidebar-header">Target Device</div>
               <TargetPanel />
-            </>
+            </div>
           )}
           {rightPanelTab === "ai" && (
             <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-              <div className="sidebar-header">AI Settings</div>
-              <AiSettings />
-              <div className="sidebar-header">License</div>
-              <LicensePanel />
-              <div className="sidebar-header">AI Chat</div>
-              <div style={{ flex: 1, overflow: "auto", padding: "0 8px" }}>
-                <AiChatPanel />
-              </div>
+              <AiChatPanel />
+            </div>
+          )}
+          {rightPanelTab === "refs" && (
+            <div style={{ flex: 1, overflow: "auto" }}>
+              <div className="sidebar-header">Cross-Reference</div>
+              <XrefPanel />
             </div>
           )}
         </div>
@@ -528,6 +689,18 @@ export default function App() {
             onClick={() => setBottomTab("histogram")}
           >
             Histogram
+          </button>
+          <button
+            className={`bottom-tab ${bottomTab === "search" ? "active" : ""}`}
+            onClick={() => setBottomTab("search")}
+          >
+            Search
+          </button>
+          <button
+            className={`bottom-tab ${bottomTab === "simulation" ? "active" : ""}`}
+            onClick={() => setBottomTab("simulation")}
+          >
+            Simulation
           </button>
         </div>
         <div className="bottom-content">
@@ -613,8 +786,160 @@ export default function App() {
           )}
           {bottomTab === "timing" && <CycleGraph />}
           {bottomTab === "histogram" && <Histogram />}
+          {bottomTab === "search" && <SearchPanel />}
+          {bottomTab === "simulation" && <SimulationPanel />}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SearchPanel() {
+  const searchQuery = useStore((s) => s.searchQuery);
+  const setSearchQuery = useStore((s) => s.setSearchQuery);
+  const searchUseRegex = useStore((s) => s.searchUseRegex);
+  const setSearchUseRegex = useStore((s) => s.setSearchUseRegex);
+  const searchResults = useStore((s) => s.searchResults);
+  const searchAllFiles = useStore((s) => s.searchAllFiles);
+  const setActiveFile = useStore((s) => s.setActiveFile);
+  const openFiles = useStore((s) => s.openFiles);
+
+  const handleSearch = () => {
+    searchAllFiles();
+  };
+
+  const gotoResult = (file: string, line: number) => {
+    const idx = openFiles.findIndex((f) => f.name === file);
+    if (idx >= 0) {
+      setActiveFile(idx);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("editor-goto", { detail: { line } }));
+      }, 50);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+        <input
+          className="scan-cycle-input"
+          style={{ flex: 1, textAlign: "left", width: "auto" }}
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
+          placeholder="Search in project..."
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={searchUseRegex}
+            onChange={(e) => setSearchUseRegex(e.target.checked)}
+          />
+          Regex
+        </label>
+        <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={handleSearch}>
+          Search
+        </button>
+      </div>
+      {searchResults.length === 0 ? (
+        <span style={{ color: "var(--text-muted)" }}>
+          {searchQuery ? "No results" : "Type a query and press Enter or Search"}
+        </span>
+      ) : (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {searchResults.map((r, i) => (
+            <div
+              key={i}
+              className="diagnostic-item"
+              style={{ cursor: "pointer", padding: "2px 0" }}
+              onClick={() => gotoResult(r.file, r.line)}
+            >
+              <span style={{ color: "var(--accent)", whiteSpace: "nowrap", fontSize: 11 }}>{r.file}:{r.line}:{r.col}</span>
+              <span style={{ color: "var(--text-muted)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function XrefPanel() {
+  const xrefVariable = useStore((s) => s.xrefVariable);
+  const setXrefVariable = useStore((s) => s.setXrefVariable);
+  const xrefResults = useStore((s) => s.xrefResults);
+  const findReferences = useStore((s) => s.findReferences);
+  const compiledVariables = useStore((s) => s.compiledVariables);
+  const setActiveFile = useStore((s) => s.setActiveFile);
+  const openFiles = useStore((s) => s.openFiles);
+
+  const gotoRef = (file: string, line: number) => {
+    const idx = openFiles.findIndex((f) => f.name === file);
+    if (idx >= 0) {
+      setActiveFile(idx);
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("editor-goto", { detail: { line } }));
+      }, 50);
+    }
+  };
+
+  const kindLabel: Record<string, { label: string; color: string }> = {
+    declare: { label: "DEC", color: "#a855f7" },
+    write: { label: "W", color: "#3b82f6" },
+    read: { label: "R", color: "#10b981" },
+  };
+
+  return (
+    <div style={{ padding: "0 12px", fontSize: 12 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+        <select
+          value={xrefVariable}
+          onChange={(e) => setXrefVariable(e.target.value)}
+          style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
+        >
+          <option value="">Select variable...</option>
+          {compiledVariables.map((v) => (
+            <option key={v.name} value={v.name}>{v.name}</option>
+          ))}
+        </select>
+        <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={findReferences}>
+          Find
+        </button>
+      </div>
+      {xrefResults.length === 0 ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+          {xrefVariable ? "No references found" : "Select a variable to find all references"}
+        </div>
+      ) : (
+        <div>
+          {xrefResults.map((r, i) => (
+            <div
+              key={i}
+              style={{ display: "flex", gap: 4, padding: "3px 0", cursor: "pointer", borderBottom: "1px solid var(--border)" }}
+              onClick={() => gotoRef(r.file, r.line)}
+            >
+              <span style={{
+                fontSize: 9, fontWeight: 700, width: 24, flexShrink: 0,
+                color: kindLabel[r.kind]?.color || "var(--text-muted)",
+              }}>
+                {kindLabel[r.kind]?.label || "?"}
+              </span>
+              <span style={{ fontSize: 11, color: "var(--accent)", whiteSpace: "nowrap" }}>
+                {r.file}:{r.line}
+              </span>
+              <span style={{
+                fontSize: 10, color: "var(--text-muted)", overflow: "hidden",
+                textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+              }}>
+                {r.context}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

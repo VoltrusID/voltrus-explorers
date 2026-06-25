@@ -140,6 +140,9 @@ esp_err_t plc_vm_load_bytecode(plc_vm_t *vm, const plc_bytecode_t *bc) {
     // Free previous allocations
     plc_vm_cleanup(vm);
 
+    // Clear forced variable bitmap
+    memset(vm->forced_vars, 0, sizeof(vm->forced_vars));
+
     // Copy instructions
     if (bc->instruction_count > 0 && bc->instructions) {
         vm->instructions = heap_caps_malloc(bc->instruction_count * sizeof(plc_instruction_t), MALLOC_CAP_8BIT);
@@ -263,8 +266,21 @@ esp_err_t plc_vm_set_variable(plc_vm_t *vm, uint32_t index, const plc_value_t *v
 }
 
 esp_err_t plc_vm_force_variable(plc_vm_t *vm, uint32_t index, const plc_value_t *val) {
-    // Same as set for now; a "forced" flag could be added later
-    return plc_vm_set_variable(vm, index, val);
+    if (!vm->variables || index >= vm->variable_count) return ESP_ERR_INVALID_ARG;
+    vm->variables[index] = *val;
+    vm->forced_vars[index / 32] |= (1U << (index % 32));
+    return ESP_OK;
+}
+
+esp_err_t plc_vm_unforce_variable(plc_vm_t *vm, uint32_t index) {
+    if (index >= vm->variable_count) return ESP_ERR_INVALID_ARG;
+    vm->forced_vars[index / 32] &= ~(1U << (index % 32));
+    return ESP_OK;
+}
+
+bool plc_vm_is_variable_forced(const plc_vm_t *vm, uint32_t index) {
+    if (index >= vm->variable_count) return false;
+    return (vm->forced_vars[index / 32] & (1U << (index % 32))) != 0;
 }
 
 // --- Breakpoints ---
@@ -644,7 +660,9 @@ static uint32_t execute_instruction(plc_vm_t *vm, uint32_t pc) {
         case OPC_STORE_VAR: {
             uint32_t slot = (uint32_t)operand;
             if (stack_pop(vm, &a) && slot < vm->variable_count) {
-                vm->variables[slot] = a;
+                if (!plc_vm_is_variable_forced(vm, slot)) {
+                    vm->variables[slot] = a;
+                }
             }
             break;
         }

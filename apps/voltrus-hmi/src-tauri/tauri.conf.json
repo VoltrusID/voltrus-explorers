@@ -1,0 +1,63 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "Voltrus HMI",
+  "version": "0.1.0",
+  "identifier": "com.joyodigitama.voltrus-hmi",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1450",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm --filter voltrus-hmi build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Voltrus HMI Designer",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src ws: http: https:; img-src 'self' data: blob:"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGM0MyQTdCRjVFRTkxMUUKUldRZWtlNzFleW84M3lsVDdHbEhUQlIzOEZDa1Q0QmpxcThiUWxJVzI4bENNSHltS0YzOXVHWlQK",
+      "endpoints": [
+        "https://dl-voltrus-hmi.voltrus.id/update/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "voltrus-hmi"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. All rights reserved.",
+    "shortDescription": "Drag-and-drop HMI builder for industrial PLCs",
+    "longDescription": "Design operator dashboards with widgets bound to PLC variables, then deploy as standalone HTML files.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

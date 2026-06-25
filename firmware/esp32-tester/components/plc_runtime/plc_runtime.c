@@ -157,6 +157,9 @@ esp_err_t plc_runtime_stop(void) {
     s_runtime.running = false;
     s_runtime.state = PLC_STATE_STOPPED;
 
+    // Push stopped status to WebSocket clients immediately
+    plc_ws_push_status();
+
     // Wait for task to signal completion
     if (task) {
         // Wait up to cycle_time + 500ms for the task to exit
@@ -270,10 +273,10 @@ esp_err_t plc_runtime_unforce_variable_by_name(const char *name) {
 }
 
 esp_err_t plc_runtime_unforce_variable(uint32_t var_index) {
-    // For now, unforce is a no-op (no forced flag tracking)
-    // In the future, we'd clear a forced flag and let the VM overwrite naturally
-    (void)var_index;
-    return ESP_OK;
+    xSemaphoreTakeRecursive(s_runtime.mutex, portMAX_DELAY);
+    esp_err_t ret = plc_vm_unforce_variable(&s_runtime.vm, var_index);
+    xSemaphoreGiveRecursive(s_runtime.mutex);
+    return ret;
 }
 
 int plc_runtime_get_variables_json(char *buf, int buf_len) {
@@ -366,6 +369,11 @@ static void plc_scan_task(void *arg) {
 
         // Stream variables to WebSocket clients
         plc_ws_push_variables(&s_runtime.vm);
+
+        // Push runtime status every 10 cycles
+        if (s_runtime.vm.cycle_count % 10 == 0) {
+            plc_ws_push_status();
+        }
 
         // Wait for next cycle
         vTaskDelayUntil(&last_wake, cycle_ticks);

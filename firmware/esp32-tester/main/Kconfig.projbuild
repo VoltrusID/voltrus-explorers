@@ -37,6 +37,14 @@ menu "WiFi Configuration"
     config ESP_TESTER_WIFI_PASSWORD
         string "WiFi Password"
         default "YOUR_PASSWORD"
+
+    config ESP_TESTER_WIFI_PORTAL_ENABLE
+        bool "Enable WiFi Configuration Portal"
+        default n
+        depends on ESP_TESTER_PROTOCOL_PLC_RUNTIME
+        help
+            Start a captive portal (SoftAP + HTTP form) when WiFi connection fails.
+            Allows runtime WiFi configuration without menuconfig.
 endmenu
 
 endmenu
