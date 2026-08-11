@@ -38,6 +38,7 @@ impl MqttIoDriver {
             client_id: self.client_id.clone(),
             username: None,
             password: None,
+            ..Default::default()
         };
         let mut client = MqttPubClient::connect(config).await.map_err(|e| IoError {
             message: format!("MQTT connect: {}", e),

@@ -48,6 +48,7 @@ impl EnipIoDriver {
                 IoSize::Dword => CipDataType::Dint,
             },
             element_count: 1,
+            template_id: None,
         }
     }
 
