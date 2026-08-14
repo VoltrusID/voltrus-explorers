@@ -204,7 +204,7 @@ create_dmg() {
   rm -rf "$staging"
 
   local file_size
-  file_size=$(stat -f%z "$dmg_path" 2>/dev/null || stat -c%s "$dmg_path")
+  file_size=$(stat -f%z "$dmg_path" 2>/dev/null || stat -c%s "$dmg_path" 2>/dev/null || echo 0)
   local file_size_mb
   file_size_mb=$(echo "scale=1; $file_size / 1048576" | bc)
   ok "DMG: $dmg_path (${file_size_mb} MB)"
@@ -311,14 +311,19 @@ build_windows() {
 
   if [[ "$SKIP_BUILD" == "1" ]]; then
     local found=""
+    local want="${APP_NAME// /_}"
     for pattern in \
       "$win_build_dir/nsis/"*.exe \
       "$win_build_dir/msi/"*.msi \
       "$win_build_dir/"*.zip \
-      "$MONOREPO_DIR/target/$target/release/${APP_NAME// /_}_*.zip"; do
+      "$MONOREPO_DIR/target/$target/release/${want}_*.zip"; do
       if [[ -f "$pattern" ]]; then
-        found="$pattern"
-        break
+        local base; base="$(basename "$pattern")"
+        # Only accept THIS app's artifact (shared monorepo bundle dir has other apps)
+        if [[ "$base" == *"$VERSION"* ]] && { [[ "$base" == *"$APP_NAME"* ]] || [[ "$base" == *"$want"* ]]; }; then
+          found="$pattern"
+          break
+        fi
       fi
     done
     if [[ -n "$found" ]]; then
@@ -344,14 +349,18 @@ build_windows() {
     "$win_build_dir/nsis/"*.exe \
     "$win_build_dir/msi/"*.msi; do
     if [[ -f "$candidate" ]]; then
-      installer_path="$candidate"
-      break
+      local base; base="$(basename "$candidate")"
+      # Only accept THIS app's installer (shared monorepo bundle dir has other apps)
+      if [[ "$base" == *"$VERSION"* && "$base" == *"$APP_NAME"* ]]; then
+        installer_path="$candidate"
+        break
+      fi
     fi
   done
 
   if [[ -n "$installer_path" ]]; then
     local file_size
-    file_size=$(stat -f%z "$installer_path" 2>/dev/null || stat -c%s "$installer_path")
+    file_size=$(stat -f%z "$installer_path" 2>/dev/null || stat -c%s "$installer_path" 2>/dev/null || echo 0)
     local file_size_mb
     file_size_mb=$(echo "scale=1; $file_size / 1048576" | bc)
     ok "Built installer: $installer_path (${file_size_mb} MB)"
@@ -381,7 +390,7 @@ build_windows() {
   fi
 
   local file_size
-  file_size=$(stat -f%z "$zip_path" 2>/dev/null || stat -c%s "$zip_path")
+  file_size=$(stat -f%z "$zip_path" 2>/dev/null || stat -c%s "$zip_path" 2>/dev/null || echo 0)
   local file_size_mb
   file_size_mb=$(echo "scale=1; $file_size / 1048576" | bc)
   ok "Built zip: $zip_path (${file_size_mb} MB)"
@@ -467,7 +476,7 @@ for p in "${PLATFORMS[@]}"; do
     local_filename="$(basename "$installer_path")"
     normalized_filename="${local_filename// /_}"
     if [[ "$normalized_filename" != "$local_filename" ]]; then
-      local dest_dir="$(dirname "$installer_path")"
+      dest_dir="$(dirname "$installer_path")"
       cp "$installer_path" "$dest_dir/$normalized_filename"
       installer_path="$dest_dir/$normalized_filename"
     fi
@@ -508,7 +517,7 @@ for entry in "${BUILT_FILES[@]:-}"; do
   npx wrangler r2 object put "$R2_BUCKET/$filename" --file="$filepath" --remote
   ok "Uploaded: $filename"
 
-  filepath_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath")
+  filepath_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath" 2>/dev/null || echo 0)
 
   update_signature=""
   update_r2_key=""
@@ -520,7 +529,7 @@ for entry in "${BUILT_FILES[@]:-}"; do
       rm -f "$update_tarball"
       tar -czf "$update_tarball" -C "$(dirname "$app_path")" "$(basename "$app_path")"
       update_r2_key="$(basename "$update_tarball")"
-      update_size=$(stat -f%z "$update_tarball" 2>/dev/null || stat -c%s "$update_tarball")
+      update_size=$(stat -f%z "$update_tarball" 2>/dev/null || stat -c%s "$update_tarball" 2>/dev/null || echo 0)
 
       update_signature=$(sign_update_file "$update_tarball")
 
@@ -554,7 +563,7 @@ done
 if [[ ${#BUILT_FILES[@]} -gt 0 ]]; then
   first_entry="${BUILT_FILES[0]}"
   IFS='|' read -r _ _ filename filepath _ <<< "$first_entry"
-  filepath_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath")
+  filepath_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath" 2>/dev/null || echo 0)
   enclosure_url="${R2_PUBLIC_BASE_URL%/}/releases/$filename"
   pub_date=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
   title="$APP_NAME $VERSION"
@@ -578,7 +587,7 @@ banner "Release Complete — v$VERSION"
 for entry in "${BUILT_FILES[@]:-}"; do
   [[ -z "$entry" ]] && continue
   IFS='|' read -r label platform_key filename filepath _ <<< "$entry"
-  file_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath")
+  file_size=$(stat -f%z "$filepath" 2>/dev/null || stat -c%s "$filepath" 2>/dev/null || echo 0)
   file_size_mb=$(echo "scale=1; $file_size / 1048576" | bc)
   echo -e "  ${GREEN}$label${NC} (${platform_key}): ${BLUE}$filepath${NC} (${file_size_mb} MB)"
 done
