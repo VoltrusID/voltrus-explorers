@@ -6,7 +6,6 @@ set -euo pipefail
 # ============================================================
 # Usage:
 #   ./scripts/build-dmg.sh              # Build + sign + DMG (no notarize)
-#   ./scripts/build-dmg.sh --dev         # Dev build (skip license check)
 #   NOTARIZE=1 ./scripts/build-dmg.sh   # Build + sign + notarize + DMG
 #   SKIP_BUILD=1 ./scripts/build-dmg.sh # Skip cargo tauri build
 
@@ -19,11 +18,9 @@ APP_PATH="$BUILD_DIR/macos/$APP_NAME.app"
 
 SKIP_BUILD="${SKIP_BUILD:-0}"
 NOTARIZE="${NOTARIZE:-0}"
-DEV_MODE=0
 
 for arg in "$@"; do
   case "$arg" in
-    --dev)      DEV_MODE=1 ;;
     --notarize) NOTARIZE=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
   esac

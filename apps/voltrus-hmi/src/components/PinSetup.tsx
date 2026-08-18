@@ -1,14 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "../store";
+import { stretchPin } from "../crypto";
 import type { AccessConfig } from "../types";
-
-async function hashPin(pin: string, salt: string): Promise<string> {
-  const data = new TextEncoder().encode(salt + pin);
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 function generateSalt(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -117,6 +110,12 @@ export function PinSetup() {
   );
   const [setting, setSetting] = useState<"operator" | "supervisor" | null>(null);
 
+  // Keep the local timeout field in sync when a project is (re)loaded while
+  // this panel stays mounted — otherwise "Set" would persist a stale value.
+  useEffect(() => {
+    setAutoLogout(accessConfig?.autoLogoutMinutes ?? 5);
+  }, [accessConfig?.salt, accessConfig?.autoLogoutMinutes]);
+
   const handleSetPin = async (role: "operator" | "supervisor") => {
     const pin = role === "operator" ? operatorPin : supervisorPin;
     if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) return;
@@ -124,7 +123,8 @@ export function PinSetup() {
     setSetting(role);
     try {
       const salt = accessConfig?.salt || generateSalt();
-      const hash = await hashPin(pin, salt);
+      // Must match the runtime's stretchPin (export/auth.rs) exactly.
+      const hash = await Promise.resolve(stretchPin(salt, pin));
 
       const config: AccessConfig = {
         operatorPinHash:

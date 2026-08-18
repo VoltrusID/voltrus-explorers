@@ -36,7 +36,25 @@ fn license_file_path() -> PathBuf {
     dir.join("voltrus-plc").join("license.json")
 }
 
+/// Stable per-installation device identifier.
+///
+/// 1. Cached `device_id` file next to `license.json` (stable across launches)
+/// 2. macOS: `IOPlatformUUID` via `ioreg` (stable across reinstalls)
+/// 3. Fresh random UUID, persisted for next launch
+///
+/// The PID fallback that used to live here rotated on every launch and
+/// burned a Polar seat per app start — never fall back to it.
 fn generate_device_id() -> String {
+    let dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let cache = dir.join("voltrus-plc").join("device_id");
+
+    if let Ok(cached) = fs::read_to_string(&cache) {
+        let trimmed = cached.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+
     let mut id = String::new();
     #[cfg(target_os = "macos")]
     {
@@ -58,8 +76,14 @@ fn generate_device_id() -> String {
         }
     }
     if id.is_empty() {
-        id = format!("voltrus-{:x}", std::process::id());
+        id = uuid::Uuid::new_v4().to_string();
     }
+
+    // Persist so non-macOS installs (and ioreg failures) stay stable.
+    if let Some(parent) = cache.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&cache, &id);
     id
 }
 
@@ -87,7 +111,10 @@ fn save_license(state: &LicenseState) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn activate_license(license_key: String) -> Result<LicenseState, String> {
-    let device_id = generate_device_id();
+    // ioreg is a subprocess — keep it off the async worker
+    let device_id = tauri::async_runtime::spawn_blocking(generate_device_id)
+        .await
+        .map_err(|e| format!("Device ID generation failed: {e}"))?;
     let client = reqwest::Client::new();
 
     let resp = client
@@ -165,10 +192,48 @@ pub fn get_license_status() -> LicenseState {
 }
 
 #[tauri::command]
-pub fn deactivate_license() -> Result<(), String> {
-    let path = license_file_path();
-    if path.exists() {
-        fs::remove_file(path).map_err(|e| e.to_string())?;
+pub async fn deactivate_license() -> Result<(), String> {
+    let state = load_license();
+
+    // Release the Polar activation seat first, so it doesn't leak when the
+    // user moves to another machine. Local file removal follows on success.
+    if let Some(state) = state.filter(|s| s.activated && !s.activation_id.is_empty()) {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{}/license/deactivate", LICENSE_SERVER))
+            .json(&serde_json::json!({
+                "key": state.license_key,
+                "activation_id": state.activation_id,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        #[derive(serde::Deserialize)]
+        struct DeactivateResponse {
+            ok: bool,
+            #[serde(default)]
+            error: Option<String>,
+        }
+        let result: DeactivateResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Invalid response: {}", e))?;
+        if !result.ok {
+            return Err(result
+                .error
+                .unwrap_or_else(|| "Deactivation failed".to_string()));
+        }
     }
-    Ok(())
+
+    let path = license_file_path();
+    let remove = move || {
+        if path.exists() {
+            fs::remove_file(path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    tauri::async_runtime::spawn_blocking(remove)
+        .await
+        .map_err(|e| e.to_string())?
 }

@@ -39,6 +39,10 @@ pub struct HmiWidget {
     pub label: String,
     #[serde(default)]
     pub variable_name: String,
+    /// PLC data type of the bound variable ("BOOL", "INT", "REAL", ...) —
+    /// determines the wire type code used for force writes in the export.
+    #[serde(default)]
+    pub data_type: Option<String>,
     #[serde(default = "default_min")]
     pub min: f64,
     #[serde(default = "default_max")]
@@ -129,7 +133,9 @@ async fn deploy_to_esp32(ip: String, html: String) -> Result<String, String> {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
-    let url = format!("http://{}/api/hmi/upload", ip);
+    // The ESP32 firmware registers /api/deploy (plc_ws_server.c), not
+    // /api/hmi/upload — keep in sync with the firmware routes.
+    let url = format!("http://{}/api/deploy", ip);
     let resp = client
         .post(&url)
         .header("Content-Type", "text/html")

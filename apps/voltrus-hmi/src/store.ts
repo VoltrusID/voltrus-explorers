@@ -33,11 +33,25 @@ const WIDGET_DEFAULTS: Record<WidgetType, { width: number; height: number }> = {
   chart: { width: 300, height: 180 },
 };
 
+export interface Toast {
+  id: number;
+  kind: "success" | "error" | "info";
+  message: string;
+}
+
 interface AppState {
   // Screens
   screens: HmiScreen[];
   activeScreenIndex: number;
   selectedWidgetId: string | null;
+
+  // Unsaved-changes indicator
+  isDirty: boolean;
+
+  // Toasts (single active toast, auto-dismissed)
+  toast: Toast | null;
+  showToast: (kind: Toast["kind"], message: string) => void;
+  dismissToast: () => void;
 
   // Zoom
   zoom: number;
@@ -49,7 +63,7 @@ interface AppState {
   plcConnecting: boolean;
   plcVariables: PlcVariable[];
   setPlcIp: (ip: string) => void;
-  connectPlc: () => Promise<void>;
+  connectPlc: () => Promise<boolean>;
   disconnectPlc: () => void;
 
   // Tags
@@ -75,6 +89,13 @@ interface AppState {
   selectWidget: (id: string | null) => void;
   moveWidget: (id: string, x: number, y: number) => void;
   resizeWidget: (id: string, width: number, height: number) => void;
+  /** Push a single undo checkpoint before a continuous drag — call once at
+   *  drag start; moveWidget/resizeWidget do not touch the undo stack. */
+  beginWidgetDrag: () => void;
+  /** Bind a variable (and its PLC data type) to a widget, e.g. on tag drop. */
+  bindVariable: (id: string, variableName: string, dataType?: string) => void;
+  /** Insert template widgets (undoable, selects the last inserted). */
+  addTemplateWidgets: (widgets: Omit<HmiWidget, "id">[]) => void;
 
   // Widget layering
   bringToFront: (id: string) => void;
@@ -90,8 +111,8 @@ interface AppState {
 
   // Project
   projectPath: string | null;
-  saveProject: () => Promise<void>;
-  loadProject: () => Promise<void>;
+  saveProject: () => Promise<boolean>;
+  loadProject: () => Promise<boolean>;
 
   // Alarms
   scadaUrl: string;
@@ -124,6 +145,7 @@ interface AppState {
   setRpi5Ip: (ip: string) => void;
   setRpi5Port: (port: number) => void;
   deployToRpi5: () => Promise<void>;
+  deployToEsp32: (ip: string) => Promise<void>;
 
   // Undo/Redo
   canUndo: boolean;
@@ -132,36 +154,64 @@ interface AppState {
   redo: () => void;
 }
 
-// WebSocket reference kept outside store for lifecycle management
+// WebSocket state kept outside the store for lifecycle management
 let plcWs: WebSocket | null = null;
+let wsGeneration = 0;
+let plcAutoReconnect = false;
+let reconnectDelayMs = 1000;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Undo/Redo history
 const MAX_HISTORY = 50;
 const undoStack: string[] = [];
 const redoStack: string[] = [];
+let lastPushAt = 0;
+const PUSH_COALESCE_MS = 400;
 
 /** Reset undo/redo stacks — intended for test use only */
 export function _resetUndoHistory() {
   undoStack.length = 0;
   redoStack.length = 0;
+  lastPushAt = 0;
 }
 
-function pushUndo(screens: HmiScreen[], set: (partial: Partial<AppState>) => void) {
+type SetFn = (partial: Partial<AppState>) => void;
+
+function pushUndo(screens: HmiScreen[], set: SetFn) {
   undoStack.push(JSON.stringify(screens));
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   redoStack.length = 0;
-  set({ canUndo: true, canRedo: false });
+  lastPushAt = Date.now();
+  set({ canUndo: true, canRedo: false, isDirty: true });
 }
 
+/**
+ * Push an undo checkpoint unless one was pushed very recently (e.g. the
+ * previous keystroke in a text field) — keeps typing from flooding the
+ * 50-entry history stack.
+ */
+function pushUndoCoalesced(screens: HmiScreen[], set: SetFn) {
+  if (Date.now() - lastPushAt < PUSH_COALESCE_MS) {
+    redoStack.length = 0;
+    set({ isDirty: true });
+    return;
+  }
+  pushUndo(screens, set);
+}
+
+/** Wire type codes match firmware `plc_value_type_t` (plc_bytecode.h):
+ *  BOOL=0 BYTE=1 INT=2 DINT=3 REAL=4 TIME=5 STRING=6 WORD=7 DWORD=8. */
 export const TYPE_MAP: Record<number, string> = {
   0: "BOOL",
-  1: "INT",
-  2: "DINT",
-  3: "REAL",
-  4: "WORD",
-  5: "DWORD",
+  1: "BYTE",
+  2: "INT",
+  3: "DINT",
+  4: "REAL",
+  5: "TIME",
   6: "STRING",
-  7: "BYTE",
+  7: "WORD",
+  8: "DWORD",
 };
 
 export function parseVarUpdate(buf: ArrayBuffer): PlcVariable[] {
@@ -191,14 +241,18 @@ export function parseVarUpdate(buf: ArrayBuffer): PlcVariable[] {
     const typeName = TYPE_MAP[typeCode] ?? "UNKNOWN";
 
     let value: unknown;
-    if (typeName === "REAL") {
-      // IEEE 754 float sent by firmware
+    if (typeCode === 4) {
+      // REAL: IEEE 754 float32
       value = view.getFloat32(offset, true);
+    } else if (typeCode === 7 || typeCode === 8) {
+      // WORD / DWORD: unsigned
+      value = view.getUint32(offset, true);
+    } else if (typeCode === 0) {
+      value = view.getInt32(offset, true) !== 0;
     } else {
-      const rawValue = view.getInt32(offset, true);
-      if (typeName === "BOOL") value = rawValue !== 0;
-      else if (typeName === "STRING") value = String(rawValue);
-      else value = rawValue;
+      // BYTE/INT/DINT/TIME (and STRING — firmware sends the string-table
+      // index, the table itself is not part of the protocol)
+      value = view.getInt32(offset, true);
     }
     offset += 4;
 
@@ -211,518 +265,700 @@ export function parseVarUpdate(buf: ArrayBuffer): PlcVariable[] {
   return vars;
 }
 
-export const useStore = create<AppState>((set, get) => ({
-  screens: DEFAULT_SCREENS,
-  activeScreenIndex: 0,
-  selectedWidgetId: null,
-  clipboard: null,
-  zoom: 1,
-  setZoom: (z) => set({ zoom: Math.max(0.25, Math.min(3, z)) }),
-  plcIp: "192.168.1.100",
-  plcConnected: false,
-  plcConnecting: false,
-  plcVariables: [],
-  tags: [],
-  setPlcIp: (ip) => set({ plcIp: ip }),
-  theme: "dark",
-  setTheme: (t) => set({ theme: t }),
+export const useStore = create<AppState>((set, get) => {
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let toastId = 0;
 
-  connectPlc: async () => {
-    const { plcIp } = get();
-    if (plcWs) {
-      plcWs.close();
-      plcWs = null;
-    }
+  const showToast: AppState["showToast"] = (kind, message) => {
+    if (toastTimer) clearTimeout(toastTimer);
+    const id = ++toastId;
+    set({ toast: { id, kind, message } });
+    toastTimer = setTimeout(() => set({ toast: null }), kind === "error" ? 6000 : 4000);
+  };
 
-    set({ plcConnecting: true, plcConnected: false });
+  return {
+    screens: DEFAULT_SCREENS,
+    activeScreenIndex: 0,
+    selectedWidgetId: null,
+    clipboard: null,
+    isDirty: false,
+    toast: null,
+    showToast,
+    dismissToast: () => {
+      if (toastTimer) clearTimeout(toastTimer);
+      set({ toast: null });
+    },
+    zoom: 1,
+    setZoom: (z) => set({ zoom: Math.max(0.25, Math.min(3, z)) }),
+    plcIp: "192.168.1.100",
+    plcConnected: false,
+    plcConnecting: false,
+    plcVariables: [],
+    tags: [],
+    setPlcIp: (ip) => set({ plcIp: ip }),
+    theme: "dark",
+    setTheme: (t) => set({ theme: t }),
 
-    try {
-      const resp = await fetch(`http://${plcIp}/api/variables`);
-      if (resp.ok) {
-        const data = await resp.json();
-        const vars: PlcVariable[] = (data.variables ?? []).map(
-          (v: { name: string; type: string; value: unknown }) => ({
-            name: v.name,
-            type: v.type,
-            value: v.value,
-          })
-        );
-        set({ plcVariables: vars });
+    connectPlc: async () => {
+      const { plcIp } = get();
+      const generation = ++wsGeneration;
+      plcAutoReconnect = true;
+      reconnectDelayMs = 1000;
+
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
-    } catch {
-      // HTTP snapshot is best-effort
-    }
+      if (plcWs) {
+        const old = plcWs;
+        plcWs = null;
+        old.onclose = null;
+        old.close();
+      }
 
-    return new Promise<void>((resolve) => {
+      set({ plcConnecting: true, plcConnected: false });
+
+      // Best-effort HTTP snapshot of current variable values.
       try {
-        const ws = new WebSocket(`ws://${plcIp}/ws/plc`);
-        plcWs = ws;
-        ws.binaryType = "arraybuffer";
-
-        ws.onopen = () => {
-          set({ plcConnected: true, plcConnecting: false });
-          resolve();
-        };
-
-        ws.onmessage = (ev) => {
-          if (typeof ev.data === "string") return;
-          const buf = ev.data as ArrayBuffer;
-          if (buf.byteLength < 1) return;
-
-          const msgType = new DataView(buf).getUint8(0);
-          if (msgType !== 0x01) return;
-
-          const parsed = parseVarUpdate(buf.slice(1));
-          if (parsed.length === 0) return;
-
-          set((state) => {
-            const map = new Map(state.plcVariables.map((v) => [v.name, v]));
-            for (const v of parsed) {
-              const existing = map.get(v.name);
-              if (existing) {
-                map.set(v.name, {
-                  ...existing,
-                  value: v.value,
-                  type: v.type !== "UNKNOWN" ? v.type : existing.type,
-                });
-              } else {
-                map.set(v.name, v);
-              }
-            }
-            return { plcVariables: Array.from(map.values()) };
-          });
-        };
-
-        ws.onclose = () => {
-          plcWs = null;
-          set({ plcConnected: false, plcConnecting: false });
-          resolve();
-        };
-
-        ws.onerror = () => {
-          plcWs = null;
-          set({ plcConnected: false, plcConnecting: false });
-          resolve();
-        };
+        const resp = await fetch(`http://${plcIp}/api/variables`);
+        if (generation !== wsGeneration) return false;
+        if (resp.ok) {
+          const data = await resp.json();
+          const vars: PlcVariable[] = (data.variables ?? []).map(
+            (v: { name: string; type: string; value: unknown }) => ({
+              name: v.name,
+              type: v.type,
+              value: v.value,
+            })
+          );
+          set({ plcVariables: vars });
+        }
       } catch {
-        set({ plcConnected: false, plcConnecting: false });
-        resolve();
+        // HTTP snapshot is best-effort
       }
-    });
-  },
 
-  disconnectPlc: () => {
-    if (plcWs) {
-      plcWs.close();
-      plcWs = null;
-    }
-    set({ plcConnected: false, plcConnecting: false, plcVariables: [] });
-  },
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const settle = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          if (connectTimeoutTimer) {
+            clearTimeout(connectTimeoutTimer);
+            connectTimeoutTimer = null;
+          }
+          resolve(ok);
+        };
 
-  addTag: (tag) => {
-    const newTag: HmiTag = { ...tag, id: uid() };
-    set((state) => ({ tags: [...state.tags, newTag] }));
-  },
+        try {
+          const ws = new WebSocket(`ws://${plcIp}/ws/plc`);
+          plcWs = ws;
+          ws.binaryType = "arraybuffer";
 
-  removeTag: (id) => {
-    set((state) => ({ tags: state.tags.filter((t) => t.id !== id) }));
-  },
+          // Connect timeout: never leave the UI stuck on "Connecting...".
+          connectTimeoutTimer = setTimeout(() => {
+            if (generation !== wsGeneration) return;
+            try { ws.close(); } catch { /* ignore */ }
+            set({ plcConnected: false, plcConnecting: false });
+            if (plcWs === ws) plcWs = null;
+            get().showToast("error", `Cannot connect to ${plcIp} (timeout)`);
+            settle(false);
+          }, 8000);
 
-  renameTag: (id, name) => {
-    set((state) => ({
-      tags: state.tags.map((t) => (t.id === id ? { ...t, name } : t)),
-    }));
-  },
+          ws.onopen = () => {
+            if (generation !== wsGeneration) return;
+            reconnectDelayMs = 1000;
+            set({ plcConnected: true, plcConnecting: false });
+            settle(true);
+          };
 
-  addScreen: () => {
-    const { screens } = get();
-    pushUndo(screens, set);
-    const newScreen: HmiScreen = {
-      id: uid(),
-      name: `Screen ${screens.length + 1}`,
-      backgroundColor: "#1e1e2e",
-      widgets: [],
-    };
-    set({
-      screens: [...screens, newScreen],
-      activeScreenIndex: screens.length,
-      selectedWidgetId: null,
-    });
-  },
+          ws.onmessage = (ev) => {
+            if (generation !== wsGeneration) return;
+            if (typeof ev.data === "string") return;
+            const buf = ev.data as ArrayBuffer;
+            if (buf.byteLength < 1) return;
 
-  deleteScreen: (id) => {
-    const { screens, activeScreenIndex } = get();
-    pushUndo(screens, set);
-    if (screens.length <= 1) return;
-    const newScreens = screens.filter((s) => s.id !== id);
-    const newIndex = Math.min(activeScreenIndex, newScreens.length - 1);
-    set({ screens: newScreens, activeScreenIndex: newIndex, selectedWidgetId: null });
-  },
+            const msgType = new DataView(buf).getUint8(0);
+            if (msgType !== 0x01) return;
 
-  setActiveScreen: (index) => set({ activeScreenIndex: index, selectedWidgetId: null }),
+            const parsed = parseVarUpdate(buf.slice(1));
+            if (parsed.length === 0) return;
 
-  updateScreen: (id, updates) => {
-    const { screens } = get();
-    pushUndo(screens, set);
-    set({
-      screens: screens.map((s) => (s.id === id ? { ...s, ...updates } : s)),
-    });
-  },
+            set((state) => {
+              const map = new Map(state.plcVariables.map((v) => [v.name, v]));
+              for (const v of parsed) {
+                const existing = map.get(v.name);
+                if (existing) {
+                  map.set(v.name, {
+                    ...existing,
+                    value: v.value,
+                    type: v.type !== "UNKNOWN" ? v.type : existing.type,
+                  });
+                } else {
+                  map.set(v.name, v);
+                }
+              }
+              return { plcVariables: Array.from(map.values()) };
+            });
+          };
 
-  addWidget: (type, x, y) => {
-    const { screens, activeScreenIndex } = get();
-    pushUndo(screens, set);
-    const defaults = WIDGET_DEFAULTS[type];
-    const widget: HmiWidget = {
-      id: uid(),
-      type,
-      x,
-      y,
-      width: defaults.width,
-      height: defaults.height,
-      label: type.charAt(0).toUpperCase() + type.slice(1),
-      variableName: "",
-      min: 0,
-      max: 100,
-      color: "#22c55e",
-      fontSize: 14,
-    };
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: [...newScreens[activeScreenIndex].widgets, widget],
-    };
-    set({ screens: newScreens, selectedWidgetId: widget.id });
-  },
+          ws.onclose = () => {
+            if (generation !== wsGeneration) return;
+            if (plcWs === ws) plcWs = null;
+            set({ plcConnected: false, plcConnecting: false });
+            settle(false);
+            // Auto-reconnect with backoff (until the user disconnects).
+            if (plcAutoReconnect) {
+              reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                if (plcAutoReconnect && generation === wsGeneration) get().connectPlc();
+              }, reconnectDelayMs);
+              reconnectDelayMs = Math.min(reconnectDelayMs * 2, 30000);
+            }
+          };
 
-  updateWidget: (id, updates) => {
-    const { screens, activeScreenIndex } = get();
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.map((w) =>
-        w.id === id ? { ...w, ...updates } : w
-      ),
-    };
-    set({ screens: newScreens });
-  },
-
-  deleteWidget: (id) => {
-    const { screens, activeScreenIndex, selectedWidgetId } = get();
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.filter((w) => w.id !== id),
-    };
-    set({
-      screens: newScreens,
-      selectedWidgetId: selectedWidgetId === id ? null : selectedWidgetId,
-    });
-  },
-
-  selectWidget: (id) => set({ selectedWidgetId: id }),
-
-  moveWidget: (id, x, y) => {
-    const { screens, activeScreenIndex } = get();
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.map((w) =>
-        w.id === id ? { ...w, x, y } : w
-      ),
-    };
-    set({ screens: newScreens });
-  },
-
-  resizeWidget: (id, width, height) => {
-    const { screens, activeScreenIndex } = get();
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.map((w) =>
-        w.id === id ? { ...w, width: Math.max(30, width), height: Math.max(30, height) } : w
-      ),
-    };
-    set({ screens: newScreens });
-  },
-
-  bringToFront: (id) => {
-    const { screens, activeScreenIndex } = get();
-    const screen = screens[activeScreenIndex];
-    const maxZ = screen.widgets.reduce((m, w) => Math.max(m, w.zIndex ?? 0), 0);
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.map((w) =>
-        w.id === id ? { ...w, zIndex: maxZ + 1 } : w
-      ),
-    };
-    set({ screens: newScreens });
-  },
-
-  sendToBack: (id) => {
-    const { screens, activeScreenIndex } = get();
-    const screen = screens[activeScreenIndex];
-    const minZ = screen.widgets.reduce((m, w) => Math.min(m, w.zIndex ?? 0), 0);
-    pushUndo(screens, set);
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: newScreens[activeScreenIndex].widgets.map((w) =>
-        w.id === id ? { ...w, zIndex: Math.max(0, minZ - 1) } : w
-      ),
-    };
-    set({ screens: newScreens });
-  },
-
-  copyWidget: (id) => {
-    const { screens, activeScreenIndex } = get();
-    const widget = screens[activeScreenIndex].widgets.find((w) => w.id === id);
-    if (widget) set({ clipboard: { ...widget } });
-  },
-
-  pasteWidget: () => {
-    const { screens, activeScreenIndex, clipboard } = get();
-    if (!clipboard) return;
-    pushUndo(screens, set);
-    const pasted: HmiWidget = {
-      ...clipboard,
-      id: uid(),
-      x: clipboard.x + 20,
-      y: clipboard.y + 20,
-    };
-    const newScreens = [...screens];
-    newScreens[activeScreenIndex] = {
-      ...newScreens[activeScreenIndex],
-      widgets: [...newScreens[activeScreenIndex].widgets, pasted],
-    };
-    set({ screens: newScreens, selectedWidgetId: pasted.id });
-  },
-
-  exportHtml: async () => {
-    const { screens, plcIp, scadaUrl, alarms, accessConfig, translations, defaultLanguage, kioskMode } = get();
-    try {
-      const html = await invoke<string>("export_hmi", {
-        request: {
-          screens,
-          plcIp,
-          scadaUrl: scadaUrl || undefined,
-          alarms,
-          accessConfig: accessConfig || undefined,
-          translations: Object.keys(translations).length > 0 ? translations : undefined,
-          defaultLanguage: defaultLanguage || undefined,
-          kioskMode,
-        },
+          ws.onerror = () => {
+            if (generation !== wsGeneration) return;
+            set({ plcConnected: false, plcConnecting: false });
+          };
+        } catch {
+          set({ plcConnected: false, plcConnecting: false });
+          get().showToast("error", `Cannot connect to ${plcIp}`);
+          settle(false);
+        }
       });
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const path = await save({
-        title: "Export HMI",
-        filters: [{ name: "HTML", extensions: ["html"] }],
-        defaultPath: "hmi-dashboard.html",
-      });
-      if (path) {
-        await invoke("save_project_data", { path, data: html });
+    },
+
+    disconnectPlc: () => {
+      plcAutoReconnect = false;
+      wsGeneration++;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
-    } catch (e) {
-      console.error("Export failed:", e);
-    }
-  },
+      if (connectTimeoutTimer) {
+        clearTimeout(connectTimeoutTimer);
+        connectTimeoutTimer = null;
+      }
+      if (plcWs) {
+        const old = plcWs;
+        plcWs = null;
+        old.onclose = null;
+        old.close();
+      }
+      set({ plcConnected: false, plcConnecting: false, plcVariables: [] });
+    },
 
-  projectPath: null,
+    addTag: (tag) => {
+      const newTag: HmiTag = { ...tag, id: uid() };
+      set((state) => ({ tags: [...state.tags, newTag], isDirty: true }));
+    },
 
-  saveProject: async () => {
-    const {
-      screens,
-      plcIp,
-      projectPath,
-      scadaUrl,
-      alarms,
-      accessConfig,
-      translations,
-      defaultLanguage,
-      kioskMode,
-    } = get();
-    const data = JSON.stringify({
-      screens,
-      plcIp,
-      version: "0.2",
-      scadaUrl,
-      alarms,
-      accessConfig,
-      translations,
-      defaultLanguage,
-      kioskMode,
-    });
-    try {
-      if (projectPath) {
-        await invoke("save_project_data", { path: projectPath, data });
-      } else {
+    removeTag: (id) => {
+      set((state) => ({ tags: state.tags.filter((t) => t.id !== id), isDirty: true }));
+    },
+
+    renameTag: (id, name) => {
+      set((state) => ({
+        tags: state.tags.map((t) => (t.id === id ? { ...t, name } : t)),
+        isDirty: true,
+      }));
+    },
+
+    addScreen: () => {
+      const { screens } = get();
+      pushUndo(screens, set);
+      const newScreen: HmiScreen = {
+        id: uid(),
+        name: `Screen ${screens.length + 1}`,
+        backgroundColor: "#1e1e2e",
+        widgets: [],
+      };
+      set({
+        screens: [...screens, newScreen],
+        activeScreenIndex: screens.length,
+        selectedWidgetId: null,
+      });
+    },
+
+    deleteScreen: (id) => {
+      const { screens, activeScreenIndex } = get();
+      if (screens.length <= 1) return;
+      pushUndo(screens, set);
+      const newScreens = screens.filter((s) => s.id !== id);
+      const newIndex = Math.min(activeScreenIndex, newScreens.length - 1);
+      set({ screens: newScreens, activeScreenIndex: newIndex, selectedWidgetId: null });
+    },
+
+    setActiveScreen: (index) => set({ activeScreenIndex: index, selectedWidgetId: null }),
+
+    updateScreen: (id, updates) => {
+      const { screens } = get();
+      pushUndoCoalesced(screens, set);
+      set({
+        screens: screens.map((s) => (s.id === id ? { ...s, ...updates } : s)),
+      });
+    },
+
+    addWidget: (type, x, y) => {
+      const { screens, activeScreenIndex } = get();
+      pushUndo(screens, set);
+      const defaults = WIDGET_DEFAULTS[type];
+      const widget: HmiWidget = {
+        id: uid(),
+        type,
+        x,
+        y,
+        width: defaults.width,
+        height: defaults.height,
+        label: type.charAt(0).toUpperCase() + type.slice(1),
+        variableName: "",
+        min: 0,
+        max: 100,
+        color: "#22c55e",
+        fontSize: 14,
+      };
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: [...newScreens[activeScreenIndex].widgets, widget],
+      };
+      set({ screens: newScreens, selectedWidgetId: widget.id });
+    },
+
+    updateWidget: (id, updates) => {
+      const { screens, activeScreenIndex } = get();
+      pushUndoCoalesced(screens, set);
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id ? { ...w, ...updates } : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    deleteWidget: (id) => {
+      const { screens, activeScreenIndex, selectedWidgetId } = get();
+      pushUndo(screens, set);
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.filter((w) => w.id !== id),
+      };
+      set({
+        screens: newScreens,
+        selectedWidgetId: selectedWidgetId === id ? null : selectedWidgetId,
+      });
+    },
+
+    selectWidget: (id) => set({ selectedWidgetId: id }),
+
+    moveWidget: (id, x, y) => {
+      // No undo push here — beginWidgetDrag pushed one checkpoint at drag start.
+      const { screens, activeScreenIndex } = get();
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id ? { ...w, x, y } : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    resizeWidget: (id, width, height) => {
+      const { screens, activeScreenIndex } = get();
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id ? { ...w, width: Math.max(30, width), height: Math.max(30, height) } : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    beginWidgetDrag: () => {
+      const { screens } = get();
+      pushUndo(screens, set);
+    },
+
+    bindVariable: (id, variableName, dataType) => {
+      const { screens, activeScreenIndex } = get();
+      pushUndoCoalesced(screens, set);
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id
+            ? { ...w, variableName, dataType: dataType || w.dataType }
+            : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    addTemplateWidgets: (widgets) => {
+      const { screens, activeScreenIndex } = get();
+      pushUndo(screens, set);
+      const newWidgets: HmiWidget[] = widgets.map((w) => ({ ...w, id: uid() }));
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: [...newScreens[activeScreenIndex].widgets, ...newWidgets],
+      };
+      set({
+        screens: newScreens,
+        selectedWidgetId: newWidgets.length > 0 ? newWidgets[newWidgets.length - 1].id : null,
+      });
+    },
+
+    bringToFront: (id) => {
+      const { screens, activeScreenIndex } = get();
+      const screen = screens[activeScreenIndex];
+      const maxZ = screen.widgets.reduce((m, w) => Math.max(m, w.zIndex ?? 0), 0);
+      pushUndo(screens, set);
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id ? { ...w, zIndex: maxZ + 1 } : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    sendToBack: (id) => {
+      const { screens, activeScreenIndex } = get();
+      const screen = screens[activeScreenIndex];
+      const minZ = screen.widgets.reduce((m, w) => Math.min(m, w.zIndex ?? 0), 0);
+      pushUndo(screens, set);
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: newScreens[activeScreenIndex].widgets.map((w) =>
+          w.id === id ? { ...w, zIndex: Math.max(0, minZ - 1) } : w
+        ),
+      };
+      set({ screens: newScreens });
+    },
+
+    copyWidget: (id) => {
+      const { screens, activeScreenIndex } = get();
+      const widget = screens[activeScreenIndex].widgets.find((w) => w.id === id);
+      if (widget) set({ clipboard: { ...widget } });
+    },
+
+    pasteWidget: () => {
+      const { screens, activeScreenIndex, clipboard } = get();
+      if (!clipboard) return;
+      pushUndo(screens, set);
+      const pasted: HmiWidget = {
+        ...clipboard,
+        id: uid(),
+        x: clipboard.x + 20,
+        y: clipboard.y + 20,
+      };
+      const newScreens = [...screens];
+      newScreens[activeScreenIndex] = {
+        ...newScreens[activeScreenIndex],
+        widgets: [...newScreens[activeScreenIndex].widgets, pasted],
+      };
+      set({ screens: newScreens, selectedWidgetId: pasted.id });
+    },
+
+    exportHtml: async () => {
+      const { screens, plcIp, scadaUrl, alarms, accessConfig, translations, defaultLanguage, kioskMode } = get();
+      let html: string;
+      try {
+        html = await invoke<string>("export_hmi", {
+          request: {
+            screens,
+            plcIp,
+            scadaUrl: scadaUrl || undefined,
+            alarms,
+            accessConfig: accessConfig || undefined,
+            translations: Object.keys(translations).length > 0 ? translations : undefined,
+            defaultLanguage: defaultLanguage || undefined,
+            kioskMode,
+          },
+        });
+      } catch (e) {
+        get().showToast("error", `Export failed: ${String(e)}`);
+        return;
+      }
+      try {
         const { save } = await import("@tauri-apps/plugin-dialog");
         const path = await save({
-          title: "Save Project",
-          filters: [{ name: "Voltrus HMI Project", extensions: ["vhmi"] }],
-          defaultPath: "hmi-project.vhmi",
+          title: "Export HMI",
+          filters: [{ name: "HTML", extensions: ["html"] }],
+          defaultPath: "hmi-dashboard.html",
         });
         if (path) {
-          await invoke("save_project_data", { path, data });
-          set({ projectPath: path });
+          await invoke("save_project_data", { path, data: html });
+          get().showToast("success", `Exported to ${path}`);
+        }
+      } catch (e) {
+        get().showToast("error", `Export failed: ${String(e)}`);
+      }
+    },
+
+    projectPath: null,
+
+    saveProject: async () => {
+      const {
+        screens,
+        plcIp,
+        projectPath,
+        scadaUrl,
+        alarms,
+        accessConfig,
+        translations,
+        defaultLanguage,
+        kioskMode,
+        tags,
+        rpi5Ip,
+        rpi5Port,
+      } = get();
+      const data = JSON.stringify({
+        screens,
+        plcIp,
+        version: "0.3",
+        scadaUrl,
+        alarms,
+        accessConfig,
+        translations,
+        defaultLanguage,
+        kioskMode,
+        tags,
+        rpi5Ip,
+        rpi5Port,
+      });
+      try {
+        if (projectPath) {
+          await invoke("save_project_data", { path: projectPath, data });
+        } else {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const path = await save({
+            title: "Save Project",
+            filters: [{ name: "Voltrus HMI Project", extensions: ["vhmi"] }],
+            defaultPath: "hmi-project.vhmi",
+          });
+          if (path) {
+            await invoke("save_project_data", { path, data });
+            set({ projectPath: path });
+          } else {
+            return false;
+          }
+        }
+        set({ isDirty: false });
+        get().showToast("success", "Project saved");
+        return true;
+      } catch (e) {
+        get().showToast("error", `Save failed: ${String(e)}`);
+        return false;
+      }
+    },
+
+    loadProject: async () => {
+      try {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const path = await open({
+          title: "Open Project",
+          filters: [{ name: "Voltrus HMI Project", extensions: ["vhmi"] }],
+          multiple: false,
+        });
+        if (path) {
+          const data = await invoke<string>("load_project_data", { path });
+          const project = JSON.parse(data);
+          // Loading replaces the project: drop stale connection and history.
+          get().disconnectPlc();
+          _resetUndoHistory();
+          set({
+            screens: project.screens || DEFAULT_SCREENS,
+            plcIp: project.plcIp || "192.168.1.100",
+            projectPath: path,
+            activeScreenIndex: 0,
+            selectedWidgetId: null,
+            scadaUrl: project.scadaUrl || "",
+            alarms: project.alarms || [],
+            accessConfig: project.accessConfig || null,
+            translations: project.translations || {},
+            defaultLanguage: project.defaultLanguage || "en",
+            kioskMode: project.kioskMode || false,
+            tags: project.tags || [],
+            rpi5Ip: project.rpi5Ip || "",
+            rpi5Port: project.rpi5Port || 8080,
+            isDirty: false,
+            canUndo: false,
+            canRedo: false,
+          });
+          get().showToast("success", `Opened ${path}`);
+          return true;
+        }
+        return false;
+      } catch (e) {
+        get().showToast("error", `Load failed: ${String(e)}`);
+        return false;
+      }
+    },
+
+    // Alarms
+    scadaUrl: "",
+    alarms: [],
+    setScadaUrl: (url) => set({ scadaUrl: url, isDirty: true }),
+    addAlarm: (alarm) => {
+      const newAlarm: AlarmRule = { ...alarm, id: uid() };
+      set((state) => ({ alarms: [...state.alarms, newAlarm], isDirty: true }));
+    },
+    removeAlarm: (id) => {
+      set((state) => ({ alarms: state.alarms.filter((a) => a.id !== id), isDirty: true }));
+    },
+    updateAlarm: (id, updates) => {
+      set((state) => ({
+        alarms: state.alarms.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+        isDirty: true,
+      }));
+    },
+
+    // Access control
+    accessConfig: null,
+    setAccessConfig: (config) => set({ accessConfig: config, isDirty: true }),
+
+    // i18n
+    translations: {},
+    defaultLanguage: "en",
+    addLanguage: (code) => {
+      set((state) => {
+        if (state.translations[code]) return state;
+        const newTranslations = { ...state.translations, [code]: {} };
+        return { translations: newTranslations, isDirty: true };
+      });
+    },
+    removeLanguage: (code) => {
+      set((state) => {
+        const { [code]: _, ...rest } = state.translations;
+        // Never leave the default pointing at a removed language.
+        const defaultLanguage =
+          state.defaultLanguage === code
+            ? Object.keys(rest)[0] ?? "en"
+            : state.defaultLanguage;
+        return { translations: rest, defaultLanguage, isDirty: true };
+      });
+    },
+    setTranslation: (key, langCode, value) => {
+      set((state) => ({
+        translations: {
+          ...state.translations,
+          [langCode]: {
+            ...state.translations[langCode],
+            [key]: value,
+          },
+        },
+        isDirty: true,
+      }));
+    },
+    setDefaultLanguage: (code) => set({ defaultLanguage: code, isDirty: true }),
+    collectTranslatableStrings: () => {
+      const { screens, alarms } = get();
+      const strings = new Set<string>();
+      for (const screen of screens) {
+        strings.add(screen.name);
+        for (const widget of screen.widgets) {
+          if (widget.label) strings.add(widget.label);
         }
       }
-    } catch (e) {
-      console.error("Save failed:", e);
-    }
-  },
+      for (const alarm of alarms) {
+        if (alarm.message) strings.add(alarm.message);
+      }
+      return Array.from(strings);
+    },
 
-  loadProject: async () => {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const path = await open({
-        title: "Open Project",
-        filters: [{ name: "Voltrus HMI Project", extensions: ["vhmi"] }],
-        multiple: false,
-      });
-      if (path) {
-        const data = await invoke<string>("load_project_data", { path });
-        const project = JSON.parse(data);
-        set({
-          screens: project.screens || DEFAULT_SCREENS,
-          plcIp: project.plcIp || "192.168.1.100",
-          projectPath: path,
-          activeScreenIndex: 0,
-          selectedWidgetId: null,
-          scadaUrl: project.scadaUrl || "",
-          alarms: project.alarms || [],
-          accessConfig: project.accessConfig || null,
-          translations: project.translations || {},
-          defaultLanguage: project.defaultLanguage || "en",
-          kioskMode: project.kioskMode || false,
+    // Kiosk
+    kioskMode: false,
+    setKioskMode: (enabled) => set({ kioskMode: enabled, isDirty: true }),
+
+    // RPi5 deploy
+    rpi5Ip: "",
+    rpi5Port: 8080,
+    setRpi5Ip: (ip) => set({ rpi5Ip: ip, isDirty: true }),
+    setRpi5Port: (port) => set({ rpi5Port: Number.isFinite(port) ? port : 8080, isDirty: true }),
+    deployToRpi5: async () => {
+      const { rpi5Ip, rpi5Port, screens, plcIp, scadaUrl, alarms, accessConfig, translations, defaultLanguage, kioskMode } = get();
+      try {
+        const html = await invoke<string>("export_hmi", {
+          request: {
+            screens,
+            plcIp,
+            scadaUrl: scadaUrl || undefined,
+            alarms,
+            accessConfig: accessConfig || undefined,
+            translations: Object.keys(translations).length > 0 ? translations : undefined,
+            defaultLanguage: defaultLanguage || undefined,
+            kioskMode,
+          },
         });
+        await invoke<string>("deploy_to_rpi5", { ip: rpi5Ip, port: rpi5Port, html });
+        get().showToast("success", `Deployed to RPi5 at ${rpi5Ip}:${rpi5Port}`);
+      } catch (e) {
+        get().showToast("error", `RPi5 deploy failed: ${String(e)}`);
+        throw e;
       }
-    } catch (e) {
-      console.error("Load failed:", e);
-    }
-  },
-
-  // Alarms
-  scadaUrl: "",
-  alarms: [],
-  setScadaUrl: (url) => set({ scadaUrl: url }),
-  addAlarm: (alarm) => {
-    const newAlarm: AlarmRule = { ...alarm, id: uid() };
-    set((state) => ({ alarms: [...state.alarms, newAlarm] }));
-  },
-  removeAlarm: (id) => {
-    set((state) => ({ alarms: state.alarms.filter((a) => a.id !== id) }));
-  },
-  updateAlarm: (id, updates) => {
-    set((state) => ({
-      alarms: state.alarms.map((a) => (a.id === id ? { ...a, ...updates } : a)),
-    }));
-  },
-
-  // Access control
-  accessConfig: null,
-  setAccessConfig: (config) => set({ accessConfig: config }),
-
-  // i18n
-  translations: {},
-  defaultLanguage: "en",
-  addLanguage: (code) => {
-    set((state) => {
-      if (state.translations[code]) return state;
-      const newTranslations = { ...state.translations, [code]: {} };
-      return { translations: newTranslations };
-    });
-  },
-  removeLanguage: (code) => {
-    set((state) => {
-      const { [code]: _, ...rest } = state.translations;
-      return { translations: rest };
-    });
-  },
-  setTranslation: (key, langCode, value) => {
-    set((state) => ({
-      translations: {
-        ...state.translations,
-        [langCode]: {
-          ...state.translations[langCode],
-          [key]: value,
-        },
-      },
-    }));
-  },
-  setDefaultLanguage: (code) => set({ defaultLanguage: code }),
-  collectTranslatableStrings: () => {
-    const { screens, alarms } = get();
-    const strings = new Set<string>();
-    for (const screen of screens) {
-      strings.add(screen.name);
-      for (const widget of screen.widgets) {
-        if (widget.label) strings.add(widget.label);
+    },
+    deployToEsp32: async (ip) => {
+      const { screens, plcIp, scadaUrl, alarms, accessConfig, translations, defaultLanguage, kioskMode } = get();
+      try {
+        const html = await invoke<string>("export_hmi", {
+          request: {
+            screens,
+            plcIp,
+            scadaUrl: scadaUrl || undefined,
+            alarms,
+            accessConfig: accessConfig || undefined,
+            translations: Object.keys(translations).length > 0 ? translations : undefined,
+            defaultLanguage: defaultLanguage || undefined,
+            kioskMode,
+          },
+        });
+        await invoke<string>("deploy_to_esp32", { ip, html });
+        get().showToast("success", `Deployed to ESP32 at ${ip}`);
+      } catch (e) {
+        get().showToast("error", `ESP32 deploy failed: ${String(e)}`);
+        throw e;
       }
-    }
-    for (const alarm of alarms) {
-      if (alarm.message) strings.add(alarm.message);
-    }
-    return Array.from(strings);
-  },
+    },
 
-  // Kiosk
-  kioskMode: false,
-  setKioskMode: (enabled) => set({ kioskMode: enabled }),
-
-  // RPi5 deploy
-  rpi5Ip: "",
-  rpi5Port: 8080,
-  setRpi5Ip: (ip) => set({ rpi5Ip: ip }),
-  setRpi5Port: (port) => set({ rpi5Port: port }),
-  deployToRpi5: async () => {
-    const { rpi5Ip, rpi5Port, screens, plcIp, scadaUrl, alarms, accessConfig, translations, defaultLanguage, kioskMode } = get();
-    try {
-      const html = await invoke<string>("export_hmi", {
-        request: {
-          screens,
-          plcIp,
-          scadaUrl: scadaUrl || undefined,
-          alarms,
-          accessConfig: accessConfig || undefined,
-          translations: Object.keys(translations).length > 0 ? translations : undefined,
-          defaultLanguage: defaultLanguage || undefined,
-          kioskMode,
-        },
+    // Undo/Redo
+    canUndo: false,
+    canRedo: false,
+    undo: () => {
+      const { screens } = get();
+      if (undoStack.length === 0) return;
+      redoStack.push(JSON.stringify(screens));
+      const prev = JSON.parse(undoStack.pop()!) as HmiScreen[];
+      set({
+        screens: prev,
+        selectedWidgetId: null,
+        activeScreenIndex: Math.min(get().activeScreenIndex, prev.length - 1),
+        canUndo: undoStack.length > 0,
+        canRedo: true,
+        isDirty: true,
       });
-      const result = await invoke<string>("deploy_to_rpi5", {
-        ip: rpi5Ip,
-        port: rpi5Port,
-        html,
+    },
+    redo: () => {
+      const { screens } = get();
+      if (redoStack.length === 0) return;
+      undoStack.push(JSON.stringify(screens));
+      const next = JSON.parse(redoStack.pop()!) as HmiScreen[];
+      set({
+        screens: next,
+        selectedWidgetId: null,
+        activeScreenIndex: Math.min(get().activeScreenIndex, next.length - 1),
+        canUndo: true,
+        canRedo: redoStack.length > 0,
+        isDirty: true,
       });
-      console.log("RPi5 deploy:", result);
-    } catch (e) {
-      console.error("RPi5 deploy failed:", e);
-      throw e;
-    }
-  },
-
-  // Undo/Redo
-  canUndo: false,
-  canRedo: false,
-  undo: () => {
-    const { screens } = get();
-    if (undoStack.length === 0) return;
-    redoStack.push(JSON.stringify(screens));
-    const prev = JSON.parse(undoStack.pop()!);
-    set({ screens: prev, selectedWidgetId: null, canUndo: undoStack.length > 0, canRedo: true });
-  },
-  redo: () => {
-    const { screens } = get();
-    if (redoStack.length === 0) return;
-    undoStack.push(JSON.stringify(screens));
-    const next = JSON.parse(redoStack.pop()!);
-    set({ screens: next, selectedWidgetId: null, canUndo: true, canRedo: redoStack.length > 0 });
-  },
-}));
+    },
+  };
+});

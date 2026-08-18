@@ -13,18 +13,18 @@ test.describe("Editor", () => {
 
   test("toolbar renders run button", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: /run/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible({ timeout: 10000 });
   });
 
   test("sidebar shows watch tab", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("Watch")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Watch", exact: true })).toBeVisible({ timeout: 10000 });
   });
 
   test("undo and redo buttons present", async ({ page }) => {
     await page.goto("/");
-    const undo = page.getByRole("button", { name: /undo/i });
-    const redo = page.getByRole("button", { name: /redo/i });
+    const undo = page.getByTitle("Undo (Cmd+Z)");
+    const redo = page.getByTitle("Redo (Cmd+Shift+Z)");
     await expect(undo).toBeVisible({ timeout: 10000 });
     await expect(redo).toBeVisible();
   });

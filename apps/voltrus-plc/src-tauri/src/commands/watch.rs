@@ -59,15 +59,57 @@ pub async fn force_variable(
     name: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    // Remote mode: send force command to ESP32 via persistent WebSocket
+    // Remote mode: route by target kind — gRPC (Linux) or WebSocket (ESP32)
     let connected = state.target.connected.load(std::sync::atomic::Ordering::SeqCst);
     if connected {
-        let force_val = RemoteForceValue::from_json(&value);
-        crate::commands::target::send_remote_force(&state.target.ws_sink, &name, &force_val).await?;
-        return Ok(());
+        let kind = state.target.target_kind.lock().await.clone();
+        match kind {
+            crate::state::TargetKind::Grpc => {
+                let resp = {
+                    let guard = state.target.grpc_client.lock().await;
+                    let Some(client) = guard.as_ref() else {
+                        // No persistent gRPC connection — fall through to local below
+                        return force_local(&state, &name, value).await;
+                    };
+                    let mut c = client.clone();
+                    match &value {
+                        serde_json::Value::Bool(b) => c.force_bool(&name, *b).await,
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                c.force_dint(&name, i as i32).await
+                            } else if let Some(f) = n.as_f64() {
+                                c.force_real(&name, f as f32).await
+                            } else {
+                                c.force_dint(&name, 0).await
+                            }
+                        }
+                        serde_json::Value::String(s) => c.force_string(&name, s).await,
+                        _ => c.force_dint(&name, 0).await,
+                    }
+                }
+                .map_err(|e| format!("gRPC force failed: {e}"))?;
+                if !resp.success {
+                    return Err(resp.error_message);
+                }
+                return Ok(());
+            }
+            crate::state::TargetKind::WebSocket => {
+                let force_val = RemoteForceValue::from_json(&value);
+                crate::commands::target::send_remote_force(&state.target.ws_sink, &name, &force_val).await?;
+                return Ok(());
+            }
+        }
     }
 
-    // Local softPLC mode
+    force_local(&state, &name, value).await
+}
+
+/// Force a variable on the local softPLC.
+async fn force_local(
+    state: &tauri::State<'_, AppState>,
+    name: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
     let mut plc = state.runtime.plc.lock().await;
     match *plc {
         Some(ref mut runtime) => {
@@ -85,7 +127,7 @@ pub async fn force_variable(
                 serde_json::Value::String(s) => mt_plc_runtime::PlcValue::String(s),
                 _ => mt_plc_runtime::PlcValue::Dint(0),
             };
-            runtime.force_variable(&name, plc_val)
+            runtime.force_variable(name, plc_val)
         }
         None => Err("Runtime not running".to_string()),
     }
@@ -96,18 +138,45 @@ pub async fn unforce_variable(
     state: tauri::State<'_, AppState>,
     name: String,
 ) -> Result<(), String> {
-    // Remote mode: send unforce command to ESP32 via persistent WebSocket
+    // Remote mode: route by target kind — gRPC (Linux) or WebSocket (ESP32)
     let connected = state.target.connected.load(std::sync::atomic::Ordering::SeqCst);
     if connected {
-        crate::commands::target::send_remote_unforce(&state.target.ws_sink, &name).await?;
-        return Ok(());
+        let kind = state.target.target_kind.lock().await.clone();
+        match kind {
+            crate::state::TargetKind::Grpc => {
+                let resp = {
+                    let guard = state.target.grpc_client.lock().await;
+                    let Some(client) = guard.as_ref() else {
+                        return unforce_local(&state, &name).await;
+                    };
+                    let mut c = client.clone();
+                    c.unforce_variable(&name).await
+                }
+                .map_err(|e| format!("gRPC unforce failed: {e}"))?;
+                if !resp.success {
+                    return Err(resp.error_message);
+                }
+                return Ok(());
+            }
+            crate::state::TargetKind::WebSocket => {
+                crate::commands::target::send_remote_unforce(&state.target.ws_sink, &name).await?;
+                return Ok(());
+            }
+        }
     }
 
-    // Local softPLC mode
+    unforce_local(&state, &name).await
+}
+
+/// Unforce a variable on the local softPLC.
+async fn unforce_local(
+    state: &tauri::State<'_, AppState>,
+    name: &str,
+) -> Result<(), String> {
     let mut plc = state.runtime.plc.lock().await;
     match *plc {
         Some(ref mut runtime) => {
-            runtime.unforce_variable(&name);
+            runtime.unforce_variable(name);
             Ok(())
         }
         None => Err("Runtime not running".to_string()),

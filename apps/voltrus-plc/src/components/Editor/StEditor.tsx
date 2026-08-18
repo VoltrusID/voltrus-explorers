@@ -54,8 +54,7 @@ const breakpointField = StateField.define<RangeSet<GutterMarker>>({
     const currentExe = exeLine !== undefined ? exeLine : useStore.getState().currentExecutionLine;
 
     const doc = tr.state.doc;
-    const iter = marks.iter();
-    let result = RangeSet.empty<GutterMarker>();
+    let result: RangeSet<GutterMarker> = RangeSet.empty;
 
     for (const line of currentBps) {
       if (line >= 1 && line <= doc.lines) {

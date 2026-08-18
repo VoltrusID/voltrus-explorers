@@ -17,13 +17,29 @@ export function gaugeColor(fraction: number): string {
   return "#ef4444";
 }
 
+/** Mirrors the exported runtime's ON check exactly (widgets.rs) so the
+ *  designer preview never disagrees with the deployed HMI. */
+export function isOn(v: unknown): boolean {
+  return v === true || v === 1 || v === "1" || v === "true";
+}
+
+function formatValue(v: unknown, dataType?: string): string {
+  if (typeof v === "number") {
+    return dataType === "REAL" || dataType === "FLOAT" ? v.toFixed(1) : String(Math.round(v));
+  }
+  return String(v);
+}
+
+// Rolling chart buffer per bound variable (designer-side trend preview).
+const chartBuffers = new Map<string, number[]>();
+const CHART_MAX_POINTS = 50;
+
 export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const { min, max, label, variableName } = widget;
-  const raw = Number(liveValue);
-  const fraction = liveValue !== undefined
-    ? Math.max(0, Math.min(1, (raw - min) / (max - min || 1)))
-    : 0.42;
-  const value = min + fraction * (max - min);
+  const { min, max, label, variableName, dataType } = widget;
+  const hasValue = liveValue !== undefined && typeof liveValue === "number";
+  const fraction = hasValue
+    ? Math.max(0, Math.min(1, ((liveValue as number) - min) / (max - min || 1)))
+    : 0;
   const arcEndAngle = fraction * 180; // 0 to 180 degrees
 
   const startPt = arcPoint(0);   // right end (angle 0)
@@ -51,7 +67,7 @@ export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveVal
         )}
         {/* Value text */}
         <text x="50" y="52" textAnchor="middle" fill="white" fontSize="13" fontWeight="bold" fontFamily="sans-serif">
-          {Math.round(value)}
+          {hasValue ? formatValue(liveValue, dataType) : "--"}
         </text>
       </svg>
       {variableName && <span className="widget-var-label">{variableName}</span>}
@@ -60,9 +76,8 @@ export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveVal
 }
 
 export function IndicatorPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const active = liveValue !== undefined
-    ? Number(liveValue) > 0 || !!liveValue
-    : !!widget.variableName;
+  // Bound without a value yet, or unbound: show OFF (never a fake ON).
+  const active = liveValue !== undefined ? isOn(liveValue) : false;
   const fillColor = active ? "#4ade80" : "#666";
   const circleColor = active ? "#4ade80" : widget.color;
   return (
@@ -82,25 +97,23 @@ export function IndicatorPreview({ widget, liveValue }: { widget: HmiWidget; liv
 }
 
 export function ButtonPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const isOn = liveValue !== undefined
-    ? Number(liveValue) > 0 || !!liveValue
-    : !!widget.variableName;
-  const bg = isOn ? widget.color : "#3b82f6";
+  const isLit = liveValue !== undefined ? isOn(liveValue) : false;
+  const bg = isLit ? widget.color : "#3b82f6";
   return (
     <div className="widget-preview-button" style={{ background: bg, borderRadius: 6 }}>
-      <span className="button-label" style={{ fontSize: widget.fontSize }}>{widget.label}</span>
+      <span className="button-label" style={{ fontSize: widget.fontSize, color: "#fff" }}>{widget.label}</span>
       {widget.variableName && <span className="button-var">{widget.variableName}</span>}
     </div>
   );
 }
 
 export function SliderPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const { min, max, color, label, variableName } = widget;
+  const { min, max, color, label, variableName, dataType } = widget;
+  const hasValue = liveValue !== undefined && typeof liveValue === "number";
   const raw = Number(liveValue);
-  const fraction = liveValue !== undefined
+  const fraction = hasValue
     ? Math.max(0, Math.min(1, (raw - min) / (max - min || 1)))
-    : 0.5;
-  const value = min + fraction * (max - min);
+    : 0;
   return (
     <div className="widget-preview-slider">
       <svg viewBox="0 0 100 20" preserveAspectRatio="xMidYMid meet">
@@ -111,16 +124,36 @@ export function SliderPreview({ widget, liveValue }: { widget: HmiWidget; liveVa
         {/* Thumb */}
         <circle cx={5 + fraction * 90} cy="10" r="5" fill="#fff" stroke={color} strokeWidth="1.5" />
       </svg>
-      <span className="slider-value">{Math.round(value)}</span>
+      <span className="slider-value">{hasValue ? formatValue(liveValue, dataType) : "--"}</span>
       {variableName && <span className="widget-var-label">{variableName}</span>}
     </div>
   );
 }
 
-export function ChartPreview({ widget, liveValue: _liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
+export function ChartPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
   const { label, variableName, color } = widget;
-  // Placeholder sparkline polyline
-  const points = "5,35 15,28 25,32 35,18 45,24 55,14 65,20 75,10 85,16 95,12";
+
+  let points = "";
+  if (variableName && typeof liveValue === "number") {
+    const buf = chartBuffers.get(variableName) ?? [];
+    buf.push(liveValue);
+    if (buf.length > CHART_MAX_POINTS) buf.shift();
+    chartBuffers.set(variableName, buf);
+
+    if (buf.length >= 2) {
+      const minV = Math.min(...buf);
+      const maxV = Math.max(...buf);
+      const range = maxV - minV || 1;
+      points = buf
+        .map((v, i) => {
+          const px = 5 + (i / (buf.length - 1)) * 90;
+          const py = 45 - ((v - minV) / range) * 38;
+          return `${px.toFixed(1)},${py.toFixed(1)}`;
+        })
+        .join(" ");
+    }
+  }
+
   return (
     <div className="widget-preview-chart">
       <svg viewBox="0 0 100 50" preserveAspectRatio="xMidYMid meet">
@@ -130,8 +163,14 @@ export function ChartPreview({ widget, liveValue: _liveValue }: { widget: HmiWid
         <line x1="5" y1="25" x2="95" y2="25" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
         <line x1="35" y1="5" x2="35" y2="45" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
         <line x1="65" y1="5" x2="65" y2="45" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
-        {/* Sparkline */}
-        <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+        {/* Trend line — real data once values stream in */}
+        {points ? (
+          <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+        ) : (
+          <text x="50" y="30" textAnchor="middle" fill="#555" fontSize="6" fontFamily="sans-serif">
+            {variableName ? "waiting for data" : "unbound"}
+          </text>
+        )}
         {/* Label */}
         <text x="50" y="8" textAnchor="middle" fill="#888" fontSize="6" fontFamily="sans-serif">{label}</text>
       </svg>

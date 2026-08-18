@@ -41,16 +41,30 @@ pub async fn new_file(name: String, pou_type: String) -> Result<String, String> 
 
 #[tauri::command]
 pub async fn open_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn save_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, &content).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, &content).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn list_project_files(dir: String) -> Result<Vec<FileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_project_files_blocking(&dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn list_project_files_blocking(dir: &str) -> Result<Vec<FileEntry>, String> {
     let path = Path::new(&dir);
     if !path.exists() {
         return Ok(vec![]);
@@ -350,17 +364,33 @@ pub struct ProjectFile {
     pub watch_list: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub breakpoints: Vec<(String, Vec<u32>)>,
+    /// Last target IP / SCADA URL (execution_mode is intentionally NOT
+    /// persisted — live connections can't be restored).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scada_url: Option<String>,
     pub created_at: String,
 }
 
 #[tauri::command]
 pub async fn save_project(path: String, project: ProjectFile) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&project).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &json).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, &json).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn load_project(path: String) -> Result<ProjectFile, String> {
-    let json = std::fs::read_to_string(&path).map_err(|e| format!("Failed to read project file: {}", e))?;
-    serde_json::from_str::<ProjectFile>(&json).map_err(|e| format!("Failed to parse project file: {}", e))
+    tauri::async_runtime::spawn_blocking(move || {
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read project file: {}", e))?;
+        serde_json::from_str::<ProjectFile>(&json)
+            .map_err(|e| format!("Failed to parse project file: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

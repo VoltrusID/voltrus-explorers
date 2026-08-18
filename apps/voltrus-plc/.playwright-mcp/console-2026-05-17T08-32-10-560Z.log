@@ -1,4 +1,0 @@
-[      88ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:1440/node_modules/.vite/deps/react-dom_client.js?v=1d4080b7:20102
-[      92ms] TypeError: source is not a function
-    at _NodeSet.extend (http://localhost:1440/node_modules/.vite/deps/chunk-5TIUC7BQ.js?v=1d4080b7:192:19)
-    at http://localhost:1440/src/lang/iecst/index.ts?t=1779006705371:60:40

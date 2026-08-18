@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "../store";
 import type { AlarmRule } from "../types";
 
@@ -11,7 +11,18 @@ export function AlarmConfig() {
   const removeAlarm = useStore((s) => s.removeAlarm);
   const updateAlarm = useStore((s) => s.updateAlarm);
 
-  const [scadaEnabled, setScadaEnabled] = useState(false);
+  // Enabled == a URL is configured (the export gates SCADA polling on it).
+  // Remember the last URL so toggling off/on does not lose it.
+  const scadaEnabled = scadaUrl.trim().length > 0;
+  const lastScadaUrl = useRef(scadaUrl);
+  useEffect(() => {
+    if (scadaUrl.trim()) lastScadaUrl.current = scadaUrl;
+  }, [scadaUrl]);
+  const toggleScada = () => {
+    if (scadaEnabled) setScadaUrl("");
+    else setScadaUrl(lastScadaUrl.current || "http://localhost:8080");
+  };
+
   const [showForm, setShowForm] = useState(false);
   const [formVar, setFormVar] = useState("");
   const [formSeverity, setFormSeverity] = useState<"critical" | "warning">("warning");
@@ -77,7 +88,7 @@ export function AlarmConfig() {
           }}
         >
           <button
-            onClick={() => setScadaEnabled(!scadaEnabled)}
+            onClick={toggleScada}
             style={{
               width: 36,
               height: 20,

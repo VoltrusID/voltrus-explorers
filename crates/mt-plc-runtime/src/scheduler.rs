@@ -1,4 +1,3 @@
-use crate::types::CycleStats;
 
 /// Cyclic scan scheduler
 pub struct Scheduler {

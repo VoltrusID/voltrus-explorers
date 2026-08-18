@@ -1,5 +1,8 @@
+use super::js_escape;
+
 /// Generate the WebSocket runtime JS: screen navigation, binary parser, force-var, button handler.
 pub fn render_ws_runtime_js(plc_ip: &str) -> String {
+    let plc_ip_js = js_escape(plc_ip);
     format!(
         r#"// --- Screen Navigation ---
 function switchScreen(idx) {{
@@ -23,23 +26,35 @@ var ws = null;
 var lastUpdate = Date.now();
 var reconnectDelay = 1000;
 var maxReconnectDelay = 30000;
+var reconnectTimer = null;
+
+function scheduleReconnect() {{
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(function() {{
+        reconnectTimer = null;
+        connectWS();
+    }}, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+}}
 
 function connectWS() {{
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     try {{
-        ws = new WebSocket('ws://{plc_ip}/ws/plc');
+        ws = new WebSocket('ws://{plc_ip_js}/ws/plc');
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = function() {{
             document.getElementById('wsStatus').className = 'status-dot connected';
             document.getElementById('wsLabel').textContent = 'Connected';
             reconnectDelay = 1000;
+            if (typeof hideConnectionLost === 'function') hideConnectionLost();
+            if (typeof resetWatchdog === 'function') resetWatchdog();
         }};
 
         ws.onclose = function() {{
             document.getElementById('wsStatus').className = 'status-dot disconnected';
             document.getElementById('wsLabel').textContent = 'Disconnected';
-            setTimeout(connectWS, reconnectDelay);
-            reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+            scheduleReconnect();
         }};
 
         ws.onmessage = function(e) {{
@@ -47,6 +62,7 @@ function connectWS() {{
             var dt = now - lastUpdate;
             lastUpdate = now;
             document.getElementById('updateRate').textContent = dt + ' ms';
+            if (typeof resetWatchdog === 'function') resetWatchdog();
             try {{
                 parseBinaryFrame(e.data);
             }} catch(ex) {{
@@ -62,13 +78,23 @@ function connectWS() {{
 
         ws.onerror = function() {{}};
     }} catch(ex) {{
-        setTimeout(connectWS, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+        scheduleReconnect();
     }}
 }}
 
 // --- Binary Frame Parser ---
 // VAR_UPDATE (0x01): [2B var_count] then per var: [2B name_len] [name_bytes] [1B type] [4B value] [4B timestamp]
+// Wire type codes match firmware plc_value_type_t:
+// BOOL=0 BYTE=1 INT=2 DINT=3 REAL=4 TIME=5 STRING=6 WORD=7 DWORD=8
+function decodeVarValue(view, offset, varType) {{
+    switch (varType) {{
+        case 4: return view.getFloat32(offset, true);   // REAL
+        case 7: return view.getUint32(offset, true);    // WORD (unsigned)
+        case 8: return view.getUint32(offset, true);    // DWORD (unsigned)
+        default: return view.getInt32(offset, true);    // BOOL/BYTE/INT/DINT/TIME/STRING
+    }}
+}}
+
 function parseBinaryFrame(buf) {{
     var view = new DataView(buf);
     var offset = 0;
@@ -98,12 +124,7 @@ function parseBinaryFrame(buf) {{
         offset += 1;
 
         if (offset + 4 > view.byteLength) break;
-        var value;
-        if (varType === 3) {{
-            value = view.getFloat32(offset, true);
-        }} else {{
-            value = view.getInt32(offset, true);
-        }}
+        var value = decodeVarValue(view, offset, varType);
         offset += 4;
 
         if (offset + 4 > view.byteLength) break;
@@ -121,6 +142,8 @@ function parseBinaryFrame(buf) {{
 }}
 
 // --- Force Variable Write-back ---
+// varType must match the target's wire type (BOOL=0 ... REAL=4 ... DWORD=8);
+// REAL is written as float32, everything else as int32.
 function sendForceVar(name, varType, value) {{
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     var nameBytes = [];
@@ -132,7 +155,7 @@ function sendForceVar(name, varType, value) {{
     view.setUint16(offset, nameBytes.length, true); offset += 2;
     for (var i = 0; i < nameBytes.length; i++) {{ view.setUint8(offset, nameBytes[i]); offset += 1; }}
     view.setUint8(offset, varType); offset += 1;
-    if (varType === 3) {{
+    if (varType === 4) {{
         view.setFloat32(offset, Number(value), true);
     }} else {{
         view.setInt32(offset, Number(value), true);
@@ -142,13 +165,14 @@ function sendForceVar(name, varType, value) {{
 }}
 
 // --- Button Handler ---
-function handleButton(varName, toggleValue) {{
+function handleButton(varName, toggleValue, varType) {{
     if (!varName) return;
     buttonStates[varName] = !!toggleValue;
-    sendForceVar(varName, 0, toggleValue ? 1 : 0);
+    sendForceVar(varName, varType || 0, toggleValue ? 1 : 0);
 }}
 
 // --- Init ---
-connectWS();"#
+connectWS();"#,
+        plc_ip_js = plc_ip_js,
     )
 }

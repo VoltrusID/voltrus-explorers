@@ -103,6 +103,9 @@ pub async fn deploy_to_target(
         _ => auto_gpio_mappings(&module.variable_slots),
     };
 
+    // Cache for `get_io_mappings`
+    *state.io.mappings.lock().await = frontend_cache(io_mappings.as_deref());
+
     let bytecode = serialize_bytecode(&module, &mappings)
         .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
 
@@ -322,7 +325,7 @@ pub async fn target_status(state: tauri::State<'_, AppState>) -> Result<TargetSt
 /// Register the ESP32 target as a device in Voltrus SCADA.
 #[tauri::command]
 pub async fn register_scada_device(
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     registration: ScadaRegistration,
 ) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::new();
@@ -398,10 +401,16 @@ pub async fn set_target_kind(
 }
 
 /// Deploy compiled bytecode to a Linux target via gRPC.
+///
+/// The Linux runtime deserializes the payload with `bincode` (see the
+/// `Deploy` handler in `mt-grpc` server), so the module is sent via
+/// serde/bincode — the ESP32 `VLT1` format is only used by the HTTP
+/// deploy path (`deploy_to_target`).
 #[tauri::command]
 pub async fn deploy_via_grpc(
     state: tauri::State<'_, AppState>,
     addr: String,
+    io_mappings: Option<Vec<FrontendIoMapping>>,
 ) -> Result<DeployResult, String> {
     let module = {
         let compiler = state.compiler.lock().await;
@@ -409,14 +418,36 @@ pub async fn deploy_via_grpc(
     };
 
     let module = module.ok_or("No compiled program. Build first.")?;
-    let bytecode = serialize_bytecode(&module, &[])
+
+    // Cache for `get_io_mappings`
+    *state.io.mappings.lock().await = frontend_cache(io_mappings.as_deref());
+
+    let bytecode = bincode::serialize(&module)
         .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
+
+    // I/O mappings travel in the config JSON (proto IoMapping shape) so the
+    // Linux runtime can wire its IoManager.
+    let io_json: Vec<serde_json::Value> = match io_mappings {
+        Some(ref frontend) if !frontend.is_empty() => frontend
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "variable_name": m.variable,
+                    "address": m.address,
+                    "driver": m.driver_id,
+                    "connection_json": m.protocol_address,
+                })
+            })
+            .collect(),
+        _ => vec![],
+    };
+    let config = serde_json::json!({ "io_mappings": io_json }).to_string();
 
     let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
         .await
         .map_err(|e| format!("gRPC connection to {addr} failed: {e}"))?;
 
-    let resp = client.deploy(&bytecode, None::<&str>)
+    let resp = client.deploy(&bytecode, Some(config.as_str()))
         .await
         .map_err(|e| format!("gRPC deploy failed: {e}"))?;
 
@@ -426,8 +457,20 @@ pub async fn deploy_via_grpc(
         resp.error_message
     };
 
+    let success = resp.success;
+    if success {
+        *state.target.ip.lock().await = Some(addr.clone());
+        *state.target.target_kind.lock().await = crate::state::TargetKind::Grpc;
+        *state.target.grpc_addr.lock().await = Some(addr);
+        *state.target.grpc_client.lock().await = Some(client);
+        state
+            .target
+            .connected
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     Ok(DeployResult {
-        success: resp.success,
+        success,
         message: msg,
         byte_count: Some(bytecode.len()),
     })
@@ -436,11 +479,11 @@ pub async fn deploy_via_grpc(
 /// Start the remote runtime via gRPC.
 #[tauri::command]
 pub async fn grpc_start(
+    state: tauri::State<'_, AppState>,
     addr: String,
     cycle_ms: u32,
 ) -> Result<String, String> {
-    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
-        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+    let mut client = grpc_client_for(&state, &addr).await?;
     let config = serde_json::json!({"scan_cycle_ms": cycle_ms}).to_string();
     let resp = client.start(Some(config.as_str())).await
         .map_err(|e| format!("gRPC start failed: {e}"))?;
@@ -449,9 +492,8 @@ pub async fn grpc_start(
 
 /// Stop the remote runtime via gRPC.
 #[tauri::command]
-pub async fn grpc_stop(addr: String) -> Result<String, String> {
-    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
-        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+pub async fn grpc_stop(state: tauri::State<'_, AppState>, addr: String) -> Result<String, String> {
+    let mut client = grpc_client_for(&state, &addr).await?;
     let resp = client.stop().await
         .map_err(|e| format!("gRPC stop failed: {e}"))?;
     Ok(format!("{:?}", resp.status))
@@ -459,12 +501,39 @@ pub async fn grpc_stop(addr: String) -> Result<String, String> {
 
 /// Step the remote runtime via gRPC.
 #[tauri::command]
-pub async fn grpc_step(addr: String) -> Result<String, String> {
-    let mut client = mt_grpc::client::PlcRuntimeClient::connect(&addr)
-        .await.map_err(|e| format!("gRPC connect failed: {e}"))?;
+pub async fn grpc_step(state: tauri::State<'_, AppState>, addr: String) -> Result<String, String> {
+    let mut client = grpc_client_for(&state, &addr).await?;
     let resp = client.step().await
         .map_err(|e| format!("gRPC step failed: {e}"))?;
     Ok(format!("{:?}", resp.status))
+}
+
+/// Return the persistent gRPC client when it matches `addr`; otherwise
+/// connect, store it, and mark the target connected.
+async fn grpc_client_for(
+    state: &tauri::State<'_, AppState>,
+    addr: &str,
+) -> Result<mt_grpc::client::PlcRuntimeClient, String> {
+    {
+        let stored_addr = state.target.grpc_addr.lock().await;
+        if stored_addr.as_deref() == Some(addr) {
+            let client = state.target.grpc_client.lock().await;
+            if let Some(c) = client.as_ref() {
+                return Ok(c.clone());
+            }
+        }
+    }
+
+    let client = mt_grpc::client::PlcRuntimeClient::connect(addr)
+        .await
+        .map_err(|e| format!("gRPC connect failed: {e}"))?;
+    *state.target.grpc_addr.lock().await = Some(addr.to_string());
+    *state.target.grpc_client.lock().await = Some(client.clone());
+    state
+        .target
+        .connected
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(client)
 }
 
 // ── Internal helpers ──
@@ -708,6 +777,21 @@ pub async fn send_remote_unforce(
 ) -> Result<(), String> {
     let payload = build_unforce_payload(name);
     send_via_sink(ws_sink, &payload).await
+}
+
+/// Snapshot frontend mappings for `get_io_mappings` (lossless, same shape).
+fn frontend_cache(frontend: Option<&[FrontendIoMapping]>) -> Vec<crate::commands::io::IoMapping> {
+    frontend
+        .unwrap_or(&[])
+        .iter()
+        .map(|m| crate::commands::io::IoMapping {
+            variable: m.variable.clone(),
+            direction: m.direction.clone(),
+            address: m.address.clone(),
+            driver_id: m.driver_id.clone(),
+            protocol_address: m.protocol_address.clone(),
+        })
+        .collect()
 }
 
 /// Resolve frontend string-based mappings to index-based bytecode mappings.

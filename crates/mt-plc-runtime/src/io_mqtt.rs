@@ -54,6 +54,7 @@ impl MqttIoDriver {
             while let Some(event) = client.next_event().await {
                 let msg = match event {
                     mt_mqtt::MqttClientEvent::Message(msg) => msg,
+                    _ => continue,
                 };
                 let mut cache = cache.lock().await;
                 cache.insert(msg.topic.clone(), msg.payload.clone());

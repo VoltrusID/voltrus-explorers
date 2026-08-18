@@ -92,7 +92,7 @@ export function LanguageManager() {
         });
       }
     } catch (e) {
-      console.error("Export translations failed:", e);
+      useStore.getState().showToast("error", `Export translations failed: ${String(e)}`);
     }
   }, [translations]);
 
@@ -116,7 +116,7 @@ export function LanguageManager() {
         }
       }
     } catch (e) {
-      console.error("Import translations failed:", e);
+      useStore.getState().showToast("error", `Import translations failed: ${String(e)}`);
     }
   }, [addLanguage, setTranslation]);
 

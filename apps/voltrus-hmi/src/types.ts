@@ -9,6 +9,9 @@ export interface HmiWidget {
   height: number;
   label: string;
   variableName: string;
+  /** PLC data type of the bound variable ("BOOL" | "INT" | "REAL" | ...) —
+   *  controls the wire type code used for writes in the exported runtime. */
+  dataType?: string;
   min: number;
   max: number;
   color: string;

@@ -506,7 +506,7 @@ export default function App() {
             <ul className="file-list">
               {stFiles.length === 0 ? (
                 <li className="file-item" style={{ color: "var(--text-muted)" }}>
-                  No .st files found
+                  No program files found
                 </li>
               ) : (
                 stFiles.map((f) => (
@@ -515,7 +515,9 @@ export default function App() {
                     className={`file-item ${openFiles[activeFileIndex]?.path === f.path ? "active" : ""}`}
                     onClick={() => openFile(f.path)}
                   >
-                    <span style={{ fontSize: 10 }}>ST</span>
+                    <span style={{ fontSize: 10 }}>
+                      {(f.name.split(".").pop() || "st").toUpperCase().slice(0, 3)}
+                    </span>
                     <span>{f.name}</span>
                   </li>
                 ))

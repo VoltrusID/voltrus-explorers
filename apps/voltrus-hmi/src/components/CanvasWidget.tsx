@@ -14,6 +14,7 @@ export function CanvasWidget({
   widget,
   selected,
   onSelect,
+  onDragStart,
   onMove,
   onResize,
   zoom,
@@ -26,6 +27,8 @@ export function CanvasWidget({
   widget: HmiWidget;
   selected: boolean;
   onSelect: () => void;
+  /** Called once at drag/resize start — pushes the single undo checkpoint. */
+  onDragStart: () => void;
   onMove: (x: number, y: number) => void;
   onResize: (w: number, h: number) => void;
   zoom: number;
@@ -47,6 +50,14 @@ export function CanvasWidget({
     origH: number;
   } | null>(null);
 
+  // Subscribe to only this widget's live value — returns a primitive, so the
+  // widget re-renders when its value changes, not on every PLC frame.
+  const liveValue = useStore((s) =>
+    widget.variableName
+      ? s.plcVariables.find((v) => v.name === widget.variableName)?.value
+      : undefined
+  );
+
   const snap = useCallback(
     (val: number) => (snapEnabled ? Math.round(val / 10) * 10 : val),
     [snapEnabled]
@@ -57,6 +68,8 @@ export function CanvasWidget({
       e.stopPropagation();
       e.preventDefault();
       onSelect();
+      // One checkpoint per gesture; the per-mousemove updates skip the stack.
+      onDragStart();
       dragState.current = {
         type,
         handle,
@@ -105,14 +118,10 @@ export function CanvasWidget({
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [widget, onSelect, onMove, onResize, zoom, snap]
+    [widget, onSelect, onDragStart, onMove, onResize, zoom, snap]
   );
 
   const renderPreview = () => {
-    const plcVariables = useStore.getState().plcVariables;
-    const liveValue = widget.variableName
-      ? plcVariables.find((v) => v.name === widget.variableName)?.value
-      : undefined;
     switch (widget.type) {
       case "gauge":
         return <GaugePreview widget={widget} liveValue={liveValue} />;

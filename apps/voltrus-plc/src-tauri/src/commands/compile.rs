@@ -31,11 +31,6 @@ pub async fn compile_source(
     let result = if let Some(ref extras) = extra_sources {
         let mut all_sources = vec![(file_name.clone(), source.clone())];
         all_sources.extend(extras.iter().cloned());
-        // Reorder: main source (program) first
-        if all_sources.len() > 1 {
-            let main = all_sources.remove(0);
-            all_sources.insert(0, main);
-        }
         mt_stc::compile_project(&all_sources)
     } else {
         mt_stc::compile(&source)

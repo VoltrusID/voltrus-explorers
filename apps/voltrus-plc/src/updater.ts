@@ -28,13 +28,19 @@ export async function installUpdate(
     const update = await check();
     if (!update) return false;
 
+    let downloaded = 0;
+    let total = 0;
     await update.downloadAndInstall((event) => {
       switch (event.event) {
         case "Started":
+          downloaded = 0;
+          total = event.data.contentLength ?? 0;
+          if (onProgress) onProgress(0);
           break;
         case "Progress":
-          if (onProgress) {
-            onProgress(Math.min(99, Math.round(event.data.chunkLength / 100)));
+          if (onProgress && total > 0) {
+            downloaded += event.data.chunkLength;
+            onProgress(Math.min(99, Math.round((downloaded / total) * 100)));
           }
           break;
         case "Finished":

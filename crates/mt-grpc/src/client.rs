@@ -9,6 +9,7 @@ use crate::pb::*;
 /// High-level gRPC client for the Voltrus PLC Runtime.
 ///
 /// Wraps the generated tonic client with ergonomic methods.
+#[derive(Clone)]
 pub struct PlcRuntimeClient {
     inner: TonicPlcRuntimeClient<Channel>,
 }

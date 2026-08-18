@@ -1,4 +1,5 @@
 use crate::*;
+use super::{js_escape, json_for_script};
 
 /// Generate alarm banner HTML (fixed position below nav bar).
 pub fn render_alarm_banner_html() -> String {
@@ -11,17 +12,36 @@ pub fn render_alarm_banner_html() -> String {
 </div>"#.to_string()
 }
 
+/// Validate a SCADA base URL: http(s) scheme, conservative charset.
+fn safe_scada_url(url: &str) -> &str {
+    let valid = (url.starts_with("http://") || url.starts_with("https://"))
+        && !url.contains('"')
+        && !url.contains('\'')
+        && !url.contains('<')
+        && !url.contains('>')
+        && !url.contains('\\');
+    if valid {
+        url
+    } else {
+        "http://localhost"
+    }
+}
+
 /// Generate alarm banner JS — SCADA polling + PLC variable monitoring + acknowledge.
 pub fn render_alarm_banner_js(alarm_rules: &[AlarmRule], scada_url: &str) -> String {
-    let rules_json = serde_json::to_string(alarm_rules).unwrap_or_else(|_| "[]".to_string());
-    let has_scada = !scada_url.is_empty();
+    // Rule values are free-form user strings; escape so they cannot break out
+    // of the embedded JSON (and thus the <script> block).
+    let rules_json = json_for_script(&serde_json::to_string(alarm_rules).unwrap_or_else(|_| "[]".to_string()));
+    let scada_url = safe_scada_url(scada_url);
+    let scada_url_js = js_escape(scada_url);
+    let has_scada = scada_url != "http://localhost";
 
     let scada_poll_js = if has_scada {
         format!(
             r#"
 var scadaAlarms = [];
 function connectSCADAAlarms() {{
-    fetch("{scada_url}/api/v1/alarms")
+    fetch("{scada_url_js}/api/v1/alarms")
         .then(function(r) {{ return r.json(); }})
         .then(function(data) {{
             scadaAlarms = (data.alarms || []).filter(function(a) {{ return !a.acknowledged; }});
@@ -30,11 +50,12 @@ function connectSCADAAlarms() {{
         .catch(function() {{}});
 }}
 function acknowledgeSCADAAlarm(id) {{
-    fetch("{scada_url}/api/v1/alarms/" + id + "/acknowledge", {{ method: 'POST' }})
+    fetch("{scada_url_js}/api/v1/alarms/" + id + "/acknowledge", {{ method: 'POST' }})
         .then(function() {{ connectSCADAAlarms(); }})
         .catch(function() {{}});
 }}
-"#
+"#,
+            scada_url_js = scada_url_js,
         )
     } else {
         "var scadaAlarms = [];\n".to_string()
@@ -99,7 +120,7 @@ function renderAlarms() {{
 
         var msg = document.createElement('span');
         msg.style.cssText = 'font-size:12px;color:#eee';
-        msg.textContent = a.message || '';
+        msg.textContent = (typeof t === 'function') ? t(a.message || '') : (a.message || '');
 
         var ts = document.createElement('span');
         ts.style.cssText = 'font-size:10px;color:#999;margin:0 8px';
@@ -140,8 +161,7 @@ function toggleAlarmBanner() {{
     }}
 }})();
 
-{scada_start}
-"#,
+{scada_start}"#,
         rules_json = rules_json,
         scada_poll_js = scada_poll_js,
         scada_start = if has_scada { "setInterval(connectSCADAAlarms, 5000); connectSCADAAlarms();" } else { "" },

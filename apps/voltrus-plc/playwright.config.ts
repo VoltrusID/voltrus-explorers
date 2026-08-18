@@ -5,12 +5,12 @@ export default defineConfig({
   timeout: 30000,
   retries: 0,
   use: {
-    baseURL: "http://localhost:1420",
+    baseURL: "http://localhost:1440",
     headless: true,
   },
   webServer: {
     command: "pnpm dev",
-    port: 1420,
+    port: 1440,
     reuseExistingServer: true,
     timeout: 30000,
   },

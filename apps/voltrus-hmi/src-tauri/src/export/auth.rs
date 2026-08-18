@@ -1,4 +1,5 @@
 use crate::*;
+use super::js_escape;
 
 /// Generate auth HTML — role indicator in status bar + PIN modal.
 pub fn render_auth_html() -> String {
@@ -31,6 +32,12 @@ pub fn render_auth_html() -> String {
 }
 
 /// Generate auth JS — PIN hashing, role enforcement, auto-logout, lockout.
+///
+/// Hashing uses a pure-JS SHA-256 (no `crypto.subtle`) so PIN login also works
+/// when the export is served over plain HTTP, where subtle crypto is undefined.
+/// The PIN is stretched (SHA-256 chained 5000 rounds) so the 4-digit keyspace
+/// cannot be brute-forced from the hashes embedded in the file. PinSetup.tsx
+/// in the designer computes the identical `stretchPin` — keep them in sync.
 pub fn render_auth_js(config: &AccessConfig) -> String {
     format!(
         r#"
@@ -47,12 +54,92 @@ var wrongAttempts = 0;
 var lockoutUntil = 0;
 var autoLogoutTimer = null;
 
+// Lockout survives page reloads within the session.
+try {{
+    wrongAttempts = parseInt(sessionStorage.getItem('pinAttempts') || '0', 10) || 0;
+    lockoutUntil = parseInt(sessionStorage.getItem('pinLockoutUntil') || '0', 10) || 0;
+}} catch (e) {{}}
+
+function persistPinState() {{
+    try {{
+        sessionStorage.setItem('pinAttempts', String(wrongAttempts));
+        sessionStorage.setItem('pinLockoutUntil', String(lockoutUntil));
+    }} catch (e) {{}}
+}}
+
+// --- Pure-JS SHA-256 (ASCII input only; salt and PIN digits are ASCII) ---
+function sha256Hex(ascii) {{
+    function rightRotate(value, amount) {{ return (value >>> amount) | (value << (32 - amount)); }}
+    var maxWord = Math.pow(2, 32);
+    var result = '';
+    var words = [];
+    var asciiBitLength = ascii.length * 8;
+    var hash = sha256Hex.h = sha256Hex.h || [];
+    var k = sha256Hex.k = sha256Hex.k || [];
+    var primeCounter = k.length;
+    var isComposite = {{}};
+    for (var candidate = 2; primeCounter < 64; candidate++) {{
+        if (!isComposite[candidate]) {{
+            for (var i = 0; i < 313; i += candidate) {{ isComposite[i] = candidate; }}
+            hash[primeCounter] = (Math.pow(candidate, 0.5) * maxWord) | 0;
+            k[primeCounter++] = (Math.pow(candidate, 1 / 3) * maxWord) | 0;
+        }}
+    }}
+    ascii += '\x80';
+    while (ascii.length % 64 - 56) ascii += '\x00';
+    for (var i = 0; i < ascii.length; i++) {{
+        var j = ascii.charCodeAt(i);
+        if (j >> 8) return '';
+        words[i >> 2] |= j << ((3 - i) % 4) * 8;
+    }}
+    words[words.length] = (asciiBitLength / maxWord) | 0;
+    words[words.length] = asciiBitLength;
+    for (var j = 0; j < words.length;) {{
+        var w = words.slice(j, j += 16);
+        var oldHash = hash;
+        hash = hash.slice(0, 8);
+        for (var i = 0; i < 64; i++) {{
+            var w15 = w[i - 15], w2 = w[i - 2];
+            var a = hash[0], e = hash[4];
+            var temp1 = hash[7]
+                + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+                + ((e & hash[5]) ^ ((~e) & hash[6]))
+                + k[i]
+                + (w[i] = (i < 16) ? w[i] : (
+                        w[i - 16]
+                        + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+                        + w[i - 7]
+                        + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+                    ) | 0
+                );
+            var temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+                + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+            hash = [(temp1 + temp2) | 0].concat(hash);
+            hash[4] = (hash[4] + temp1) | 0;
+        }}
+        for (var i = 0; i < 8; i++) {{
+            hash[i] = (hash[i] + oldHash[i]) | 0;
+        }}
+    }}
+    for (var i = 0; i < 8; i++) {{
+        for (var j = 3; j + 1; j--) {{
+            var b = (hash[i] >> (j * 8)) & 255;
+            result += ((b < 16) ? 0 : '') + b.toString(16);
+        }}
+    }}
+    return result;
+}}
+
+// Stretch: chain SHA-256 5000 times so the 10^4 PIN keyspace is
+// computationally expensive to search offline.
+function stretchPin(salt, pin) {{
+    var h = sha256Hex(salt + pin);
+    for (var i = 0; i < 5000; i++) h = sha256Hex(h);
+    return h;
+}}
+
 function hashPin(pin) {{
-    var encoder = new TextEncoder();
-    var data = encoder.encode(ACCESS_CONFIG.salt + pin);
-    return crypto.subtle.digest('SHA-256', data).then(function(hash) {{
-        return Array.from(new Uint8Array(hash)).map(function(b) {{ return b.toString(16).padStart(2, '0'); }}).join('');
-    }});
+    return Promise.resolve(stretchPin(ACCESS_CONFIG.salt, pin));
 }}
 
 function checkRole(required) {{
@@ -118,10 +205,19 @@ function enterPinDigit(d) {{
     pinBuffer += d;
     updatePinDots();
     if (pinBuffer.length === 4) {{
-        hashPin(pinBuffer).then(function(hash) {{
-            if (hash === ACCESS_CONFIG.supervisorPinHash) {{
+        var hash;
+        try {{
+            hash = hashPin(pinBuffer);
+        }} catch (ex) {{
+            document.getElementById('pin-error').textContent = 'Hash error';
+            pinBuffer = '';
+            updatePinDots();
+            return;
+        }}
+        hash.then(function(h) {{
+            if (h === ACCESS_CONFIG.supervisorPinHash) {{
                 currentRole = 'supervisor';
-            }} else if (hash === ACCESS_CONFIG.operatorPinHash) {{
+            }} else if (h === ACCESS_CONFIG.operatorPinHash) {{
                 currentRole = 'operator';
             }} else {{
                 wrongAttempts++;
@@ -131,11 +227,13 @@ function enterPinDigit(d) {{
                 }} else {{
                     document.getElementById('pin-error').textContent = 'Wrong PIN (' + wrongAttempts + '/3)';
                 }}
+                persistPinState();
                 pinBuffer = '';
                 updatePinDots();
                 return;
             }}
             wrongAttempts = 0;
+            persistPinState();
             closePinModal();
             applyRoleToControls();
             startAutoLogoutTimer();
@@ -164,9 +262,9 @@ document.addEventListener('touchstart', function() {{ startAutoLogoutTimer(); }}
 // Initialize as viewer
 applyRoleToControls();
 "#,
-        op_hash = config.operator_pin_hash,
-        sup_hash = config.supervisor_pin_hash,
-        salt = config.salt,
+        op_hash = js_escape(&config.operator_pin_hash),
+        sup_hash = js_escape(&config.supervisor_pin_hash),
+        salt = js_escape(&config.salt),
         auto_logout = config.auto_logout_minutes,
     )
 }

@@ -24,6 +24,8 @@ pub struct RuntimeState {
 pub struct IoState {
     pub driver: Arc<Mutex<Option<Box<dyn IoDriver>>>>,
     pub config: Arc<Mutex<Option<IoDriverConfig>>>,
+    /// Last I/O mappings handed to a deploy — surfaced by `get_io_mappings`.
+    pub mappings: Arc<Mutex<Vec<crate::commands::io::IoMapping>>>,
 }
 
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
@@ -43,6 +45,10 @@ pub struct TargetState {
     pub connected: Arc<std::sync::atomic::AtomicBool>,
     pub ws_sink: Arc<Mutex<Option<WsSink>>>,
     pub target_kind: Arc<Mutex<TargetKind>>,
+    /// Persistent gRPC client to a Linux runtime (set on successful gRPC deploy/connect).
+    pub grpc_client: Arc<Mutex<Option<mt_grpc::client::PlcRuntimeClient>>>,
+    /// Address of the persistent gRPC connection.
+    pub grpc_addr: Arc<Mutex<Option<String>>>,
 }
 
 pub struct AppState {

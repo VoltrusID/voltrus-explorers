@@ -14,6 +14,8 @@ set -euo pipefail
 #   ./scripts/release-local.sh --target x86_64          # macOS Intel only
 #   ./scripts/release-local.sh --target windows         # Windows x86_64 only
 #   ./scripts/release-local.sh --target mac             # Both macOS archs
+#   ./scripts/release-local.sh --bump                   # Auto patch-bump version, then build+upload
+#   ./scripts/release-local.sh --bump=minor             # minor-bump (or major) instead of patch
 #   SKIP_BUILD=1 ./scripts/release-local.sh --skip-build
 #
 # Prerequisites:
@@ -48,6 +50,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 VERSION=""
 DESCRIPTION="Bug fixes and improvements."
 TARGET_FILTER="all"
+BUMP="${BUMP:-none}"   # none|patch|minor|major — auto-bump version before building
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +60,8 @@ while [[ $# -gt 0 ]]; do
     --notarize)     NOTARIZE=1;    shift ;;
     --description)  DESCRIPTION="${2:-Bug fixes and improvements.}"; shift 2 ;;
     --build-number) BUILD_NUMBER="${2:-1}"; shift 2 ;;
+    --bump)         BUMP="patch"; shift ;;
+    --bump=*)       BUMP="${1#*=}"; shift ;;
     --)             shift; break ;;
     -*)             err "Unknown option: $1"; exit 1 ;;
     *)
@@ -88,6 +93,34 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1" >&2; }
 err()   { echo -e "${RED}[✗]${NC} $1" >&2; }
 step()  { echo -e "\n${BLUE}━━━ $1 ━━━${NC}" >&2; }
 banner() { echo -e "\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}\n${BOLD}$1${NC}\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}" >&2; }
+
+# Bump a semver string (patch|minor|major) → echo new version
+bump_semver() {
+  local part="$1" cur="$2" major minor patch
+  IFS='.' read -r major minor patch <<< "$cur"
+  case "$part" in
+    major) major=$((major+1)); minor=0; patch=0 ;;
+    minor) minor=$((minor+1)); patch=0 ;;
+    patch) patch=$((patch+1)) ;;
+    *) err "Invalid --bump part: $part (use patch|minor|major)"; exit 1 ;;
+  esac
+  echo "${major}.${minor}.${patch}"
+}
+
+# Apply version bump: writes new version back to tauri.conf.json + package.json
+# (first occurrence only, so package.json root version is updated, not dep versions).
+write_version() {
+  local v="$1" f
+  for f in "$PROJECT_DIR/src-tauri/tauri.conf.json" "$PROJECT_DIR/package.json"; do
+    perl -i -pe 'if (/"version":\s*"[^"]*"/ && !$done) { s/"version":\s*"[^"]*"/"version": "'"$v"'"/; $done=1; }' "$f"
+  done
+}
+
+if [[ "$BUMP" != "none" ]]; then
+  VERSION="$(bump_semver "$BUMP" "$VERSION")"
+  write_version "$VERSION"
+  ok "Bumped version → $VERSION ($BUMP)"
+fi
 
 BUILT_FILES=()
 

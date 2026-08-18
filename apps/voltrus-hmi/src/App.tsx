@@ -1,22 +1,27 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useStore, uid } from "./store";
+import { useStore } from "./store";
+import { checkForUpdates, installUpdate } from "./updater";
 import { TagBrowser } from "./components/TagBrowser";
 import { AlarmConfig } from "./components/AlarmConfig";
 import { PinSetup } from "./components/PinSetup";
 import { LanguageManager } from "./components/LanguageManager";
 import { CanvasWidget } from "./components/CanvasWidget";
 import { PropertiesPanel } from "./components/PropertiesPanel";
-import type { HmiWidget, HmiScreen, WidgetType } from "./types";
+import type { HmiWidget, WidgetType } from "./types";
+
+/** Base canvas size (matches the HMI panel the export targets). */
+const CANVAS_W = 1024;
+const CANVAS_H = 600;
 
 const WIDGET_TYPES: { type: WidgetType; icon: string; label: string }[] = [
-  { type: "gauge", icon: "\u25CB", label: "Gauge" },
-  { type: "button", icon: "\u25A1", label: "Button" },
-  { type: "indicator", icon: "\u25CF", label: "Indicator" },
+  { type: "gauge", icon: "○", label: "Gauge" },
+  { type: "button", icon: "□", label: "Button" },
+  { type: "indicator", icon: "●", label: "Indicator" },
   { type: "text", icon: "T", label: "Text" },
-  { type: "slider", icon: "\u2550", label: "Slider" },
-  { type: "chart", icon: "\u2588", label: "Chart" },
+  { type: "slider", icon: "═", label: "Slider" },
+  { type: "chart", icon: "█", label: "Chart" },
 ];
 
 const SCREEN_TEMPLATES: { name: string; desc: string; widgets: Omit<HmiWidget, "id">[] }[] = [
@@ -70,38 +75,39 @@ const SCREEN_TEMPLATES: { name: string; desc: string; widgets: Omit<HmiWidget, "
   },
 ];
 
+/** True when a keyboard event target is a field the user is typing into. */
+function isEditableTarget(target: unknown): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main App
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const {
-    screens,
-    activeScreenIndex,
-    selectedWidgetId,
-    zoom,
-    setZoom,
-    plcIp,
-    theme,
-    setTheme,
-    addScreen,
-    deleteScreen,
-    setActiveScreen,
-    addWidget,
-    selectWidget,
-    moveWidget,
-    resizeWidget,
-    updateWidget,
-    exportHtml,
-    saveProject,
-    loadProject,
-  } = useStore();
+  // Field-level subscriptions: a whole-store subscription would re-render the
+  // entire editor on every PLC WebSocket frame.
+  const screens = useStore((s) => s.screens);
+  const activeScreenIndex = useStore((s) => s.activeScreenIndex);
+  const selectedWidgetId = useStore((s) => s.selectedWidgetId);
+  const zoom = useStore((s) => s.zoom);
+  const plcIp = useStore((s) => s.plcIp);
+  const theme = useStore((s) => s.theme);
+  const isDirty = useStore((s) => s.isDirty);
+  const toast = useStore((s) => s.toast);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [dragOverWidgetId, setDragOverWidgetId] = useState<string | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     widgets: false,
     templates: true,
@@ -136,20 +142,78 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  // Warn before closing with unsaved changes.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (useStore.getState().isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
+  // Auto-update: check quietly on launch, notify when one is available.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const info = await checkForUpdates();
+        if (!cancelled && info.available) {
+          useStore
+            .getState()
+            .showToast("info", `Update ${info.version} available — use Check for Updates to install`);
+        }
+      } catch {
+        // offline / endpoint not deployed yet — silent on launch
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true);
+    const toast = useStore.getState().showToast;
+    try {
+      const info = await checkForUpdates();
+      if (!info.available) {
+        toast("info", "You are up to date");
+        return;
+      }
+      const install = window.confirm(
+        `Update ${info.version} available.\n\n${info.notes ?? ""}\n\nDownload and install now? The app will restart.`
+      );
+      if (!install) return;
+      toast("info", "Downloading update…");
+      const ok = await installUpdate();
+      if (!ok) toast("error", "Update installation failed");
+    } catch (e) {
+      toast("error", `Update check failed: ${String(e)}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        saveProject();
+        useStore.getState().saveProject();
       }
       if (e.key === "Delete" || e.key === "Backspace") {
-        if (selectedWidgetId && !(e.target instanceof HTMLInputElement)) {
+        if (selectedWidgetId && !isEditableTarget(e.target)) {
           useStore.getState().deleteWidget(selectedWidgetId);
         }
       }
       if (e.key === "Escape") {
-        selectWidget(null);
+        if (previewHtml !== null) {
+          setPreviewHtml(null);
+          return;
+        }
+        useStore.getState().selectWidget(null);
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -160,13 +224,13 @@ export default function App() {
         useStore.getState().redo();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "c") {
-        if (selectedWidgetId && !(e.target instanceof HTMLInputElement)) {
+        if (selectedWidgetId && !isEditableTarget(e.target)) {
           e.preventDefault();
           useStore.getState().copyWidget(selectedWidgetId);
         }
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "v") {
-        if (useStore.getState().clipboard && !(e.target instanceof HTMLInputElement)) {
+        if (useStore.getState().clipboard && !isEditableTarget(e.target)) {
           e.preventDefault();
           useStore.getState().pasteWidget();
         }
@@ -174,7 +238,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedWidgetId, selectWidget, saveProject]);
+  }, [selectedWidgetId, previewHtml]);
 
   // Drag and drop from palette
   const handleDragStart = (e: React.DragEvent, type: WidgetType) => {
@@ -204,12 +268,12 @@ export default function App() {
     const y = (e.clientY - rect.top) / zoom;
     const snappedX = snapEnabled ? Math.round(x / 10) * 10 : x;
     const snappedY = snapEnabled ? Math.round(y / 10) * 10 : y;
-    addWidget(type, snappedX, snappedY);
+    useStore.getState().addWidget(type, snappedX, snappedY);
   };
 
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (e.target === canvasRef.current || e.target === e.currentTarget) {
-      selectWidget(null);
+      useStore.getState().selectWidget(null);
     }
   };
 
@@ -232,13 +296,14 @@ export default function App() {
       e.stopPropagation();
       setDragOverWidgetId(null);
 
+      const bind = useStore.getState().bindVariable;
       const tagData = e.dataTransfer.getData("application/tag");
       if (tagData) {
         try {
           const tag = JSON.parse(tagData);
-          updateWidget(widgetId, { variableName: tag.plcVariable || tag.name || tagData });
+          bind(widgetId, tag.plcVariable || tag.name || tagData, tag.dataType);
         } catch {
-          updateWidget(widgetId, { variableName: tagData });
+          bind(widgetId, tagData);
         }
         return;
       }
@@ -247,74 +312,83 @@ export default function App() {
       if (varData) {
         try {
           const v = JSON.parse(varData);
-          updateWidget(widgetId, { variableName: v.plcVariable || v.name || varData });
+          bind(widgetId, v.plcVariable || v.name || varData, v.type);
         } catch {
-          updateWidget(widgetId, { variableName: varData });
+          bind(widgetId, varData);
         }
       }
     },
   });
 
-  const loadTemplate = (template: typeof SCREEN_TEMPLATES[0]) => {
-    const { screens, activeScreenIndex } = useStore.getState();
-    const newWidgets: HmiWidget[] = template.widgets.map((w) => ({
-      ...w,
-      id: uid(),
-    }));
-    const newScreens = [...screens];
-    const screen = { ...newScreens[activeScreenIndex] };
-    screen.widgets = [...screen.widgets, ...newWidgets];
-    newScreens[activeScreenIndex] = screen;
-    useStore.setState({ screens: newScreens });
-  };
-
-  // Live preview
+  // Live preview: render the exported runtime in an in-app sandboxed iframe.
   const handleLivePreview = async () => {
+    const s = useStore.getState();
     try {
       const html = await invoke<string>("export_hmi", {
-        request: { screens, plc_ip: plcIp },
+        request: {
+          screens: s.screens,
+          plcIp,
+          scadaUrl: s.scadaUrl || undefined,
+          alarms: s.alarms,
+          accessConfig: s.accessConfig || undefined,
+          translations: Object.keys(s.translations).length > 0 ? s.translations : undefined,
+          defaultLanguage: s.defaultLanguage || undefined,
+          kioskMode: s.kioskMode,
+        },
       });
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
+      setPreviewHtml(html);
     } catch (e) {
-      console.error("Preview failed:", e);
+      s.showToast("error", `Preview failed: ${String(e)}`);
     }
   };
 
   // Zoom helpers
-  const zoomIn = () => setZoom(zoom + 0.1);
-  const zoomOut = () => setZoom(zoom - 0.1);
-  const zoomReset = () => setZoom(1);
+  const zoomIn = () => useStore.getState().setZoom(zoom + 0.1);
+  const zoomOut = () => useStore.getState().setZoom(zoom - 0.1);
+  const zoomReset = () => useStore.getState().setZoom(1);
 
   return (
     <div className="app-layout">
       {/* Toolbar */}
       <div className="toolbar">
-        <span className="toolbar-title">Voltrus HMI</span>
+        <span className="toolbar-title">
+          Voltrus HMI{isDirty ? <span className="dirty-dot" title="Unsaved changes" /> : null}
+        </span>
         <button
           className="toolbar-btn"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          onClick={() => useStore.getState().setTheme(theme === "dark" ? "light" : "dark")}
         >
-          {theme === "dark" ? "\u2600" : "\u263D"}
+          {theme === "dark" ? "☀" : "☽"}
         </button>
         <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => loadProject()}>
+        <button className="toolbar-btn" onClick={() => useStore.getState().loadProject()}>
           Open
         </button>
-        <button className="toolbar-btn" onClick={() => saveProject()} title="Save Project (Cmd+S)">
-          Save
+        <button
+          className="toolbar-btn"
+          onClick={() => useStore.getState().saveProject()}
+          title="Save Project (Cmd+S)"
+        >
+          Save{isDirty ? " •" : ""}
         </button>
         <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => addScreen()}>
+        <button className="toolbar-btn" onClick={() => useStore.getState().addScreen()}>
           + Screen
         </button>
         <span className="toolbar-spacer" />
-        <button className="toolbar-btn primary" onClick={() => exportHtml()}>
+        <button className="toolbar-btn primary" onClick={() => useStore.getState().exportHtml()}>
           Export HTML
         </button>
         <button className="toolbar-btn" onClick={handleLivePreview} title="Live Preview">
           Preview
+        </button>
+        <button
+          className="toolbar-btn"
+          onClick={handleCheckForUpdates}
+          disabled={checkingUpdate}
+          title="Check for Updates"
+        >
+          {checkingUpdate ? "…" : "Check for Updates"}
         </button>
       </div>
 
@@ -324,7 +398,7 @@ export default function App() {
           <div
             key={screen.id}
             className={`screen-tab ${i === activeScreenIndex ? "active" : ""}`}
-            onClick={() => setActiveScreen(i)}
+            onClick={() => useStore.getState().setActiveScreen(i)}
           >
             {screen.name}
             {screens.length > 1 && (
@@ -332,7 +406,7 @@ export default function App() {
                 className="screen-tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteScreen(screen.id);
+                  useStore.getState().deleteScreen(screen.id);
                 }}
               >
                 x
@@ -402,7 +476,7 @@ export default function App() {
                   <div
                     key={t.name}
                     className="template-item"
-                    onClick={() => loadTemplate(t)}
+                    onClick={() => useStore.getState().addTemplateWidgets(t.widgets)}
                   >
                     <span className="template-name">{t.name}</span>
                     <span className="template-desc">{t.desc}</span>
@@ -486,46 +560,56 @@ export default function App() {
             </button>
           </div>
 
-          {/* Scrollable canvas container */}
+          {/* Scrollable canvas container.
+              The wrapper carries the zoom-scaled layout size so the scroll
+              extent matches what scale() actually renders. */}
           <div className="canvas-scroll-container">
             <div
-              ref={canvasRef}
-              className={`canvas-drop-zone ${dragOver ? "drag-over" : ""} ${showGrid ? "show-grid" : ""}`}
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "top left",
-                backgroundColor: activeScreen?.backgroundColor || "#1e1e2e",
-              }}
-              onDragOver={handleCanvasDragOver}
-              onDragLeave={handleCanvasDragLeave}
-              onDrop={handleCanvasDrop}
-              onClick={handleCanvasClick}
+              className="canvas-zoom-wrapper"
+              style={{ width: CANVAS_W * zoom + 48, height: CANVAS_H * zoom + 48 }}
             >
-              {activeScreen?.widgets.length === 0 && (
-                <div className="empty-canvas">
-                  <div className="empty-canvas-icon">+</div>
-                  <div className="empty-canvas-text">Drag widgets here</div>
-                </div>
-              )}
-              {activeScreen?.widgets.map((widget) => {
-                const tagHandlers = makeWidgetDragHandlers(widget.id);
-                return (
-                  <CanvasWidget
-                    key={widget.id}
-                    widget={widget}
-                    selected={widget.id === selectedWidgetId}
-                    onSelect={() => selectWidget(widget.id)}
-                    onMove={(x, y) => moveWidget(widget.id, x, y)}
-                    onResize={(w, h) => resizeWidget(widget.id, w, h)}
-                    zoom={zoom}
-                    snapEnabled={snapEnabled}
-                    dragOverTag={dragOverWidgetId === widget.id}
-                    onDragOverTag={tagHandlers.onDragOver}
-                    onDragLeaveTag={tagHandlers.onDragLeave}
-                    onDropTag={tagHandlers.onDrop}
-                  />
-                );
-              })}
+              <div
+                ref={canvasRef}
+                className={`canvas-drop-zone ${dragOver ? "drag-over" : ""} ${showGrid ? "show-grid" : ""}`}
+                style={{
+                  width: CANVAS_W,
+                  height: CANVAS_H,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top left",
+                  backgroundColor: activeScreen?.backgroundColor || "#1e1e2e",
+                }}
+                onDragOver={handleCanvasDragOver}
+                onDragLeave={handleCanvasDragLeave}
+                onDrop={handleCanvasDrop}
+                onClick={handleCanvasClick}
+              >
+                {activeScreen?.widgets.length === 0 && (
+                  <div className="empty-canvas">
+                    <div className="empty-canvas-icon">+</div>
+                    <div className="empty-canvas-text">Drag widgets here</div>
+                  </div>
+                )}
+                {activeScreen?.widgets.map((widget) => {
+                  const tagHandlers = makeWidgetDragHandlers(widget.id);
+                  return (
+                    <CanvasWidget
+                      key={widget.id}
+                      widget={widget}
+                      selected={widget.id === selectedWidgetId}
+                      onSelect={() => useStore.getState().selectWidget(widget.id)}
+                      onDragStart={() => useStore.getState().beginWidgetDrag()}
+                      onMove={(x, y) => useStore.getState().moveWidget(widget.id, x, y)}
+                      onResize={(w, h) => useStore.getState().resizeWidget(widget.id, w, h)}
+                      zoom={zoom}
+                      snapEnabled={snapEnabled}
+                      dragOverTag={dragOverWidgetId === widget.id}
+                      onDragOverTag={tagHandlers.onDragOver}
+                      onDragLeaveTag={tagHandlers.onDragLeave}
+                      onDropTag={tagHandlers.onDrop}
+                    />
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -535,6 +619,33 @@ export default function App() {
           <PropertiesPanel />
         </div>
       </div>
+
+      {/* Live preview modal */}
+      {previewHtml !== null && (
+        <div className="preview-modal" onClick={() => setPreviewHtml(null)}>
+          <div className="preview-frame" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-toolbar">
+              <span>Live Preview</span>
+              <button className="preview-close" onClick={() => setPreviewHtml(null)} title="Close (Esc)">
+                ×
+              </button>
+            </div>
+            <iframe
+              title="HMI Live Preview"
+              srcDoc={previewHtml}
+              sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className={`toast toast-${toast.kind}`} onClick={() => useStore.getState().dismissToast()}>
+          {toast.kind === "error" ? "✕ " : toast.kind === "success" ? "✓ " : "ℹ "}
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
+use mt_plc_runtime::io_manager::{self, IoAddress, IoDriver, IoArea};
 use mt_plc_runtime::opcode::{CompiledModule, Instruction};
 use mt_plc_runtime::types::{CycleStats, RuntimeConfig};
 use mt_plc_runtime::{PlcRuntime, PlcValue};
@@ -127,6 +128,69 @@ pub struct PlcRuntimeGrpcServer {
     /// Filter for which variables to stream.
     watch_filter: Arc<RwLock<Vec<String>>>,
     watch_interval_ms: Arc<RwLock<u32>>,
+    /// Field-device I/O: one primary driver plus variable↔address mappings.
+    io: Arc<std::sync::Mutex<ServerIoState>>,
+}
+
+/// A resolved I/O mapping: PLC variable ↔ parsed direct address.
+struct ServerIoMapping {
+    variable_name: String,
+    address: IoAddress,
+}
+
+/// Driver connection parameters, parsed from a mapping's `connection_json`.
+#[derive(serde::Deserialize, Default)]
+struct ConnectionParams {
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    port: u16,
+    #[serde(default)]
+    unit_id: u8,
+    #[serde(default)]
+    rack: u8,
+    #[serde(default)]
+    slot: u8,
+    #[serde(default)]
+    endpoint: String,
+    #[serde(default)]
+    topic_prefix: String,
+    #[serde(default)]
+    client_id: String,
+}
+
+/// I/O state shared between the gRPC handlers and the scan-cycle task.
+/// Sync mutex: `IoDriver` methods are synchronous (they internally `block_on`).
+#[derive(Default)]
+struct ServerIoState {
+    driver: Option<Box<dyn IoDriver>>,
+    mappings: Vec<ServerIoMapping>,
+    connection_label: String,
+    last_error: Option<String>,
+}
+
+/// Serde mirror of the proto `IoMapping` (prost types have no serde impls).
+#[derive(serde::Deserialize, Clone)]
+struct IoMappingJson {
+    #[serde(default)]
+    variable_name: String,
+    #[serde(default)]
+    address: String,
+    #[serde(default)]
+    driver: String,
+    #[serde(default)]
+    connection_json: String,
+}
+
+impl From<IoMappingJson> for pb::IoMapping {
+    fn from(m: IoMappingJson) -> Self {
+        pb::IoMapping {
+            variable_name: m.variable_name,
+            address: m.address,
+            driver: m.driver,
+            connection_json: m.connection_json,
+        }
+    }
 }
 
 impl PlcRuntimeGrpcServer {
@@ -144,6 +208,7 @@ impl PlcRuntimeGrpcServer {
             watch_tx,
             watch_filter: Arc::new(RwLock::new(Vec::new())),
             watch_interval_ms: Arc::new(RwLock::new(0)),
+            io: Arc::new(std::sync::Mutex::new(ServerIoState::default())),
         }
     }
 
@@ -166,6 +231,7 @@ impl PlcRuntimeGrpcServer {
         let broadcast_tx = self.watch_tx.clone();
         let watch_filter = self.watch_filter.clone();
         let watch_interval_ms = self.watch_interval_ms.clone();
+        let io_state = self.io.clone();
 
         // Store the cancel handle
         {
@@ -190,7 +256,16 @@ impl PlcRuntimeGrpcServer {
                 let _cycle_result = {
                     let mut guard = inner.write().await;
                     if let Some(ref mut rt) = guard.runtime {
-                        match rt.execute_cycle() {
+                        // Read field inputs → force into the VM
+                        io_cycle_read(&io_state, rt);
+
+                        let cycle = rt.execute_cycle();
+                        let result = cycle.map_err(|e| e.clone());
+
+                        // Write VM outputs → field devices
+                        io_cycle_write(&io_state, rt);
+
+                        match result {
                             Ok(stats) => {
                                 guard.state = DomainRuntimeState::Running;
                                 guard.stats = stats;
@@ -302,13 +377,28 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         let module: CompiledModule = bincode::deserialize(&req.bytecode)
             .map_err(|e| Status::invalid_argument(format!("Invalid bytecode: {}", e)))?;
 
-        // Parse optional config overrides.
-        let config = if !req.config_json.is_empty() {
-            serde_json::from_str::<RuntimeConfig>(&req.config_json)
-                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?
+        // Parse optional config overrides + I/O mappings.
+        // JSON shape: { scan_cycle_ms, max_cycle_ms, io_mappings: [...] }
+        let (config, io_mappings) = if !req.config_json.is_empty() {
+            let value: serde_json::Value = serde_json::from_str(&req.config_json)
+                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?;
+            let config: RuntimeConfig = serde_json::from_value(value.clone())
+                .map_err(|e| Status::invalid_argument(format!("Invalid config JSON: {}", e)))?;
+            let io_mappings: Vec<pb::IoMapping> = value
+                .get("io_mappings")
+                .cloned()
+                .and_then(|v| serde_json::from_value::<Vec<IoMappingJson>>(v).ok())
+                .map(|v| v.into_iter().map(Into::into).collect())
+                .unwrap_or_default();
+            (config, io_mappings)
         } else {
-            RuntimeConfig::default()
+            (RuntimeConfig::default(), Vec::new())
         };
+
+        // Wire field-device I/O when mappings were provided.
+        if !io_mappings.is_empty() {
+            self.apply_io_config(&io_mappings);
+        }
 
         let instructions = module.instructions.clone();
 
@@ -519,20 +609,204 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<IoStatus>, Status> {
-        // Stub: I/O drivers are not yet connected through gRPC.
-        // Returns empty status; will be filled in Phase 2+.
+        let guard = self.io.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = match (&guard.driver, &guard.last_error) {
+            (Some(driver), _) => IoConnectionStatus {
+                driver: driver.name().to_string(),
+                address: guard.connection_label.clone(),
+                connected: driver.is_connected(),
+                error_message: String::new(),
+            },
+            (None, Some(err)) => IoConnectionStatus {
+                driver: guard.connection_label.clone(),
+                address: String::new(),
+                connected: false,
+                error_message: err.clone(),
+            },
+            (None, None) => IoConnectionStatus {
+                driver: String::new(),
+                address: String::new(),
+                connected: false,
+                error_message: if guard.mappings.is_empty() {
+                    "No I/O configured".to_string()
+                } else {
+                    String::new()
+                },
+            },
+        };
         Ok(Response::new(IoStatus {
-            connections: Vec::new(),
+            connections: vec![connection],
         }))
     }
 
     async fn configure_io(
         &self,
-        _request: Request<IoConfig>,
+        request: Request<IoConfig>,
     ) -> Result<Response<IoStatus>, Status> {
-        // Stub: I/O configuration will be implemented in Phase 2+.
+        let req = request.into_inner();
+        self.apply_io_config(&req.mappings);
+
+        // Report the result of the (re)configuration.
+        let guard = self.io.lock().unwrap_or_else(|e| e.into_inner());
+        let connection = match (&guard.driver, &guard.last_error) {
+            (Some(driver), _) => IoConnectionStatus {
+                driver: driver.name().to_string(),
+                address: guard.connection_label.clone(),
+                connected: driver.is_connected(),
+                error_message: String::new(),
+            },
+            (None, Some(err)) => IoConnectionStatus {
+                driver: guard.connection_label.clone(),
+                address: String::new(),
+                connected: false,
+                error_message: err.clone(),
+            },
+            (None, None) => IoConnectionStatus {
+                driver: String::new(),
+                address: String::new(),
+                connected: false,
+                error_message: "No usable mapping found".to_string(),
+            },
+        };
         Ok(Response::new(IoStatus {
-            connections: Vec::new(),
+            connections: vec![connection],
         }))
+    }
+}
+
+impl PlcRuntimeGrpcServer {
+    /// Apply proto I/O mappings: resolve direct addresses, (re)connect the
+    /// primary driver. Uses the first mapping with a driver as the connection
+    /// source; mappings without a parseable address are skipped.
+    fn apply_io_config(&self, mappings: &[pb::IoMapping]) {
+        let mut state = self.io.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Disconnect any previous driver first.
+        if let Some(mut old) = state.driver.take() {
+            old.disconnect();
+        }
+        state.last_error = None;
+
+        state.mappings = mappings
+            .iter()
+            .filter_map(|m| {
+                io_manager::parse_direct_address(&m.address).map(|address| ServerIoMapping {
+                    variable_name: m.variable_name.clone(),
+                    address,
+                })
+            })
+            .collect();
+
+        // Pick the first mapping that names a driver and try to connect.
+        let Some(source) = mappings.iter().find(|m| !m.driver.is_empty()) else {
+            state.connection_label = String::new();
+            return;
+        };
+
+        let params = parse_connection(&source.connection_json);
+        state.connection_label = format!(
+            "{}://{}:{}",
+            source.driver, params.host, params.port
+        );
+
+        match io_manager::create_driver(
+            &source.driver,
+            &params.host,
+            params.port,
+            params.unit_id,
+            params.rack,
+            params.slot,
+            &params.endpoint,
+            &params.topic_prefix,
+            &params.client_id,
+        ) {
+            Ok(driver) => state.driver = Some(driver),
+            Err(e) => state.last_error = Some(e.to_string()),
+        }
+    }
+}
+
+/// Parse connection parameters from a mapping's `connection_json`.
+/// Accepts a JSON object, or a plain `host:port` string.
+fn parse_connection(raw: &str) -> ConnectionParams {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return ConnectionParams::default();
+    }
+    if let Ok(params) = serde_json::from_str::<ConnectionParams>(raw) {
+        return params;
+    }
+    // Fallback: "host:port"
+    if let Some((host, port)) = raw.rsplit_once(':') {
+        if let Ok(port) = port.trim().parse::<u16>() {
+            let mut params = ConnectionParams::default();
+            params.host = host.trim().to_string();
+            params.port = port;
+            return params;
+        }
+    }
+    ConnectionParams::default()
+}
+
+/// Read mapped field inputs and force them into the VM before a scan cycle.
+fn io_cycle_read(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &mut PlcRuntime) {
+    let mut guard = io.lock().unwrap_or_else(|e| e.into_inner());
+    // Destructure so `driver` and `mappings` borrow disjoint fields through
+    // the MutexGuard deref.
+    let ServerIoState { driver, mappings, last_error, .. } = &mut *guard;
+    let Some(driver) = driver.as_mut() else { return };
+
+    let input_addrs: Vec<IoAddress> = mappings
+        .iter()
+        .filter(|m| m.address.area == IoArea::Input)
+        .map(|m| m.address.clone())
+        .collect();
+    if input_addrs.is_empty() {
+        return;
+    }
+
+    let names: Vec<&str> = mappings
+        .iter()
+        .filter(|m| m.address.area == IoArea::Input)
+        .map(|m| m.variable_name.as_str())
+        .collect();
+
+    match driver.read_inputs(&input_addrs) {
+        Ok(values) => {
+            for ((name, value)) in names.into_iter().zip(values) {
+                let _ = rt.force_variable(name, value);
+            }
+        }
+        Err(e) => *last_error = Some(e.to_string()),
+    }
+}
+
+/// Write mapped VM outputs to field devices after a scan cycle.
+fn io_cycle_write(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &PlcRuntime) {
+    let mut guard = io.lock().unwrap_or_else(|e| e.into_inner());
+    let ServerIoState { driver, mappings, last_error, .. } = &mut *guard;
+    let Some(driver) = driver.as_mut() else { return };
+
+    let outputs: Vec<&ServerIoMapping> = mappings
+        .iter()
+        .filter(|m| m.address.area != IoArea::Input)
+        .collect();
+    if outputs.is_empty() {
+        return;
+    }
+
+    let watched = rt.watch_variables();
+    let pairs: Vec<(IoAddress, PlcValue)> = outputs
+        .iter()
+        .filter_map(|m| {
+            watched
+                .iter()
+                .find(|v| v.name == m.variable_name)
+                .map(|v| (m.address.clone(), v.value.clone()))
+        })
+        .collect();
+
+    if let Err(e) = driver.write_outputs(&pairs) {
+        *last_error = Some(e.to_string());
     }
 }

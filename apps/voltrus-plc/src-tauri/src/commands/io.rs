@@ -53,17 +53,23 @@ pub async fn configure_io_driver(
         driver.disconnect();
     }
 
-    match create_driver(
-        &config.protocol,
-        &config.host,
-        config.port,
-        config.unit_id,
-        config.s7_rack,
-        config.s7_slot,
-        &config.opcua_endpoint_url,
-        &config.mqtt_topic_prefix,
-        &config.mqtt_client_id,
-    ) {
+    // create_driver performs blocking network I/O (it `block_on`s the
+    // protocol connect) — keep it off the async worker.
+    let created = tokio::task::block_in_place(|| {
+        create_driver(
+            &config.protocol,
+            &config.host,
+            config.port,
+            config.unit_id,
+            config.s7_rack,
+            config.s7_slot,
+            &config.opcua_endpoint_url,
+            &config.mqtt_topic_prefix,
+            &config.mqtt_client_id,
+        )
+    });
+
+    match created {
         Ok(driver) => {
             let connected = driver.is_connected();
             *io = Some(driver);
@@ -164,7 +170,8 @@ pub async fn io_test_read(
                 bit: None,
                 size: IoSize::Word,
             };
-            match driver.read_inputs(&[addr]) {
+            // Sync driver I/O — keep it off the async worker
+            match tokio::task::block_in_place(|| driver.read_inputs(&[addr])) {
                 Ok(values) => Ok(IoReadResult {
                     success: true,
                     address,
@@ -198,7 +205,10 @@ pub async fn io_test_write(
                 bit: None,
                 size: IoSize::Word,
             };
-            match driver.write_outputs(&[(addr, mt_plc_runtime::PlcValue::Dint(value as i32))]) {
+            // Sync driver I/O — keep it off the async worker
+            match tokio::task::block_in_place(|| {
+                driver.write_outputs(&[(addr, mt_plc_runtime::PlcValue::Dint(value as i32))])
+            }) {
                 Ok(()) => Ok(IoReadResult {
                     success: true, address, value: format!("{}", value), error: None,
                 }),
@@ -216,7 +226,7 @@ pub async fn io_test_write(
 
 #[tauri::command]
 pub async fn get_io_mappings(
-    _state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<IoMapping>, String> {
-    Ok(vec![])
+    Ok(state.io.mappings.lock().await.clone())
 }

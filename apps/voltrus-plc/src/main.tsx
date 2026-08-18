@@ -11,6 +11,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 );
 
 // Only setup Tauri listeners when running inside Tauri webview
-if (window.__TAURI_INTERNALS__) {
+if ((window as any).__TAURI_INTERNALS__) {
   setupRuntimeListeners();
 }

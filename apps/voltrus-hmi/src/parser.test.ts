@@ -3,8 +3,10 @@ import { parseVarUpdate, TYPE_MAP } from "./store";
 
 /**
  * Encode a binary var-update message (msgType 0x01 header + body).
- * The body format matches what the ESP32 firmware sends:
+ * The body format and wire type codes match the ESP32 firmware
+ * (plc_flatbuf.c / plc_value_type_t):
  *   count(u16le) + [nameLen(u16le) + name(utf8) + typeCode(u8) + value(4 bytes) + timestamp(u32le)]
+ *   BOOL=0 BYTE=1 INT=2 DINT=3 REAL=4 TIME=5 STRING=6 WORD=7 DWORD=8
  */
 function encodeVarUpdate(
   vars: Array<{ name: string; typeCode: number; value: number }>
@@ -29,10 +31,12 @@ function encodeVarUpdate(
     new DataView(typeByte).setUint8(0, v.typeCode);
     parts.push(typeByte);
 
-    // value (4 bytes)
+    // value (4 bytes) — REAL is float32, WORD/DWORD raw u32, the rest i32
     const valueBuf = new ArrayBuffer(4);
-    if (v.typeCode === 3) {
+    if (v.typeCode === 4) {
       new DataView(valueBuf).setFloat32(0, v.value, true);
+    } else if (v.typeCode === 7 || v.typeCode === 8) {
+      new DataView(valueBuf).setUint32(0, v.value, true);
     } else {
       new DataView(valueBuf).setInt32(0, v.value, true);
     }
@@ -76,7 +80,7 @@ describe("Binary Protocol Parser", () => {
   });
 
   it("should parse a single INT variable", () => {
-    const buf = encodeVarUpdate([{ name: "speed", typeCode: 1, value: 1500 }]);
+    const buf = encodeVarUpdate([{ name: "speed", typeCode: 2, value: 1500 }]);
     const vars = parseVarUpdate(buf);
     expect(vars).toHaveLength(1);
     expect(vars[0].name).toBe("speed");
@@ -84,9 +88,16 @@ describe("Binary Protocol Parser", () => {
     expect(vars[0].value).toBe(1500);
   });
 
+  it("should parse a DINT variable as signed int (not float)", () => {
+    const buf = encodeVarUpdate([{ name: "counter", typeCode: 3, value: 123456 }]);
+    const vars = parseVarUpdate(buf);
+    expect(vars[0].type).toBe("DINT");
+    expect(vars[0].value).toBe(123456);
+  });
+
   it("should parse a REAL variable with float encoding", () => {
     const buf = encodeVarUpdate([
-      { name: "temperature", typeCode: 3, value: 23.5 },
+      { name: "temperature", typeCode: 4, value: 23.5 },
     ]);
     const vars = parseVarUpdate(buf);
     expect(vars).toHaveLength(1);
@@ -95,10 +106,22 @@ describe("Binary Protocol Parser", () => {
     expect(vars[0].value).toBeCloseTo(23.5, 5);
   });
 
+  it("should parse WORD/DWORD as unsigned", () => {
+    const buf = encodeVarUpdate([
+      { name: "w", typeCode: 7, value: 40000 },
+      { name: "dw", typeCode: 8, value: 3_000_000_000 },
+    ]);
+    const vars = parseVarUpdate(buf);
+    expect(vars[0].type).toBe("WORD");
+    expect(vars[0].value).toBe(40000);
+    expect(vars[1].type).toBe("DWORD");
+    expect(vars[1].value).toBe(3_000_000_000);
+  });
+
   it("should parse multiple variables", () => {
     const buf = encodeVarUpdate([
-      { name: "speed", typeCode: 1, value: 1500 },
-      { name: "temp", typeCode: 3, value: 45.2 },
+      { name: "speed", typeCode: 2, value: 1500 },
+      { name: "temp", typeCode: 4, value: 45.2 },
       { name: "running", typeCode: 0, value: 1 },
     ]);
     const vars = parseVarUpdate(buf);
@@ -131,7 +154,7 @@ describe("Binary Protocol Parser", () => {
     const vars = typeCodes.map((tc) => ({
       name: `var_${tc}`,
       typeCode: tc,
-      value: tc === 3 ? 1.5 : tc * 10,
+      value: tc === 4 ? 1.5 : (tc * 10) % 1000,
     }));
     const buf = encodeVarUpdate(vars);
     const parsed = parseVarUpdate(buf);

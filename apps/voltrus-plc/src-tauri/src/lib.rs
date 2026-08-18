@@ -28,12 +28,15 @@ pub fn run() {
             io: IoState {
                 driver: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 config: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                mappings: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
             },
             target: TargetState {
                 ip: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 ws_sink: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 target_kind: std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::TargetKind::WebSocket)),
+                grpc_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                grpc_addr: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             },
         })
         .invoke_handler(tauri::generate_handler![

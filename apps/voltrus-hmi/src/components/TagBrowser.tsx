@@ -99,13 +99,11 @@ export function TagBrowser() {
     [handleRenameSubmit]
   );
 
-  const handleTagContextMenu = useCallback(
-    (e: React.MouseEvent, tagId: string) => {
-      e.preventDefault();
-      removeTag(tagId);
-    },
-    [removeTag]
-  );
+  const handleTagContextMenu = useCallback((e: React.MouseEvent) => {
+    // Suppress the browser menu; deletion happens via the × button
+    // (never delete instantly on right-click — users lose tags by accident).
+    e.preventDefault();
+  }, []);
 
   return (
     <div
@@ -382,7 +380,7 @@ export function TagBrowser() {
                 onDoubleClick={() =>
                   handleTagDoubleClick(tag.id, tag.name)
                 }
-                onContextMenu={(e) => handleTagContextMenu(e, tag.id)}
+                onContextMenu={(e) => handleTagContextMenu(e)}
                 style={{
                   display: "flex",
                   alignItems: "center",

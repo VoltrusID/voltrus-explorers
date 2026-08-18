@@ -21,6 +21,9 @@ import type {
   DiscoveredTarget,
   TargetKind,
 } from "./types";
+import { transpileFbdToSt } from "./components/Editor/FbdEditor/transpiler/fbd-to-st";
+import { transpileLdToSt } from "./components/Editor/LdEditor/transpiler/ld-to-st";
+import { transpileSfcToSt } from "./components/Editor/SfcEditor/transpiler/sfc-to-st";
 
 interface AppState {
   // Theme
@@ -450,18 +453,16 @@ export const useStore = create<AppState>((set, get) => ({
         return { source: f.content, fileName: f.name, diagnostics: [] };
       }
 
-      const transpilerMap: Record<string, { importPath: string; funcName: string; label: string }> = {
-        fbd: { importPath: "./components/Editor/FbdEditor/transpiler/fbd-to-st", funcName: "transpileFbdToSt", label: "FBD" },
-        ld:  { importPath: "./components/Editor/LdEditor/transpiler/ld-to-st",   funcName: "transpileLdToSt",  label: "LD" },
-        sfc: { importPath: "./components/Editor/SfcEditor/transpiler/sfc-to-st", funcName: "transpileSfcToSt", label: "SFC" },
+      const transpilerMap: Record<string, { transpile: (program: any) => { source: string; diagnostics: any[] }; label: string }> = {
+        fbd: { transpile: transpileFbdToSt, label: "FBD" },
+        ld:  { transpile: transpileLdToSt,  label: "LD" },
+        sfc: { transpile: transpileSfcToSt, label: "SFC" },
       };
 
       const entry = transpilerMap[ext ?? ""];
       if (!entry) return { source: f.content, fileName: f.name, diagnostics: [] };
 
       try {
-        const mod = await import(entry.importPath as any);
-        const transpile = mod[entry.funcName];
         const program = JSON.parse(f.content);
         if (!program || typeof program !== "object" || typeof program.programName !== "string") {
           return {
@@ -470,7 +471,7 @@ export const useStore = create<AppState>((set, get) => ({
             diagnostics: [{ severity: "error", message: `Invalid ${entry.label} diagram: missing required fields`, source: `${ext}-transpiler` }],
           };
         }
-        const result = transpile(program);
+        const result = entry.transpile(program);
         return {
           source: result.source,
           fileName: f.name.replace(new RegExp(`\\.${ext}$`), ".st"),
@@ -869,7 +870,7 @@ export const useStore = create<AppState>((set, get) => ({
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const deployResult = isGrpc
-            ? await invoke<DeployResult>("deploy_via_grpc", { addr: `http://${ip}:50051` })
+            ? await invoke<DeployResult>("deploy_via_grpc", { addr: `http://${ip}:50051`, ioMappings: get().ioMappings })
             : await invoke<DeployResult>("deploy_to_target", { ip, ioMappings: get().ioMappings });
           if (deployResult.success) {
             get().addLog("system", `Deployed ${deployResult.byte_count} bytes to ${ip}`);

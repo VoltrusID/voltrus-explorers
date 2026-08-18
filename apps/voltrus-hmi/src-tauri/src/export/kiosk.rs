@@ -1,4 +1,7 @@
-/// Generate kiosk mode JS — fullscreen, wake lock, watchdog overlay, enhanced reconnect.
+/// Generate kiosk mode JS — fullscreen, wake lock, watchdog overlay.
+/// The watchdog is reset from the WS runtime's own onopen/onmessage handlers
+/// (they call `resetWatchdog()` when present), so it keeps working across
+/// reconnects — the WS object is recreated on every connectWS() call.
 pub fn render_kiosk_js() -> String {
     r#"
 // --- Kiosk Mode ---
@@ -32,34 +35,8 @@ function resetWatchdog() {
     watchdogTimer = setTimeout(showConnectionLost, watchdogTimeout);
 }
 
-// Hook into existing WS events for watchdog
-(function() {
-    var origOnOpen = null;
-    var origOnMessage = null;
-
-    // Wait for WS to be created, then hook in
-    var checkInterval = setInterval(function() {
-        if (typeof ws !== 'undefined' && ws) {
-            origOnOpen = ws.onopen;
-            origOnMessage = ws.onmessage;
-
-            ws.onopen = function(e) {
-                hideConnectionLost();
-                resetWatchdog();
-                if (origOnOpen) origOnOpen.call(ws, e);
-            };
-
-            ws.onmessage = function(e) {
-                resetWatchdog();
-                if (origOnMessage) origOnMessage.call(ws, e);
-            };
-            clearInterval(checkInterval);
-        }
-    }, 100);
-
-    // Start watchdog regardless
-    resetWatchdog();
-})();
+// Start watchdog; the WS runtime keeps resetting it while data flows.
+resetWatchdog();
 
 // Request wake lock on load
 requestWakeLock();

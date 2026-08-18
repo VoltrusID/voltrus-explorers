@@ -14,8 +14,6 @@ tauri-build = { workspace = true }
 mt-stc = { path = "../../../crates/mt-stc" }
 mt-plc-runtime = { path = "../../../crates/mt-plc-runtime" }
 mt-plc-types = { path = "../../../crates/mt-plc-types" }
-mt-protocol = { path = "../../../crates/mt-protocol" }
-mt-modbus = { path = "../../../crates/mt-modbus" }
 mt-grpc = { path = "../../../crates/mt-grpc" }
 tauri = { workspace = true }
 tauri-plugin-updater = "2"
@@ -24,10 +22,11 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+bincode = "1"
+uuid = { version = "1", features = ["v4"] }
 tokio = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
-tokio-stream = "0.1"
 futures = "0.3"
 dirs = "6"
 mdns-sd = "0.11"

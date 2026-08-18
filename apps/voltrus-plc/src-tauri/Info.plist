@@ -7,9 +7,9 @@
 	<key>CFBundleName</key>
 	<string>Voltrus PLC</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.0</string>
+	<string>2.0.1</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>2.0.1</string>
 	<key>CFBundleExecutable</key>
 	<string>voltrus_plc</string>
 	<key>CFBundlePackageType</key>

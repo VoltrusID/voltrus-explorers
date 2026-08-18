@@ -1,4 +1,3 @@
-use crate::types::PlcValue;
 
 /// Timer instance (TON/TOF/TP)
 #[derive(Debug, Clone)]

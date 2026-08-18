@@ -14,6 +14,8 @@ set -euo pipefail
 #   ./scripts/release-local.sh --target x86_64          # macOS Intel only
 #   ./scripts/release-local.sh --target windows         # Windows x86_64 only
 #   ./scripts/release-local.sh --target mac             # Both macOS archs
+#   ./scripts/release-local.sh --bump                   # Auto patch-bump version, then build+upload
+#   ./scripts/release-local.sh --bump=minor             # minor-bump (or major) instead of patch
 #   SKIP_BUILD=1 ./scripts/release-local.sh --skip-build
 #
 # Prerequisites:
@@ -46,17 +48,39 @@ BUILD_NUMBER="${BUILD_NUMBER:-1}"
 VERSION=""
 DESCRIPTION="Bug fixes and improvements."
 TARGET_FILTER="all"
+BUMP="${BUMP:-none}"
 
+# Colors (defined before parse loop so err() is available for unknown-option errors)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+info()  { echo -e "${BLUE}[*]${NC} $1" >&2; }
+ok()    { echo -e "${GREEN}[✓]${NC} $1" >&2; }
+warn()  { echo -e "${YELLOW}[!]${NC} $1" >&2; }
+err()   { echo -e "${RED}[✗]${NC} $1" >&2; }
+step()  { echo -e "\n${BLUE}━━━ $1 ━━━${NC}" >&2; }
+banner() { echo -e "\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}\n${BOLD}$1${NC}\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}" >&2; }
+
+# Parse args (supports both --opt val and --opt=val)
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-upload)  SKIP_UPLOAD=1; shift ;;
-    --skip-build)   SKIP_BUILD=1;  shift ;;
-    --target)       TARGET_FILTER="${2:-all}"; shift 2 ;;
-    --notarize)     NOTARIZE=1;    shift ;;
-    --description)  DESCRIPTION="${2:-Bug fixes and improvements.}"; shift 2 ;;
-    --build-number) BUILD_NUMBER="${2:-1}"; shift 2 ;;
-    --)             shift; break ;;
-    -*)             err "Unknown option: $1"; exit 1 ;;
+    --skip-upload)   SKIP_UPLOAD=1; shift ;;
+    --skip-build)    SKIP_BUILD=1;  shift ;;
+    --target)        TARGET_FILTER="${2:-all}"; shift 2 ;;
+    --target=*)      TARGET_FILTER="${1#--target=}"; shift ;;
+    --notarize)      NOTARIZE=1;    shift ;;
+    --description)   DESCRIPTION="${2:-Bug fixes and improvements.}"; shift 2 ;;
+    --description=*) DESCRIPTION="${1#--description=}"; shift ;;
+    --build-number)  BUILD_NUMBER="${2:-1}"; shift 2 ;;
+    --build-number=*) BUILD_NUMBER="${1#--build-number=}"; shift ;;
+    --bump)          BUMP="patch"; shift ;;
+    --bump=*)        BUMP="${1#*=}"; shift ;;
+    --)              shift; break ;;
+    -*)              err "Unknown option: $1"; exit 1 ;;
     *)
       if [[ -z "$VERSION" ]]; then
         VERSION="$1"
@@ -72,20 +96,33 @@ if [[ -z "$VERSION" ]]; then
   VERSION=$(grep '"version"' "$PROJECT_DIR/src-tauri/tauri.conf.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 fi
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+# Bump a semver string (patch|minor|major) → echo new version
+bump_semver() {
+  local part="$1" cur="$2" major minor patch
+  IFS='.' read -r major minor patch <<< "$cur"
+  case "$part" in
+    major) major=$((major+1)); minor=0; patch=0 ;;
+    minor) minor=$((minor+1)); patch=0 ;;
+    patch) patch=$((patch+1)) ;;
+    *) err "Invalid --bump part: $part (use patch|minor|major)"; exit 1 ;;
+  esac
+  echo "${major}.${minor}.${patch}"
+}
 
-info()  { echo -e "${BLUE}[*]${NC} $1" >&2; }
-ok()    { echo -e "${GREEN}[✓]${NC} $1" >&2; }
-warn()  { echo -e "${YELLOW}[!]${NC} $1" >&2; }
-err()   { echo -e "${RED}[✗]${NC} $1" >&2; }
-step()  { echo -e "\n${BLUE}━━━ $1 ━━━${NC}" >&2; }
-banner() { echo -e "\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}\n${BOLD}$1${NC}\n${BOLD}${BLUE}════════════════════════════════════════════════${NC}" >&2; }
+# Apply version bump: writes new version back to tauri.conf.json + package.json
+# (first occurrence only, so package.json root version is updated, not dep versions).
+write_version() {
+  local v="$1" f
+  for f in "$PROJECT_DIR/src-tauri/tauri.conf.json" "$PROJECT_DIR/package.json"; do
+    perl -i -pe 'if (/"version":\s*"[^"]*"/ && !$done) { s/"version":\s*"[^"]*"/"version": "'"$v"'"/; $done=1; }' "$f"
+  done
+}
+
+if [[ "$BUMP" != "none" ]]; then
+  VERSION="$(bump_semver "$BUMP" "$VERSION")"
+  write_version "$VERSION"
+  ok "Bumped version → $VERSION ($BUMP)"
+fi
 
 BUILT_FILES=()
 
@@ -442,6 +479,19 @@ if [[ "$SKIP_UPLOAD" != "1" ]]; then
   ok "Wrangler ready"
 fi
 
+# Auto-increment build number from D1
+if [[ "$SKIP_UPLOAD" != "1" ]] && [[ "$BUILD_NUMBER" == "1" ]]; then
+  cd "$WORKER_DIR"
+  CURRENT_MAX=$(npx wrangler d1 execute voltrus-plc-releases-db --remote --command \
+    "SELECT MAX(version) as v FROM release_files" --json 2>/dev/null \
+    | grep -o '"v": *[0-9]*' | grep -o '[0-9]*' | head -1)
+  cd "$PROJECT_DIR"
+  if [[ -n "$CURRENT_MAX" ]] && [[ "$CURRENT_MAX" -ge 1 ]]; then
+    BUILD_NUMBER=$((CURRENT_MAX + 1))
+    ok "Auto build number: $BUILD_NUMBER (was $CURRENT_MAX)"
+  fi
+fi
+
 # ============================================================
 # BUILD EACH PLATFORM
 # ============================================================
@@ -543,6 +593,9 @@ for entry in "${BUILT_FILES[@]:-}"; do
   sig_esc="${update_signature//\'/\'\'}"
 
   info "Inserting $platform_key into D1 release_files..."
+  # Ensure parent releases row exists (FK constraint on release_files.version)
+  npx wrangler d1 execute voltrus-plc-releases-db --remote --command \
+    "INSERT OR IGNORE INTO releases (version, short_version_string, title, description, enclosure_url, ed_signature, length, pub_date) VALUES ($BUILD_NUMBER, '$VERSION', '$APP_NAME $VERSION', 'Bug fixes and improvements.', '$enclosure_url', 'unsigned', $filepath_size, '$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")');" 2>/dev/null
   npx wrangler d1 execute voltrus-plc-releases-db --remote --command \
     "INSERT OR REPLACE INTO release_files (version, platform, filename, r2_key, size, signature) VALUES ($BUILD_NUMBER, '$platform_key', '$filename', '$filename', $filepath_size, '$sig_esc');"
   ok "D1 record: $platform_key"

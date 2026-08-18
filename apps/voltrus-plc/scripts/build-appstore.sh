@@ -17,7 +17,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MONOREPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-WRAPPER_DIR="$PROJECT_DIR/xcode-wrapper"
 APP_NAME="Voltrus PLC"
 BUNDLE_ID="com.joyodigitama.voltrus-plc"
 TAURI_BINARY="$MONOREPO_DIR/target/release/voltrus_plc"
