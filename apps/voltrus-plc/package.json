@@ -28,24 +28,24 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@xyflow/react": "^12.10.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "zustand": "^5.0.13"
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "zustand": "5.0.13"
   },
   "devDependencies": {
     "@lezer/generator": "^1.8.0",
     "@lezer/lr": "^1.4.10",
     "@playwright/test": "^1.60.0",
-    "@tailwindcss/vite": "^4",
+    "@tailwindcss/vite": "4.2.4",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
-    "jsdom": "^29.1.1",
-    "tailwindcss": "^4",
-    "typescript": "^5.7",
-    "vite": "^6",
-    "vitest": "^3.2.4"
+    "jsdom": "29.1.1",
+    "tailwindcss": "4.2.4",
+    "typescript": "5.9.3",
+    "vite": "6.4.2",
+    "vitest": "3.2.4"
   }
 }

@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1450",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm --filter voltrus-hmi build"
+    "beforeBuildCommand": "bun run build"
   },
   "app": {
     "windows": [
