@@ -1,5 +1,11 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+// Shared engine adoption (deliberately narrow): History<T> owns the undo/redo
+// stacks and newId() replaces the local newId(). Geometry (move/resize),
+// z-order and clipboard stay local — HMI semantics pinned by store.test.ts
+// differ from the engine's (absolute move, min-30 clamp, explicit zIndex,
+// single-widget paste with +20 offset).
+import { History, newId } from "@mactools/symbol-engine";
 import type {
   HmiWidget,
   HmiScreen,
@@ -11,13 +17,9 @@ import type {
   TranslationSet,
 } from "./types";
 
-export function uid(): string {
-  return Math.random().toString(36).substring(2, 10);
-}
-
 const DEFAULT_SCREENS: HmiScreen[] = [
   {
-    id: uid(),
+    id: newId(),
     name: "Main Screen",
     backgroundColor: "#1e1e2e",
     widgets: [],
@@ -162,26 +164,22 @@ let reconnectDelayMs = 1000;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Undo/Redo history
-const MAX_HISTORY = 50;
-const undoStack: string[] = [];
-const redoStack: string[] = [];
+// Undo/Redo history — engine `History` owns the stacks; the coalesce window
+// keeps rapid keystrokes (text fields) from flooding the 50-entry stack.
+const history = new History<HmiScreen[]>(50);
 let lastPushAt = 0;
 const PUSH_COALESCE_MS = 400;
 
-/** Reset undo/redo stacks — intended for test use only */
+/** Reset undo/redo history — intended for test use only */
 export function _resetUndoHistory() {
-  undoStack.length = 0;
-  redoStack.length = 0;
+  history.clear();
   lastPushAt = 0;
 }
 
 type SetFn = (partial: Partial<AppState>) => void;
 
 function pushUndo(screens: HmiScreen[], set: SetFn) {
-  undoStack.push(JSON.stringify(screens));
-  if (undoStack.length > MAX_HISTORY) undoStack.shift();
-  redoStack.length = 0;
+  history.push(screens);
   lastPushAt = Date.now();
   set({ canUndo: true, canRedo: false, isDirty: true });
 }
@@ -189,11 +187,16 @@ function pushUndo(screens: HmiScreen[], set: SetFn) {
 /**
  * Push an undo checkpoint unless one was pushed very recently (e.g. the
  * previous keystroke in a text field) — keeps typing from flooding the
- * 50-entry history stack.
+ * history stack.
  */
 function pushUndoCoalesced(screens: HmiScreen[], set: SetFn) {
   if (Date.now() - lastPushAt < PUSH_COALESCE_MS) {
-    redoStack.length = 0;
+    if (history.canRedo()) {
+      // Typing must kill a stale redo tail; History has no clear-redo-only
+      // op, so checkpoint instead (one extra entry in this narrow case).
+      pushUndo(screens, set);
+      return;
+    }
     set({ isDirty: true });
     return;
   }
@@ -449,7 +452,7 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     addTag: (tag) => {
-      const newTag: HmiTag = { ...tag, id: uid() };
+      const newTag: HmiTag = { ...tag, id: newId() };
       set((state) => ({ tags: [...state.tags, newTag], isDirty: true }));
     },
 
@@ -468,7 +471,7 @@ export const useStore = create<AppState>((set, get) => {
       const { screens } = get();
       pushUndo(screens, set);
       const newScreen: HmiScreen = {
-        id: uid(),
+        id: newId(),
         name: `Screen ${screens.length + 1}`,
         backgroundColor: "#1e1e2e",
         widgets: [],
@@ -504,7 +507,7 @@ export const useStore = create<AppState>((set, get) => {
       pushUndo(screens, set);
       const defaults = WIDGET_DEFAULTS[type];
       const widget: HmiWidget = {
-        id: uid(),
+        id: newId(),
         type,
         x,
         y,
@@ -602,7 +605,7 @@ export const useStore = create<AppState>((set, get) => {
     addTemplateWidgets: (widgets) => {
       const { screens, activeScreenIndex } = get();
       pushUndo(screens, set);
-      const newWidgets: HmiWidget[] = widgets.map((w) => ({ ...w, id: uid() }));
+      const newWidgets: HmiWidget[] = widgets.map((w) => ({ ...w, id: newId() }));
       const newScreens = [...screens];
       newScreens[activeScreenIndex] = {
         ...newScreens[activeScreenIndex],
@@ -656,7 +659,7 @@ export const useStore = create<AppState>((set, get) => {
       pushUndo(screens, set);
       const pasted: HmiWidget = {
         ...clipboard,
-        id: uid(),
+        id: newId(),
         x: clipboard.x + 20,
         y: clipboard.y + 20,
       };
@@ -809,7 +812,7 @@ export const useStore = create<AppState>((set, get) => {
     alarms: [],
     setScadaUrl: (url) => set({ scadaUrl: url, isDirty: true }),
     addAlarm: (alarm) => {
-      const newAlarm: AlarmRule = { ...alarm, id: uid() };
+      const newAlarm: AlarmRule = { ...alarm, id: newId() };
       set((state) => ({ alarms: [...state.alarms, newAlarm], isDirty: true }));
     },
     removeAlarm: (id) => {
@@ -934,29 +937,27 @@ export const useStore = create<AppState>((set, get) => {
     canRedo: false,
     undo: () => {
       const { screens } = get();
-      if (undoStack.length === 0) return;
-      redoStack.push(JSON.stringify(screens));
-      const prev = JSON.parse(undoStack.pop()!) as HmiScreen[];
+      const prev = history.undo(screens);
+      if (!prev) return;
       set({
         screens: prev,
         selectedWidgetId: null,
         activeScreenIndex: Math.min(get().activeScreenIndex, prev.length - 1),
-        canUndo: undoStack.length > 0,
-        canRedo: true,
+        canUndo: history.canUndo(),
+        canRedo: history.canRedo(),
         isDirty: true,
       });
     },
     redo: () => {
       const { screens } = get();
-      if (redoStack.length === 0) return;
-      undoStack.push(JSON.stringify(screens));
-      const next = JSON.parse(redoStack.pop()!) as HmiScreen[];
+      const next = history.redo(screens);
+      if (!next) return;
       set({
         screens: next,
         selectedWidgetId: null,
         activeScreenIndex: Math.min(get().activeScreenIndex, next.length - 1),
-        canUndo: true,
-        canRedo: redoStack.length > 0,
+        canUndo: history.canUndo(),
+        canRedo: history.canRedo(),
         isDirty: true,
       });
     },

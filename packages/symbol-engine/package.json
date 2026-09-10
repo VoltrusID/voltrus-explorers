@@ -1,0 +1,17 @@
+{
+  "name": "@mactools/symbol-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared 2D symbol-editor engine: model, geometry, history, clipboard. Standalone — no runtime deps.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}
