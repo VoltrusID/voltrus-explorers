@@ -24,6 +24,17 @@ import type {
 import { transpileFbdToSt } from "./components/Editor/FbdEditor/transpiler/fbd-to-st";
 import { transpileLdToSt } from "./components/Editor/LdEditor/transpiler/ld-to-st";
 import { transpileSfcToSt } from "./components/Editor/SfcEditor/transpiler/sfc-to-st";
+import type { FbdProgram } from "./types/fbd";
+import type { SfcProgram } from "./types/sfc";
+import type { LdProgram } from "./types/ld";
+import {
+  canonicalizeFileContent,
+  serializeFbd,
+  serializeLd,
+  serializeSfc,
+  DIAGRAM_FORMAT_VERSION,
+  LD_FORMAT_VERSION,
+} from "./types/canonical";
 
 interface AppState {
   // Theme
@@ -279,10 +290,11 @@ export const useStore = create<AppState>((set, get) => ({
   updateFileContent: (index, content) => {
     const { openFiles } = get();
     const newFiles = [...openFiles];
-    if (newFiles[index]) {
-      newFiles[index] = { ...newFiles[index], content, modified: true };
-      set({ openFiles: newFiles });
-    }
+    const file = newFiles[index];
+    // Editors re-serialize on mount; identical content must not flip the dirty flag.
+    if (!file || file.content === content) return;
+    newFiles[index] = { ...file, content, modified: true };
+    set({ openFiles: newFiles });
   },
 
   newFile: async (name, pouType) => {
@@ -305,14 +317,14 @@ export const useStore = create<AppState>((set, get) => ({
   newFbdFile: (name: string) => {
     const { openFiles } = get();
     const fileName = name.endsWith(".fbd") ? name : `${name}.fbd`;
-    const content = JSON.stringify({
-      version: "1.0",
+    const content = serializeFbd({
+      version: DIAGRAM_FORMAT_VERSION,
       programName: name.replace(/\.fbd$/, ""),
       declarations: [],
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
-    }, null, 2);
+    });
     set({
       openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
       activeFileIndex: openFiles.length,
@@ -323,10 +335,12 @@ export const useStore = create<AppState>((set, get) => ({
     const { openFiles } = get();
     const file = openFiles[index];
     if (!file) return;
+    // PLC-5: every diagram save is canonicalized before it reaches disk.
+    const content = canonicalizeFileContent(file.name, file.content);
     try {
-      await invoke("save_file", { path: file.path, content: file.content });
+      await invoke("save_file", { path: file.path, content });
       const newFiles = [...openFiles];
-      newFiles[index] = { ...newFiles[index], modified: false };
+      newFiles[index] = { ...newFiles[index], content, modified: false };
       set({ openFiles: newFiles });
       get().addLog("system", `Saved ${file.name}`);
     } catch (e) {
@@ -374,7 +388,7 @@ export const useStore = create<AppState>((set, get) => ({
   loadFbdSample: (sample: { name: string; program: unknown }) => {
     const { openFiles } = get();
     const fileName = `${sample.name.replace(/\s+/g, "")}.fbd`;
-    const content = JSON.stringify(sample.program, null, 2);
+    const content = serializeFbd(sample.program as FbdProgram);
     set({
       openFiles: [
         ...openFiles,
@@ -387,11 +401,11 @@ export const useStore = create<AppState>((set, get) => ({
   newLdFile: (name: string) => {
     const { openFiles } = get();
     const fileName = name.endsWith(".ld") ? name : `${name}.ld`;
-    const content = JSON.stringify({
-      version: "2.0",
+    const content = serializeLd({
+      version: LD_FORMAT_VERSION,
       programName: name.replace(/\.ld$/, ""),
       rungs: [],
-    }, null, 2);
+    });
     set({
       openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
       activeFileIndex: openFiles.length,
@@ -401,7 +415,7 @@ export const useStore = create<AppState>((set, get) => ({
   loadLdSample: (sample: { name: string; program: unknown }) => {
     const { openFiles } = get();
     const fileName = `${sample.name.replace(/\s+/g, "")}.ld`;
-    const content = JSON.stringify(sample.program, null, 2);
+    const content = serializeLd(sample.program as LdProgram);
     set({
       openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
       activeFileIndex: openFiles.length,
@@ -411,13 +425,13 @@ export const useStore = create<AppState>((set, get) => ({
   newSfcFile: (name: string) => {
     const { openFiles } = get();
     const fileName = name.endsWith(".sfc") ? name : `${name}.sfc`;
-    const content = JSON.stringify({
-      version: "1.0",
+    const content = serializeSfc({
+      version: DIAGRAM_FORMAT_VERSION,
       programName: name.replace(/\.sfc$/, ""),
       nodes: [],
       edges: [],
       viewport: { x: 0, y: 0, zoom: 1 },
-    }, null, 2);
+    });
     set({
       openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
       activeFileIndex: openFiles.length,
@@ -427,7 +441,7 @@ export const useStore = create<AppState>((set, get) => ({
   loadSfcSample: (sample: { name: string; program: unknown }) => {
     const { openFiles } = get();
     const fileName = `${sample.name.replace(/\s+/g, "")}.sfc`;
-    const content = JSON.stringify(sample.program, null, 2);
+    const content = serializeSfc(sample.program as SfcProgram);
     set({
       openFiles: [...openFiles, { name: fileName, path: fileName, content, modified: false }],
       activeFileIndex: openFiles.length,

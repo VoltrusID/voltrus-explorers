@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import type { LdProgram, LdCursor, LdElement, LdElementType } from "../../../types/ld";
 import { migrateLdProgram } from "./migrate";
+import { serializeLd } from "../../../types/canonical";
 import { isContactType, isOutputType, MIN_CONTACT_COLS, makeLdElement, makeLdPath, makeLdRung } from "../../../types/ld";
 import LdGrid from "./LdGrid";
 import LdPalette from "./palette/LdPalette";
@@ -49,7 +50,7 @@ export default function GridLdEditor({ value, onChange }: Props) {
   const scheduleSerialize = useCallback((p: LdProgram) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      onChange(JSON.stringify(p, null, 2));
+      onChange(serializeLd(p));
     }, 200);
   }, [onChange]);
 

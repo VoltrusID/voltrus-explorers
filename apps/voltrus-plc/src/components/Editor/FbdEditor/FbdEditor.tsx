@@ -6,6 +6,7 @@ import FbdCanvas from "./FbdCanvas";
 import BlockPalette from "./palette/BlockPalette";
 import { useFbdHotkeys, FBD_HOTKEYS } from "./useFbdHotkeys";
 import type { BlockNodeData, FbdProgram } from "../../../types/fbd";
+import { parseFbdProgram, serializeFbd } from "../../../types/canonical";
 
 interface FbdEditorProps {
   value: string;
@@ -20,7 +21,7 @@ function FbdEditorInner({ value, onChange }: FbdEditorProps) {
 
   const initial = useMemo(() => {
     try {
-      return JSON.parse(value) as FbdProgram;
+      return parseFbdProgram(value);
     } catch {
       return {
         version: "1.0",
@@ -47,7 +48,7 @@ function FbdEditorInner({ value, onChange }: FbdEditorProps) {
         nodes: nodes as Node<BlockNodeData>[],
         edges: edges,
       };
-      onChange(JSON.stringify(program, null, 2));
+      onChange(serializeFbd(program));
     }, 150);
   }, [nodes, edges, onChange]);
 

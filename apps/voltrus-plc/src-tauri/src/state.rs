@@ -49,6 +49,11 @@ pub struct TargetState {
     pub grpc_client: Arc<Mutex<Option<mt_grpc::client::PlcRuntimeClient>>>,
     /// Address of the persistent gRPC connection.
     pub grpc_addr: Arc<Mutex<Option<String>>>,
+    /// CRC32 of the last successfully deployed bundle payload (drift
+    /// detection, PLC-6). `crc32_le` over the VLT1 body without its trailing
+    /// 4-byte CRC for ESP32 HTTP deploys, over the full bincode payload for
+    /// gRPC deploys. `None` until a deploy succeeds in this session.
+    pub last_deployed_crc32: Arc<Mutex<Option<u32>>>,
 }
 
 pub struct AppState {

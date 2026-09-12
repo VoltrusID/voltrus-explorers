@@ -159,12 +159,18 @@ export interface TargetStatus {
   ip: string | null;
   runtime_state: string | null;
   cycle_count: number | null;
+  /** CRC32 of the last bundle deployed from this project session. */
+  deployed_crc32?: number | null;
+  /** CRC32 the running target reports for its loaded bundle. */
+  running_crc32?: number | null;
 }
 
 export interface DeployResult {
   success: boolean;
   message: string;
   byte_count: number | null;
+  /** CRC32 recorded for this deploy (drift-detection fingerprint). */
+  crc32?: number | null;
 }
 
 export interface ScadaRegistration {

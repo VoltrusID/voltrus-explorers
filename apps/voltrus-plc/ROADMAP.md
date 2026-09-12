@@ -673,6 +673,8 @@ The "be CODESYS" phase — graphical IEC 61131-3 editors alongside ST.
 - [ ] **Blog post: "From ST Code to Factory Floor in 5 Minutes"** — e2e walkthrough: write ST → deploy to ESP32 → monitor in SCADA → HMI
 - [ ] **Video: ESP32 + Voltrus PLC demo** — YouTube, 5 min, shows the full e2e flow
 - [ ] **Comparison page: Voltrus vs CODESYS vs TIA Portal** — honest feature/price matrix
+- [ ] **Blog post: "Deterministic PLC tests: virtual-time acceptance testing in Voltrus"** — angle: "your TON doesn't need 10 real seconds"; publish alongside the mt-plc-cli release
+- [ ] **Landing section: "Test your logic in CI"** on voltrus.id/voltrus-plc — `.test.yaml` sample + `voltrus-plc test` capture, once the CLI ships
 
 ---
 
@@ -730,6 +732,7 @@ The "be CODESYS" phase — graphical IEC 61131-3 editors alongside ST.
 | **MICS** | Browser-native IEC 61131-3 IDE (all 5 languages) | Low now — early, but watch |
 | **Xentara** | Software-defined automation, C++/Rust, MCP | Low — different category |
 | **OpenPLC v4** | Open-source, cross-platform, full IEC 61131-3 | Low — education/hobbyist |
+| **nautilus (Joy Automation)** | Open-source Go "SCADA as software" toolkit: ST/LD/FBD/SFC → own IR/VM, virtual-time YAML acceptance tests, `check` CI gate, online edits with git round-trip, Sparkplug B (TCK-passing), ISA-18.2 alarms, VS Code LSP | Medium — dev-ex credibility (viral ~480-like LinkedIn demo); but a Go toolkit, not a Mac IDE: EIP-only driver, no bare-metal/ESP32, no AI, no SCADA/HMI products. Copy the workflow (tests, CI, diffable artifacts) — being implemented as PLC-4..7 |
 
 ### Our Positioning
 

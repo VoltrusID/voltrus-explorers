@@ -6,6 +6,7 @@ import SfcCanvas from "./SfcCanvas";
 import SfcPalette from "./palette/SfcPalette";
 import { useSfcHotkeys, SFC_HOTKEYS } from "./useSfcHotkeys";
 import type { SfcNodeData, SfcProgram } from "../../../types/sfc";
+import { parseSfcProgram, serializeSfc } from "../../../types/canonical";
 
 interface SfcEditorProps {
   value: string;
@@ -20,7 +21,7 @@ function SfcEditorInner({ value, onChange }: SfcEditorProps) {
 
   const initial = useMemo(() => {
     try {
-      return JSON.parse(value) as SfcProgram;
+      return parseSfcProgram(value);
     } catch {
       return {
         version: "1.0",
@@ -45,7 +46,7 @@ function SfcEditorInner({ value, onChange }: SfcEditorProps) {
         nodes: nodes as Node<SfcNodeData>[],
         edges,
       };
-      onChange(JSON.stringify(program, null, 2));
+      onChange(serializeSfc(program));
     }, 150);
   }, [nodes, edges, onChange]);
 

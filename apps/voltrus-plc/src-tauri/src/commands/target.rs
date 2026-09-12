@@ -1,7 +1,31 @@
+//! # Drift detection (PLC-6)
+//!
+//! The IDE records the CRC32 of every bundle it deploys (`TargetState::last_deployed_crc32`)
+//! and compares it against the CRC32 reported by the running target
+//! (`target_status` → `deployed_crc32` vs `running_crc32`).
+//!
+//! CRC definition (must stay identical on every side):
+//! - `crc32_le` (reflected IEEE, init 0, no final XOR — see `mt-plc-types`).
+//! - Linux gRPC target: CRC over the full bincode payload sent as
+//!   `DeployRequest.bytecode`; reported via `RuntimeState.deployed_bundle_crc32`.
+//! - ESP32 (this file): CRC over the VLT1 bundle body WITHOUT its trailing
+//!   4-byte CRC field — exactly the value the firmware already computes
+//!   during deploy validation.
+//!
+//! Required ESP32-C firmware change (firmware lives outside this repo):
+//! `GET /api/state` must include the loaded-bundle CRC32 in its JSON:
+//!
+//!      { "state": "running", "cycle_count": 1234,
+//!        "loaded_bundle_crc32": 3149628632 }
+//!
+//! After a successful `/api/deploy` validation the firmware stores
+//! `crc32_le(payload[0 .. len-4])` and reports it here. Older firmware that
+//! omits the field deserializes as `None`, and the UI shows "unknown".
+
 use std::sync::Arc;
 use crate::state::AppState;
 use futures::{SinkExt, StreamExt};
-use mt_plc_types::{serialize_bytecode, IoMapping, IoProtocol, IoType};
+use mt_plc_types::{crc32_le, serialize_bytecode, IoMapping, IoType};
 use tauri::Emitter;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -11,6 +35,10 @@ pub struct TargetStatusResult {
     pub ip: Option<String>,
     pub runtime_state: Option<String>,
     pub cycle_count: Option<u64>,
+    /// CRC32 of the last bundle deployed from this project session.
+    pub deployed_crc32: Option<u32>,
+    /// CRC32 the running target reports for its loaded bundle.
+    pub running_crc32: Option<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -18,6 +46,8 @@ pub struct DeployResult {
     pub success: bool,
     pub message: String,
     pub byte_count: Option<usize>,
+    /// CRC32 recorded for this deploy (drift-detection fingerprint).
+    pub crc32: Option<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -110,6 +140,9 @@ pub async fn deploy_to_target(
         .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
 
     let byte_count = bytecode.len();
+    // Drift fingerprint: CRC over the VLT1 body without the trailing CRC
+    // field — the same value the firmware computes during deploy validation.
+    let bundle_crc = (byte_count >= 4).then(|| crc32_le(&bytecode[..byte_count - 4]));
     let url = format!("http://{ip}/api/deploy");
 
     let client = reqwest::Client::new();
@@ -132,10 +165,13 @@ pub async fn deploy_to_target(
             .connected
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
+        *state.target.last_deployed_crc32.lock().await = bundle_crc;
+
         Ok(DeployResult {
             success: true,
             message: "Deployed successfully".into(),
             byte_count: Some(byte_count),
+            crc32: bundle_crc,
         })
     } else {
         let status = resp.status();
@@ -291,7 +327,10 @@ pub async fn target_step(state: tauri::State<'_, AppState>) -> Result<(), String
     send_via_sink(&state.target.ws_sink, &[0x06]).await
 }
 
-/// Get current target connection status.
+/// Get current target connection status, including the drift-detection
+/// fingerprints: `deployed_crc32` (what this project last deployed) and
+/// `running_crc32` (what the target reports as loaded — `/api/state` for
+/// ESP32, `GetRuntimeState` for gRPC targets). `None` means unknown.
 #[tauri::command]
 pub async fn target_status(state: tauri::State<'_, AppState>) -> Result<TargetStatusResult, String> {
     let connected = state
@@ -299,27 +338,137 @@ pub async fn target_status(state: tauri::State<'_, AppState>) -> Result<TargetSt
         .connected
         .load(std::sync::atomic::Ordering::SeqCst);
     let ip = state.target.ip.lock().await.clone();
+    let kind = state.target.target_kind.lock().await.clone();
 
-    // Try to fetch state from ESP32 if connected
-    let (runtime_state, cycle_count) = if connected {
-        if let Some(ref ip) = ip {
-            match fetch_runtime_state(ip).await {
-                Ok(s) => (Some(s.state), Some(s.cycle_count)),
-                Err(_) => (None, None),
+    let (runtime_state, cycle_count, running_crc32) = if connected {
+        match kind {
+            crate::state::TargetKind::Grpc => {
+                let mut client = state.target.grpc_client.lock().await.clone();
+                match client.as_mut().map(|c| c.get_runtime_state()) {
+                    Some(fut) => match fut.await {
+                        Ok(s) => (
+                            Some(pb_status_name(s.status).to_string()),
+                            Some(s.cycle_count),
+                            (s.deployed_bundle_crc32 != 0).then_some(s.deployed_bundle_crc32),
+                        ),
+                        Err(_) => (None, None, None),
+                    },
+                    None => (None, None, None),
+                }
             }
-        } else {
-            (None, None)
+            crate::state::TargetKind::WebSocket => match ip.as_deref() {
+                Some(ip) => match fetch_runtime_state(ip).await {
+                    Ok(s) => (
+                        Some(s.state),
+                        Some(s.cycle_count),
+                        s.loaded_bundle_crc32.filter(|crc| *crc != 0),
+                    ),
+                    Err(_) => (None, None, None),
+                },
+                None => (None, None, None),
+            },
         }
     } else {
-        (None, None)
+        (None, None, None)
     };
+
+    let deployed_crc32 = state.target.last_deployed_crc32.lock().await.clone();
 
     Ok(TargetStatusResult {
         connected,
         ip,
         runtime_state,
         cycle_count,
+        deployed_crc32,
+        running_crc32,
     })
+}
+
+/// Human-readable name for the proto `RuntimeStatus` (mirrors the ESP32
+/// status names used by `parse_status_msg`). The prost field is a raw `i32`.
+fn pb_status_name(status: i32) -> &'static str {
+    match mt_grpc::RuntimeStatus::try_from(status) {
+        Ok(mt_grpc::RuntimeStatus::Stopped) => "stopped",
+        Ok(mt_grpc::RuntimeStatus::Running) => "running",
+        Ok(mt_grpc::RuntimeStatus::Paused) => "paused",
+        Ok(mt_grpc::RuntimeStatus::Error) => "error",
+        _ => "unknown",
+    }
+}
+
+// ── Drift comparison (PLC-6) ──
+
+/// Outcome of comparing the project's last-deployed CRC against the
+/// running target's loaded CRC.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriftStatus {
+    /// Both CRCs known and equal.
+    Sync,
+    /// Both CRCs known but different — the target runs another program.
+    Drift,
+    /// Either side unknown (never deployed, old firmware, disconnected).
+    Unknown,
+}
+
+/// Compare the project-side CRC with the running CRC. A CRC of 0 counts as
+/// unknown (proto3 default / "nothing loaded"), mirroring the frontend rule.
+pub fn compare_crc(project_crc: Option<u32>, running_crc: Option<u32>) -> DriftStatus {
+    match (project_crc, running_crc) {
+        (Some(project), Some(running)) if project != 0 && running != 0 => {
+            if project == running {
+                DriftStatus::Sync
+            } else {
+                DriftStatus::Drift
+            }
+        }
+        _ => DriftStatus::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod drift_tests {
+    use super::*;
+
+    #[test]
+    fn equal_crcs_are_in_sync() {
+        assert_eq!(compare_crc(Some(0xDEADBEEF), Some(0xDEADBEEF)), DriftStatus::Sync);
+    }
+
+    #[test]
+    fn different_crcs_drift() {
+        assert_eq!(compare_crc(Some(0xDEADBEEF), Some(0x12345678)), DriftStatus::Drift);
+    }
+
+    #[test]
+    fn missing_either_side_is_unknown() {
+        assert_eq!(compare_crc(None, Some(0xDEADBEEF)), DriftStatus::Unknown);
+        assert_eq!(compare_crc(Some(0xDEADBEEF), None), DriftStatus::Unknown);
+        assert_eq!(compare_crc(None, None), DriftStatus::Unknown);
+    }
+
+    #[test]
+    fn zero_crc_counts_as_unknown() {
+        assert_eq!(compare_crc(Some(0), Some(0xDEADBEEF)), DriftStatus::Unknown);
+        assert_eq!(compare_crc(Some(0xDEADBEEF), Some(0)), DriftStatus::Unknown);
+    }
+
+    #[test]
+    fn drift_lifecycle_transitions() {
+        let mut status = compare_crc(None, None);
+        assert_eq!(status, DriftStatus::Unknown); // not connected / nothing deployed
+
+        // Deploy succeeded, target reports the same bundle.
+        status = compare_crc(Some(42), Some(42));
+        assert_eq!(status, DriftStatus::Sync);
+
+        // Someone else redeployed on the target.
+        status = compare_crc(Some(42), Some(43));
+        assert_eq!(status, DriftStatus::Drift);
+
+        // Target went away (old firmware or disconnected).
+        status = compare_crc(Some(42), None);
+        assert_eq!(status, DriftStatus::Unknown);
+    }
 }
 
 /// Register the ESP32 target as a device in Voltrus SCADA.
@@ -424,6 +573,9 @@ pub async fn deploy_via_grpc(
 
     let bytecode = bincode::serialize(&module)
         .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
+    // Drift fingerprint: CRC over the full bincode payload — the value the
+    // mt-grpc server records from `DeployRequest.bytecode`.
+    let bundle_crc = crc32_le(&bytecode);
 
     // I/O mappings travel in the config JSON (proto IoMapping shape) so the
     // Linux runtime can wire its IoManager.
@@ -467,12 +619,14 @@ pub async fn deploy_via_grpc(
             .target
             .connected
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        *state.target.last_deployed_crc32.lock().await = Some(bundle_crc);
     }
 
     Ok(DeployResult {
         success,
         message: msg,
         byte_count: Some(bytecode.len()),
+        crc32: Some(bundle_crc),
     })
 }
 
@@ -551,6 +705,10 @@ struct WatchedVar {
 struct RemoteState {
     state: String,
     cycle_count: u64,
+    /// Drift fingerprint reported by the firmware (`loaded_bundle_crc32` in
+    /// `/api/state`). Absent on older firmware → `None` → UI shows "unknown".
+    #[serde(default)]
+    loaded_bundle_crc32: Option<u32>,
 }
 
 /// Parse ESP32 VAR_UPDATE frame (msg_type 0x01 already stripped).
@@ -799,6 +957,8 @@ fn resolve_mappings(
     frontend: &[FrontendIoMapping],
     variable_slots: &[(String, mt_plc_types::PlcValue)],
 ) -> Vec<IoMapping> {
+    use mt_plc_types::{IoMapping, IoProtocol, IoType};
+
     frontend
         .iter()
         .filter_map(|fm| {

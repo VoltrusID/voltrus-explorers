@@ -1,0 +1,71 @@
+# Virtual-time scenarios for TrafficLight.st (PLC-4 headless test gate).
+#
+# The controller is scan-driven: `timer` counts scans (no TON FBs and no
+# physical I/O), so everything is exactly assertable. One caveat reflected
+# below: the state variable leads the lamp outputs by one scan, because a
+# branch only assigns its lamps on the scan AFTER the transition.
+#   state 0 red:        timer > 100 (scan 101)
+#   state 1 red+yellow: timer > 30  (scan 31 relative)
+#   state 2 green:      timer > 100 (scan 101 relative)
+#   state 3 yellow:     timer > 40  (scan 41 relative)
+#   flash = (flash_counter MOD 20) > 10
+
+program: TrafficLight.st
+
+scenarios:
+  - name: red holds for 100 scans then prepares to go
+    steps:
+      - advance: 100scans
+        expect:
+          state: 0
+          red: true
+          yellow: false
+          green: false
+          timer: 100
+      - advance: 2scans # scan 101 transitions, scan 102 assigns lamps
+        expect:
+          state: 1
+          red: true
+          yellow: true
+          green: false
+
+  - name: red+yellow switches to green after 31 scans
+    given:
+      state: 1
+      timer: 0
+    steps:
+      - advance: 31scans
+        expect:
+          state: 2
+          yellow: true # lamps still from the state-1 branch
+          green: false
+      - advance: 1scans
+        expect:
+          state: 2
+          green: true
+          red: false
+          yellow: false
+
+  - name: yellow phase returns to red after 41 scans
+    given:
+      state: 3
+      timer: 0
+    steps:
+      - advance: 41scans
+        expect:
+          state: 0
+          yellow: true # lamps still from the state-3 branch
+      - advance: 101scans
+        expect:
+          state: 1
+          red: true
+          yellow: false
+
+  - name: flash blinks on a 20-scan duty cycle
+    steps:
+      - advance: 10scans
+        expect:
+          flash: false # counter 10 -> 10 MOD 20 not > 10
+      - advance: 1scans
+        expect:
+          flash: true # counter 11 -> 11 MOD 20 > 10

@@ -22,6 +22,13 @@ message RuntimeState {
   double avg_cycle_ms = 4;
   double max_cycle_ms = 5;
   string error_message = 6;
+  // Fingerprint of the bundle currently loaded by the runtime (drift
+  // detection). CRC32 is `crc32_le` over the payload the runtime loaded:
+  // the bincode bytes for gRPC deploys, the VLT1 body without its trailing
+  // 4-byte CRC for HTTP/ESP32 deploys. Both stay 0 until a Deploy succeeds
+  // (next free field numbers: 9+).
+  uint32 deployed_bundle_crc32 = 7;
+  uint64 deployed_bundle_len = 8;
 }
 
 // ── Variable Updates ──

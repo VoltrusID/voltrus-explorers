@@ -12,6 +12,7 @@ use mt_plc_runtime::io_manager::{self, IoAddress, IoDriver, IoArea};
 use mt_plc_runtime::opcode::{CompiledModule, Instruction};
 use mt_plc_runtime::types::{CycleStats, RuntimeConfig};
 use mt_plc_runtime::{PlcRuntime, PlcValue};
+use mt_plc_types::crc32_le;
 
 use crate::pb::plc_runtime_server::{PlcRuntime as PlcRuntimeTrait, PlcRuntimeServer};
 use crate::pb::{self, *};
@@ -31,17 +32,19 @@ fn runtime_status_to_pb(state: &DomainRuntimeState) -> RuntimeStatus {
     }
 }
 
-fn runtime_state_to_pb(state: &DomainRuntimeState, stats: &CycleStats) -> ProtoRuntimeState {
+fn runtime_state_to_pb(inner: &RuntimeInner) -> ProtoRuntimeState {
     ProtoRuntimeState {
-        status: runtime_status_to_pb(state).into(),
-        cycle_count: stats.cycle_count,
-        last_cycle_ms: stats.last_cycle_ms,
-        avg_cycle_ms: stats.avg_cycle_ms,
-        max_cycle_ms: stats.max_cycle_ms,
-        error_message: match state {
+        status: runtime_status_to_pb(&inner.state).into(),
+        cycle_count: inner.stats.cycle_count,
+        last_cycle_ms: inner.stats.last_cycle_ms,
+        avg_cycle_ms: inner.stats.avg_cycle_ms,
+        max_cycle_ms: inner.stats.max_cycle_ms,
+        error_message: match &inner.state {
             DomainRuntimeState::Error(e) => e.clone(),
             _ => String::new(),
         },
+        deployed_bundle_crc32: inner.deployed_bundle_crc32,
+        deployed_bundle_len: inner.deployed_bundle_len,
     }
 }
 
@@ -112,6 +115,11 @@ struct RuntimeInner {
     instructions: Vec<Instruction>,
     state: DomainRuntimeState,
     stats: CycleStats,
+    /// Fingerprint of the deployed bundle (drift detection, PLC-6).
+    /// CRC32 is `crc32_le` over the received bytecode; both stay 0 until a
+    /// Deploy succeeds.
+    deployed_bundle_crc32: u32,
+    deployed_bundle_len: u64,
 }
 
 /// Handle to the background scan-cycle task, used to start/stop it.
@@ -202,6 +210,8 @@ impl PlcRuntimeGrpcServer {
                 instructions: Vec::new(),
                 state: DomainRuntimeState::Stopped,
                 stats: CycleStats::default(),
+                deployed_bundle_crc32: 0,
+                deployed_bundle_len: 0,
             })),
             scan_handle: Arc::new(Mutex::new(None)),
             scan_loop_handle: Arc::new(Mutex::new(None)),
@@ -407,8 +417,10 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         guard.runtime = Some(PlcRuntime::new(config, module));
         guard.state = DomainRuntimeState::Stopped;
         guard.stats = CycleStats::default();
+        guard.deployed_bundle_crc32 = crc32_le(&req.bytecode);
+        guard.deployed_bundle_len = req.bytecode.len() as u64;
 
-        let new_state = runtime_state_to_pb(&guard.state, &guard.stats);
+        let new_state = runtime_state_to_pb(&guard);
 
         Ok(Response::new(DeployResponse {
             success: true,
@@ -422,7 +434,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         _request: Request<Empty>,
     ) -> Result<Response<ProtoRuntimeState>, Status> {
         let guard = self.inner.read().await;
-        let pb_state = runtime_state_to_pb(&guard.state, &guard.stats);
+        let pb_state = runtime_state_to_pb(&guard);
         Ok(Response::new(pb_state))
     }
 
@@ -455,7 +467,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         self.start_scan_loop().await;
 
         let guard = self.inner.read().await;
-        let pb_state = runtime_state_to_pb(&guard.state, &guard.stats);
+        let pb_state = runtime_state_to_pb(&guard);
         Ok(Response::new(pb_state))
     }
 
@@ -468,7 +480,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         let mut guard = self.inner.write().await;
         guard.state = DomainRuntimeState::Stopped;
 
-        let pb_state = runtime_state_to_pb(&guard.state, &guard.stats);
+        let pb_state = runtime_state_to_pb(&guard);
         Ok(Response::new(pb_state))
     }
 
@@ -491,7 +503,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
             return Err(Status::failed_precondition("No program deployed"));
         }
 
-        let pb_state = runtime_state_to_pb(&guard.state, &guard.stats);
+        let pb_state = runtime_state_to_pb(&guard);
         Ok(Response::new(pb_state))
     }
 
@@ -808,5 +820,93 @@ fn io_cycle_write(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &PlcRuntime) {
 
     if let Err(e) = driver.write_outputs(&pairs) {
         *last_error = Some(e.to_string());
+    }
+}
+
+#[cfg(test)]
+mod drift_tests {
+    use super::*;
+
+    use mt_plc_types::{Instruction, Opcode};
+
+    use crate::pb::{DeployRequest, Empty};
+
+    fn sample_module(name: &str) -> CompiledModule {
+        CompiledModule {
+            name: name.to_string(),
+            instructions: vec![Instruction { opcode: Opcode::PushBool, operand: Some(1) }],
+            variable_slots: vec![("motor".to_string(), PlcValue::Bool(false))],
+            pou_table: vec![("Main".to_string(), 0)],
+            name_constants: vec![],
+            line_map: vec![(1, 0)],
+        }
+    }
+
+    async fn deploy_bytes(server: &PlcRuntimeGrpcServer, bytes: &[u8]) {
+        server
+            .deploy(Request::new(DeployRequest {
+                bytecode: bytes.to_vec(),
+                config_json: String::new(),
+            }))
+            .await
+            .expect("deploy");
+    }
+
+    async fn fingerprint(server: &PlcRuntimeGrpcServer) -> (u32, u64) {
+        let state = server
+            .get_runtime_state(Request::new(Empty {}))
+            .await
+            .expect("get_runtime_state")
+            .into_inner();
+        (state.deployed_bundle_crc32, state.deployed_bundle_len)
+    }
+
+    #[tokio::test]
+    async fn fresh_runtime_reports_zero_fingerprint() {
+        let server = PlcRuntimeGrpcServer::new();
+        assert_eq!(fingerprint(&server).await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn deploy_records_bundle_fingerprint() {
+        let server = PlcRuntimeGrpcServer::new();
+        let bytes = bincode::serialize(&sample_module("Main")).expect("serialize");
+
+        deploy_bytes(&server, &bytes).await;
+        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+    }
+
+    #[tokio::test]
+    async fn redeploy_updates_fingerprint() {
+        let server = PlcRuntimeGrpcServer::new();
+        let first = bincode::serialize(&sample_module("Main")).expect("serialize");
+        let mut second = first.clone();
+        second.push(0xFF); // any byte difference must move the CRC
+
+        deploy_bytes(&server, &first).await;
+        let (crc_before, len_before) = fingerprint(&server).await;
+
+        deploy_bytes(&server, &second).await;
+        let (crc_after, len_after) = fingerprint(&server).await;
+
+        assert_ne!(crc_before, crc_after);
+        assert_ne!(len_before, len_after);
+        assert_eq!(crc_after, crc32_le(&second));
+    }
+
+    #[tokio::test]
+    async fn start_stop_preserves_fingerprint() {
+        let server = PlcRuntimeGrpcServer::new();
+        let bytes = bincode::serialize(&sample_module("Main")).expect("serialize");
+        deploy_bytes(&server, &bytes).await;
+
+        server
+            .start(Request::new(StartConfig { config_json: String::new() }))
+            .await
+            .expect("start");
+        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+
+        server.stop(Request::new(Empty {})).await.expect("stop");
+        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
     }
 }

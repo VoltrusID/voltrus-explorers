@@ -3,6 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../../store";
 import type { IoStatus, IoReadResult } from "../../types";
 import { PROTOCOLS } from "../../constants/protocols";
+import {
+  acceptEipImport,
+  fetchEipUdts,
+  filterGeneratedSt,
+  type EipImportResult,
+} from "../../lib/eipImport";
 
 const IO_PROTOCOLS = PROTOCOLS.filter((p) => p.defaultPort !== undefined);
 
@@ -29,6 +35,15 @@ export default function IoPanel() {
   const [testValue, setTestValue] = useState(0);
   const [readResult, setReadResult] = useState<IoReadResult | null>(null);
   const [testing, setTesting] = useState(false);
+
+  // UDT import (EtherNet/IP only)
+  const [eipImportOpen, setEipImportOpen] = useState(false);
+  const [eipImportLoading, setEipImportLoading] = useState(false);
+  const [eipImportError, setEipImportError] = useState<string | null>(null);
+  const [eipImportResult, setEipImportResult] = useState<EipImportResult | null>(null);
+  const [eipImportSelected, setEipImportSelected] = useState<Set<string>>(new Set());
+  const [eipImportGlob, setEipImportGlob] = useState("*");
+  const [eipImportAccepting, setEipImportAccepting] = useState(false);
 
   const handleProtocolChange = (p: string) => {
     setProtocol(p);
@@ -105,6 +120,44 @@ export default function IoPanel() {
     } finally {
       setTesting(false);
     }
+  };
+
+  const openEipImport = async (glob: string) => {
+    setEipImportOpen(true);
+    setEipImportLoading(true);
+    setEipImportError(null);
+    try {
+      const result = await fetchEipUdts(host, port, glob);
+      setEipImportResult(result);
+      setEipImportSelected(new Set(result.tags.map((t) => t.name)));
+    } catch (e) {
+      setEipImportResult(null);
+      setEipImportError(String(e));
+    } finally {
+      setEipImportLoading(false);
+    }
+  };
+
+  const handleEipImportAccept = async () => {
+    if (!eipImportResult) return;
+    setEipImportAccepting(true);
+    try {
+      await acceptEipImport(eipImportResult, eipImportSelected);
+      setEipImportOpen(false);
+      setEipImportResult(null);
+      setEipImportError(null);
+    } catch (e) {
+      setEipImportError(String(e));
+    } finally {
+      setEipImportAccepting(false);
+    }
+  };
+
+  const toggleEipImportTag = (name: string, checked: boolean) => {
+    const next = new Set(eipImportSelected);
+    if (checked) next.add(name);
+    else next.delete(name);
+    setEipImportSelected(next);
   };
 
   const connected = status?.connected ?? false;
@@ -293,6 +346,17 @@ export default function IoPanel() {
         {connecting ? "Connecting..." : connected ? "Disconnect" : "Connect"}
       </button>
 
+      {protocol === "enip" && (
+        <button
+          className="toolbar-btn"
+          style={{ width: "100%", marginTop: 6 }}
+          onClick={() => openEipImport(eipImportGlob)}
+          disabled={eipImportLoading}
+        >
+          {eipImportLoading ? "Browsing..." : "Import UDTs from controller…"}
+        </button>
+      )}
+
       {connected && (
         <>
           <div style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 11, fontWeight: 600 }}>
@@ -336,6 +400,100 @@ export default function IoPanel() {
             </div>
           )}
         </>
+      )}
+
+      {eipImportOpen && (
+        <div className="modal-overlay" onClick={() => setEipImportOpen(false)}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="eip-import-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ minWidth: 420, maxWidth: 560 }}
+          >
+            <h3 id="eip-import-title">Import UDTs from controller</h3>
+            {eipImportError && (
+              <div style={{ color: "var(--danger)", fontSize: 11, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+                {eipImportError}
+              </div>
+            )}
+            {eipImportLoading && (
+              <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 8 }}>
+                Browsing {host}:{port}...
+              </div>
+            )}
+            {eipImportResult && (
+              <>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  <input
+                    className="scan-cycle-input"
+                    style={{ flex: 1, textAlign: "left", padding: "2px 6px" }}
+                    value={eipImportGlob}
+                    onChange={(e) => setEipImportGlob(e.target.value)}
+                    placeholder="Tag glob, e.g. Motor*"
+                  />
+                  <button
+                    className="toolbar-btn"
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                    onClick={() => openEipImport(eipImportGlob)}
+                    disabled={eipImportLoading}
+                  >
+                    Browse
+                  </button>
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid var(--border)", marginBottom: 8 }}>
+                  {eipImportResult.tags.map((t) => (
+                    <label
+                      key={t.name}
+                      style={{ display: "flex", gap: 6, alignItems: "center", padding: "2px 6px", fontSize: 11, cursor: "pointer" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={eipImportSelected.has(t.name)}
+                        onChange={(e) => toggleEipImportTag(t.name, e.target.checked)}
+                      />
+                      <span>{t.name}</span>
+                      <span style={{ color: "var(--text-muted)" }}>
+                        {t.template} ({t.members.length} members)
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 4 }}>
+                  Preview — eip_types.st
+                </div>
+                <pre
+                  style={{
+                    maxHeight: 180,
+                    overflowY: "auto",
+                    fontSize: 10,
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    padding: 8,
+                    margin: 0,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {filterGeneratedSt(eipImportResult.generated_st, eipImportSelected, eipImportResult.tags)}
+                </pre>
+              </>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button
+                className="toolbar-btn primary"
+                style={{ flex: 1 }}
+                disabled={!eipImportResult || eipImportSelected.size === 0 || eipImportAccepting}
+                onClick={handleEipImportAccept}
+              >
+                {eipImportAccepting ? "Writing..." : "Accept"}
+              </button>
+              <button className="toolbar-btn" style={{ flex: 1 }} onClick={() => setEipImportOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

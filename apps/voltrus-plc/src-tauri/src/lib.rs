@@ -2,6 +2,7 @@ mod state;
 mod commands {
     pub mod ai;
     pub mod compile;
+    pub mod eip_import;
     pub mod files;
     pub mod runtime;
     pub mod watch;
@@ -37,6 +38,7 @@ pub fn run() {
                 target_kind: std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::TargetKind::WebSocket)),
                 grpc_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 grpc_addr: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                last_deployed_crc32: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             },
         })
         .invoke_handler(tauri::generate_handler![
@@ -69,6 +71,7 @@ pub fn run() {
             commands::io::io_test_read,
             commands::io::io_test_write,
             commands::io::get_io_mappings,
+            commands::eip_import::eip_import_udts,
             commands::ai::chat_claude_stream,
             commands::ai::chat_ollama_stream,
 

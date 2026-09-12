@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../../store";
-import type { DiscoveredTarget } from "../../types";
+import type { DiscoveredTarget, TargetStatus } from "../../types";
+import { compareCrc, formatCrcHex, type DriftInfo } from "./compareCrc";
 import "./ToggleGroup.css";
 
 const TARGET_PRESETS = [
@@ -8,6 +10,12 @@ const TARGET_PRESETS = [
   { label: "192.168.0.100", ip: "192.168.0.100" },
   { label: "10.0.0.1", ip: "10.0.0.1" },
 ];
+
+const DRIFT_BADGE: Record<DriftInfo["status"], { color: string; label: string }> = {
+  sync: { color: "#22c55e", label: "Running program in sync with project" },
+  drift: { color: "#f59e0b", label: "Running program differs from project" },
+  unknown: { color: "var(--text-muted)", label: "Running program version unknown" },
+}
 
 export default function TargetPanel() {
   const targetIp = useStore((s) => s.targetIp);
@@ -32,6 +40,38 @@ export default function TargetPanel() {
 
   const isRemote = executionMode === "remote";
   const [connecting, setConnecting] = useState(false);
+
+  const [drift, setDrift] = useState<DriftInfo>({ status: "unknown", projectCrc: null, runningCrc: null });
+
+  // Drift detection (PLC-6): poll the target every 10s while connected and
+  // compare the project's last-deployed CRC with the target's loaded CRC.
+  useEffect(() => {
+    if (!isRemote || !targetConnected) {
+      setDrift({ status: "unknown", projectCrc: null, runningCrc: null });
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const status = await invoke<TargetStatus>("target_status");
+        if (!cancelled) {
+          setDrift({
+            status: compareCrc(status.deployed_crc32, status.running_crc32),
+            projectCrc: status.deployed_crc32 || null,
+            runningCrc: status.running_crc32 || null,
+          });
+        }
+      } catch {
+        if (!cancelled) setDrift({ status: "unknown", projectCrc: null, runningCrc: null });
+      }
+    };
+    void poll();
+    const id = setInterval(poll, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [isRemote, targetConnected]);
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -175,6 +215,24 @@ export default function TargetPanel() {
         >
           {targetDeploying ? "Deploying..." : "Build & Deploy"}
         </button>
+        {isRemote && targetConnected && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 10 }}>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: DRIFT_BADGE[drift.status].color,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ color: DRIFT_BADGE[drift.status].color }}>
+              {DRIFT_BADGE[drift.status].label}
+              {drift.status === "drift" &&
+                ` (${formatCrcHex(drift.projectCrc ?? 0)} vs ${formatCrcHex(drift.runningCrc ?? 0)})`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* SCADA Connection */}
