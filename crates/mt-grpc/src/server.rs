@@ -227,6 +227,23 @@ impl PlcRuntimeGrpcServer {
         PlcRuntimeServer::new(self)
     }
 
+    /// Read-only snapshot of the named variables from the currently deployed
+    /// runtime — `None` per name that is absent (or while nothing is
+    /// deployed). Lets in-process observers, e.g. a Sparkplug publisher,
+    /// sample VM state without owning the scan loop.
+    pub async fn variable_snapshot(&self, names: &[String]) -> Vec<Option<PlcValue>> {
+        let guard = self.inner.read().await;
+        names
+            .iter()
+            .map(|name| {
+                guard
+                    .runtime
+                    .as_ref()
+                    .and_then(|rt| rt.read_variable(name).cloned())
+            })
+            .collect()
+    }
+
     /// Start the background scan-cycle loop.
     ///
     /// If a scan loop is already running, it is stopped first (Fix 2: guard
@@ -253,6 +270,19 @@ impl PlcRuntimeGrpcServer {
             let mut last_push = std::time::Instant::now();
 
             loop {
+                // Pace the loop by the deployed program's configured scan
+                // cycle (RuntimeConfig.scan_cycle_ms); re-read each iteration
+                // so Deploy/Start config overrides take effect live. The
+                // 1ms floor avoids a busy loop on a zero config.
+                let cycle_ms = {
+                    let guard = inner.read().await;
+                    guard
+                        .runtime
+                        .as_ref()
+                        .map(|rt| rt.config().scan_cycle_ms)
+                        .unwrap_or(10)
+                        .max(1)
+                };
                 // Check cancellation
                 tokio::select! {
                     result = cancel_rx.changed() => {
@@ -260,7 +290,7 @@ impl PlcRuntimeGrpcServer {
                             break;
                         }
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(cycle_ms)) => {}
                 }
 
                 let _cycle_result = {

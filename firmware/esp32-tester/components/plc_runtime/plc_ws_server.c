@@ -202,8 +202,10 @@ static esp_err_t state_get_handler(httpd_req_t *req) {
     char buf[256];
     int len = snprintf(buf, sizeof(buf),
         "{\"state\":\"%s\",\"cycle_count\":%" PRIu32 ","
-        "\"scan_time_us\":%" PRIu32 ",\"max_scan_time_us\":%" PRIu32 "}",
-        state_str, status.cycle_count, status.scan_time_us, status.max_scan_time_us);
+        "\"scan_time_us\":%" PRIu32 ",\"max_scan_time_us\":%" PRIu32 ","
+        "\"loaded_bundle_crc32\":%" PRIu32 "}",
+        state_str, status.cycle_count, status.scan_time_us, status.max_scan_time_us,
+        status.loaded_bundle_crc32);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, buf, len);

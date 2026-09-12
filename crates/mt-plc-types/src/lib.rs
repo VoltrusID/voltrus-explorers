@@ -150,6 +150,111 @@ pub enum Opcode {
     Halt = 0xFF,
 }
 
+impl Opcode {
+    /// Decode an opcode byte as stored in VLT1 bytecode (`opcode as u8`).
+    /// Inverse of the serializer; unknown bytes are rejected.
+    pub fn from_u8(v: u8) -> Option<Opcode> {
+        match v {
+            0x01 => Some(Opcode::PushBool),
+            0x02 => Some(Opcode::PushInt),
+            0x03 => Some(Opcode::PushReal),
+            0x04 => Some(Opcode::PushTime),
+            0x05 => Some(Opcode::PushDint),
+            0x06 => Some(Opcode::PushEnum),
+            0x07 => Some(Opcode::PushString),
+            0x10 => Some(Opcode::LoadVar),
+            0x11 => Some(Opcode::StoreVar),
+            0x12 => Some(Opcode::LoadIo),
+            0x13 => Some(Opcode::StoreIo),
+            0x20 => Some(Opcode::Add),
+            0x21 => Some(Opcode::Sub),
+            0x22 => Some(Opcode::Mul),
+            0x23 => Some(Opcode::Div),
+            0x24 => Some(Opcode::Modulo),
+            0x25 => Some(Opcode::Pow),
+            0x26 => Some(Opcode::Neg),
+            0x30 => Some(Opcode::Eq),
+            0x31 => Some(Opcode::Ne),
+            0x32 => Some(Opcode::Lt),
+            0x33 => Some(Opcode::Le),
+            0x34 => Some(Opcode::Gt),
+            0x35 => Some(Opcode::Ge),
+            0x40 => Some(Opcode::And),
+            0x41 => Some(Opcode::Or),
+            0x42 => Some(Opcode::Xor),
+            0x43 => Some(Opcode::Not),
+            0x44 => Some(Opcode::Shl),
+            0x45 => Some(Opcode::Shr),
+            0x46 => Some(Opcode::Rol),
+            0x47 => Some(Opcode::Ror),
+            0x50 => Some(Opcode::Jump),
+            0x51 => Some(Opcode::JumpIfFalse),
+            0x52 => Some(Opcode::Call),
+            0x53 => Some(Opcode::CallPou),
+            0x54 => Some(Opcode::Return),
+            0x60 => Some(Opcode::TonCall),
+            0x61 => Some(Opcode::TofCall),
+            0x62 => Some(Opcode::TpCall),
+            0x63 => Some(Opcode::CtuCall),
+            0x64 => Some(Opcode::CtdCall),
+            0x65 => Some(Opcode::RTrigCall),
+            0x66 => Some(Opcode::FTrigCall),
+            0x67 => Some(Opcode::CtudCall),
+            0x70 => Some(Opcode::Sqrt),
+            0x71 => Some(Opcode::Ln),
+            0x72 => Some(Opcode::Log),
+            0x73 => Some(Opcode::Exp),
+            0x74 => Some(Opcode::Sin),
+            0x75 => Some(Opcode::Cos),
+            0x76 => Some(Opcode::Tan),
+            0x77 => Some(Opcode::Asin),
+            0x78 => Some(Opcode::Acos),
+            0x79 => Some(Opcode::Atan),
+            0x7A => Some(Opcode::Abs),
+            0x7B => Some(Opcode::Trunc),
+            0x7C => Some(Opcode::Floor),
+            0x7D => Some(Opcode::Ceil),
+            0x7E => Some(Opcode::Expt),
+            0x80 => Some(Opcode::StrLen),
+            0x81 => Some(Opcode::StrLeft),
+            0x82 => Some(Opcode::StrRight),
+            0x83 => Some(Opcode::StrMid),
+            0x84 => Some(Opcode::Concat),
+            0x85 => Some(Opcode::StrInsert),
+            0x86 => Some(Opcode::StrDelete),
+            0x87 => Some(Opcode::StrReplace),
+            0x88 => Some(Opcode::StrFind),
+            0x90 => Some(Opcode::IntToReal),
+            0x91 => Some(Opcode::RealToInt),
+            0x92 => Some(Opcode::IntToBool),
+            0x93 => Some(Opcode::BoolToInt),
+            0x94 => Some(Opcode::IntToString),
+            0x95 => Some(Opcode::RealToString),
+            0x96 => Some(Opcode::StringToInt),
+            0x97 => Some(Opcode::StringToReal),
+            0x98 => Some(Opcode::WordToInt),
+            0x99 => Some(Opcode::DwordToInt),
+            0x9A => Some(Opcode::IntToWord),
+            0x9B => Some(Opcode::IntToDword),
+            0x9C => Some(Opcode::DwordToReal),
+            0x9D => Some(Opcode::RealToDword),
+            0xA0 => Some(Opcode::Sel),
+            0xA1 => Some(Opcode::Mux),
+            0xA2 => Some(Opcode::Limit),
+            0xA3 => Some(Opcode::Max),
+            0xA4 => Some(Opcode::Min),
+            0xA5 => Some(Opcode::Move),
+            0xB0 => Some(Opcode::LoadArrayIndex),
+            0xB1 => Some(Opcode::StoreArrayIndex),
+            0xB2 => Some(Opcode::ArrayLen),
+            0xB3 => Some(Opcode::LoadStructField),
+            0xB4 => Some(Opcode::StoreStructField),
+            0xFF => Some(Opcode::Halt),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instruction {
     pub opcode: Opcode,
@@ -482,5 +587,43 @@ fn plvalue_to_esp_raw(
             // ESP32 bytecode doesn't support complex type init
             (EspVarType::Dint, 0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opcode_u8_round_trip() {
+        // Every variant survives the serializer's `opcode as u8` encoding.
+        for opcode in [
+            Opcode::PushBool,
+            Opcode::PushString,
+            Opcode::LoadVar,
+            Opcode::StoreIo,
+            Opcode::Add,
+            Opcode::Ge,
+            Opcode::Ror,
+            Opcode::Return,
+            Opcode::CtudCall,
+            Opcode::Expt,
+            Opcode::StrFind,
+            Opcode::RealToDword,
+            Opcode::Move,
+            Opcode::ArrayLen,
+            Opcode::StoreStructField,
+            Opcode::Halt,
+        ] {
+            assert_eq!(Opcode::from_u8(opcode as u8), Some(opcode));
+        }
+    }
+
+    #[test]
+    fn opcode_u8_rejects_unknown() {
+        assert_eq!(Opcode::from_u8(0x00), None);
+        assert_eq!(Opcode::from_u8(0x08), None);
+        assert_eq!(Opcode::from_u8(0x14), None);
+        assert_eq!(Opcode::from_u8(0xFE), None);
     }
 }

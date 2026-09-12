@@ -15,7 +15,12 @@ use crate::{Metric, MqttTransport, PAYLOAD_UUID, SparkplugError};
 /// One metric the edge node publishes. `get` is sampled on every scan.
 pub struct MetricSource {
     pub name: String,
-    pub get: Box<dyn Fn() -> MetricValue + Send + Sync>,
+    /// Sample the metric. `None` = unavailable this scan (e.g. the backing
+    /// variable does not currently exist): the scan skips the metric without
+    /// touching its published state. A metric whose first-ever sample is
+    /// `None` misses that session's NBIRTH and stays unpublished until the
+    /// next birth — hosts reject unbirthed NDATA metrics.
+    pub get: Box<dyn Fn() -> Option<MetricValue> + Send + Sync>,
 }
 
 impl MetricSource {
@@ -27,7 +32,7 @@ impl MetricSource {
     {
         Self {
             name: name.into(),
-            get: Box::new(move || MetricValue::from(get())),
+            get: Box::new(move || Some(MetricValue::from(get()))),
         }
     }
 }
@@ -68,6 +73,8 @@ pub struct SparkplugPublisher<T: MqttTransport> {
     last: Vec<Option<MetricValue>>,
     /// Millis timestamp of the last publish per metric.
     last_publish_ms: Vec<Option<u64>>,
+    /// Whether the metric made it into this session's NBIRTH.
+    birthed: Vec<bool>,
 }
 
 impl<T: MqttTransport> SparkplugPublisher<T> {
@@ -80,11 +87,12 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             bd_seq: 0,
             last: vec![None; metric_count],
             last_publish_ms: vec![None; metric_count],
+            birthed: vec![false; metric_count],
         }
     }
 
     /// Open a session: bump + persist bdSeq, register the NDEATH Will,
-    /// connect, then publish NBIRTH carrying every metric and `seq = 0`.
+    /// connect, then publish NBIRTH carrying every available metric and `seq = 0`.
     pub async fn connect(&mut self, now_ms: u64) -> Result<(), SparkplugError> {
         let bd_seq = bdseq::load(&self.config.bd_seq_path)?.wrapping_add(1);
         bdseq::store(&self.config.bd_seq_path, bd_seq)?;
@@ -106,14 +114,20 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             })
             .await?;
 
-        // NBIRTH: every metric at its current value, plus bdSeq.
+        // NBIRTH: every metric that has a value right now, plus bdSeq. A
+        // metric with no sample misses this birth and stays unpublished
+        // until the next session.
         let mut metrics = Vec::with_capacity(self.config.metrics.len() + 1);
         metrics.push(bd_seq_metric(bd_seq, now_ms));
-        let mut values = Vec::with_capacity(self.config.metrics.len());
-        for source in &self.config.metrics {
-            let value = (source.get)();
+        let mut last = vec![None; self.config.metrics.len()];
+        let mut last_publish_ms = vec![None; self.config.metrics.len()];
+        for (i, source) in self.config.metrics.iter().enumerate() {
+            let Some(value) = (source.get)() else {
+                continue;
+            };
             metrics.push(value_metric(&source.name, &value, now_ms));
-            values.push(value);
+            last[i] = Some(value);
+            last_publish_ms[i] = Some(now_ms);
         }
         let birth = Payload {
             timestamp: Some(now_ms),
@@ -126,8 +140,9 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
         self.transport.publish(&topic, &birth.encode_to_vec()).await?;
 
         self.seq = 1;
-        self.last = values.into_iter().map(Some).collect();
-        self.last_publish_ms = vec![Some(now_ms); self.config.metrics.len()];
+        self.birthed = last_publish_ms.iter().map(|slot| slot.is_some()).collect();
+        self.last = last;
+        self.last_publish_ms = last_publish_ms;
         Ok(())
     }
 
@@ -136,11 +151,16 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
     pub async fn publish_changes(&mut self, now_ms: u64) -> Result<bool, SparkplugError> {
         let mut metrics = Vec::new();
         for (i, source) in self.config.metrics.iter().enumerate() {
-            let value = (source.get)();
+            if !self.birthed[i] {
+                // Missed this session's NBIRTH: hosts reject unbirthed NDATA
+                // metrics, so it stays quiet until the next session.
+                continue;
+            }
+            let Some(value) = (source.get)() else {
+                // Unavailable this scan: keep the last published state.
+                continue;
+            };
             let Some(last) = self.last[i].as_ref() else {
-                // No birth for this metric yet (connect not called): record
-                // only, so the next NBIRTH is the metric's first appearance.
-                self.last[i] = Some(value);
                 continue;
             };
             let deadband = deadband_for(&self.config.deadband_by_prefix, &source.name);
@@ -295,7 +315,7 @@ mod tests {
         let value = value.clone();
         MetricSource {
             name: name.to_string(),
-            get: Box::new(move || MetricValue::Int(*value.lock())),
+            get: Box::new(move || Some(MetricValue::Int(*value.lock()))),
         }
     }
 
@@ -303,7 +323,7 @@ mod tests {
         let value = value.clone();
         MetricSource {
             name: name.to_string(),
-            get: Box::new(move || MetricValue::Real(*value.lock())),
+            get: Box::new(move || Some(MetricValue::Real(*value.lock()))),
         }
     }
 
@@ -311,7 +331,7 @@ mod tests {
         let value = value.clone();
         MetricSource {
             name: name.to_string(),
-            get: Box::new(move || MetricValue::Bool(*value.lock())),
+            get: Box::new(move || Some(MetricValue::Bool(*value.lock()))),
         }
     }
 
@@ -533,7 +553,7 @@ mod tests {
             let s = s.clone();
             MetricSource {
                 name: "misc/label".to_string(),
-                get: Box::new(move || MetricValue::String(s.lock().clone())),
+                get: Box::new(move || Some(MetricValue::String(s.lock().clone()))),
             }
         };
         let mut publisher = SparkplugPublisher::new(
@@ -598,5 +618,75 @@ mod tests {
         assert_eq!(deaths[0].metrics.len(), 1);
         assert_eq!(deaths[0].metrics[0].name.as_deref(), Some("bdSeq"));
         assert_eq!(deaths[0].metrics[0].value, Some(metric::Value::LongValue(1)));
+    }
+
+    #[tokio::test]
+    async fn absent_metric_misses_birth_and_stays_quiet() {
+        let dir = tempfile::tempdir().unwrap();
+        let maybe = Arc::new(Mutex::new(None::<i64>));
+        let source = {
+            let maybe = maybe.clone();
+            MetricSource {
+                name: "line/gap".to_string(),
+                get: Box::new(move || (*maybe.lock()).map(MetricValue::Int)),
+            }
+        };
+        let mut publisher = SparkplugPublisher::new(
+            config(&dir, vec![source], vec![]),
+            MockTransport::default(),
+        );
+        publisher.connect(0).await.unwrap();
+
+        // Absent at birth → not in the NBIRTH.
+        let birth = &publisher.transport.payloads("NBIRTH/edge1")[0];
+        assert!(birth.metrics.iter().all(|m| m.name.as_deref() != Some("line/gap")));
+
+        // ...and never published mid-session, even once it becomes available.
+        *maybe.lock() = Some(7);
+        assert!(!publisher.publish_changes(1).await.unwrap());
+        assert!(publisher.transport.payloads("NDATA/edge1").is_empty());
+
+        // The next session births it with its current value.
+        publisher.connect(2).await.unwrap();
+        let birth = &publisher.transport.payloads("NBIRTH/edge1")[1];
+        let gap = birth
+            .metrics
+            .iter()
+            .find(|m| m.name.as_deref() == Some("line/gap"))
+            .expect("gap metric birthed in second session");
+        assert_eq!(gap.value, Some(metric::Value::LongValue(7)));
+    }
+
+    #[tokio::test]
+    async fn unavailable_scan_keeps_published_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let maybe = Arc::new(Mutex::new(Some(1i64)));
+        let source = {
+            let maybe = maybe.clone();
+            MetricSource {
+                name: "tank/level".to_string(),
+                get: Box::new(move || (*maybe.lock()).map(MetricValue::Int)),
+            }
+        };
+        let mut publisher = SparkplugPublisher::new(
+            config(&dir, vec![source], vec![]),
+            MockTransport::default(),
+        );
+        publisher.connect(0).await.unwrap();
+
+        // A None scan is not an error and publishes nothing.
+        *maybe.lock() = None;
+        assert!(!publisher.publish_changes(1).await.unwrap());
+
+        // State survives the gap: back to the same value → still no publish.
+        *maybe.lock() = Some(1);
+        assert!(!publisher.publish_changes(2).await.unwrap());
+
+        // A real change after the gap publishes normally.
+        *maybe.lock() = Some(3);
+        assert!(publisher.publish_changes(3).await.unwrap());
+        let published = publisher.transport.payloads("NDATA/edge1");
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].metrics[0].value, Some(metric::Value::LongValue(3)));
     }
 }

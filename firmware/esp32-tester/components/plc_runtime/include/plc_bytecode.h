@@ -216,6 +216,9 @@ typedef struct {
     uint32_t io_mapping_count;
     char (*name_constants)[PLC_MAX_NAME_LEN];
     uint32_t name_constant_count;
+    // CRC32 of the bundle body (everything except the trailing CRC field),
+    // as computed during validation. Used for deploy drift detection.
+    uint32_t bundle_crc32;
 } plc_bytecode_t;
 
 /**
@@ -232,5 +235,8 @@ void plc_bytecode_free(plc_bytecode_t *bc);
 
 /**
  * Validate bytecode integrity (magic, version, CRC).
+ * On validation reaching the CRC check, *crc_out (if non-NULL) receives the
+ * computed CRC32 of the bundle body. A CRC mismatch still yields the
+ * computed value in *crc_out; earlier failures leave it untouched.
  */
-esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len);
+esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len, uint32_t *crc_out);

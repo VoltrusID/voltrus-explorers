@@ -18,6 +18,11 @@ pub struct Will {
 
 /// Publish transport used by [`crate::SparkplugPublisher`]. Mock this in
 /// tests; [`RumqttcTransport`] is the real implementation.
+///
+/// Native async-fn-in-trait (no `#[async_trait]`): the publisher is generic
+/// over the transport, so the futures never need to be boxed behind `dyn`,
+/// and `Send` bounds are unnecessary — each publisher lives on one task.
+#[allow(async_fn_in_trait)]
 pub trait MqttTransport {
     /// Open the MQTT session, registering `will`.
     async fn connect(&mut self, will: Will) -> Result<(), SparkplugError>;

@@ -26,6 +26,7 @@ static struct {
     plc_state_t    state;
     bool           initialized;
     SemaphoreHandle_t mutex;
+    uint32_t       loaded_bundle_crc32;  // Drift fingerprint, 0 = nothing loaded
 } s_runtime;
 
 // Forward declaration
@@ -89,13 +90,11 @@ esp_err_t plc_runtime_load_bytecode(const uint8_t *data, uint32_t len) {
 
     // Load into VM
     ret = plc_vm_load_bytecode(&s_runtime.vm, &bc);
-    plc_bytecode_free(&bc);
-
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "VM load failed: %s", esp_err_to_name(ret));
-        xSemaphoreGiveRecursive(s_runtime.mutex);
-        return ret;
+    if (ret == ESP_OK) {
+        // Record drift fingerprint from validation (PLC-6).
+        s_runtime.loaded_bundle_crc32 = bc.bundle_crc32;
     }
+    plc_bytecode_free(&bc);
 
     s_runtime.state = PLC_STATE_STOPPED;
     xSemaphoreGiveRecursive(s_runtime.mutex);
@@ -212,6 +211,7 @@ plc_runtime_status_t plc_runtime_get_status(void) {
     status.scan_time_us = s_runtime.vm.scan_time_us;
     status.max_scan_time_us = s_runtime.vm.max_scan_time_us;
     status.variable_count = s_runtime.vm.variable_count;
+    status.loaded_bundle_crc32 = s_runtime.loaded_bundle_crc32;
 
     if (s_runtime.vm.cycle_count > 0) {
         status.avg_scan_time_us = s_runtime.vm.total_scan_time_us / s_runtime.vm.cycle_count;

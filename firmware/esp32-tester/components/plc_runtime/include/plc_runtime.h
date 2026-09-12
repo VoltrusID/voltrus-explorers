@@ -21,6 +21,8 @@ typedef struct {
     uint32_t max_scan_time_us;
     uint32_t avg_scan_time_us;
     uint32_t variable_count;
+    // CRC32 of the loaded bundle body (drift detection), 0 = nothing loaded.
+    uint32_t loaded_bundle_crc32;
 } plc_runtime_status_t;
 
 /**

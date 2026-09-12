@@ -12,7 +12,7 @@ static uint32_t crc32_compute(const uint8_t *data, uint32_t len) {
     return esp_crc32_le(0xFFFFFFFF, data, len) ^ 0xFFFFFFFF;
 }
 
-esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len) {
+esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len, uint32_t *crc_out) {
     if (len < sizeof(plc_bytecode_header_t) + 4) {
         ESP_LOGE(TAG, "bytecode too short: %" PRIu32 " bytes", len);
         return ESP_ERR_INVALID_SIZE;
@@ -48,6 +48,9 @@ esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len) {
     // Verify CRC (last 4 bytes)
     uint32_t computed_crc = crc32_compute(data, len - 4);
     uint32_t stored_crc = read_u32_le(data + len - 4);
+    if (crc_out) {
+        *crc_out = computed_crc;
+    }
     if (computed_crc != stored_crc) {
         ESP_LOGE(TAG, "CRC mismatch: computed 0x%08" PRIX32 " stored 0x%08" PRIX32, computed_crc, stored_crc);
         return ESP_ERR_INVALID_CRC;
@@ -59,10 +62,12 @@ esp_err_t plc_bytecode_validate(const uint8_t *data, uint32_t len) {
 esp_err_t plc_bytecode_load(const uint8_t *data, uint32_t len, plc_bytecode_t *out) {
     memset(out, 0, sizeof(*out));
 
-    esp_err_t ret = plc_bytecode_validate(data, len);
+    uint32_t bundle_crc = 0;
+    esp_err_t ret = plc_bytecode_validate(data, len, &bundle_crc);
     if (ret != ESP_OK) {
         return ret;
     }
+    out->bundle_crc32 = bundle_crc;
 
     const plc_bytecode_header_t *hdr = (const plc_bytecode_header_t *)data;
     const uint8_t *ptr = data + sizeof(plc_bytecode_header_t);
