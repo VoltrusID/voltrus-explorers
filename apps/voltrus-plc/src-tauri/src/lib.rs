@@ -9,6 +9,7 @@ mod commands {
     pub mod io;
     pub mod license;
     pub mod target;
+    pub mod tests;
 }
 
 use state::*;
@@ -97,6 +98,9 @@ pub fn run() {
             commands::target::grpc_start,
             commands::target::grpc_stop,
             commands::target::grpc_step,
+
+            commands::tests::run_project_tests,
+            commands::tests::generate_test_prompt,
         ])
         .setup(|app| {
             #[cfg(desktop)]

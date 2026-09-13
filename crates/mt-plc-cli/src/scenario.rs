@@ -35,10 +35,18 @@ pub struct Scenario {
     pub expect: Option<Mapping>,
 }
 
+/// One ordered step of a scenario: optional variable writes and an
+/// optional virtual-time advance. A step must carry at least one of the
+/// two — `run_scenario` rejects steps with neither, naming the index.
 #[derive(Deserialize, Debug)]
 pub struct Step {
     /// Virtual time to run: `500ms`, `2s` or `25scans`.
-    pub advance: String,
+    pub advance: Option<String>,
+    /// Variable writes applied before this step's scans, coerced to the
+    /// declared slot types exactly like `given:`. A set-only step applies
+    /// its writes without running any scan.
+    #[serde(default)]
+    pub set: Option<Mapping>,
     /// Matchers checked right after this step's scans.
     #[serde(default)]
     pub expect: Option<Mapping>,
@@ -298,7 +306,7 @@ scenarios:
         assert_eq!(scenario.name, "fills tank");
         assert_eq!(scenario.given.len(), 1);
         assert_eq!(scenario.steps.len(), 1);
-        assert_eq!(scenario.steps[0].advance, "500ms");
+        assert_eq!(scenario.steps[0].advance.as_deref(), Some("500ms"));
         assert_eq!(scenario.steps[0].expect.as_ref().unwrap().len(), 2);
         assert!(scenario.expect.is_some());
     }
@@ -314,11 +322,16 @@ scenarios:
     }
 
     #[test]
-    fn missing_advance_is_rejected() {
-        let parsed: Result<ScenarioFile, _> = serde_yaml::from_str(
-            "program: P.st\nscenarios:\n  - name: bare\n    steps:\n      - expect: {x: 1}\n",
-        );
-        assert!(parsed.is_err());
+    fn set_parses_and_advance_is_optional() {
+        let file: ScenarioFile = serde_yaml::from_str(
+            "program: P.st\nscenarios:\n  - name: write only\n    steps:\n      - set: {level: 40}\n        expect: {level: 40}\n",
+        )
+        .unwrap();
+        let step = &file.scenarios[0].steps[0];
+        assert_eq!(step.advance, None);
+        let set = step.set.as_ref().unwrap();
+        assert_eq!(set.len(), 1);
+        assert!(set.contains_key(&yaml("level")));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use anyhow::Context;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use serde_yaml::Mapping;
+use std::time::{Duration, Instant};
 
 use mt_plc_runtime::Vm;
 use mt_plc_types::{CompiledModule, Instruction, PlcValue};
@@ -88,28 +90,49 @@ impl TestRunner {
     }
 }
 
-pub struct ScenarioOutcome {
+/// Per-assertion detail recorded for report consumers (JSON panel, CI).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Assertion {
     pub name: String,
-    pub failures: Vec<String>,
+    pub passed: bool,
+    /// Rendered expectation, e.g. `3` or `90 ±0.001`.
+    pub expected: String,
+    /// Rendered actual value, e.g. `2 (DINT)`.
+    pub actual: String,
 }
 
-impl ScenarioOutcome {
+/// In-memory result of one scenario run; the harness converts it into a
+/// serializable `ScenarioReport`.
+#[derive(Clone, Debug)]
+pub struct ScenarioResult {
+    pub name: String,
+    pub failures: Vec<String>,
+    pub assertions: Vec<Assertion>,
+    pub duration_ms: u64,
+}
+
+impl ScenarioResult {
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
 }
 
-/// Execute one scenario: seed `given`, run each step's scans, check the
-/// step's and finally the scenario's expectations. All failures are
-/// collected (never early-panic); a runtime abort stops the scenario.
-pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) -> ScenarioOutcome {
+/// Execute one scenario: seed `given`, apply each step's `set:` writes
+/// (before its advance), run each step's scans, check the step's and
+/// finally the scenario's expectations. All failures are collected (never
+/// early-panic); a runtime abort stops the scenario.
+pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) -> ScenarioResult {
+    let started = Instant::now();
     let mut failures = Vec::new();
+    let mut assertions = Vec::new();
     let mut runner = match TestRunner::new(module.clone(), scan_ms) {
         Ok(runner) => runner,
         Err(err) => {
-            return ScenarioOutcome {
+            return ScenarioResult {
                 name: scenario.name.clone(),
                 failures: vec![format!("setup: {err:#}")],
+                assertions: Vec::new(),
+                duration_ms: 0,
             }
         }
     };
@@ -128,21 +151,45 @@ pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) 
     }
 
     if failures.is_empty() {
-        for step in &scenario.steps {
-            let scans = match parse_advance(&step.advance, scan_ms) {
-                Ok(scans) => scans,
-                Err(err) => {
-                    failures.push(format!("invalid advance `{}`: {err:#}", step.advance));
+        for (index, step) in scenario.steps.iter().enumerate() {
+            if step.advance.is_none() && step.set.as_ref().is_none_or(Mapping::is_empty) {
+                failures.push(format!("step {index}: needs `set` or `advance`"));
+                break;
+            }
+            if let Some(set) = &step.set {
+                for (key, raw) in set {
+                    let name = match key.as_str() {
+                        Some(name) => name,
+                        None => {
+                            failures.push(format!(
+                                "step {index}: `set` keys must be variable names"
+                            ));
+                            break;
+                        }
+                    };
+                    if let Err(err) = runner.give(name, raw) {
+                        failures.push(format!("step {index}: {err:#}"));
+                    }
+                }
+            }
+            if let Some(advance) = &step.advance {
+                let scans = match parse_advance(advance, scan_ms) {
+                    Ok(scans) => scans,
+                    Err(err) => {
+                        failures.push(format!("invalid advance `{advance}`: {err:#}"));
+                        break;
+                    }
+                };
+                if let Err(err) = runner.advance(scans) {
+                    failures.push(format!("runtime error during `advance {advance}`: {err}"));
                     break;
                 }
-            };
-            if let Err(err) = runner.advance(scans) {
-                failures.push(format!("runtime error during `advance {}`: {err}", step.advance));
-                break;
             }
             if let Some(expect) = &step.expect {
                 match parse_expect(expect) {
-                    Ok(matchers) => check_matchers(&matchers, &runner, &mut failures),
+                    Ok(matchers) => {
+                        check_matchers(&matchers, &runner, &mut failures, &mut assertions)
+                    }
                     Err(err) => {
                         failures.push(format!("invalid expect: {err:#}"));
                         break;
@@ -154,41 +201,69 @@ pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) 
         if failures.is_empty() {
             if let Some(expect) = &scenario.expect {
                 match parse_expect(expect) {
-                    Ok(matchers) => check_matchers(&matchers, &runner, &mut failures),
+                    Ok(matchers) => {
+                        check_matchers(&matchers, &runner, &mut failures, &mut assertions)
+                    }
                     Err(err) => failures.push(format!("invalid expect: {err:#}")),
                 }
             }
         }
     }
 
-    ScenarioOutcome {
+    ScenarioResult {
         name: scenario.name.clone(),
         failures,
+        assertions,
+        duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
 }
 
-fn check_matchers(expect: &[(String, Matcher)], runner: &TestRunner, failures: &mut Vec<String>) {
+fn check_matchers(
+    expect: &[(String, Matcher)],
+    runner: &TestRunner,
+    failures: &mut Vec<String>,
+    assertions: &mut Vec<Assertion>,
+) {
     for (name, matcher) in expect {
         match runner.value_of(name) {
-            Some(actual) if matcher.matches(&actual) => {}
-            Some(actual) => failures.push(format!(
-                "{}: expected {}, got {} ({})",
-                name,
-                matcher.describe(),
-                actual,
-                actual.type_name()
-            )),
-            None => failures.push(format!(
-                "{}: no such variable (declared: {})",
-                name,
-                runner.variable_names().join(", ")
-            )),
+            Some(actual) => {
+                let passed = matcher.matches(&actual);
+                if !passed {
+                    failures.push(format!(
+                        "{}: expected {}, got {} ({})",
+                        name,
+                        matcher.describe(),
+                        actual,
+                        actual.type_name()
+                    ));
+                }
+                assertions.push(Assertion {
+                    name: name.clone(),
+                    passed,
+                    expected: matcher.describe(),
+                    actual: format!("{actual} ({})", actual.type_name()),
+                });
+            }
+            None => {
+                failures.push(format!(
+                    "{}: no such variable (declared: {})",
+                    name,
+                    runner.variable_names().join(", ")
+                ));
+                assertions.push(Assertion {
+                    name: name.clone(),
+                    passed: false,
+                    expected: matcher.describe(),
+                    actual: "no such variable".into(),
+                });
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::scenario::ScenarioFile;
     use super::*;
 
     const TON_PROGRAM: &str = r#"
@@ -200,6 +275,18 @@ VAR
 END_VAR
     LampDelay(IN := Start, PT := T#2s);
     Done := LampDelay.Q;
+END_PROGRAM
+"#;
+
+    const CTU_PROGRAM: &str = r#"
+PROGRAM CounterTest
+VAR
+    Pulse : BOOL := FALSE;
+    Count : BOOL := FALSE;
+    Tally : CTU;
+END_VAR
+    Tally(CU := Pulse, R := FALSE, PV := 1);
+    Count := Tally.Q;
 END_PROGRAM
 "#;
 
@@ -249,19 +336,7 @@ END_PROGRAM
 
     #[test]
     fn counter_counts_one_edge_per_scan() {
-        let module = compile(
-            r#"
-PROGRAM CounterTest
-VAR
-    Pulse : BOOL := FALSE;
-    Count : BOOL := FALSE;
-    Tally : CTU;
-END_VAR
-    Tally(CU := Pulse, R := FALSE, PV := 1);
-    Count := Tally.Q;
-END_PROGRAM
-"#,
-        );
+        let module = compile(CTU_PROGRAM);
         let mut runner = TestRunner::new(module, 10).unwrap();
 
         give(&mut runner, "Pulse", "true");
@@ -349,5 +424,118 @@ scenarios:
         let module = compile(TON_PROGRAM);
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
         assert!(outcome.failures[0].contains("no such variable"), "{:?}", outcome.failures);
+    }
+
+    #[test]
+    fn set_only_step_writes_without_scanning() {
+        let module = compile(CTU_PROGRAM);
+        let yaml = r#"
+program: inline
+scenarios:
+  - name: write without scanning
+    steps:
+      - set: {Pulse: true}
+        expect:
+          Pulse: true
+          Tally.CV: 0
+"#;
+        let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
+        let outcome = run_scenario(&file.scenarios[0], &module, 10);
+        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+        // The write landed and no scan ran, so the counter saw no edge.
+        assert_eq!(outcome.assertions.len(), 2);
+        assert!(outcome.assertions.iter().all(|a| a.passed));
+    }
+
+    #[test]
+    fn set_then_advance_pulses_the_counter() {
+        let module = compile(CTU_PROGRAM);
+        let yaml = r#"
+program: inline
+scenarios:
+  - name: set then advance
+    steps:
+      - set: {Pulse: true}
+        advance: 1scans
+        expect:
+          Tally.CV: 1
+          Count: true
+      - set: {Pulse: false}
+        advance: 1scans
+        expect:
+          Tally.CV: 1
+"#;
+        let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
+        let outcome = run_scenario(&file.scenarios[0], &module, 10);
+        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+    }
+
+    #[test]
+    fn ctu_counts_three_set_pulses() {
+        let module = compile(CTU_PROGRAM);
+        let yaml = r#"
+program: inline
+scenarios:
+  - name: three pulses reach CV 3
+    steps:
+      - set: {Pulse: true}
+        advance: 1scans
+      - set: {Pulse: false}
+        advance: 1scans
+      - set: {Pulse: true}
+        advance: 1scans
+      - set: {Pulse: false}
+        advance: 1scans
+      - set: {Pulse: true}
+        advance: 1scans
+      - set: {Pulse: false}
+        advance: 1scans
+    expect:
+      Tally.CV: 3
+      Count: true
+"#;
+        let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
+        let outcome = run_scenario(&file.scenarios[0], &module, 10);
+        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+    }
+
+    #[test]
+    fn unknown_set_variable_lists_declared_names() {
+        let module = compile(TON_PROGRAM);
+        let yaml = r#"
+program: inline
+scenarios:
+  - name: typo in set
+    steps:
+      - set: {Stat: true}
+"#;
+        let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
+        let outcome = run_scenario(&file.scenarios[0], &module, 10);
+        assert!(!outcome.passed());
+        let message = &outcome.failures[0];
+        assert!(message.contains("step 0"), "{message}");
+        assert!(message.contains("unknown variable `Stat`"), "{message}");
+        assert!(message.contains("Start"), "{message}");
+    }
+
+    #[test]
+    fn step_without_set_or_advance_names_the_index() {
+        let module = compile(TON_PROGRAM);
+        let yaml = r#"
+program: inline
+scenarios:
+  - name: empty step
+    steps:
+      - advance: 1scans
+      - expect: {Done: false}
+"#;
+        let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
+        let outcome = run_scenario(&file.scenarios[0], &module, 10);
+        assert!(!outcome.passed());
+        assert!(
+            outcome.failures[0].contains("step 1"),
+            "{:?}",
+            outcome.failures
+        );
     }
 }

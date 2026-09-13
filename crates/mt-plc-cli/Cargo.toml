@@ -3,6 +3,10 @@ name = "mt-plc-cli"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "mt_plc_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "voltrus-plc"
 path = "src/main.rs"

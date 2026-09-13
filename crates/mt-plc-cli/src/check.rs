@@ -1,45 +1,97 @@
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+/// One rendered compiler diagnostic, tied to its source file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Diagnostic {
+    pub file: String,
+    pub line: usize,
+    pub col: usize,
+    pub message: String,
+    pub severity: String,
+}
+
+/// Result of a `check` run; rendering (stdout, JSON) is the caller's job.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CheckReport {
     pub files: usize,
     pub errors: usize,
     pub warnings: usize,
+    /// `true` when no error diagnostics and no fatal I/O problem.
+    pub passed: bool,
+    /// Per-file diagnostics in deterministic (path-sorted) order.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Fatal problem that aborted the walk (unreadable directory/file).
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
-/// Compile every `.st` file below `dir` headlessly and print
+/// Compile every `.st` file below `dir` headlessly and collect
 /// `file:line:col: severity: message` diagnostics in deterministic order.
-pub fn run(dir: &Path) -> anyhow::Result<CheckReport> {
-    let sources = collect_files(dir, |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("st")))?;
+pub fn run(dir: &Path) -> CheckReport {
+    let sources = match collect_files(dir, |p| {
+        p.extension().is_some_and(|e| e.eq_ignore_ascii_case("st"))
+    }) {
+        Ok(sources) => sources,
+        Err(err) => {
+            return CheckReport {
+                files: 0,
+                errors: 0,
+                warnings: 0,
+                passed: false,
+                diagnostics: Vec::new(),
+                error: Some(format!("{err:#}")),
+            }
+        }
+    };
+
     let mut errors = 0usize;
     let mut warnings = 0usize;
-    let mut stdout = std::io::stdout().lock();
+    let mut diagnostics = Vec::new();
 
     for path in &sources {
         let rel = rel_path(dir, path);
-        let source = fs::read_to_string(path).with_context(|| format!("failed to read {rel}"))?;
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(err) => {
+                return CheckReport {
+                    files: sources.len(),
+                    errors,
+                    warnings,
+                    passed: false,
+                    diagnostics,
+                    error: Some(format!("failed to read {rel}: {err}")),
+                }
+            }
+        };
         let result = mt_stc::compile(&source);
         for d in &result.diagnostics {
-            writeln!(
-                stdout,
-                "{}:{}:{}: {}: {}",
-                rel, d.line, d.col, d.severity, d.message
-            )?;
             if d.severity == "error" {
                 errors += 1;
             } else {
                 warnings += 1;
             }
+            diagnostics.push(Diagnostic {
+                file: rel.clone(),
+                line: d.line,
+                col: d.col,
+                message: d.message.clone(),
+                severity: d.severity.clone(),
+            });
         }
     }
 
-    Ok(CheckReport {
+    let passed = errors == 0;
+    CheckReport {
         files: sources.len(),
         errors,
         warnings,
-    })
+        passed,
+        diagnostics,
+        error: None,
+    }
 }
 
 /// Recursively collect files matching `pred`, sorted for deterministic

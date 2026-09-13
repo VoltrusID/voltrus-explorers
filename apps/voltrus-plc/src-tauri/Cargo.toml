@@ -16,6 +16,7 @@ mt-plc-runtime = { path = "../../../crates/mt-plc-runtime" }
 mt-plc-types = { path = "../../../crates/mt-plc-types" }
 mt-enip = { path = "../../../crates/mt-enip" }
 mt-grpc = { path = "../../../crates/mt-grpc" }
+mt-plc-cli = { path = "../../../crates/mt-plc-cli" }
 tauri = { workspace = true }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

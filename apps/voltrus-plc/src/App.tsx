@@ -13,6 +13,7 @@ import LicensePanel from "./components/Sidebar/LicensePanel";
 import CycleGraph from "./components/Bottom/CycleGraph";
 import Histogram from "./components/Bottom/Histogram";
 import SimulationPanel from "./components/Bottom/SimulationPanel";
+import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
 import type { SampleTemplate } from "./types";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
@@ -73,6 +74,8 @@ export default function App() {
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [targetConnecting, setTargetConnecting] = useState(false);
+  // The Tests overlay lives outside the store's fixed bottomTab union.
+  const [testsActive, setTestsActive] = useState(false);
 
   const activeFile = openFiles[activeFileIndex];
 
@@ -135,6 +138,7 @@ export default function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "F") {
         e.preventDefault();
+        setTestsActive(false);
         setBottomTab("search");
       }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "z") {
@@ -651,8 +655,8 @@ export default function App() {
       <div className="bottom-panel" style={{ height: bottomHeight }}>
         <div className="bottom-tabs">
           <button
-            className={`bottom-tab ${bottomTab === "diagnostics" ? "active" : ""}`}
-            onClick={() => setBottomTab("diagnostics")}
+            className={`bottom-tab ${!testsActive && bottomTab === "diagnostics" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("diagnostics"); }}
           >
             Diagnostics
             {diagnostics.length > 0 && (
@@ -669,44 +673,51 @@ export default function App() {
             )}
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "log" ? "active" : ""}`}
-            onClick={() => setBottomTab("log")}
+            className={`bottom-tab ${testsActive ? "active" : ""}`}
+            onClick={() => setTestsActive(true)}
+          >
+            Tests
+          </button>
+          <button
+            className={`bottom-tab ${!testsActive && bottomTab === "log" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("log"); }}
           >
             Runtime Log
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "output" ? "active" : ""}`}
-            onClick={() => setBottomTab("output")}
+            className={`bottom-tab ${!testsActive && bottomTab === "output" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("output"); }}
           >
             Output
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "timing" ? "active" : ""}`}
-            onClick={() => setBottomTab("timing")}
+            className={`bottom-tab ${!testsActive && bottomTab === "timing" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("timing"); }}
           >
             Timing
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "histogram" ? "active" : ""}`}
-            onClick={() => setBottomTab("histogram")}
+            className={`bottom-tab ${!testsActive && bottomTab === "histogram" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("histogram"); }}
           >
             Histogram
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "search" ? "active" : ""}`}
-            onClick={() => setBottomTab("search")}
+            className={`bottom-tab ${!testsActive && bottomTab === "search" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("search"); }}
           >
             Search
           </button>
           <button
-            className={`bottom-tab ${bottomTab === "simulation" ? "active" : ""}`}
-            onClick={() => setBottomTab("simulation")}
+            className={`bottom-tab ${!testsActive && bottomTab === "simulation" ? "active" : ""}`}
+            onClick={() => { setTestsActive(false); setBottomTab("simulation"); }}
           >
             Simulation
           </button>
         </div>
         <div className="bottom-content">
-          {bottomTab === "diagnostics" && (
+          {testsActive && <TestsPanel />}
+          {!testsActive && bottomTab === "diagnostics" && (
             <>
               {diagnostics.length === 0 ? (
                 <span style={{ color: "var(--text-muted)" }}>No diagnostics</span>

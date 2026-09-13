@@ -1,40 +1,18 @@
 use anyhow::Context;
 use std::fmt::Write as _;
 use std::path::Path;
+use crate::harness::SuiteReport;
 
-/// One `*.test.yaml` file's results.
-pub struct Suite {
-    pub name: String,
-    pub cases: Vec<Case>,
-}
-
-/// One scenario (or a file-level load/compile failure).
-pub struct Case {
-    pub name: String,
-    /// Assertion failures, rendered as `<failure>` elements.
-    pub failures: Vec<String>,
-    /// Setup/compile abort, rendered as an `<error>` element.
-    pub error: Option<String>,
-}
-
-impl Case {
-    pub fn failed(&self) -> bool {
-        self.error.is_some() || !self.failures.is_empty()
-    }
-}
-
-pub fn write_report(path: &Path, suites: &[Suite]) -> anyhow::Result<()> {
+pub fn write_report(path: &Path, suites: &[SuiteReport]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     std::fs::write(path, to_xml(suites))
         .with_context(|| format!("failed to write {}", path.display()))
 }
 
-pub fn to_xml(suites: &[Suite]) -> String {
+pub fn to_xml(suites: &[SuiteReport]) -> String {
     let tests: usize = suites.iter().map(|s| s.cases.len()).sum();
     let failures: usize = suites.iter().map(|s| s.cases.iter().filter(|c| !c.failures.is_empty()).count()).sum();
     let errors: usize = suites.iter().map(|s| s.cases.iter().filter(|c| c.error.is_some()).count()).sum();
@@ -56,11 +34,13 @@ pub fn to_xml(suites: &[Suite]) -> String {
         )
         .unwrap();
         for case in &suite.cases {
+            let time = format!("{:.3}", case.duration_ms as f64 / 1000.0);
             writeln!(
                 xml,
-                "    <testcase name=\"{}\" classname=\"{}\" time=\"0\">",
+                "    <testcase name=\"{}\" classname=\"{}\" time=\"{}\">",
                 escape(&case.name),
-                escape(&suite.name)
+                escape(&suite.name),
+                time.trim_end_matches('0').trim_end_matches('.')
             )
             .unwrap();
             if let Some(err) = &case.error {
@@ -111,20 +91,39 @@ fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::{ScenarioOutcome, ScenarioReport};
+    use crate::runner::Assertion;
 
-    fn sample() -> Vec<Suite> {
-        vec![Suite {
+    fn passing_case(name: &str) -> ScenarioReport {
+        ScenarioReport {
+            name: name.into(),
+            outcome: ScenarioOutcome::Passed,
+            duration_ms: 0,
+            failures: vec![],
+            error: None,
+            assertions: Vec::new(),
+        }
+    }
+
+    fn sample() -> Vec<SuiteReport> {
+        vec![SuiteReport {
             name: "TankLevel.test.yaml".into(),
             cases: vec![
-                Case {
-                    name: "low level opens inlet".into(),
-                    failures: vec![],
-                    error: None,
-                },
-                Case {
+                passing_case("low level opens inlet"),
+                ScenarioReport {
                     name: "fails <hard> & 'loud'".into(),
-                    failures: vec!["level: expected 91 ±0.001, got 90.00 (REAL)\nsecond line".into()],
+                    outcome: ScenarioOutcome::Failed,
+                    duration_ms: 0,
+                    failures: vec![
+                        "level: expected 91 ±0.001, got 90.00 (REAL)\nsecond line".into()
+                    ],
                     error: None,
+                    assertions: vec![Assertion {
+                        name: "level".into(),
+                        passed: false,
+                        expected: "91 ±0.001".into(),
+                        actual: "90.00 (REAL)".into(),
+                    }],
                 },
             ],
         }]
@@ -150,13 +149,24 @@ mod tests {
     }
 
     #[test]
+    fn testcase_time_renders_scenario_duration() {
+        let mut suites = sample();
+        suites[0].cases[0].duration_ms = 1250;
+        let xml = to_xml(&suites);
+        assert!(xml.contains("time=\"1.25\""), "{xml}");
+    }
+
+    #[test]
     fn error_case_renders_error_element() {
-        let suites = vec![Suite {
+        let suites = vec![SuiteReport {
             name: "broken.test.yaml".into(),
-            cases: vec![Case {
+            cases: vec![ScenarioReport {
                 name: "load".into(),
+                outcome: ScenarioOutcome::Error,
+                duration_ms: 0,
                 failures: vec![],
                 error: Some("invalid scenario YAML: bad token".into()),
+                assertions: Vec::new(),
             }],
         }];
         let xml = to_xml(&suites);

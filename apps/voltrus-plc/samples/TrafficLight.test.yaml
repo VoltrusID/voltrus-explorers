@@ -9,6 +9,10 @@
 #   state 2 green:      timer > 100 (scan 101 relative)
 #   state 3 yellow:     timer > 40  (scan 41 relative)
 #   flash = (flash_counter MOD 20) > 10
+#
+# The last scenario exercises `set:`: a mid-scenario write jumps the
+# controller from a running green phase straight into yellow, which no
+# amount of pure advancing could reach from state 2.
 
 program: TrafficLight.st
 
@@ -69,3 +73,28 @@ scenarios:
       - advance: 1scans
         expect:
           flash: true # counter 11 -> 11 MOD 20 > 10
+
+  - name: set jumps from green into yellow mid-scenario
+    given:
+      state: 2
+      timer: 0
+    steps:
+      - advance: 5scans
+        expect:
+          state: 2
+          green: true
+      - set: # mid-scenario write; no scan runs, so lamps lag one scan
+          state: 3
+          timer: 0
+        expect:
+          state: 3
+          green: true # still the green branch's lamps
+      - advance: 41scans
+        expect:
+          state: 0
+          yellow: true # lamps from the state-3 branch
+      - advance: 101scans
+        expect:
+          state: 1
+          red: true
+          yellow: false
