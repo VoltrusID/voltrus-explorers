@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0.0.10" SoftwareRevision="32.11" TargetName="Truncated" TargetType="Controller" ContainsContext="false">
+  <Controller Use="Target" Name="Truncated">
+    <Tags>
+      <Tag Name="Ok" TagType="Base" DataType="BOOL" Constant="false"/>
+    </Tags>
+    <Programs>
+      <Program Use="Target" Name="Broken" Type="Normal" MainRoutineName="Main">
+        <Routines>
+          <Routine Use="Target" Name="Main" Type="ST">

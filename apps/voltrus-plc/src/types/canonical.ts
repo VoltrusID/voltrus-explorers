@@ -21,18 +21,19 @@
 // - LD rung/path/element array order IS ladder semantics (network order, contact
 //   column order) and is preserved; only key order and the version stamp apply.
 //
-// Versions: FBD/SFC save as "1.1" (was "1.0"). LD stays at "2.0" — it is already
-// past the 1.x line (see components/Editor/LdEditor/migrate.ts for the legacy
-// node-graph format it absorbed). Loaders accept any object-shaped program and
-// migrate old files simply by canonicalizing on load/save.
+// Versions: FBD/SFC save as "1.1" (was "1.0"); loaders accept "1.0". LD saves as
+// "2.1" (was "2.0"; PLC-12 gave LD canonical ids, closing the build-order gap
+// documented in PLC-5 — see migrate.ts for the legacy node-graph format it
+// absorbed). Loaders accept any object-shaped program and migrate old files
+// simply by canonicalizing on load/save.
 
 import type { FbdProgram, FbdNode, FbdEdge } from "./fbd";
 import type { SfcProgram, SfcNode, SfcEdge } from "./sfc";
 import type { LdProgram } from "./ld";
 /** Format version written by FBD/SFC canonicalization. Loaders also accept "1.0". */
 export const DIAGRAM_FORMAT_VERSION = "1.1";
-/** Format version written by LD canonicalization (unchanged by PLC-5). */
-export const LD_FORMAT_VERSION = "2.0";
+/** Format version written by LD canonicalization (PLC-12: canonical ids). Loaders also accept "2.0". */
+export const LD_FORMAT_VERSION = "2.1";
 
 const POSITION_GRID_PX = 10;
 const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
@@ -148,11 +149,40 @@ export function canonicalizeSfc(program: SfcProgram): CanonicalSfcProgram {
   }) as CanonicalSfcProgram;
 }
 
+// LD model: a program is an ordered list of rungs (ladder networks); each rung
+// is an ordered list of paths (parallel branches, OR); each path is an ordered
+// list of elements (series contacts/coils/FBs, left-to-right, AND). There is no
+// spatial grid — geometry is fully implied by the (rung, path, column) order,
+// unlike the free-positioned FBD/SFC canvases. Rung, branch and series order is
+// ladder semantics and is never reordered; the only construction-order leak was
+// nextLdId()'s session-scoped ids ("e_17", "p_5", "r_2"), a global build
+// counter.
+//
+// PLC-12: ids are reassigned from a deterministic traversal — rungs in order,
+// paths in order per rung, elements in column order per path:
+//   rung -> "r<r>", path -> "p<r>_<p>", element -> "e<r>_<k>"
+// where k is the running element index across the whole rung. Element identity
+// is therefore (kind, operand/instance, rung index, path index, column): the
+// same ladder built in any order serializes identically. Underscore separators
+// keep the transpiler's fallback identifiers (e.g. "__var_e0_0") valid IEC
+// names. Accepted tradeoff: inserting/removing an element shifts the canonical
+// ids of its right-hand siblings within the rung.
 export function canonicalizeLd(program: LdProgram): LdProgram {
+  const rungs = program.rungs.map((rung, r) => {
+    let k = 0;
+    const paths = rung.paths.map((path, p) => ({
+      id: `p${r}_${p}`,
+      elements: path.elements.map((el) => ({
+        ...el,
+        id: `e${r}_${k++}`,
+      })),
+    }));
+    return { id: `r${r}`, label: rung.label, paths };
+  });
   return sortKeysDeep({
     version: LD_FORMAT_VERSION,
     programName: program.programName,
-    rungs: program.rungs,
+    rungs,
   });
 }
 

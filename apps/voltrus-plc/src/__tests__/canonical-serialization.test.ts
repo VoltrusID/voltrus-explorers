@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useStore } from "../store";
+import { transpileLdToSt } from "../components/Editor/LdEditor/transpiler/ld-to-st";
 import {
   canonicalizeFileContent,
   parseFbdProgram,
@@ -81,9 +82,29 @@ function buildLdProgram(): LdProgram {
           },
         ],
       },
-      { id: "r_2", paths: [{ id: "p_2", elements: [{ id: "e_4", type: "contact_no", variable: "Y0" }] }] },
+      { id: "r_2", paths: [{ id: "p_2", elements: [
+        { id: "e_4", type: "contact_no", variable: "X1" },
+        { id: "e_5", type: "coil", variable: "Y1" },
+      ] }] },
     ],
   };
+}
+
+// The same ladder as buildLdProgram(), but "built" in a different session:
+// elements created in reverse order, unrelated session ids, scrambled key
+// insertion order. Semantic rung/branch/series order is untouched — that part
+// is the ladder, not its history.
+function buildLdProgramShuffled(): LdProgram {
+  // Created in reverse order with unrelated session ids — but placed in the
+  // same semantic (rung, path, column) slots as buildLdProgram().
+  const coilY1 = { id: "q77", type: "coil", variable: "Y1" };
+  const contactX1 = { id: "z12", type: "contact_no", variable: "X1" };
+  const ton = { id: "a5", type: "fb_block", blockType: "TON", instanceName: "t1", pinValues: { PT: "T#1S" } };
+  const coilY0 = { id: "m2", type: "coil", variable: "Y0" };
+  const contactX0 = { id: "k9", type: "contact_no", variable: "X0" };
+  const rung2 = { id: "rung-two", label: undefined, paths: [{ id: "path-two", elements: [contactX1, coilY1] }] };
+  const rung1 = { id: "rung-one", label: "Motor", paths: [{ id: "path-one", elements: [contactX0, coilY0, ton] }] };
+  return reverseKeysOnly({ rungs: [rung1, rung2], version: "2.0", programName: "LdCanonical" }) as LdProgram;
 }
 
 // Clone with every object's keys inserted in reverse order and every array
@@ -191,16 +212,31 @@ describe("canonical serialization (PLC-5)", () => {
       expect(serializeSfc(reordered)).toBe(serializeSfc(ordered));
     });
 
-    it("produces identical LD files regardless of object key insertion order", () => {
-      const program = buildLdProgram();
-      const scrambled = reverseKeysOnly(program) as LdProgram;
-      expect(serializeLd(scrambled)).toBe(serializeLd(program));
+    it("produces identical LD files for ladders built in different sessions", () => {
+      const natural = buildLdProgram();
+      const shuffled = buildLdProgramShuffled();
+      expect(serializeLd(shuffled)).toBe(serializeLd(natural));
+    });
+
+    it("assigns canonical LD ids from the semantic traversal, not construction history", () => {
+      const out = JSON.parse(serializeLd(buildLdProgram())) as LdProgram;
+      expect(out.rungs.map((r) => r.id)).toEqual(["r0", "r1"]);
+      expect(out.rungs[0].paths.map((p) => p.id)).toEqual(["p0_0"]);
+      expect(out.rungs[0].paths[0].elements.map((e) => e.id)).toEqual(["e0_0", "e0_1", "e0_2"]);
+      expect(out.rungs[1].paths[0].elements.map((e) => e.id)).toEqual(["e1_0", "e1_1"]);
     });
 
     it("keeps LD rung and element order (ladder semantics) untouched", () => {
       const out = JSON.parse(serializeLd(buildLdProgram())) as LdProgram;
-      expect(out.rungs.map((r) => r.id)).toEqual(["r_1", "r_2"]);
-      expect(out.rungs[0].paths[0].elements.map((e) => e.id)).toEqual(["e_1", "e_2", "e_3"]);
+      expect(out.rungs[0].paths[0].elements.map((e) => e.variable ?? e.instanceName)).toEqual(["X0", "Y0", "t1"]);
+      expect(out.rungs[1].paths[0].elements.map((e) => e.variable)).toEqual(["X1", "Y1"]);
+    });
+    it("transpiles differently-built ladders to identical ST", () => {
+      const natural = transpileLdToSt(buildLdProgram());
+      const shuffled = transpileLdToSt(buildLdProgramShuffled());
+      expect(natural.diagnostics.filter((d) => d.severity === "error")).toHaveLength(0);
+      expect(shuffled.source).toBe(natural.source);
+      expect(shuffled.diagnostics).toEqual(natural.diagnostics);
     });
   });
 
@@ -223,6 +259,19 @@ describe("canonical serialization (PLC-5)", () => {
       const once = serializeFbd(buildFbdProgram());
       const twice = serializeFbd(parseFbdProgram(once));
       expect(twice).toBe(once);
+    });
+
+    it("changes exactly one field when one LD operand changes", () => {
+      const before = JSON.parse(serializeLd(buildLdProgram()));
+      const program = buildLdProgram();
+      program.rungs[0].paths[0].elements[0].variable = "X5";
+      const after = JSON.parse(serializeLd(program));
+
+      const diffs = diffLeafPaths(before, after);
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].path).toBe("rungs[0].paths[0].elements[0].variable");
+      expect(diffs[0].before).toBe("X0");
+      expect(diffs[0].after).toBe("X5");
     });
 
     it("serializes SFC programs idempotently", () => {
@@ -269,11 +318,42 @@ describe("canonical serialization (PLC-5)", () => {
         ],
         edges: [],
       });
+
       const out = JSON.parse(serializeSfc(parseSfcProgram(legacySfc)));
       expect(out.version).toBe(DIAGRAM_FORMAT_VERSION);
       expect(out.viewport).toBeUndefined();
       // sorted by (stepName, elementType, id)
       expect(out.nodes.map((n: { id: string }) => n.id)).toEqual(["s_idle", "s_run"]);
+    });
+
+    it("migrates a v2.0 LD file with session ids to canonical v2.1", () => {
+      const legacy = JSON.stringify({
+        version: "2.0",
+        programName: "OldLd",
+        rungs: [
+          {
+            id: "r_7",
+            label: "Legacy rung",
+            paths: [
+              {
+                id: "p_3",
+                elements: [
+                  { id: "e_42", type: "contact_no", variable: "X0" },
+                  { id: "e_43", type: "coil", variable: "Y0" },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+      const out = JSON.parse(serializeLd(JSON.parse(legacy) as LdProgram)) as LdProgram;
+      expect(out.version).toBe(LD_FORMAT_VERSION);
+      expect(out.rungs[0].id).toBe("r0");
+      expect(out.rungs[0].label).toBe("Legacy rung");
+      expect(out.rungs[0].paths[0].id).toBe("p0_0");
+      expect(out.rungs[0].paths[0].elements.map((e) => e.id)).toEqual(["e0_0", "e0_1"]);
+      // round-trip stable: reopened canonical file keeps its ids
+      expect(serializeLd(out)).toBe(JSON.stringify(out, null, 2));
     });
   });
 
@@ -298,7 +378,7 @@ describe("canonical serialization (PLC-5)", () => {
       expect(useStore.getState().openFiles[0].modified).toBe(false);
     });
 
-    it("creates new FBD/SFC files as canonical v1.1 and LD as v2.0", () => {
+    it("creates new FBD/SFC files as canonical v1.1 and LD as v2.1", () => {
       useStore.getState().newFbdFile("Main");
       const fbd = JSON.parse(useStore.getState().openFiles[0].content);
       expect(fbd.version).toBe(DIAGRAM_FORMAT_VERSION);

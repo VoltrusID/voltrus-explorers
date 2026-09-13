@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6/0201">
+  <fileHeader companyName="Voltrus" productName="Voltrus Studio" productVersion="1.0" creationDateTime="2026-09-13T00:00:00"/>
+  <types>
+    <pous>
+      <pou name="Broken" pouType="program">
+        <interface>
+          <localVars>
+            <variable name="x"><type><BOOL/></type></variable>

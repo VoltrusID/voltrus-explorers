@@ -174,3 +174,45 @@ cd apps/voltrus-plc && pnpm vitest run --config scripts/gen-goldens.vitest.confi
 
 This script is excluded from the default `pnpm test` suite; run it
 explicitly after changing a transpiler on either side.
+## Import (L5X / PLCopen XML)
+
+`import` converts a third-party export into a flat folder of `.st` files:
+
+```bash
+voltrus-plc import --l5x conveyor.l5x --out project/
+voltrus-plc import --plcopen project.xml --out project/
+voltrus-plc check project/
+```
+
+- `--l5x <file>`: Rockwell Studio 5000 (Logix) L5X export.
+- `--plcopen <file>`: PLCopen TC6 XML (IEC 61131-10) project.
+- `--out <dir>`: created if missing; generated `.st` files are written there.
+
+The report is printed to stdout: imported files, every skipped element with
+its reason, and errors. Exit code is `0` on success, `1` when nothing usable
+was imported (or errors were reported), `2` on unreadable/malformed input.
+
+### Supported subset (honest scope)
+
+L5X: controller- and program-scoped elementary tags (`BOOL`, `INT`, `DINT`,
+`REAL`, `STRING`, ...), `TIMER` → `TON` and `COUNTER` → `CTUD` instances,
+and `Routine Type="ST"` bodies (one `PROGRAM` per routine). Deliberately
+skipped with per-item reasons: RLL/FBD/SFC routines (ladder, function block
+diagrams and SFCs are XML *graphics sheets*, not IEC statements — no
+faithful transpile), encrypted routines, UDT definitions (tags typed with
+them are skipped individually), alias and array tags, Add-On Instructions,
+and Tasks/Modules/hardware configuration.
+
+PLCopen: struct datatypes (→ `TYPE ... STRUCT`), programs and function
+blocks with full interface mapping (`inputVars` → `VAR_INPUT`, etc.),
+initial values, and `body/ST` text. Skipped with reasons: FUNCTION POUs
+(the mt-stc code generator cannot assign function-name returns), IL bodies
+and LD/FBD/SFC graphics-sheet bodies, enum/array/subrange/alias datatypes,
+task configuration, external variables.
+
+Every generated file is compiled with the same `mt-stc` call the `check`
+command uses before it is written; files that do not compile are reported
+under `errors` and never written. Identifier sanitization (`Motor Start` →
+`Motor_Start`) is deterministic; collisions it creates are reported, and
+names that trip a known iecst lexer defect (an embedded `type` segment) are
+skipped with an explanation instead of being emitted broken.

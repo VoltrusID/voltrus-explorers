@@ -1,0 +1,13 @@
+[package]
+name = "mt-import"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mt-stc = { path = "../mt-stc" }
+quick-xml = "0.39"
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
