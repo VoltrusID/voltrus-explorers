@@ -155,8 +155,40 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
             ))
         }
     };
+    let st_source = match crate::diagram::DiagramKind::from_extension(
+        &program_path
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    ) {
+        Some(kind) => match crate::diagram::transpile_source(kind, &source) {
+            Ok(result)
+                if !result.source.is_empty()
+                    && !result.diagnostics.iter().any(|d| d.severity == "error") =>
+            {
+                result.source
+            }
+            Ok(result) => {
+                let detail = result
+                    .diagnostics
+                    .iter()
+                    .map(|d| format!("  {}: 1:1: {}: {}", file.program, d.message, d.severity))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                return error_case(format!(
+                    "program {} failed to transpile{}",
+                    file.program,
+                    if detail.is_empty() { String::new() } else { format!("\n{detail}") }
+                ));
+            }
+            Err(err) => {
+                return error_case(format!("program {} failed to parse: {err}", file.program))
+            }
+        },
+        None => source,
+    };
 
-    let compiled = mt_stc::compile(&source);
+    let compiled = mt_stc::compile(&st_source);
     let module = match compiled.module {
         Some(module) if compiled.success => module,
         _ => {
@@ -174,7 +206,6 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
             ));
         }
     };
-
     let cases = file
         .scenarios
         .iter()

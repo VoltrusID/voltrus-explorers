@@ -1,0 +1,1 @@
+error: Diagram contains a cycle — FBD execution order must be acyclic

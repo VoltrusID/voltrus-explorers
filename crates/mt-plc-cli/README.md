@@ -147,3 +147,30 @@ condition becomes true.
 | 0    | check/test passed                        |
 | 1    | compile errors / scenario failures       |
 | 2    | usage error or unreadable directory/file |
+
+
+## Diagram programs (`.fbd` / `.ld` / `.sfc`)
+
+`check` and `test` also accept FBD, LD, and SFC diagram files — the same
+canonical JSON the IDE saves. `src/diagram/` ports the frontend
+transpilers (`fbd-to-st.ts`, `ld-to-st.ts`, `sfc-to-st.ts`) to Rust
+byte-for-byte; the CLI deserializes the diagram, transpiles it to ST, and
+compiles the result through the normal `mt-stc` path with diagnostics
+attributed to the diagram file. In `test` scenarios, point `program:` at a
+`.fbd`/`.ld`/`.sfc` file directly (see `AlarmLatch.test.yaml` in
+`apps/voltrus-plc/samples/`).
+
+### Goldens
+
+Transpiler output is pinned to the TypeScript implementation by golden
+tests (`tests/golden_diagrams.rs`) over fixtures under
+`tests/fixtures/{fbd,ld,sfc}/`. The goldens (and the fixture JSONs, plus
+the diagram samples exported to `apps/voltrus-plc/samples/`) are generated
+from the real TS transpilers:
+
+```text
+cd apps/voltrus-plc && pnpm vitest run --config scripts/gen-goldens.vitest.config.ts
+```
+
+This script is excluded from the default `pnpm test` suite; run it
+explicitly after changing a transpiler on either side.

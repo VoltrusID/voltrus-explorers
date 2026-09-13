@@ -76,14 +76,24 @@ pub struct SparkplugSettings {
 /// through the publisher. Broker loss is recovered by opening a fresh
 /// session (bdSeq bump + NBIRTH); on shutdown the graceful NDEATH is
 /// published first.
+///
+/// Redeploys are observed through the server's deploy events: when the
+/// deployed variable catalog changed, the publisher is reborn with a fresh
+/// catalog (Rebirth semantics — seq resets, bdSeq unchanged); otherwise only
+/// the value snapshot is refreshed. A lagged event stream is treated the
+/// same — the live catalog read is authoritative.
 pub async fn run_sparkplug(
     server: Arc<PlcRuntimeGrpcServer>,
-    cache: Arc<bridge::VariableCache>,
+    mut cache: Arc<bridge::VariableCache>,
     settings: SparkplugSettings,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let client_id = format!("voltrus-runtime-{}", settings.edge_node_id);
     let tick = std::time::Duration::from_millis(settings.scan_cycle_ms.max(1));
+    let mut deploy_events = server.deploy_events();
+    // Catalog of the last birth; a redeploy that changes it triggers rebirth.
+    // Assigned on the first successful connect before any read.
+    let mut birthed_names: Vec<String>;
 
     loop {
         let transport = match RumqttcTransport::new(&settings.broker_url, client_id.clone()) {
@@ -114,10 +124,12 @@ pub async fn run_sparkplug(
 
         match publisher.connect(now_ms()).await {
             Ok(()) => {
+                birthed_names = cache.names().to_vec();
                 tracing::info!(
-                    "Sparkplug session established (group {}, node {})",
+                    "Sparkplug session established (group {}, node {}, {} metrics)",
                     settings.group_id,
-                    settings.edge_node_id
+                    settings.edge_node_id,
+                    cache.names().len()
                 );
                 loop {
                     tokio::select! {
@@ -125,6 +137,31 @@ pub async fn run_sparkplug(
                             let _ = publisher.death(now_ms()).await;
                             tracing::info!("Sparkplug session closed (NDEATH published)");
                             return;
+                        }
+                        event = deploy_events.recv() => {
+                            if event.is_err() {
+                                tracing::warn!("deploy event stream lagged; re-reading catalog");
+                            }
+                            let names = server.variable_names().await;
+                            if names.is_empty() || names == birthed_names {
+                                // Same program (or nothing deployed): refresh values only.
+                                let snapshot = server.variable_snapshot(cache.names()).await;
+                                cache.refresh(snapshot);
+                                continue;
+                            }
+                            tracing::info!(
+                                "redeploy detected ({} → {} variables): rebirthing with fresh catalog",
+                                birthed_names.len(),
+                                names.len()
+                            );
+                            birthed_names = names;
+                            cache = Arc::new(bridge::VariableCache::new(birthed_names.clone()));
+                            let snapshot = server.variable_snapshot(cache.names()).await;
+                            cache.refresh(snapshot);
+                            if let Err(e) = publisher.rebirth_with(cache.metric_sources(), now_ms()).await {
+                                tracing::warn!("Sparkplug rebirth failed, reconnecting: {e}");
+                                break;
+                            }
                         }
                         _ = tokio::time::sleep(tick) => {
                             let snapshot = server.variable_snapshot(cache.names()).await;
@@ -158,6 +195,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge::VariableCache;
     use mt_plc_types::{Instruction, Opcode, PlcValue};
     use mt_sparkplug::MetricValue;
 
@@ -226,5 +264,181 @@ mod tests {
             .expect("state");
         let state = state.into_inner();
         assert_eq!(state.status, mt_grpc::pb::RuntimeStatus::Running as i32);
+    }
+
+    /// Transport recording publishes, for driving the publisher without a
+    /// broker (the crate's own mock is private to its tests).
+    struct RecordingTransport {
+        publishes: Arc<parking_lot::Mutex<Vec<(String, Vec<u8>)>>>,
+    }
+
+    impl mt_sparkplug::MqttTransport for RecordingTransport {
+        async fn connect(
+            &mut self,
+            _will: mt_sparkplug::Will,
+        ) -> Result<(), mt_sparkplug::SparkplugError> {
+            Ok(())
+        }
+
+        async fn publish(
+            &mut self,
+            topic: &str,
+            payload: &[u8],
+        ) -> Result<(), mt_sparkplug::SparkplugError> {
+            self.publishes.lock().push((topic.to_string(), payload.to_vec()));
+            Ok(())
+        }
+    }
+
+    fn module_with_variables(variables: Vec<(&str, PlcValue)>) -> CompiledModule {
+        CompiledModule {
+            name: "Main".into(),
+            instructions: vec![Instruction { opcode: Opcode::Halt, operand: None }],
+            variable_slots: variables
+                .into_iter()
+                .map(|(name, value)| (name.to_string(), value))
+                .collect(),
+            pou_table: vec![],
+            name_constants: vec![],
+            line_map: vec![],
+        }
+    }
+
+    /// The GW-4 acceptance chain: boot v1, NDATA flowing, redeploy v2 with an
+    /// extra variable through the server's deploy path, deploy event fires,
+    /// rebirth republishes NBIRTH (seq reset, same bdSeq) including the new
+    /// metric, and NDATA continues from the reset.
+    #[tokio::test]
+    async fn redeploy_rebirths_sparkplug_with_new_catalog() {
+        use mt_grpc::pb::{DeployRequest, ForceRequest, VariableValue, variable_value};
+        use mt_plc_types::crc32_le;
+        use prost::Message as _;
+
+        let server = boot(
+            module_with_variables(vec![("pump", PlcValue::Dint(1)), ("target", PlcValue::Dint(0))]),
+            10,
+        )
+        .await
+        .expect("boot v1");
+        let names_v1 = server.variable_names().await;
+        assert_eq!(names_v1, vec!["pump".to_string(), "target".to_string()]);
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(VariableCache::new(names_v1));
+        cache.refresh(server.variable_snapshot(cache.names()).await);
+        let recorded = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let mut publisher = SparkplugPublisher::new(
+            SparkplugConfig {
+                broker_url: String::new(),
+                group_id: "plant".into(),
+                edge_node_id: "gw1".into(),
+                bd_seq_path: dir.path().join("bd_seq"),
+                metrics: cache.metric_sources(),
+                deadband_by_prefix: vec![],
+                max_interval_ms: 60_000,
+            },
+            RecordingTransport { publishes: recorded.clone() },
+        );
+        publisher.connect(1_000).await.unwrap();
+
+        // NDATA flowing: force pump 1 → 5 through the IDE force path.
+        server
+            .force_variable(Request::new(ForceRequest {
+                variable_name: "pump".to_string(),
+                value: Some(VariableValue {
+                    value: Some(variable_value::Value::DintVal(5)),
+                }),
+            }))
+            .await
+            .unwrap();
+        cache.refresh(server.variable_snapshot(cache.names()).await);
+        assert!(publisher.publish_changes(1_500).await.unwrap());
+
+        // Redeploy v2 (extra variable) through the same deploy handler the
+        // IDE uses; the deploy event must fire with the new fingerprint.
+        let mut events = server.deploy_events();
+        let module_v2 = module_with_variables(vec![
+            ("pump", PlcValue::Dint(1)),
+            ("target", PlcValue::Dint(0)),
+            ("extra", PlcValue::Dint(0)),
+        ]);
+        let v2_bytes = bincode::serialize(&module_v2).unwrap();
+        server
+            .deploy(Request::new(DeployRequest {
+                bytecode: v2_bytes.clone(),
+                config_json: String::new(),
+            }))
+            .await
+            .unwrap();
+        let event = events.recv().await.expect("deploy event");
+        assert_eq!(event.deployed_bundle_crc32, crc32_le(&v2_bytes));
+        assert_eq!(
+            server.variable_names().await,
+            vec!["pump".to_string(), "target".to_string(), "extra".to_string()]
+        );
+
+        // The bridge's event handling: catalog changed → rebirth with a
+        // fresh catalog.
+        let new_cache = Arc::new(VariableCache::new(server.variable_names().await));
+        new_cache.refresh(server.variable_snapshot(new_cache.names()).await);
+        publisher.rebirth_with(new_cache.metric_sources(), 2_000).await.unwrap();
+
+        let payloads = recorded.lock().clone();
+        let births = payloads
+            .iter()
+            .filter(|(topic, _)| topic.ends_with("/NBIRTH/gw1"))
+            .map(|(_, bytes)| mt_sparkplug::Payload::decode(bytes.as_slice()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(births.len(), 2);
+        assert_eq!(births[1].seq, Some(0), "rebirth resets seq");
+        let bd_seq = |payload: &mt_sparkplug::Payload| {
+            payload
+                .metrics
+                .iter()
+                .find(|m| m.name.as_deref() == Some("bdSeq"))
+                .map(|m| m.value.clone())
+        };
+        assert_eq!(
+            bd_seq(&births[0]),
+            bd_seq(&births[1]),
+            "same session: bdSeq unchanged"
+        );
+        let extra = births[1]
+            .metrics
+            .iter()
+            .find(|m| m.name.as_deref() == Some("extra"))
+            .and_then(|m| m.value.clone());
+        assert_eq!(
+            extra,
+            Some(mt_sparkplug::pb::payload::metric::Value::LongValue(0))
+        );
+
+        // NDATA continues from the reset: force extra 0 → 7.
+        server
+            .force_variable(Request::new(ForceRequest {
+                variable_name: "extra".to_string(),
+                value: Some(VariableValue {
+                    value: Some(variable_value::Value::DintVal(7)),
+                }),
+            }))
+            .await
+            .unwrap();
+        new_cache.refresh(server.variable_snapshot(new_cache.names()).await);
+        assert!(publisher.publish_changes(2_500).await.unwrap());
+        // Read the live recordings: `payloads` was cloned before this publish.
+        let datas = recorded
+            .lock()
+            .iter()
+            .filter(|(topic, _)| topic.ends_with("/NDATA/gw1"))
+            .map(|(_, bytes)| mt_sparkplug::Payload::decode(bytes.as_slice()).unwrap())
+            .collect::<Vec<_>>();
+        let last = datas.last().expect("post-rebirth NDATA");
+        assert_eq!(last.seq, Some(1), "NDATA continues from the reset");
+        assert_eq!(last.metrics.len(), 1);
+        assert_eq!(last.metrics[0].name.as_deref(), Some("extra"));
+        assert_eq!(
+            last.metrics[0].value,
+            Some(mt_sparkplug::pb::payload::metric::Value::LongValue(7))
+        );
     }
 }

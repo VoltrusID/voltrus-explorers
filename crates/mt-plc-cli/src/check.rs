@@ -32,7 +32,11 @@ pub struct CheckReport {
 /// `file:line:col: severity: message` diagnostics in deterministic order.
 pub fn run(dir: &Path) -> CheckReport {
     let sources = match collect_files(dir, |p| {
-        p.extension().is_some_and(|e| e.eq_ignore_ascii_case("st"))
+        p.extension().is_some_and(|e| {
+            let e = e.to_string_lossy();
+            e.eq_ignore_ascii_case("st")
+                || crate::diagram::DiagramKind::from_extension(&e).is_some()
+        })
     }) {
         Ok(sources) => sources,
         Err(err) => {
@@ -66,19 +70,18 @@ pub fn run(dir: &Path) -> CheckReport {
                 }
             }
         };
-        let result = mt_stc::compile(&source);
-        for d in &result.diagnostics {
-            if d.severity == "error" {
+        for (line, col, message, severity) in compile_source(path, &source) {
+            if severity == "error" {
                 errors += 1;
             } else {
                 warnings += 1;
             }
             diagnostics.push(Diagnostic {
                 file: rel.clone(),
-                line: d.line,
-                col: d.col,
-                message: d.message.clone(),
-                severity: d.severity.clone(),
+                line,
+                col,
+                message,
+                severity,
             });
         }
     }
@@ -92,6 +95,43 @@ pub fn run(dir: &Path) -> CheckReport {
         diagnostics,
         error: None,
     }
+}
+
+/// Compile one source file to `(line, col, message, severity)` diagnostics.
+/// `.fbd` / `.ld` / `.sfc` files are transpiled to ST first; transpile
+/// diagnostics are attributed to the diagram file itself (line 1, col 1) and
+/// the generated ST is then compiled through the normal `mt-stc` path.
+/// `.st` files compile directly.
+pub(crate) fn compile_source(
+    path: &Path,
+    source: &str,
+) -> Vec<(usize, usize, String, String)> {
+    let kind = path
+        .extension()
+        .and_then(|e| crate::diagram::DiagramKind::from_extension(&e.to_string_lossy()));
+    let st_source = match kind {
+        None => source.to_string(),
+        Some(kind) => match crate::diagram::transpile_source(kind, source) {
+            Ok(result) => {
+                if result.source.is_empty()
+                    || result.diagnostics.iter().any(|d| d.severity == "error")
+                {
+                    return result
+                        .diagnostics
+                        .into_iter()
+                        .map(|d| (1, 1, d.message, d.severity))
+                        .collect();
+                }
+                result.source
+            }
+            Err(err) => return vec![(1, 1, err, "error".into())],
+        },
+    };
+    mt_stc::compile(&st_source)
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.line, d.col, d.message, d.severity))
+        .collect()
 }
 
 /// Recursively collect files matching `pred`, sorted for deterministic

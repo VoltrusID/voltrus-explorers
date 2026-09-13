@@ -41,4 +41,6 @@ pub enum SparkplugError {
     BdSeqCorrupt { path: std::path::PathBuf },
     #[error("mqtt transport: {0}")]
     Transport(String),
+    #[error("not connected: rebirth requires an open session")]
+    NotConnected,
 }

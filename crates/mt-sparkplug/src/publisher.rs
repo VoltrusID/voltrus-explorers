@@ -59,8 +59,11 @@ pub struct SparkplugConfig {
 ///
 /// Lifecycle: [`connect`](Self::connect) opens a session (bumps bdSeq,
 /// registers the NDEATH Will, publishes NBIRTH), [`publish_changes`](Self::publish_changes)
-/// is the per-scan RBE step, [`death`](Self::death) publishes NDEATH for
-/// graceful shutdown. After a lost session, call `connect` again.
+/// is the per-scan RBE step, [`rebirth`](Self::rebirth) /
+/// [`rebirth_with`](Self::rebirth_with) republish NBIRTH mid-session (Rebirth
+/// NCMD semantics: seq resets, bdSeq unchanged), and [`death`](Self::death)
+/// publishes NDEATH for graceful shutdown. After a lost session, call
+/// `connect` again.
 pub struct SparkplugPublisher<T: MqttTransport> {
     config: SparkplugConfig,
     transport: T,
@@ -75,6 +78,9 @@ pub struct SparkplugPublisher<T: MqttTransport> {
     last_publish_ms: Vec<Option<u64>>,
     /// Whether the metric made it into this session's NBIRTH.
     birthed: Vec<bool>,
+    /// Whether a session is currently open (connect without a following
+    /// death). Rebirth requires an open session.
+    connected: bool,
 }
 
 impl<T: MqttTransport> SparkplugPublisher<T> {
@@ -88,6 +94,7 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             last: vec![None; metric_count],
             last_publish_ms: vec![None; metric_count],
             birthed: vec![false; metric_count],
+            connected: false,
         }
     }
 
@@ -117,18 +124,7 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
         // NBIRTH: every metric that has a value right now, plus bdSeq. A
         // metric with no sample misses this birth and stays unpublished
         // until the next session.
-        let mut metrics = Vec::with_capacity(self.config.metrics.len() + 1);
-        metrics.push(bd_seq_metric(bd_seq, now_ms));
-        let mut last = vec![None; self.config.metrics.len()];
-        let mut last_publish_ms = vec![None; self.config.metrics.len()];
-        for (i, source) in self.config.metrics.iter().enumerate() {
-            let Some(value) = (source.get)() else {
-                continue;
-            };
-            metrics.push(value_metric(&source.name, &value, now_ms));
-            last[i] = Some(value);
-            last_publish_ms[i] = Some(now_ms);
-        }
+        let (metrics, last, last_publish_ms, birthed) = self.sample_birth(bd_seq, now_ms);
         let birth = Payload {
             timestamp: Some(now_ms),
             seq: Some(0),
@@ -140,9 +136,10 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
         self.transport.publish(&topic, &birth.encode_to_vec()).await?;
 
         self.seq = 1;
-        self.birthed = last_publish_ms.iter().map(|slot| slot.is_some()).collect();
+        self.birthed = birthed;
         self.last = last;
         self.last_publish_ms = last_publish_ms;
+        self.connected = true;
         Ok(())
     }
 
@@ -192,6 +189,9 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
     /// the same bdSeq, and the broker suppresses the Will on a clean
     /// disconnect, so hosts see exactly one death.
     pub async fn death(&mut self, now_ms: u64) -> Result<(), SparkplugError> {
+        // The session is ending regardless of whether the broker accepts
+        // the publish; rebirth must not resume it.
+        self.connected = false;
         let death = Payload {
             timestamp: Some(now_ms),
             seq: None,
@@ -203,8 +203,78 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
         self.transport.publish(&topic, &death.encode_to_vec()).await
     }
 
+    /// Republish NBIRTH for the existing catalog (the REBIRTH NCMD flow per
+    /// the Tahu normative statements): the full metric set is re-sampled
+    /// now, seq resets to 0, and bdSeq stays — it is the same edge session,
+    /// so the registered NDEATH Will remains valid.
+    pub async fn rebirth(&mut self, now_ms: u64) -> Result<(), SparkplugError> {
+        if !self.connected {
+            return Err(SparkplugError::NotConnected);
+        }
+        let (metrics, last, last_publish_ms, birthed) = self.sample_birth(self.bd_seq, now_ms);
+        let birth = Payload {
+            timestamp: Some(now_ms),
+            seq: Some(0),
+            uuid: Some(PAYLOAD_UUID.to_string()),
+            metrics,
+            body: None,
+        };
+        let topic = self.topic(SparkplugVerb::NBirth);
+        self.transport.publish(&topic, &birth.encode_to_vec()).await?;
+
+        self.seq = 1;
+        self.birthed = birthed;
+        self.last = last;
+        self.last_publish_ms = last_publish_ms;
+        Ok(())
+    }
+
+    /// Replace the metric catalog and immediately republish NBIRTH with
+    /// [`Self::rebirth`] semantics. Use after a redeploy changes the
+    /// variable set; metrics sampling `None` miss this birth and stay
+    /// unbirthed until the next session.
+    pub async fn rebirth_with(
+        &mut self,
+        metrics: Vec<MetricSource>,
+        now_ms: u64,
+    ) -> Result<(), SparkplugError> {
+        self.config.metrics = metrics;
+        self.rebirth(now_ms).await
+    }
+
     fn topic(&self, verb: SparkplugVerb) -> String {
         sparkplug_topic(&self.config.group_id, &self.config.edge_node_id, verb)
+    }
+
+    /// Sample the catalog for a birth: the NBIRTH metrics (bdSeq included),
+    /// per-metric RBE state, publish timestamps, and birth flags. A metric
+    /// whose sample is `None` is omitted and marked unbirthed.
+    fn sample_birth(
+        &self,
+        bd_seq: u8,
+        now_ms: u64,
+    ) -> (
+        Vec<Metric>,
+        Vec<Option<MetricValue>>,
+        Vec<Option<u64>>,
+        Vec<bool>,
+    ) {
+        let count = self.config.metrics.len();
+        let mut metrics = Vec::with_capacity(count + 1);
+        metrics.push(bd_seq_metric(bd_seq, now_ms));
+        let mut last = vec![None; count];
+        let mut last_publish_ms = vec![None; count];
+        let mut birthed = vec![false; count];
+        for (i, source) in self.config.metrics.iter().enumerate() {
+            let Some(value) = (source.get)() else {
+                continue;
+            };
+            metrics.push(value_metric(&source.name, &value, now_ms));
+            last[i] = Some(value);
+            last_publish_ms[i] = Some(now_ms);
+            birthed[i] = true;
+        }
+        (metrics, last, last_publish_ms, birthed)
     }
 }
 
@@ -688,5 +758,93 @@ mod tests {
         let published = publisher.transport.payloads("NDATA/edge1");
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].metrics[0].value, Some(metric::Value::LongValue(3)));
+    }
+
+    #[tokio::test]
+    async fn rebirth_replaces_catalog_resets_seq_keeps_bd_seq() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = Arc::new(Mutex::new(0i64));
+        let mut publisher = SparkplugPublisher::new(
+            config(&dir, vec![int_source("line/count", &count)], vec![]),
+            MockTransport::default(),
+        );
+        publisher.connect(0).await.unwrap();
+        *count.lock() = 5;
+        assert!(publisher.publish_changes(1).await.unwrap());
+
+        // A redeploy swaps in a new catalog; rebirth carries it with Rebirth
+        // semantics: seq back to 0, same bdSeq / same session.
+        let level = Arc::new(Mutex::new(0i64));
+        publisher
+            .rebirth_with(
+                vec![
+                    int_source("line/count", &count),
+                    int_source("tank/level", &level),
+                ],
+                2,
+            )
+            .await
+            .unwrap();
+
+        let births = publisher.transport.payloads("NBIRTH/edge1");
+        assert_eq!(births.len(), 2);
+        let rebirth = &births[1];
+        assert_eq!(rebirth.seq, Some(0));
+        let by_name = |name: &str| {
+            rebirth
+                .metrics
+                .iter()
+                .find(|m| m.name.as_deref() == Some(name))
+                .and_then(|m| m.value.clone())
+        };
+        assert_eq!(by_name("line/count"), Some(metric::Value::LongValue(5)));
+        assert_eq!(by_name("tank/level"), Some(metric::Value::LongValue(0)));
+        // Same session: bdSeq metric unchanged, Will untouched.
+        assert_eq!(by_name("bdSeq"), Some(metric::Value::LongValue(1)));
+        assert_eq!(publisher.transport.wills.len(), 1);
+
+        // NDATA continues from the reset with the fresh catalog: only the
+        // metric that actually changed is published.
+        *level.lock() = 9;
+        assert!(publisher.publish_changes(3).await.unwrap());
+        let data = publisher.transport.payloads("NDATA/edge1");
+        let last = data.last().unwrap();
+        assert_eq!(last.seq, Some(1));
+        assert_eq!(last.metrics.len(), 1);
+        assert_eq!(last.metrics[0].name.as_deref(), Some("tank/level"));
+        assert_eq!(last.metrics[0].value, Some(metric::Value::LongValue(9)));
+    }
+
+    #[tokio::test]
+    async fn rebirth_republishes_even_without_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = Arc::new(Mutex::new(0i64));
+        let mut publisher = SparkplugPublisher::new(
+            config(&dir, vec![int_source("line/count", &count)], vec![]),
+            MockTransport::default(),
+        );
+        publisher.connect(0).await.unwrap();
+
+        // Explicit rebirth re-births even with nothing changed, and RBE
+        // stays quiet afterwards until a real change.
+        publisher.rebirth(2).await.unwrap();
+        let births = publisher.transport.payloads("NBIRTH/edge1");
+        assert_eq!(births.len(), 2);
+        assert_eq!(births[1].seq, Some(0));
+        assert!(!publisher.publish_changes(3).await.unwrap());
+        assert!(publisher.transport.payloads("NDATA/edge1").is_empty());
+    }
+
+    #[tokio::test]
+    async fn rebirth_before_connect_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut publisher = SparkplugPublisher::new(
+            config(&dir, vec![], vec![]),
+            MockTransport::default(),
+        );
+        assert!(matches!(
+            publisher.rebirth(0).await,
+            Err(SparkplugError::NotConnected)
+        ));
     }
 }

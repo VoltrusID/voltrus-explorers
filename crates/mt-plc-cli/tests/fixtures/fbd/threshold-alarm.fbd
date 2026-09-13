@@ -1,0 +1,132 @@
+{
+  "declarations": [],
+  "edges": [
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e1",
+      "source": "node-1",
+      "sourceHandle": "OUT",
+      "target": "node-3",
+      "targetHandle": "IN1"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN2"
+      },
+      "id": "e2",
+      "source": "node-2",
+      "sourceHandle": "OUT",
+      "target": "node-3",
+      "targetHandle": "IN2"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e3",
+      "source": "node-3",
+      "sourceHandle": "OUT",
+      "target": "node-4",
+      "targetHandle": "IN1"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN"
+      },
+      "id": "e4",
+      "source": "node-4",
+      "sourceHandle": "OUT",
+      "target": "node-5",
+      "targetHandle": "IN"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "blockType": "ADD",
+        "label": "ADD",
+        "pinValues": {}
+      },
+      "id": "node-3",
+      "position": {
+        "x": 250,
+        "y": 30
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "GT",
+        "label": "GT",
+        "pinValues": {
+          "IN2": "100"
+        }
+      },
+      "id": "node-4",
+      "position": {
+        "x": 500,
+        "y": 60
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "registerNumber": 0,
+        "registerType": "D",
+        "variableName": "D0",
+        "variableType": "INT"
+      },
+      "id": "node-1",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "type": "input_pin"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "registerNumber": 1,
+        "registerType": "D",
+        "variableName": "D1",
+        "variableType": "INT"
+      },
+      "id": "node-2",
+      "position": {
+        "x": 0,
+        "y": 100
+      },
+      "type": "input_pin"
+    },
+    {
+      "data": {
+        "blockType": "OUTPUT_PIN",
+        "label": "Output",
+        "pinValues": {},
+        "registerNumber": 0,
+        "registerType": "Y",
+        "variableName": "Y0",
+        "variableType": "BOOL"
+      },
+      "id": "node-5",
+      "position": {
+        "x": 750,
+        "y": 60
+      },
+      "type": "output_pin"
+    }
+  ],
+  "programName": "ThresholdAlarm",
+  "version": "1.1"
+}

@@ -5,6 +5,7 @@
 
 pub mod check;
 pub mod junit;
+pub mod diagram;
 pub mod runner;
 pub mod scenario;
 

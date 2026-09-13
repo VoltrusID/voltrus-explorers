@@ -127,12 +127,23 @@ struct ScanHandle {
     cancel: watch::Sender<bool>,
 }
 
+/// Fired after a successful Deploy — see
+/// [`PlcRuntimeGrpcServer::deploy_events`]. Capacity 1: a lagged receiver
+/// missed deploys that a newer one supersedes anyway.
+#[derive(Debug, Clone, Copy)]
+pub struct DeployEvent {
+    pub deployed_bundle_crc32: u32,
+    pub deployed_bundle_len: u64,
+}
+
 /// The gRPC server wrapping a PLC runtime.
 pub struct PlcRuntimeGrpcServer {
     inner: Arc<RwLock<RuntimeInner>>,
     scan_handle: Arc<Mutex<Option<ScanHandle>>>,
     scan_loop_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     watch_tx: broadcast::Sender<Result<VariableUpdate, Status>>,
+    /// Fires [`DeployEvent`] after each successful Deploy.
+    deploy_tx: broadcast::Sender<DeployEvent>,
     /// Filter for which variables to stream.
     watch_filter: Arc<RwLock<Vec<String>>>,
     watch_interval_ms: Arc<RwLock<u32>>,
@@ -204,6 +215,7 @@ impl From<IoMappingJson> for pb::IoMapping {
 impl PlcRuntimeGrpcServer {
     pub fn new() -> Self {
         let (watch_tx, _) = broadcast::channel(256);
+        let (deploy_tx, _) = broadcast::channel(1);
         Self {
             inner: Arc::new(RwLock::new(RuntimeInner {
                 runtime: None,
@@ -216,6 +228,7 @@ impl PlcRuntimeGrpcServer {
             scan_handle: Arc::new(Mutex::new(None)),
             scan_loop_handle: Arc::new(Mutex::new(None)),
             watch_tx,
+            deploy_tx,
             watch_filter: Arc::new(RwLock::new(Vec::new())),
             watch_interval_ms: Arc::new(RwLock::new(0)),
             io: Arc::new(std::sync::Mutex::new(ServerIoState::default())),
@@ -233,15 +246,39 @@ impl PlcRuntimeGrpcServer {
     /// sample VM state without owning the scan loop.
     pub async fn variable_snapshot(&self, names: &[String]) -> Vec<Option<PlcValue>> {
         let guard = self.inner.read().await;
+        let Some(rt) = guard.runtime.as_ref() else {
+            return vec![None; names.len()];
+        };
+        // Force-aware: report the values the Watch stream reports (forced
+        // overrides honored), not the raw memory slots.
+        let watched_vars = rt.watch_variables();
+        let watched: std::collections::HashMap<&str, &PlcValue> = watched_vars
+            .iter()
+            .map(|w| (w.name.as_str(), &w.value))
+            .collect();
         names
             .iter()
-            .map(|name| {
-                guard
-                    .runtime
-                    .as_ref()
-                    .and_then(|rt| rt.read_variable(name).cloned())
-            })
+            .map(|name| watched.get(name.as_str()).map(|value| (*value).clone()))
             .collect()
+    }
+
+    /// Subscribe to deploy events, fired after each successful Deploy.
+    /// Capacity 1: a `RecvError::Lagged` means newer deploys superseded the
+    /// missed ones — re-read the live state rather than replaying.
+    pub fn deploy_events(&self) -> broadcast::Receiver<DeployEvent> {
+        self.deploy_tx.subscribe()
+    }
+
+    /// Variable names of the currently deployed runtime (empty while nothing
+    /// is deployed). Complements [`Self::variable_snapshot`] for observers
+    /// that must discover the catalog after a redeploy.
+    pub async fn variable_names(&self) -> Vec<String> {
+        let guard = self.inner.read().await;
+        guard
+            .runtime
+            .as_ref()
+            .map(|rt| rt.watch_variables().into_iter().map(|v| v.name).collect())
+            .unwrap_or_default()
     }
 
     /// Start the background scan-cycle loop.
@@ -451,6 +488,12 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         guard.deployed_bundle_len = req.bytecode.len() as u64;
 
         let new_state = runtime_state_to_pb(&guard);
+        let event = DeployEvent {
+            deployed_bundle_crc32: guard.deployed_bundle_crc32,
+            deployed_bundle_len: guard.deployed_bundle_len,
+        };
+        drop(guard);
+        let _ = self.deploy_tx.send(event);
 
         Ok(Response::new(DeployResponse {
             success: true,
@@ -938,5 +981,19 @@ mod drift_tests {
 
         server.stop(Request::new(Empty {})).await.expect("stop");
         assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+    }
+
+    #[tokio::test]
+    async fn deploy_fires_event_with_fingerprint() {
+        let server = PlcRuntimeGrpcServer::new();
+        let mut events = server.deploy_events();
+        assert!(events.try_recv().is_err(), "no event before deploy");
+
+        let bytes = bincode::serialize(&sample_module("Main")).expect("serialize");
+        deploy_bytes(&server, &bytes).await;
+
+        let event = events.recv().await.expect("deploy event");
+        assert_eq!(event.deployed_bundle_crc32, crc32_le(&bytes));
+        assert_eq!(event.deployed_bundle_len, bytes.len() as u64);
     }
 }
