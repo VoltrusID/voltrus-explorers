@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../auth";
 import type { AppEnv } from "../env";
+import { effectivePlan, FREE_MAX_PROJECTS } from "../entitlements";
 
 export const projectsRoutes = new Hono<AppEnv>();
 
@@ -40,6 +41,16 @@ projectsRoutes.post("/", async (c) => {
   const name = body && typeof body === "object" ? (body as Record<string, unknown>).name : undefined;
   if (typeof name !== "string" || name.trim().length === 0) {
     return c.json({ error: "name is required" }, 400);
+  }
+
+  // Free tier caps how many projects a user can hold; paid plans are unlimited.
+  if ((await effectivePlan(c.env.DB, c.get("userId"))) === "free") {
+    const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM projects WHERE user_id = ?")
+      .bind(c.get("userId"))
+      .first<{ n: number }>();
+    if ((count?.n ?? 0) >= FREE_MAX_PROJECTS) {
+      return c.json({ error: "plan_required", requiredPlan: "solo" }, 402);
+    }
   }
 
   const id = crypto.randomUUID();

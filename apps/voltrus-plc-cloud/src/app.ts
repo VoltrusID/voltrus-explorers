@@ -3,6 +3,9 @@ import type { AppEnv, Env } from "./env";
 import { authRoutes } from "./routes/auth";
 import { projectsRoutes } from "./routes/projects";
 import { filesRoutes } from "./routes/files";
+import { aiRoutes } from "./routes/ai";
+import { billingRoutes } from "./routes/billing";
+import { relayRoutes } from "./routes/relay";
 
 function isAllowedOrigin(c: Context<AppEnv>): string | null {
   const origin = c.req.header("Origin");
@@ -43,6 +46,9 @@ export function createApp() {
   app.route("/api/auth", authRoutes);
   app.route("/api/projects", projectsRoutes);
   app.route("/api/projects/:id/files", filesRoutes);
+  app.route("/api/ai", aiRoutes);
+  app.route("/api", relayRoutes);
+  app.route("/api", billingRoutes);
 
   return app;
 }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../auth";
 import type { AppEnv } from "../env";
+import { effectivePlan, FREE_MAX_FILES_PER_PROJECT } from "../entitlements";
 import { getOwnedProject } from "./projects";
 
 export const filesRoutes = new Hono<AppEnv>();
@@ -45,6 +46,22 @@ filesRoutes.put("/:path{.+}", async (c) => {
   const body = await c.req.json().catch(() => null);
   const content = body && typeof body === "object" ? (body as Record<string, unknown>).content : undefined;
   if (typeof content !== "string") return c.json({ error: "content is required" }, 400);
+
+  // Free tier caps files per project. Overwriting an existing row never counts
+  // against the quota — only new files do.
+  if ((await effectivePlan(c.env.DB, c.get("userId"))) === "free") {
+    const existing = await c.env.DB.prepare("SELECT 1 AS row FROM project_files WHERE project_id = ? AND path = ?")
+      .bind(project.id, path)
+      .first<{ row: number }>();
+    if (!existing) {
+      const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM project_files WHERE project_id = ?")
+        .bind(project.id)
+        .first<{ n: number }>();
+      if ((count?.n ?? 0) >= FREE_MAX_FILES_PER_PROJECT) {
+        return c.json({ error: "plan_required", requiredPlan: "solo" }, 402);
+      }
+    }
+  }
 
   const size = new TextEncoder().encode(content).byteLength;
   await c.env.FILES.put(`${c.get("userId")}/${project.id}/${path}`, content, {
