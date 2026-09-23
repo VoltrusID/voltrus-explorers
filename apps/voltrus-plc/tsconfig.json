@@ -7,7 +7,12 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@voltrus/stc-wasm": ["../../crates/mt-stc-wasm/pkg/mt_stc_wasm.d.ts"],
+      "@voltrus/runtime-wasm": ["../../crates/mt-plc-runtime-wasm/pkg/mt_plc_runtime_wasm.d.ts"]
+    }
   },
   "include": ["src"]
 }

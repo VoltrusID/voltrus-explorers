@@ -11,6 +11,7 @@ pub struct WasmCompileOutput {
     instructions_json: String,
     variables_json: String,
     line_map_json: String,
+    module_json: String,
 }
 
 #[wasm_bindgen]
@@ -48,6 +49,13 @@ impl WasmCompileOutput {
     #[wasm_bindgen(getter)]
     pub fn line_map(&self) -> String {
         self.line_map_json.clone()
+    }
+
+    /// Full module as serde `CompiledModule` JSON ("" when compilation produced
+    /// no module). This is the shape `WasmPlcRuntime::new` consumes.
+    #[wasm_bindgen(getter)]
+    pub fn module_json(&self) -> String {
+        self.module_json.clone()
     }
 }
 
@@ -95,6 +103,10 @@ pub fn wasm_compile(source: &str) -> WasmCompileOutput {
         .as_ref()
         .map(serialize_module)
         .unwrap_or_default();
+    let module_json = result.module
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
+        .unwrap_or_default();
 
     WasmCompileOutput {
         success: result.success,
@@ -104,6 +116,7 @@ pub fn wasm_compile(source: &str) -> WasmCompileOutput {
         instructions_json,
         variables_json,
         line_map_json,
+        module_json,
     }
 }
 
@@ -118,6 +131,10 @@ pub fn wasm_compile_project(sources_json: &str) -> Result<WasmCompileOutput, JsV
         .as_ref()
         .map(serialize_module)
         .unwrap_or_default();
+    let module_json = result.module
+        .as_ref()
+        .map(|m| serde_json::to_string(m).unwrap_or_default())
+        .unwrap_or_default();
 
     Ok(WasmCompileOutput {
         success: result.success,
@@ -127,6 +144,7 @@ pub fn wasm_compile_project(sources_json: &str) -> Result<WasmCompileOutput, JsV
         instructions_json,
         variables_json,
         line_map_json,
+        module_json,
     })
 }
 

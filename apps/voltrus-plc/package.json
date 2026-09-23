@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "build:wasm": "cd ../../crates/mt-stc-wasm && wasm-pack build --release --target web --out-dir pkg && cd ../mt-plc-runtime-wasm && wasm-pack build --release --target web --out-dir pkg",
     "grammar": "lezer-generator src/lang/iecst/iecst.grammar -o src/lang/iecst/iecst.js"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
     "@tailwindcss/vite": "4.2.4",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
+    "@types/node": "^26.6.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",

@@ -1,6 +1,7 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { FileEntry } from "../types";
+import type { FileEntry, RuntimeConfig } from "../types";
+import { getSimHost, setSimEventHandler } from "../wasm/sim-host";
 
 export type { UnlistenFn };
 
@@ -146,13 +147,84 @@ async function cloudInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   }
 }
 
+// Commands served locally by the wasm simulation worker in cloud mode.
+// compile_source mirrors the Tauri `compile_source` command; plc_* and the
+// debug/step/force/breakpoint/watch commands mirror commands::runtime and
+// commands::watch. Everything else falls through to cloudInvoke.
+const SIM_COMMANDS: Record<string, true> = {
+  compile_source: true,
+  plc_run: true,
+  plc_stop: true,
+  plc_step: true,
+  continue_execution: true,
+  step_instruction: true,
+  force_variable: true,
+  unforce_variable: true,
+  set_breakpoint: true,
+  clear_breakpoint: true,
+  set_remote_breakpoint: true,
+  clear_remote_breakpoint: true,
+  get_watched_variables: true,
+};
+
+async function simInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const host = getSimHost();
+  switch (cmd) {
+    case "compile_source": {
+      const source = strArg(args, "source", cmd);
+      const fileName = typeof args?.fileName === "string" ? args.fileName : "untitled.st";
+      const sources: Record<string, string> = { [fileName]: source };
+      const extras = args?.extraSources;
+      if (Array.isArray(extras)) {
+        for (const [path, content] of extras as [string, string][]) sources[path] = content;
+      }
+      return host.compile(sources) as Promise<T>;
+    }
+    case "plc_run": {
+      const raw = (args?.config ?? {}) as Partial<RuntimeConfig>;
+      const config: RuntimeConfig = {
+        scan_cycle_ms: Number(raw.scan_cycle_ms ?? 10),
+        max_cycle_ms: Number(raw.max_cycle_ms ?? 1000),
+      };
+      return host.run(config) as Promise<T>;
+    }
+    case "plc_stop":
+      return host.stop() as Promise<T>;
+    case "plc_step":
+      return host.step() as Promise<T>;
+    case "continue_execution":
+      return host.continueExecution() as Promise<T>;
+    case "step_instruction":
+      return host.stepInstruction() as Promise<T>;
+    case "force_variable": {
+      const name = strArg(args, "name", cmd);
+      return host.force(name, args?.value) as Promise<T>;
+    }
+    case "unforce_variable":
+      return host.unforce(strArg(args, "name", cmd)) as Promise<T>;
+    case "set_breakpoint":
+    case "set_remote_breakpoint":
+      return host.setBreakpoint(Number(args?.line)) as Promise<T>;
+    case "clear_breakpoint":
+    case "clear_remote_breakpoint":
+      return host.clearBreakpoint(Number(args?.line)) as Promise<T>;
+    case "get_watched_variables":
+      return host.readWatch() as Promise<T>;
+    default:
+      throw new BridgeError("cloud_unavailable", cmd, `Command '${cmd}' has no cloud mapping`);
+  }
+}
+
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (bridgeMode === "tauri") return tauriInvoke<T>(cmd, args);
+  if (cmd in SIM_COMMANDS) return simInvoke<T>(cmd, args);
   return cloudInvoke<T>(cmd, args);
 }
 
-// Cloud wave 1 has no event transport: listeners register locally and simply
-// never fire.
+// Cloud events: Tauri events ride the native bus; cloud-mode listeners
+// register locally and are fed by the wasm sim worker (watch-update /
+// runtime-state / breakpoint-hit) plus nothing else — remote transports have
+// no event mapping in this wave.
 const cloudListeners = new Map<string, Set<(e: { payload: unknown }) => void>>();
 
 export function listen<T = unknown>(
@@ -171,3 +243,17 @@ export function listen<T = unknown>(
     set.delete(handler);
   });
 }
+
+// Delivers a local event to cloud-mode listen() subscribers.
+export function emitLocalEvent(event: string, payload: unknown): void {
+  const set = cloudListeners.get(event);
+  if (!set) return;
+  for (const handler of set) handler({ payload });
+}
+
+// Worker events (watch-update / runtime-state / breakpoint-hit) ride the same
+// listener registry Tauri events use, so store.ts and App.tsx subscribers work
+// unchanged in cloud mode.
+setSimEventHandler((msg) => {
+  emitLocalEvent(msg.event, msg.payload);
+});

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileEntry } from "../types";
+import type { SimHost } from "../wasm/sim-host";
 
 // vi.mock is hoisted, so these apply to every (re)import of ./bridge below.
 const tauriInvokeMock = vi.hoisted(() => vi.fn());
@@ -188,15 +189,15 @@ describe("bridge in cloud mode", () => {
   it("throws cloud_unavailable for commands with no cloud mapping", async () => {
     setCloudEnv();
     const bridge = await loadBridge(false);
-    const err = (await bridge.invoke("compile_source", { source: "x" }).catch((e) => e)) as InstanceType<
+    const err = (await bridge.invoke("target_status").catch((e) => e)) as InstanceType<
       typeof bridge.BridgeError
     >;
     expect(err).toBeInstanceOf(bridge.BridgeError);
     expect(err.code).toBe("cloud_unavailable");
-    expect(err.cmd).toBe("compile_source");
+    expect(err.cmd).toBe("target_status");
   });
 
-  it("listen registers locally and never fires in wave 1", async () => {
+  it("listen registers locally and never fires until an event is emitted", async () => {
     setCloudEnv();
     const bridge = await loadBridge(false);
     const cb = vi.fn();
@@ -204,5 +205,112 @@ describe("bridge in cloud mode", () => {
     expect(typeof unlisten).toBe("function");
     expect(() => unlisten()).not.toThrow();
     expect(cb).not.toHaveBeenCalled();
+  });
+});
+
+// The sim host is module state inside ../wasm/sim-host, which vi.resetModules
+// (in loadBridge) re-instantiates per test — so the spy is installed against
+// the same fresh instance the new bridge module wired itself to.
+async function loadCloudBridgeWithSimSpy() {
+  const bridge = await loadBridge(false);
+  const sim = await import("../wasm/sim-host");
+  const spy = {
+    compile: vi.fn().mockResolvedValue({ success: true, diagnostics: [], pou_count: 1, variable_count: 2, module: null, lineMap: [] }),
+    run: vi.fn().mockResolvedValue(null),
+    stop: vi.fn().mockResolvedValue(null),
+    step: vi.fn().mockResolvedValue(null),
+    continueExecution: vi.fn().mockResolvedValue({ state: "paused", current_line: 3 }),
+    stepInstruction: vi.fn().mockResolvedValue({ state: "paused", current_line: 4 }),
+    force: vi.fn().mockResolvedValue(null),
+    unforce: vi.fn().mockResolvedValue(null),
+    setBreakpoint: vi.fn().mockResolvedValue(null),
+    clearBreakpoint: vi.fn().mockResolvedValue(null),
+    readWatch: vi.fn().mockResolvedValue([]),
+  };
+  sim.setSimHost(spy as unknown as SimHost);
+  return { bridge, sim, spy };
+}
+
+describe("bridge cloud mode: local sim routing", () => {
+  afterEach(async () => {
+    (await import("../wasm/sim-host")).resetSimHost();
+  });
+
+  it("routes compile_source to the sim host with sources keyed by file name", async () => {
+    setCloudEnv();
+    const fetchMock = fetchJson(null, 500);
+    vi.stubGlobal("fetch", fetchMock);
+    const { spy } = await loadCloudBridgeWithSimSpy();
+    const bridge = await import("./bridge");
+
+    await bridge.invoke("compile_source", {
+      source: "PROGRAM Main",
+      fileName: "Main.st",
+      extraSources: [["Util.st", "FUNCTION_BLOCK Util"]],
+    });
+
+    expect(spy.compile).toHaveBeenCalledOnce();
+    expect(spy.compile).toHaveBeenCalledWith({
+      "Main.st": "PROGRAM Main",
+      "Util.st": "FUNCTION_BLOCK Util",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("routes runtime, debug and watch commands to the sim host", async () => {
+    setCloudEnv();
+    const { bridge, spy } = await loadCloudBridgeWithSimSpy();
+
+    await bridge.invoke("plc_run", { config: { scan_cycle_ms: 20, max_cycle_ms: 800 } });
+    expect(spy.run).toHaveBeenCalledWith({ scan_cycle_ms: 20, max_cycle_ms: 800 });
+
+    await bridge.invoke("plc_stop");
+    await bridge.invoke("plc_step");
+    await bridge.invoke("continue_execution");
+    await bridge.invoke("step_instruction");
+    await bridge.invoke("force_variable", { name: "X0", value: true });
+    await bridge.invoke("unforce_variable", { name: "X0" });
+    await bridge.invoke("set_remote_breakpoint", { line: 12 });
+    await bridge.invoke("clear_remote_breakpoint", { line: 12 });
+    await expect(bridge.invoke("get_watched_variables")).resolves.toEqual([]);
+
+    expect(spy.stop).toHaveBeenCalledOnce();
+    expect(spy.step).toHaveBeenCalledOnce();
+    expect(spy.continueExecution).toHaveBeenCalledOnce();
+    expect(spy.stepInstruction).toHaveBeenCalledOnce();
+    expect(spy.force).toHaveBeenCalledWith("X0", true);
+    expect(spy.unforce).toHaveBeenCalledWith("X0");
+    expect(spy.setBreakpoint).toHaveBeenCalledWith(12);
+    expect(spy.clearBreakpoint).toHaveBeenCalledWith(12);
+    expect(spy.readWatch).toHaveBeenCalledOnce();
+  });
+
+  it("leaves file commands on fetch while sim commands skip it", async () => {
+    setCloudEnv();
+    const fetchMock = fetchJson({ content: "PROGRAM Main" });
+    vi.stubGlobal("fetch", fetchMock);
+    const { spy } = await loadCloudBridgeWithSimSpy();
+    const bridge = await import("./bridge");
+
+    await expect(bridge.invoke<string>("open_file", { path: "Main.st" })).resolves.toBe("PROGRAM Main");
+    await bridge.invoke("plc_stop");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(spy.stop).toHaveBeenCalledOnce();
+  });
+
+  it("delivers worker events to cloud listen() subscribers", async () => {
+    setCloudEnv();
+    const { bridge } = await loadCloudBridgeWithSimSpy();
+    const seen: unknown[] = [];
+    const unlistenWatch = await bridge.listen("watch-update", (e) => seen.push(e.payload));
+    const unlistenState = await bridge.listen("runtime-state", (e) => seen.push(e.payload));
+
+    bridge.emitLocalEvent("watch-update", [{ name: "Y0" }]);
+    bridge.emitLocalEvent("runtime-state", { state: "running" });
+    unlistenWatch();
+    bridge.emitLocalEvent("watch-update", [{ name: "Y1" }]);
+    unlistenState();
+
+    expect(seen).toEqual([[{ name: "Y0" }], { state: "running" }]);
   });
 });
