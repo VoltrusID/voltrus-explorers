@@ -19,7 +19,12 @@ export type RelayEventListener = (event: RelayEvent) => void;
 
 export type WebSocketFactory = (url: string) => WebSocket;
 
-const DEFAULT_BASE = "http://localhost:8787";
+// Same-origin relay in production; localhost dev targets the local worker.
+// vplc_base overrides. An empty base means "this origin" — made absolute in
+// connect() because the WebSocket constructor rejects relative URLs.
+const DEFAULT_BASE = /^localhost$|^127\.0\.0\.1$/.test(location.hostname)
+  ? "http://localhost:8787"
+  : "";
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 // jsdom (and node) provide no WebSocket implementation, so tests inject a
@@ -77,7 +82,10 @@ export class RelayClient {
 
   /** Open the ide socket; resolves on upgrade, rejects on error/early close. */
   connect(deviceId: string, token: string): Promise<void> {
-    const base = this.base.replace(/^http/, "ws").replace(/\/+$/, "");
+    const raw = this.base.replace(/\/+$/, "");
+    // Same-origin deployments leave the base empty; WebSocket needs absolute.
+    const absolute = /^[a-z]+:\/\//.test(raw) ? raw : `${location.origin}${raw}`;
+    const base = absolute.replace(/^http/, "ws");
     const url = `${base}/api/relay/${encodeURIComponent(deviceId)}?role=ide&token=${encodeURIComponent(token)}`;
     return new Promise<void>((resolve, reject) => {
       const ws = this.factory(url);

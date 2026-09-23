@@ -2,9 +2,13 @@
 // Bridge commands (save_file / list_project_files / open_file) go through
 // src/api/bridge.ts; account- and project-shaped REST lives here. The base URL
 // mirrors the bridge: the vplc_base localStorage key, falling back to the
-// local dev worker.
+// default below.
 
-const DEFAULT_BASE = "http://localhost:8787";
+// Same-origin API in production (one worker serves SPA + API); localhost dev
+// targets the local wrangler dev server. vplc_base overrides.
+const DEFAULT_BASE = /^localhost$|^127\.0\.0\.1$/.test(location.hostname)
+  ? "http://localhost:8787"
+  : "";
 
 export function cloudApiBase(): string {
   return localStorage.getItem("vplc_base") ?? DEFAULT_BASE;

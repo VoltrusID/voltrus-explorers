@@ -29,7 +29,11 @@ export class BridgeError extends Error {
   }
 }
 
-const DEFAULT_BASE = "http://localhost:8787";
+// Production serves the API from the same origin as the SPA (one worker);
+// localhost dev targets the local wrangler dev server. vplc_base overrides.
+const DEFAULT_BASE = /^localhost$|^127\.0\.0\.1$/.test(location.hostname)
+  ? "http://localhost:8787"
+  : "";
 
 function cloudBase(): string {
   return localStorage.getItem("vplc_base") ?? DEFAULT_BASE;
