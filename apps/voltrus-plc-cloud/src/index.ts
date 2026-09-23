@@ -3,6 +3,8 @@ import type { Env } from "./env";
 
 const app = createApp();
 
+export { RelayRoom } from "./relay";
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return app.fetch(request, env, ctx);

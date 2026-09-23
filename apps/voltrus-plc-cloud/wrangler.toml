@@ -20,3 +20,11 @@ bucket_name = "voltrus-plc-cloud-files"
 # Local dev creates the bucket in .wrangler/state automatically.
 # Replace with the real id before deploying.
 # id = "00000000-0000-0000-0000-000000000000"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]
