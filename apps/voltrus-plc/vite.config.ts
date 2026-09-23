@@ -18,10 +18,11 @@ export default defineConfig({
       "@voltrus/runtime-wasm": fileURLToPath(
         new URL("../../crates/mt-plc-runtime-wasm/pkg", import.meta.url),
       ),
+      "@voltrus/lsp-wasm": fileURLToPath(new URL("../../crates/voltrus-lsp-wasm/pkg", import.meta.url)),
     },
   },
   optimizeDeps: {
-    exclude: ["@voltrus/stc-wasm", "@voltrus/runtime-wasm"],
+    exclude: ["@voltrus/stc-wasm", "@voltrus/runtime-wasm", "@voltrus/lsp-wasm"],
   },
   worker: {
     format: "es",

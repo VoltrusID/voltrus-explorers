@@ -20,9 +20,10 @@
 //! no type inference; field resolution is name-based).
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
-use tower_lsp::lsp_types::{self, Url};
+use lsp_types::Url;
 
 use crate::convert::LineIndex;
 
@@ -144,10 +145,14 @@ pub struct Hit {
 pub struct WorkspaceIndex {
     docs: HashMap<Url, DocumentEntry>,
     /// Workspace folders supplied by the client; siblings are scanned once.
+    #[cfg(not(target_arch = "wasm32"))]
     folders: Vec<PathBuf>,
 }
 
 impl WorkspaceIndex {
+    /// Scan workspace folders for sibling `*.st` files. Native only: the wasm
+    /// build has no filesystem, every document arrives via open/change.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn set_workspace(&mut self, folders: Vec<PathBuf>) {
         self.folders = folders;
         for dir in self.folders.clone() {
@@ -164,6 +169,10 @@ impl WorkspaceIndex {
             }
         }
     }
+
+    /// wasm build: no filesystem; documents arrive via open/change.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_workspace(&mut self, _folders: Vec<std::path::PathBuf>) {}
 
     pub fn open(&mut self, uri: Url, text: String) {
         self.docs.insert(uri, index_text(&text, true));
@@ -366,6 +375,7 @@ fn is_ident_char(c: char) -> bool {
 }
 
 /// `*.st` files directly inside `dir` (flat project model — no recursion).
+#[cfg(not(target_arch = "wasm32"))]
 fn st_files_in(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {

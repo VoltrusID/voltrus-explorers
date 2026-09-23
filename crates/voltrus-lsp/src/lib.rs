@@ -5,6 +5,9 @@
 
 pub mod convert;
 pub mod index;
+
+#[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "server")]
 pub use server::run_stdio;

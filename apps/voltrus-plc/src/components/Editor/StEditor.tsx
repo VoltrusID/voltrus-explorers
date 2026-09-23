@@ -11,11 +11,15 @@ import { stColorPlugin, stTheme } from "./st-colors";
 import { stCompletion } from "./st-completion";
 import { stLinter } from "./st-lint";
 import { gotoDefExtension } from "./st-goto-def";
+import { bridgeMode } from "../../api/bridge";
+import { stLspExtensions } from "../../lsp/st-lsp";
 import { useStore } from "../../store";
 
 interface StEditorProps {
   value: string;
   onChange: (value: string) => void;
+  /** Project-relative path of the edited file; identities LSP documents in cloud mode. */
+  filePath?: string;
 }
 
 const bpMarker = new (class extends GutterMarker {
@@ -91,7 +95,7 @@ const breakpointGutter = gutter({
   },
 });
 
-export default function StEditor({ value, onChange }: StEditorProps) {
+export default function StEditor({ value, onChange, filePath = "untitled.st" }: StEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -131,8 +135,11 @@ export default function StEditor({ value, onChange }: StEditorProps) {
         stHighlighting,
         stTheme,
         stColorPlugin,
-        stCompletion,
-        stLinter,
+        // Cloud mode swaps the Tauri compile lint + static completion for the
+        // wasm LSP worker (diagnostics, hover, project-aware completion).
+        ...(bridgeMode === "cloud"
+          ? stLspExtensions(filePath)
+          : [stCompletion, stLinter]),
         gotoDefExtension,
         lintGutter(),
         breakpointField,

@@ -6,8 +6,6 @@
 //! and summing their UTF-16 lengths — identical for plain ASCII ST sources,
 //! correct for any non-ASCII content.
 
-use tower_lsp::lsp_types;
-
 /// A line-split view of a source text, used for all position conversion.
 pub struct LineIndex<'a> {
     lines: Vec<&'a str>,

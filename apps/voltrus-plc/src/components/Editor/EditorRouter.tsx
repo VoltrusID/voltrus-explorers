@@ -19,5 +19,5 @@ export default function EditorRouter({ filePath, content, onChange }: EditorRout
   if (filePath.endsWith(".fbd")) {
     return <FbdEditor value={content} onChange={onChange} />;
   }
-  return <StEditor value={content} onChange={onChange} />;
+  return <StEditor value={content} onChange={onChange} filePath={filePath} />;
 }

@@ -3,12 +3,25 @@ name = "voltrus-lsp"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["server"]
+# tower-lsp + tokio provide the stdio JSON-RPC transport for the native
+# `voltrus-lsp` binary. The wasm build (crates/voltrus-lsp-wasm) consumes the
+# IO-free core (index/convert + mt-stc) directly with default-features = false.
+server = ["dep:tower-lsp", "dep:tokio"]
+
+[[bin]]
+name = "voltrus-lsp"
+path = "src/main.rs"
+required-features = ["server"]
+
 [dependencies]
 iecst = "0.5"
+lsp-types = "0.94"
 mt-stc = { path = "../mt-stc" }
 serde_json = { workspace = true }
-tokio = { workspace = true }
-tower-lsp = "0.20"
+tokio = { workspace = true, optional = true }
+tower-lsp = { version = "0.20", optional = true }
 
 [dev-dependencies]
 futures = "0.3"

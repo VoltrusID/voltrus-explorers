@@ -4,7 +4,7 @@
 use std::sync::RwLock;
 
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::{
+use lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,

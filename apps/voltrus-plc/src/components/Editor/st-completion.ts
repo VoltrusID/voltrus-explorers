@@ -152,7 +152,7 @@ const snippets = [
   },
 ];
 
-function stCompletions(context: CompletionContext) {
+export function stCompletions(context: CompletionContext) {
   const word = context.matchBefore(/[\w]*/);
   if (!word || (word.from === word.to && !context.explicit)) return null;
 
