@@ -4,7 +4,6 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -70,20 +69,16 @@ async fn dispatch(
             None => Err(anyhow::anyhow!("unforce needs {{name}}")),
         },
         "status" => driver.status().await,
-        "deploy" => {
-            let bytecode = payload
-                .get("bytecode_base64")
-                .and_then(|v| v.as_str())
-                .map(|text| base64::engine::general_purpose::STANDARD.decode(text));
-            match bytecode {
-                Some(Ok(bytes)) => {
-                    driver
-                        .deploy(&bytes, payload.get("config_json").and_then(|v| v.as_str()).map(String::from))
-                        .await
-                }
-                Some(Err(e)) => Err(anyhow::anyhow!("bad bytecode_base64: {e}")),
-                None => Err(anyhow::anyhow!("deploy needs {{bytecode_base64}}")),
+        "deploy" => match payload.get("module_json").and_then(|v| v.as_str()) {
+            Some(module_json) => {
+                driver
+                    .deploy(
+                        module_json,
+                        payload.get("config_json").and_then(|v| v.as_str()).map(String::from),
+                    )
+                    .await
             }
+            None => Err(anyhow::anyhow!("deploy needs {{module_json}}")),
         }
         other => Err(anyhow::anyhow!("unsupported op: {other}")),
     };

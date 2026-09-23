@@ -136,14 +136,93 @@ async fn echo_driver_round_trip() {
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r7");
     assert_eq!(reply["payload"]["driver"], "echo");
+    assert!(reply["payload"]["deployed_crc32"].is_null());
 
-    // unknown op -> ok:false
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r8", "op": "teleport", "payload": null })).await;
+    // deploy: the ide payload is {module_json, config_json?}; the echo driver
+    // fingerprints the module_json bytes with FNV-1a 32-bit and reports the
+    // same crc32 back, so an ide can detect drift between what it deployed
+    // and what the device runs. Expected crc computed independently here.
+    let module_json = r#"{"name":"Main","instructions":[],"variable_slots":[["x",{"Dint":1}]]}"#;
+    let expected_crc = fnv1a32(module_json.as_bytes());
+    send_json(
+        &mut ws,
+        json!({
+            "deviceId": "dev-1",
+            "id": "r8",
+            "op": "deploy",
+            "payload": { "module_json": module_json, "config_json": "{\"io_mappings\":[]}" }
+        }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r8");
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["payload"]["deployed"], true);
+    assert_eq!(reply["payload"]["bytes"], module_json.len());
+    assert_eq!(reply["payload"]["crc32"], expected_crc);
+
+    // Determinism: redeploying the identical module_json yields the same crc.
+    send_json(
+        &mut ws,
+        json!({
+            "deviceId": "dev-1",
+            "id": "r9",
+            "op": "deploy",
+            "payload": { "module_json": module_json }
+        }),
+    )
+    .await;
+    let reply = recv_text(&mut ws).await;
+    assert_eq!(reply["id"], "r9");
+    assert_eq!(reply["ok"], true);
+    assert_eq!(reply["payload"]["crc32"], expected_crc);
+
+    // The deployed fingerprint surfaces from status for drift comparison.
+    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r10", "op": "status", "payload": null })).await;
+    let reply = recv_text(&mut ws).await;
+    assert_eq!(reply["payload"]["deployed_crc32"], expected_crc);
+    assert_eq!(reply["payload"]["deployed_bytes"], module_json.len());
+
+    // Malformed module_json -> ok:false with a pointed error.
+    send_json(
+        &mut ws,
+        json!({
+            "deviceId": "dev-1",
+            "id": "r11",
+            "op": "deploy",
+            "payload": { "module_json": "not json" }
+        }),
+    )
+    .await;
+    let reply = recv_text(&mut ws).await;
+    assert_eq!(reply["id"], "r11");
+    assert_eq!(reply["ok"], false);
+    assert!(reply["error"].as_str().expect("error string").contains("module_json"));
+
+    // missing module_json -> ok:false
+    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r12", "op": "deploy", "payload": {} })).await;
+    let reply = recv_text(&mut ws).await;
+    assert_eq!(reply["id"], "r12");
+    assert_eq!(reply["ok"], false);
+
+    // unknown op -> ok:false
+    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r13", "op": "teleport", "payload": null })).await;
+    let reply = recv_text(&mut ws).await;
+    assert_eq!(reply["id"], "r13");
     assert_eq!(reply["ok"], false);
 
     session.abort();
+}
+
+/// Independent FNV-1a reference implementation for the deploy fingerprint
+/// assertions (kept separate from the driver's copy on purpose).
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for &byte in bytes {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 #[tokio::test]

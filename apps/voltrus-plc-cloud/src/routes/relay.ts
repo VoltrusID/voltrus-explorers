@@ -122,9 +122,18 @@ relayRoutes.get("/relay/:deviceId", async (c) => {
       .bind(new Date().toISOString(), deviceId)
       .run();
   } else {
+    // Browsers cannot set Authorization headers on the WebSocket constructor,
+    // so the ide upgrade also accepts `token=<session token>` in the query
+    // string. verifyToken returns null on any failure, keeping the compare
+    // constant-time for both sources.
     const header = c.req.header("Authorization") ?? "";
     const match = /^Bearer\s+(.+)$/.exec(header);
-    const userId = match ? await verifyToken(c.env.JWT_SECRET, match[1]) : null;
+    const queryToken = url.searchParams.get("token");
+    const userId = match
+      ? await verifyToken(c.env.JWT_SECRET, match[1])
+      : queryToken
+        ? await verifyToken(c.env.JWT_SECRET, queryToken)
+        : null;
     if (!userId) return c.json({ error: "unauthorized" }, 401);
     const gate = await requirePlan(c.env.DB, userId, "solo");
     if (gate) return c.json(gate.body, gate.status);

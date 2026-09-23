@@ -185,6 +185,32 @@ describe("relay websocket auth", () => {
     const res = await connectWs(`/api/relay/${crypto.randomUUID()}?role=device&token=whatever`);
     expect(res.status).toBe(401);
   });
+
+  // Browsers cannot set Authorization headers on the WebSocket constructor,
+  // so the ide upgrade also accepts the session token as ?token=.
+  it("accepts ide upgrades with the session token in the query string", async () => {
+    const owner = await registerUser();
+    const device = await createDevice(owner);
+
+    const res = await app.request(
+      `https://example.com/api/relay/${device.id}?role=ide&token=${owner}`,
+      { headers: new Headers({ Upgrade: "websocket" }) },
+      workerEnv,
+    );
+    expect(res.status).toBe(101);
+  });
+
+  it("rejects ide upgrades with a bad query token", async () => {
+    const owner = await registerUser();
+    const device = await createDevice(owner);
+
+    const res = await app.request(
+      `https://example.com/api/relay/${device.id}?role=ide&token=not-the-token`,
+      { headers: new Headers({ Upgrade: "websocket" }) },
+      workerEnv,
+    );
+    expect(res.status).toBe(401);
+  });
 });
 
 describe("relay websocket routing", () => {

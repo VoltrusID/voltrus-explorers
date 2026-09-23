@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { invoke } from "../../api/bridge";
+import { bridgeMode, invoke } from "../../api/bridge";
 import { useStore } from "../../store";
-import type { DiscoveredTarget, TargetStatus } from "../../types";
+import type { DeployResult, DiscoveredTarget, TargetStatus } from "../../types";
 import { compareCrc, formatCrcHex, type DriftInfo } from "./compareCrc";
 import "./ToggleGroup.css";
 
@@ -39,7 +39,12 @@ export default function TargetPanel() {
   const setTargetKind = useStore((s) => s.setTargetKind);
 
   const isRemote = executionMode === "remote";
+  const isCloud = bridgeMode === "cloud";
   const [connecting, setConnecting] = useState(false);
+  const [cloudDeploying, setCloudDeploying] = useState(false);
+  // Relay device identity (cloud mode): the bridge reads this for every
+  // target/deploy command; the desktop flow never touches it.
+  const [deviceId, setDeviceId] = useState(() => localStorage.getItem("vplc_device") ?? "");
 
   const [drift, setDrift] = useState<DriftInfo>({ status: "unknown", projectCrc: null, runningCrc: null });
 
@@ -86,6 +91,37 @@ export default function TargetPanel() {
     }
   };
 
+  // Cloud deploy (PLC-23): compile via the sim host, ship the module over the
+  // relay, then read the status back so the drift badge reflects the target.
+  // Desktop keeps store.targetDeploy, which uses the native deploy commands.
+  const cloudDeploy = async () => {
+    setCloudDeploying(true);
+    const { addLog } = useStore.getState();
+    try {
+      await useStore.getState().compile();
+      const result = useStore.getState().lastCompileResult;
+      if (!result?.success || !result.module) {
+        addLog("system", "Deploy failed: compilation errors");
+        return;
+      }
+      await invoke<DeployResult>("deploy_to_target", {
+        ip: targetIp.trim(),
+        ioMappings: useStore.getState().ioMappings,
+        module: result.module,
+      });
+      const status = await invoke<TargetStatus>("target_status");
+      setDrift({
+        status: compareCrc(status.deployed_crc32, status.running_crc32),
+        projectCrc: status.deployed_crc32 || null,
+        runningCrc: status.running_crc32 || null,
+      });
+    } catch (e) {
+      addLog("system", `Deploy failed: ${e}`);
+    } finally {
+      setCloudDeploying(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 0" }}>
       {/* Execution Mode */}
@@ -126,6 +162,24 @@ export default function TargetPanel() {
             Linux (gRPC)
           </button>
         </div>
+        {isCloud && (
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>Relay Device ID</div>
+            <input
+              type="text"
+              className="io-input"
+              style={{ width: "100%", fontSize: 12 }}
+              placeholder="device id from the cloud pairing"
+              value={deviceId}
+              onChange={(e) => {
+                setDeviceId(e.target.value);
+                if (e.target.value) localStorage.setItem("vplc_device", e.target.value);
+                else localStorage.removeItem("vplc_device");
+              }}
+              disabled={targetConnected}
+            />
+          </div>
+        )}
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <input
             type="text"
@@ -194,7 +248,7 @@ export default function TargetPanel() {
             color: "#fff",
           }}
           onClick={handleConnect}
-          disabled={!targetIp.trim() || connecting}
+          disabled={(isCloud ? !deviceId.trim() : !targetIp.trim()) || connecting}
         >
           {connecting ? "Connecting..." : targetConnected ? "Disconnect" : "Connect"}
         </button>
@@ -210,10 +264,10 @@ export default function TargetPanel() {
             background: targetConnected ? "var(--accent)" : "var(--border)",
             color: "#fff",
           }}
-          onClick={targetDeploy}
-          disabled={!isRemote || !targetConnected || targetDeploying}
+          onClick={isCloud ? cloudDeploy : targetDeploy}
+          disabled={!isRemote || !targetConnected || (isCloud ? cloudDeploying : targetDeploying)}
         >
-          {targetDeploying ? "Deploying..." : "Build & Deploy"}
+          {(isCloud ? cloudDeploying : targetDeploying) ? "Deploying..." : "Build & Deploy"}
         </button>
         {isRemote && targetConnected && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 10 }}>

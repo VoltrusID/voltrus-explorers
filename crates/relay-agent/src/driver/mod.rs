@@ -34,6 +34,8 @@ pub trait DeviceDriver {
     /// Runtime status as a JSON object (driver-defined shape).
     async fn status(&mut self) -> Result<Value>;
 
-    /// Deploy a compiled bytecode bundle; `config` is an optional JSON string.
-    async fn deploy(&mut self, bytecode: &[u8], config: Option<String>) -> Result<Value>;
+    /// Deploy a compiled program. `module_json` is the serde JSON of the
+    /// compiler's `CompiledModule` (the exact JSON the wasm compiler emits);
+    /// `config` is an optional JSON string.
+    async fn deploy(&mut self, module_json: &str, config: Option<String>) -> Result<Value>;
 }

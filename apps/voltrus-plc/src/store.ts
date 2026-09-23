@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke, listen, type UnlistenFn } from "./api/bridge";
+import { bridgeMode, invoke, listen, type UnlistenFn } from "./api/bridge";
 import type {
   ChatMessage,
   CompileResult,
@@ -842,7 +842,10 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   targetConnect: async () => {
-    const ip = get().targetIp.trim();
+    // Cloud mode connects through the device relay keyed by the relay device
+    // id (vplc_device), not a LAN IP — the bridge ignores `ip` there.
+    const ip =
+      bridgeMode === "cloud" ? (localStorage.getItem("vplc_device") ?? "") : get().targetIp.trim();
     if (!ip) return;
     try {
       await invoke("target_connect", { ip });
@@ -957,13 +960,16 @@ export const useStore = create<AppState>((set, get) => ({
 
   connectScada: async () => {
     const scadaUrl = get().scadaUrl.trim();
-    const targetIp = get().targetIp.trim();
-    if (!scadaUrl || !targetIp || !get().targetConnected) return;
+    // In cloud mode the "target" identity is the relay device id, not an IP.
+    const targetIdentity =
+      bridgeMode === "cloud" ? (localStorage.getItem("vplc_device") ?? "") : get().targetIp.trim();
+    if (!scadaUrl || !targetIdentity || !get().targetConnected) return;
 
     const registration: ScadaRegistration = {
       scada_url: scadaUrl,
-      device_name: `ESP32-${targetIp}`,
-      device_url: `ws://${targetIp}/ws/plc`,
+      device_name: bridgeMode === "cloud" ? `Voltrus-Relay-${targetIdentity}` : `ESP32-${targetIdentity}`,
+      device_url:
+        bridgeMode === "cloud" ? `relay://${targetIdentity}` : `ws://${targetIdentity}/ws/plc`,
       transport: "websocket",
       interval_ms: 1000,
     };

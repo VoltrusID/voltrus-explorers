@@ -21,12 +21,31 @@ struct EchoVar {
     forced: Option<Value>,
 }
 
+/// What the last accepted deploy left behind: payload size plus a
+/// deterministic fingerprint of the module JSON bytes.
+#[derive(Debug, Clone)]
+struct EchoDeploy {
+    bytes: usize,
+    crc32: u32,
+}
+
+/// FNV-1a (32-bit): the deploy fingerprint the echo driver reports. It only
+/// needs to be deterministic so an ide can compare deploy vs status payloads.
+fn fnv1a32(bytes: &[u8]) -> u32 {
+    let mut hash: u32 = 0x811c_9dc5;
+    for &byte in bytes {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
 /// Simulated device with a few fake variables; `cycle_count` advances on its
 /// own so subscribers see movement.
 #[derive(Debug)]
 pub struct EchoDriver {
     vars: Vec<EchoVar>,
-    deployed: Option<usize>,
+    deployed: Option<EchoDeploy>,
     ticker: Option<JoinHandle<()>>,
     started_at: std::time::Instant,
 }
@@ -77,7 +96,7 @@ impl Clone for EchoDriver {
     fn clone(&self) -> Self {
         EchoDriver {
             vars: self.vars.clone(),
-            deployed: self.deployed,
+            deployed: self.deployed.clone(),
             ticker: None,
             started_at: self.started_at,
         }
@@ -172,16 +191,60 @@ impl DeviceDriver for EchoDriver {
             "running": true,
             "variables": self.vars.len(),
             "forced": self.vars.iter().filter(|v| v.forced.is_some()).count(),
-            "deployed_bytes": self.deployed,
+            "deployed_bytes": self.deployed.as_ref().map(|d| d.bytes),
+            "deployed_crc32": self.deployed.as_ref().map(|d| d.crc32),
             "uptime_s": self.started_at.elapsed().as_secs(),
         }))
     }
 
-    async fn deploy(&mut self, bytecode: &[u8], config: Option<String>) -> Result<Value> {
-        if bytecode.is_empty() {
-            bail!("empty bytecode bundle");
+    async fn deploy(&mut self, module_json: &str, config: Option<String>) -> Result<Value> {
+        if module_json.is_empty() {
+            bail!("empty module_json");
         }
-        self.deployed = Some(bytecode.len());
-        Ok(json!({ "deployed": true, "bytes": bytecode.len(), "config": config }))
+        // Sanity gate: the payload must at least be JSON the runtime could
+        // start deserializing.
+        serde_json::from_str::<Value>(module_json)
+            .map_err(|e| anyhow::anyhow!("module_json is not valid JSON: {e}"))?;
+        let crc32 = fnv1a32(module_json.as_bytes());
+        self.deployed = Some(EchoDeploy { bytes: module_json.len(), crc32 });
+        Ok(json!({ "deployed": true, "bytes": module_json.len(), "crc32": crc32, "config": config }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MODULE_JSON: &str = r#"{"name":"Main","instructions":[],"variable_slots":[["x",{"Dint":1}]]}"#;
+
+    #[test]
+    fn deploy_crc_is_deterministic() {
+        let mut driver = EchoDriver::new();
+        let first = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(driver.deploy(MODULE_JSON, None))
+            .expect("deploy ok");
+        let second = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(driver.deploy(MODULE_JSON, None))
+            .expect("deploy ok");
+        assert_eq!(first["crc32"], second["crc32"]);
+        assert_eq!(first["crc32"], fnv1a32(MODULE_JSON.as_bytes()));
+        // Same fingerprint surfaces from status, so an ide can diff them.
+        let status = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(driver.status())
+            .expect("status ok");
+        assert_eq!(status["deployed_crc32"], first["crc32"]);
+        assert_eq!(status["deployed_bytes"], MODULE_JSON.len());
+    }
+
+    #[test]
+    fn deploy_rejects_non_json() {
+        let mut driver = EchoDriver::new();
+        let result = tokio::runtime::Runtime::new()
+            .expect("runtime")
+            .block_on(driver.deploy("not json", None));
+        assert!(result.is_err());
     }
 }

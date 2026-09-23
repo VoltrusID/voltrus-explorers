@@ -10,6 +10,7 @@ use anyhow::{bail, Result};
 use mt_grpc::client::PlcRuntimeClient;
 use mt_grpc::variable_value::Value as PbValue;
 use mt_grpc::{RuntimeState, VariableValue};
+use mt_plc_types::{crc32_le, CompiledModule};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
@@ -177,21 +178,41 @@ impl DeviceDriver for GrpcDriver {
     async fn status(&mut self) -> Result<Value> {
         let mut client = self.client().await?;
         let state = client.get_runtime_state().await?;
+        let crc32 = state.deployed_bundle_crc32;
         let io = client.get_io_status().await?;
         Ok(json!({
             "driver": "grpc",
             "addr": self.addr,
             "runtime": state_to_json(state),
+            // Flat, so ides can diff deploy vs status fingerprints without
+            // knowing the driver shape.
+            "deployed_crc32": crc32,
             "connections": io.connections.len(),
         }))
     }
 
-    async fn deploy(&mut self, bytecode: &[u8], config: Option<String>) -> Result<Value> {
+    async fn deploy(&mut self, module_json: &str, config: Option<String>) -> Result<Value> {
+        // The mt-grpc runtime's Deploy handler deserializes
+        // `DeployRequest.bytecode` with bincode as a CompiledModule, so the
+        // module crosses the relay as serde JSON and is bincode-serialized
+        // here, agent-side (see driver/mod.rs).
+        let module: CompiledModule = serde_json::from_str(module_json)
+            .map_err(|e| anyhow::anyhow!("module_json is not a CompiledModule: {e}"))?;
+        let bytecode = bincode::serialize(&module)
+            .map_err(|e| anyhow::anyhow!("bincode serialization failed: {e}"))?;
+        // Fingerprint over the exact bytes shipped to the runtime — the same
+        // value the runtime records from DeployRequest.bytecode.
+        let crc32 = crc32_le(&bytecode);
         let mut client = self.client().await?;
-        let response = client.deploy(bytecode, config.as_deref()).await?;
+        let response = client.deploy(&bytecode, config.as_deref()).await?;
         if !response.success {
             bail!("deploy failed: {}", response.error_message);
         }
-        Ok(json!({ "deployed": true, "state": state_to_json(response.new_state.unwrap_or_default()) }))
+        Ok(json!({
+            "deployed": true,
+            "bytes": bytecode.len(),
+            "crc32": crc32,
+            "state": state_to_json(response.new_state.unwrap_or_default()),
+        }))
     }
 }
