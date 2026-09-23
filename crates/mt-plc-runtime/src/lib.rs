@@ -5,10 +5,15 @@ pub mod vm;
 pub mod timer;
 pub mod counter;
 pub mod scheduler;
+#[cfg(feature = "io")]
 pub mod io_manager;
+#[cfg(feature = "io")]
 pub mod io_opcua;
+#[cfg(feature = "io")]
 pub mod io_s7;
+#[cfg(feature = "io")]
 pub mod io_mqtt;
+#[cfg(feature = "io")]
 pub mod io_enip;
 
 pub use types::{RuntimeConfig, RuntimeState, CycleStats};
@@ -16,9 +21,13 @@ pub use opcode::{Opcode, Instruction, CompiledModule};
 pub use vm::{Vm, ExecutionState, FbSnapshot};
 pub use memory::MemoryModel;
 pub use scheduler::Scheduler;
+#[cfg(feature = "io")]
 pub use io_manager::{IoDriver, IoAddress, IoArea, IoSize, ModbusIoDriver, parse_direct_address, create_driver};
+#[cfg(feature = "io")]
 pub use io_opcua::OpcUaIoDriver;
+#[cfg(feature = "io")]
 pub use io_s7::S7IoDriver;
+#[cfg(feature = "io")]
 pub use io_mqtt::MqttIoDriver;
 pub use mt_plc_types::PlcValue;
 
@@ -140,12 +149,12 @@ impl PlcRuntime {
     // ── End debug methods ──
 
     pub fn execute_cycle(&mut self) -> Result<CycleStats, String> {
-        let start = std::time::Instant::now();
+        let start = now_ms();
 
         self.state = RuntimeState::Running;
         self.vm.execute(&self.instructions)?;
 
-        let elapsed = start.elapsed().as_micros() as f64 / 1000.0;
+        let elapsed = now_ms() - start;
 
         self.cycle_count += 1;
         self.stats.last_cycle_ms = elapsed;
@@ -219,5 +228,22 @@ impl PlcRuntime {
                 quality,
             }
         }).collect()
+    }
+}
+
+/// Monotonic wall clock in milliseconds for cycle timing.
+/// `Instant` is unavailable on wasm32-unknown-unknown, so wasm uses `js_sys::Date::now()`
+/// and native uses `Instant` anchored at first call.
+fn now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::LazyLock;
+        static EPOCH: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
+        EPOCH.elapsed().as_secs_f64() * 1000.0
     }
 }

@@ -10,7 +10,7 @@ pub struct FbSnapshot {
     pub edge_prev: Vec<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ExecutionState {
     Running,
     Paused,
