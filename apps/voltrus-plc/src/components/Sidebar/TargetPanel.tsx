@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../api/bridge";
 import { useStore } from "../../store";
 import type { DiscoveredTarget, TargetStatus } from "../../types";
 import { compareCrc, formatCrcHex, type DriftInfo } from "./compareCrc";

@@ -1,7 +1,7 @@
 // EtherNet/IP UDT import (issue PLC-7): browse a controller for UDT tags,
 // preview the generated IEC 61131-3 TYPE file, and write it into the project
 // via the same in-editor file path the New File flow uses.
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../api/bridge";
 import { useStore } from "../store";
 
 export const EIP_TYPES_FILENAME = "eip_types.st";

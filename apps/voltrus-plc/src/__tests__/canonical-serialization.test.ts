@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../api/bridge";
 import { useStore } from "../store";
 import { transpileLdToSt } from "../components/Editor/LdEditor/transpiler/ld-to-st";
 import {
@@ -16,11 +16,8 @@ import type { FbdProgram, FbdNode } from "../types/fbd";
 import type { SfcProgram } from "../types/sfc";
 import type { LdProgram } from "../types/ld";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../api/bridge", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 

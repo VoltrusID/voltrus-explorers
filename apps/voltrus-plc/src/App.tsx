@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useStore } from "./store";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, listen } from "./api/bridge";
 import EditorRouter from "./components/Editor/EditorRouter";
 import WatchTable from "./components/Sidebar/WatchTable";
 import RuntimeControls from "./components/Sidebar/RuntimeControls";
@@ -171,20 +170,18 @@ export default function App() {
   // Listen for breakpoint-hit events from Tauri
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen<{ state: string; current_line: number | null }>("breakpoint-hit", (event) => {
-        if (event.payload.current_line) {
-          setCurrentExecutionLine(event.payload.current_line);
-        }
-        setDebugState("paused");
-        // Also emit editor-goto to scroll editor to the line
-        if (event.payload.current_line) {
-          window.dispatchEvent(new CustomEvent("editor-goto", {
-            detail: { line: event.payload.current_line },
-          }));
-        }
-      }).then((fn) => { unlisten = fn; });
-    });
+    listen<{ state: string; current_line: number | null }>("breakpoint-hit", (event) => {
+      if (event.payload.current_line) {
+        setCurrentExecutionLine(event.payload.current_line);
+      }
+      setDebugState("paused");
+      // Also emit editor-goto to scroll editor to the line
+      if (event.payload.current_line) {
+        window.dispatchEvent(new CustomEvent("editor-goto", {
+          detail: { line: event.payload.current_line },
+        }));
+      }
+    }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
   }, [setCurrentExecutionLine, setDebugState]);
 
@@ -259,7 +256,6 @@ export default function App() {
           className="toolbar-btn"
           onClick={async () => {
             try {
-              const { invoke } = await import("@tauri-apps/api/core");
               const result = await invoke<{ state: string; current_line: number | null }>("continue_execution");
               if (result.current_line) setCurrentExecutionLine(result.current_line);
               if (result.state === "paused") setDebugState("paused");
@@ -274,7 +270,6 @@ export default function App() {
           className="toolbar-btn"
           onClick={async () => {
             try {
-              const { invoke } = await import("@tauri-apps/api/core");
               const result = await invoke<{ state: string; current_line: number | null }>("step_instruction");
               if (result.current_line) setCurrentExecutionLine(result.current_line);
               setDebugState("paused");

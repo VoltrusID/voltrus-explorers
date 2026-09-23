@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useStore, clearUndoHistory } from "../store";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("../api/bridge", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 

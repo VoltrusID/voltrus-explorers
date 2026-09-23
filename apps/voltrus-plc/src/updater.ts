@@ -1,12 +1,12 @@
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-
+// The updater/process plugins are Tauri-webview-only: static imports would pull
+// them into the web bundle, so they are loaded inside these functions.
 export async function checkForUpdates(): Promise<{
   available: boolean;
   version?: string;
   notes?: string;
 }> {
   try {
+    const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     if (update) {
       return {
@@ -25,6 +25,7 @@ export async function installUpdate(
   onProgress?: (percent: number) => void,
 ): Promise<boolean> {
   try {
+    const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     if (!update) return false;
 
@@ -49,6 +50,7 @@ export async function installUpdate(
       }
     });
 
+    const { relaunch } = await import("@tauri-apps/plugin-process");
     await relaunch();
     return true;
   } catch {

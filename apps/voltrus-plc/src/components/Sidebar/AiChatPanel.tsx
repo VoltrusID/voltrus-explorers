@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "../../api/bridge";
 import { useStore } from "../../store";
 import type { ChatMessage, CompileResult } from "../../types";
 

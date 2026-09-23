@@ -1,5 +1,5 @@
 import { linter, type Diagnostic } from "@codemirror/lint";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../api/bridge";
 import type { CompileResult } from "../../types";
 
 export const stLinter = linter(

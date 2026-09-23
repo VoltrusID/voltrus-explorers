@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../api/bridge";
 import { useStore } from "../../store";
 import type { IoStatus, IoReadResult } from "../../types";
 import { PROTOCOLS } from "../../constants/protocols";
