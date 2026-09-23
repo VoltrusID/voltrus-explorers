@@ -19,6 +19,10 @@ import type { LdProgram } from "../types/ld";
 vi.mock("../api/bridge", () => ({
   invoke: vi.fn().mockResolvedValue(undefined),
   listen: vi.fn().mockResolvedValue(() => {}),
+  // Pulled in transitively: store/cloud.ts imports api/ai-bridge, which
+  // registers cloud commands against these on load.
+  emitLocalEvent: vi.fn(),
+  registerCloudCommands: vi.fn(),
 }));
 
 const invokeMock = vi.mocked(invoke);

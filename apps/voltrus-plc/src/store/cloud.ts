@@ -12,6 +12,13 @@ import {
   type CloudProject,
   type CloudUser,
 } from "../api/cloud-auth";
+import {
+  listAiKeys as apiListAiKeys,
+  putAiKey as apiPutAiKey,
+  removeAiKey as apiRemoveAiKey,
+  type AiProvider,
+  type CloudAiKey,
+} from "../api/ai-bridge";
 import type { FileEntry } from "../types";
 
 export type { CloudProject, CloudUser };
@@ -24,6 +31,10 @@ interface CloudState {
   // File list of the active cloud project; also mirrored into the main
   // store's projectFiles while no local folder is open.
   cloudFiles: FileEntry[];
+
+  // Server-side AI provider keys (masked) managed by the cloud worker; the
+  // chat panels prefer these over local key inputs in cloud mode.
+  aiKeys: CloudAiKey[];
 
   // Status fields
   authRequired: boolean; // 401 seen → AuthDialog auto-shows
@@ -43,6 +54,9 @@ interface CloudState {
   deleteProject: (id: string) => Promise<void>;
   selectProject: (id: string) => Promise<void>;
   openCloudFile: (path: string) => Promise<void>;
+  fetchAiKeys: () => Promise<void>;
+  saveAiKey: (provider: AiProvider, key: string) => Promise<void>;
+  deleteAiKey: (provider: AiProvider) => Promise<void>;
   openAuth: () => void;
   dismissAuth: () => void;
 }
@@ -82,6 +96,7 @@ export const useCloudStore = create<CloudState>((set, get) => ({
   projectId: localStorage.getItem("vplc_project"),
   projects: [],
   cloudFiles: [],
+  aiKeys: [],
 
   authRequired: false,
   busy: false,
@@ -127,6 +142,7 @@ export const useCloudStore = create<CloudState>((set, get) => ({
       projectId: null,
       projects: [],
       cloudFiles: [],
+      aiKeys: [],
       authRequired: false,
       loadingProjects: false,
       filesLoading: false,
@@ -228,6 +244,52 @@ export const useCloudStore = create<CloudState>((set, get) => ({
     }
     await useStore.getState().openFile(path);
     set({ openingPath: null });
+  },
+
+  fetchAiKeys: async () => {
+    const { token } = get();
+    if (!token) {
+      set({ authRequired: true, error: "Sign in to manage cloud AI keys" });
+      return;
+    }
+    set({ error: null, unavailable: false });
+    try {
+      set({ aiKeys: await apiListAiKeys(token) });
+    } catch (e) {
+      set(applyError(e));
+    }
+  },
+
+  saveAiKey: async (provider, key) => {
+    const { token } = get();
+    if (!token) {
+      set({ authRequired: true, error: "Sign in to manage cloud AI keys" });
+      return;
+    }
+    set({ error: null, unavailable: false });
+    try {
+      await apiPutAiKey(token, provider, key);
+      // Refetch: the PUT response carries only {provider, masked}, and the
+      // list should show the server's updatedAt.
+      set({ aiKeys: await apiListAiKeys(token) });
+    } catch (e) {
+      set(applyError(e));
+    }
+  },
+
+  deleteAiKey: async (provider) => {
+    const { token } = get();
+    if (!token) {
+      set({ authRequired: true, error: "Sign in to manage cloud AI keys" });
+      return;
+    }
+    set({ error: null, unavailable: false });
+    try {
+      await apiRemoveAiKey(token, provider);
+      set({ aiKeys: await apiListAiKeys(token) });
+    } catch (e) {
+      set(applyError(e));
+    }
   },
 
   openAuth: () => set({ authRequired: true }),

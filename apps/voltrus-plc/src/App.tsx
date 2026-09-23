@@ -10,7 +10,9 @@ import TargetPanel from "./components/Sidebar/TargetPanel";
 import AiChatPanel from "./components/Sidebar/AiChatPanel";
 import LicensePanel from "./components/Sidebar/LicensePanel";
 import AccountBadge from "./components/Cloud/AccountBadge";
+import AiKeysPanel from "./components/Cloud/AiKeysPanel";
 import CloudProjectPanel from "./components/Cloud/CloudProjectPanel";
+import ProvisionPanel from "./components/Cloud/ProvisionPanel";
 import AuthDialog from "./components/Cloud/AuthDialog";
 import CycleGraph from "./components/Bottom/CycleGraph";
 import Histogram from "./components/Bottom/Histogram";
@@ -558,6 +560,8 @@ export default function App() {
             <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>
               <AccountBadge />
               <CloudProjectPanel />
+              <AiKeysPanel />
+              <ProvisionPanel />
             </div>
           )}
         </div>

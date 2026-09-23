@@ -2,6 +2,8 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileEntry, RuntimeConfig } from "../types";
 import { getSimHost, setSimEventHandler } from "../wasm/sim-host";
+import "./relay-bridge";
+import "./ai-bridge";
 
 export type { UnlistenFn };
 
@@ -215,9 +217,26 @@ async function simInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
   }
 }
 
+// Extension point for feature modules (relay, ai) that add cloud-mode command
+// handlers without editing this file's switch. Register from your module:
+//   registerCloudCommands({ my_cmd: (cmd, args) => ... })
+// and side-effect-import the module here so it registers on load.
+const cloudCommandHandlers = new Map<
+  string,
+  (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
+>();
+
+export function registerCloudCommands(
+  handlers: Record<string, (cmd: string, args?: Record<string, unknown>) => Promise<unknown>>,
+): void {
+  for (const [cmd, handler] of Object.entries(handlers)) cloudCommandHandlers.set(cmd, handler);
+}
+
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (bridgeMode === "tauri") return tauriInvoke<T>(cmd, args);
   if (cmd in SIM_COMMANDS) return simInvoke<T>(cmd, args);
+  const extension = cloudCommandHandlers.get(cmd);
+  if (extension) return extension(cmd, args) as Promise<T>;
   return cloudInvoke<T>(cmd, args);
 }
 

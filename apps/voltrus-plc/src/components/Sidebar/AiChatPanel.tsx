@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke, listen, type UnlistenFn } from "../../api/bridge";
+import { bridgeMode, invoke, listen, type UnlistenFn } from "../../api/bridge";
 import { useStore } from "../../store";
+import { useCloudStore } from "../../store/cloud";
 import type { ChatMessage, CompileResult } from "../../types";
 
 const MAX_MESSAGES = 100;
@@ -24,6 +25,13 @@ export default function AiChatPanel() {
     setAiApiKey,
     diagnostics,
   } = useStore();
+
+  // Cloud mode: the AI proxy authenticates with the server-side key (AI Keys
+  // panel), so the local key input is replaced by a masked hint when one is
+  // set; the apiKey argument is ignored by the cloud bridge either way.
+  const cloudClaudeKey = useCloudStore((s) =>
+    bridgeMode === "cloud" ? s.aiKeys.find((k) => k.provider === "claude") : undefined,
+  );
 
   const [input, setInput] = useState("");
   const [streamBuffer, setStreamBuffer] = useState("");
@@ -263,14 +271,20 @@ Help the user write, debug, explain, or optimize their PLC Structured Text progr
           {aiProvider === "claude" && (
             <div style={{ marginBottom: 8 }}>
               <label style={labelStyle}>API Key</label>
-              <input
-                type="password"
-                className="scan-cycle-input"
-                style={{ width: "100%", textAlign: "left" }}
-                value={aiApiKey}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder="sk-ant-api03-..."
-              />
+              {cloudClaudeKey ? (
+                <div style={{ color: "var(--text-muted)" }}>
+                  Using cloud key ({cloudClaudeKey.masked})
+                </div>
+              ) : (
+                <input
+                  type="password"
+                  className="scan-cycle-input"
+                  style={{ width: "100%", textAlign: "left" }}
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  placeholder="sk-ant-api03-..."
+                />
+              )}
             </div>
           )}
 

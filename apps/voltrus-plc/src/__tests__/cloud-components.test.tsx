@@ -24,6 +24,10 @@ const { invokeMock, BridgeError } = vi.hoisted(() => {
 vi.mock("../api/bridge", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   listen: vi.fn().mockResolvedValue(() => {}),
+  // Pulled in transitively: store/cloud.ts imports api/ai-bridge, which
+  // registers cloud commands against these on load.
+  emitLocalEvent: vi.fn(),
+  registerCloudCommands: vi.fn(),
   BridgeError,
 }));
 

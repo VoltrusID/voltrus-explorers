@@ -17,6 +17,10 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("../api/bridge", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   listen: vi.fn().mockResolvedValue(() => {}),
+  // Pulled in transitively: store/cloud.ts imports api/ai-bridge, which
+  // registers cloud commands against these on load.
+  emitLocalEvent: vi.fn(),
+  registerCloudCommands: vi.fn(),
 }));
 
 const projectFilesFixture: FileEntry[] = [
