@@ -3,14 +3,23 @@ name = "voltrus-runtime"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Air-gapped IDE host: static SPA + local REST shim mirroring the cloud worker's
+# project-file contract. Default-off so headless/ESP32 builds stay lean.
+ide = ["dep:axum", "dep:chrono", "dep:serde", "dep:serde_json"]
+
 [dependencies]
 anyhow = { workspace = true }
+axum = { version = "0.8", optional = true }
 bincode = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 clap = { version = "4", features = ["derive"] }
 mt-grpc = { path = "../mt-grpc" }
 mt-plc-types = { path = "../mt-plc-types" }
 mt-sparkplug = { path = "../mt-sparkplug" }
 parking_lot = "0.12"
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tonic = "0.12"

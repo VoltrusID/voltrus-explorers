@@ -10,6 +10,8 @@
 
 pub mod bridge;
 pub mod bundle;
+#[cfg(feature = "ide")]
+pub mod ide;
 
 use std::path::PathBuf;
 use std::sync::Arc;
