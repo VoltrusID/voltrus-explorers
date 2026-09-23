@@ -1,0 +1,22 @@
+name = "voltrus-plc-cloud"
+main = "src/index.ts"
+compatibility_date = "2026-08-22"
+
+[vars]
+# Comma-separated allowlist echoed by the CORS middleware.
+CORS_ORIGINS = "http://localhost:1440,https://ide.voltrus.id"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "voltrus-plc-cloud-db"
+# Placeholder id for local dev (`wrangler dev` / miniflare ignore it).
+# Replace with the real id before deploying (`wrangler d1 create voltrus-plc-cloud-db`).
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "voltrus-plc-cloud-files"
+# Local dev creates the bucket in .wrangler/state automatically.
+# Replace with the real id before deploying.
+# id = "00000000-0000-0000-0000-000000000000"
