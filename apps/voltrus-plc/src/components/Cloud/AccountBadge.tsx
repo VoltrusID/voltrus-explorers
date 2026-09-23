@@ -1,14 +1,16 @@
 import { useEffect } from "react";
 import { useCloudStore } from "../../store/cloud";
 
-// Signed-in identity row for the Cloud sidebar section: email + logout, or a
-// sign-in prompt when there is no session.
+// Signed-in identity row for the Cloud sidebar section: email + plan chip +
+// logout, or a sign-in prompt when there is no session.
 export default function AccountBadge() {
   const user = useCloudStore((s) => s.user);
   const token = useCloudStore((s) => s.token);
+  const plan = useCloudStore((s) => s.plan);
   const whoami = useCloudStore((s) => s.whoami);
   const logout = useCloudStore((s) => s.logout);
   const openAuth = useCloudStore((s) => s.openAuth);
+  const openUpgrade = useCloudStore((s) => s.openUpgrade);
 
   // Restored session (token in localStorage) has no user until /me answers.
   useEffect(() => {
@@ -24,6 +26,8 @@ export default function AccountBadge() {
       </div>
     );
   }
+
+  const planName = plan && (plan.plan === "solo" || plan.plan === "team") ? plan.plan : plan ? "free" : "…";
 
   return (
     <div
@@ -41,6 +45,13 @@ export default function AccountBadge() {
       >
         {user ? user.email : "Restoring session…"}
       </span>
+      <button
+        className={`plan-chip plan-chip-${planName}`}
+        onClick={openUpgrade}
+        title="Manage your plan"
+      >
+        {planName}
+      </button>
       <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={logout}>
         Log out
       </button>

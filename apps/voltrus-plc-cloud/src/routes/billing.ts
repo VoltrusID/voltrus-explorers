@@ -3,7 +3,12 @@
 import { Hono } from "hono";
 import { authMiddleware } from "../auth";
 import type { AppEnv, Env } from "../env";
-import type { Plan } from "../entitlements";
+import {
+  effectivePlan,
+  FREE_MAX_FILES_PER_PROJECT,
+  FREE_MAX_PROJECTS,
+  type Plan,
+} from "../entitlements";
 
 export const billingRoutes = new Hono<AppEnv>();
 
@@ -296,4 +301,23 @@ billingRoutes.get("/billing/portal", authMiddleware, async (c) => {
   const session = (await sessionRes.json()) as { customer_portal_url?: unknown };
   if (typeof session.customer_portal_url !== "string") return c.json({ error: "polar_error" }, 502);
   return c.json({ url: session.customer_portal_url });
+});
+
+// Plan, free-tier limits, and checkout links for the paywall UI. effectivePlan
+// is grace-aware: a canceled subscription keeps its plan until period_end.
+// Null limits mean unlimited; null checkout URLs mean the plan has no
+// purchasable link configured (the UI hides that Upgrade button).
+billingRoutes.get("/billing/plan", authMiddleware, async (c) => {
+  const plan = await effectivePlan(c.env.DB, c.get("userId"));
+  return c.json({
+    plan,
+    limits: {
+      maxProjects: plan === "free" ? FREE_MAX_PROJECTS : null,
+      maxFilesPerProject: plan === "free" ? FREE_MAX_FILES_PER_PROJECT : null,
+    },
+    checkout: {
+      solo: c.env.POLAR_CHECKOUT_SOLO || null,
+      team: c.env.POLAR_CHECKOUT_TEAM || null,
+    },
+  });
 });

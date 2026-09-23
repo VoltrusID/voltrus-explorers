@@ -14,6 +14,9 @@ export type Env = {
   POLAR_PRODUCT_TEAM?: string;
   /** Polar organization access token (customer_sessions:write) for the billing portal link. Unset = portal returns 501. */
   POLAR_ACCESS_TOKEN?: string;
+  /** Polar checkout URLs surfaced by GET /billing/plan. Unset/empty = that plan hides its Upgrade button. */
+  POLAR_CHECKOUT_SOLO?: string;
+  POLAR_CHECKOUT_TEAM?: string;
 };
 
 export type AppEnv = {

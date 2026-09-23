@@ -406,3 +406,70 @@ describe("GET /billing/portal", () => {
     });
   });
 });
+
+describe("GET /billing/plan", () => {
+  it("returns free limits and null checkout links when none are configured", async () => {
+    const user = await insertUser();
+    const token = await issueToken(JWT_SECRET, user.id);
+
+    const res = await billingRoutes.request(
+      "/billing/plan",
+      { headers: { Authorization: `Bearer ${token}` } },
+      billingEnv(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      plan: "free",
+      limits: { maxProjects: 1, maxFilesPerProject: 25 },
+      checkout: { solo: null, team: null },
+    });
+  });
+
+  it("reports paid plans without free limits and surfaces configured checkout URLs", async () => {
+    const user = await insertUser();
+    await setPlanForTest(env.DB, user.id, "solo");
+    const token = await issueToken(JWT_SECRET, user.id);
+
+    const res = await billingRoutes.request(
+      "/billing/plan",
+      { headers: { Authorization: `Bearer ${token}` } },
+      billingEnv({ POLAR_CHECKOUT_SOLO: "https://polar.sh/checkout/solo" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      plan: "solo",
+      limits: { maxProjects: null, maxFilesPerProject: null },
+      checkout: { solo: "https://polar.sh/checkout/solo", team: null },
+    });
+  });
+
+  it("keeps a canceled plan during the period_end grace window", async () => {
+    const user = await insertUser();
+    const future = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    await env.DB
+      .prepare(
+        `INSERT INTO entitlements (user_id, plan, status, period_end, polar_subscription_id, updated_at)
+         VALUES (?, 'team', 'canceled', ?, 'sub_1', ?)`,
+      )
+      .bind(user.id, future, new Date().toISOString())
+      .run();
+    const token = await issueToken(JWT_SECRET, user.id);
+
+    const res = await billingRoutes.request(
+      "/billing/plan",
+      { headers: { Authorization: `Bearer ${token}` } },
+      billingEnv(),
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { plan: string };
+    expect(body.plan).toBe("team");
+  });
+
+  it("requires auth", async () => {
+    const res = await billingRoutes.request("/billing/plan", {}, billingEnv());
+    expect(res.status).toBe(401);
+  });
+});

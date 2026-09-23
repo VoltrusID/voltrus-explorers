@@ -37,7 +37,16 @@ export class CloudApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit, token?: string): Promise<T> {
+export class PlanRequiredError extends Error {
+  constructor(
+    public requiredPlan: "solo" | "team",
+  ) {
+    super("plan_required");
+    this.name = "PlanRequiredError";
+  }
+}
+
+export async function cloudRequest<T>(path: string, init: RequestInit, token?: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${cloudApiBase()}${path}`, {
@@ -52,17 +61,24 @@ async function request<T>(path: string, init: RequestInit, token?: string): Prom
   }
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
+    let plan: "solo" | "team" | null = null;
     try {
-      const body = (await res.json()) as { error?: unknown };
+      const body = (await res.json()) as { error?: unknown; requiredPlan?: unknown };
       if (typeof body.error === "string") message = body.error;
+      if (body.error === "plan_required" && (body.requiredPlan === "solo" || body.requiredPlan === "team")) {
+        plan = body.requiredPlan;
+      }
     } catch {
       // non-JSON error body — keep the HTTP status fallback
     }
+    if (plan) throw new PlanRequiredError(plan);
     throw new CloudApiError(res.status, message);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+const request = cloudRequest;
 
 export interface AuthResponse {
   token: string;

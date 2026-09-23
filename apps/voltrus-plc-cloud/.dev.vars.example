@@ -7,3 +7,7 @@ POLAR_PRODUCT_SOLO=
 POLAR_PRODUCT_TEAM=
 # Polar org access token with customer_sessions:write for the billing portal link.
 POLAR_ACCESS_TOKEN=
+# Polar checkout URLs surfaced by GET /api/billing/plan; empty = that plan's
+# Upgrade button is hidden in the IDE.
+POLAR_CHECKOUT_SOLO=
+POLAR_CHECKOUT_TEAM=

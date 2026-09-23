@@ -14,6 +14,7 @@ export const bridgeMode: BridgeMode = "__TAURI_INTERNALS__" in window ? "tauri" 
 export type BridgeErrorCode =
   | "cloud_unavailable"
   | "unauthorized"
+  | "plan_required"
   | "not_found"
   | "bad_request"
   | "network";
@@ -67,7 +68,21 @@ async function cloudFetch(cmd: string, url: string, init?: RequestInit): Promise
   } catch (e) {
     throw new BridgeError("network", cmd, e instanceof Error ? e.message : String(e));
   }
-  if (!res.ok) throw httpError(cmd, res.status);
+  if (!res.ok) {
+    // Paywall gate (projects/files routes): surface as its own code so the
+    // cloud store can open the upgrade screen instead of logging a network error.
+    if (res.status === 402) {
+      let gated = false;
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        gated = body?.error === "plan_required";
+      } catch {
+        // fall through to the generic mapping
+      }
+      if (gated) throw new BridgeError("plan_required", cmd, `plan_required for ${cmd}`);
+    }
+    throw httpError(cmd, res.status);
+  }
   return res;
 }
 

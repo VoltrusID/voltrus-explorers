@@ -193,14 +193,35 @@ describe("cloud store auth", () => {
   });
 
   it("whoami restores the user for a stored token; 401 drops the session", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ user: USER }))
-      .mockResolvedValueOnce(jsonResponse({ error: "token expired" }, 401));
-    vi.stubGlobal("fetch", fetchMock);
+    // whoami also refreshes the entitlement since billing landed, so stub by
+    // route (call-count for /me) instead of a fragile call-order queue.
+    let meCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/auth/me")) {
+          meCalls += 1;
+          return meCalls === 1
+            ? jsonResponse({ user: USER })
+            : jsonResponse({ error: "token expired" }, 401);
+        }
+        if (url.includes("/api/billing/plan")) {
+          return jsonResponse({
+            plan: "free",
+            limits: { maxProjects: 1, maxFilesPerProject: 25 },
+            checkout: { solo: null, team: null },
+          });
+        }
+        return jsonResponse({ error: "not_found" }, 404);
+      }),
+    );
 
     useCloudStore.setState({ token: TOKEN });
     await useCloudStore.getState().whoami();
     expect(useCloudStore.getState().user).toEqual(USER);
+    // refreshPlan is fire-and-forget; flush it before asserting.
+    await vi.waitFor(() => expect(useCloudStore.getState().plan?.plan).toBe("free"));
 
     useCloudStore.setState({ token: TOKEN, user: USER });
     await useCloudStore.getState().whoami();

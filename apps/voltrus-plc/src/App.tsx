@@ -14,11 +14,14 @@ import AiKeysPanel from "./components/Cloud/AiKeysPanel";
 import CloudProjectPanel from "./components/Cloud/CloudProjectPanel";
 import ProvisionPanel from "./components/Cloud/ProvisionPanel";
 import AuthDialog from "./components/Cloud/AuthDialog";
+import AuthScreen from "./components/Cloud/AuthScreen";
+import UpgradeScreen from "./components/Cloud/UpgradeScreen";
 import CycleGraph from "./components/Bottom/CycleGraph";
 import Histogram from "./components/Bottom/Histogram";
 import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
+import { useMediaQuery } from "./lib/useMediaQuery";
 import type { SampleTemplate } from "./types";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
 import { LD_SAMPLES } from "./constants/ld-samples";
@@ -47,16 +50,11 @@ export default function App() {
     setBottomTab,
     log,
     lastCompileResult,
-    projectDir,
-    projectFiles,
-    openFile,
     openProjectDir,
-    refreshProjectFiles,
     saveFile,
     loadSampleTemplate,
     theme,
     setTheme,
-    rightPanelTab,
     setRightPanelTab,
     projectPath,
     saveProject,
@@ -81,6 +79,9 @@ export default function App() {
   // The Tests overlay lives outside the store's fixed bottomTab union.
   const [testsActive, setTestsActive] = useState(false);
   const [cloudOpen, setCloudOpen] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 768px)");
+  const [leftOpen, setLeftOpen] = useState(false);
+  const [rightOpen, setRightOpen] = useState(false);
 
   const activeFile = openFiles[activeFileIndex];
 
@@ -191,14 +192,20 @@ export default function App() {
     return () => { unlisten?.(); };
   }, [setCurrentExecutionLine, setDebugState]);
 
-  const stFiles = projectFiles.filter(
-    (f) => !f.is_dir && (f.name.endsWith(".st") || f.name.endsWith(".txt") || f.name.endsWith(".fbd") || f.name.endsWith(".ld") || f.name.endsWith(".sfc"))
-  );
-
   return (
     <div className="app-layout">
       {/* Toolbar */}
       <div className="toolbar">
+        {isMobile && (
+          <button
+            className="toolbar-btn"
+            onClick={() => { setLeftOpen(true); setRightOpen(false); }}
+            aria-label="Open project panel"
+            title="Project"
+          >
+            ☰
+          </button>
+        )}
         <span className="toolbar-title">Voltrus PLC</span>
         <button
           className="toolbar-btn theme-toggle"
@@ -289,6 +296,16 @@ export default function App() {
           <span className="debug-info">Paused at line {currentExecutionLine}</span>
         )}
         <span className="toolbar-spacer" />
+        {isMobile && (
+          <button
+            className="toolbar-btn"
+            onClick={() => { setRightOpen(true); setLeftOpen(false); }}
+            aria-label="Open watch and tools panel"
+            title="Watch / I/O / AI"
+          >
+            ⚙
+          </button>
+        )}
         {updateVersion && (
           <button
             className="toolbar-btn"
@@ -492,84 +509,18 @@ export default function App() {
       {/* Main content: 3 columns */}
       <div className="main-content">
         {/* Left sidebar: File explorer */}
-        <div className="sidebar-left" style={{ width: leftWidth }}>
-          <div className="sidebar-header">
-            Project
-            {projectDir && (
-              <button
-                style={{
-                  marginLeft: "auto", fontSize: 10, background: "none",
-                  border: "none", color: "var(--accent)", cursor: "pointer",
-                }}
-                onClick={() => refreshProjectFiles()}
-              >
-                Refresh
-              </button>
-            )}
+        {isMobile ? null : (
+          <div className="sidebar-left" style={{ width: leftWidth }}>
+            <ProjectSidebar />
           </div>
-          {projectDir ? (
-            <ul className="file-list">
-              {stFiles.length === 0 ? (
-                <li className="file-item" style={{ color: "var(--text-muted)" }}>
-                  No program files found
-                </li>
-              ) : (
-                stFiles.map((f) => (
-                  <li
-                    key={f.path}
-                    className={`file-item ${openFiles[activeFileIndex]?.path === f.path ? "active" : ""}`}
-                    onClick={() => openFile(f.path)}
-                  >
-                    <span style={{ fontSize: 10 }}>
-                      {(f.name.split(".").pop() || "st").toUpperCase().slice(0, 3)}
-                    </span>
-                    <span>{f.name}</span>
-                  </li>
-                ))
-              )}
-            </ul>
-          ) : (
-            <ul className="file-list">
-              {openFiles.map((file, i) => (
-                <li
-                  key={file.path}
-                  className={`file-item ${i === activeFileIndex ? "active" : ""}`}
-                  onClick={() => setActiveFile(i)}
-                >
-                  <span className="icon">
-                    {file.modified ? <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="var(--accent)" /></svg> : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 1h5l4 4v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" /><polyline points="9 1 9 5 13 5" /></svg>}
-                  </span>
-                  <span>{file.name}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        )}
 
-          {/* Cloud section (PLC-20): collapsible; local project flow above is untouched */}
-          <div
-            className="sidebar-header"
-            role="button"
-            aria-expanded={cloudOpen}
-            style={{ cursor: "pointer", display: "flex", alignItems: "center", marginTop: "auto" }}
-            onClick={() => setCloudOpen(!cloudOpen)}
-          >
-            Cloud
-            <span style={{ marginLeft: "auto", fontSize: 9 }}>{cloudOpen ? "\u25BE" : "\u25B8"}</span>
-          </div>
-          {cloudOpen && (
-            <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>
-              <AccountBadge />
-              <CloudProjectPanel />
-              <AiKeysPanel />
-              <ProvisionPanel />
-            </div>
-          )}
-        </div>
-
-        <ResizeHandle
-          axis="x"
-          onDrag={(d) => setLeftWidth((w) => Math.min(500, Math.max(140, w + d)))}
-        />
+        {isMobile ? null : (
+          <ResizeHandle
+            axis="x"
+            onDrag={(d) => setLeftWidth((w) => Math.min(500, Math.max(140, w + d)))}
+          />
+        )}
 
         {/* Center: Editor */}
         <div className="editor-area">
@@ -612,65 +563,42 @@ export default function App() {
           </div>
         </div>
 
-        <ResizeHandle
-          axis="x"
-          onDrag={(d) => setRightWidth((w) => Math.min(500, Math.max(180, w - d)))}
-        />
+        {isMobile ? null : (
+          <ResizeHandle
+            axis="x"
+            onDrag={(d) => setRightWidth((w) => Math.min(500, Math.max(180, w - d)))}
+          />
+        )}
 
-        {/* Right sidebar: tabs for Watch, I/O, Target, AI */}
-        <div className="sidebar-right" style={{ width: rightWidth }}>
-          <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-            {(["watch", "io", "target", "ai", "refs"] as const).map((tab) => (
-              <button
-                key={tab}
-                className={`bottom-tab ${rightPanelTab === tab ? "active" : ""}`}
-                style={{ flex: 1, justifyContent: "center" }}
-                onClick={() => setRightPanelTab(tab)}
-              >
-                {tab === "watch" ? "Watch" : tab === "io" ? "I/O" : tab === "target" ? "Target" : tab === "ai" ? "AI" : "Refs"}
-              </button>
-            ))}
+        {isMobile ? null : (
+          <div className="sidebar-right" style={{ width: rightWidth }}>
+            <RightSidebarBody />
           </div>
-          {rightPanelTab === "watch" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
-              <div className="sidebar-header">Runtime</div>
-              <RuntimeControls />
-              <div className="sidebar-header">Watch Table</div>
-              <WatchTable />
-            </div>
-          )}
-          {rightPanelTab === "io" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
-              <div className="sidebar-header">I/O Driver</div>
-              <IoPanel />
-              <div className="sidebar-header">I/O Mappings</div>
-              <IoMappingPanel />
-            </div>
-          )}
-          {rightPanelTab === "target" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
-              <div className="sidebar-header">Target Device</div>
-              <TargetPanel />
-            </div>
-          )}
-          {rightPanelTab === "ai" && (
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-              <AiChatPanel />
-            </div>
-          )}
-          {rightPanelTab === "refs" && (
-            <div style={{ flex: 1, overflow: "auto" }}>
-              <div className="sidebar-header">Cross-Reference</div>
-              <XrefPanel />
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      <ResizeHandle
-        axis="y"
-        onDrag={(d) => setBottomHeight((h) => Math.min(500, Math.max(100, h - d)))}
-      />
+      {/* Mobile drawers: fixed-position overlays driven by the toolbar toggles */}
+      {isMobile && (
+        <>
+          <div
+            className={`drawer-backdrop ${leftOpen || rightOpen ? "visible" : ""}`}
+            onClick={() => { setLeftOpen(false); setRightOpen(false); }}
+          />
+          <aside className={`drawer drawer-left ${leftOpen ? "open" : ""}`} aria-hidden={!leftOpen}>
+            <ProjectSidebar />
+          </aside>
+          <aside className={`drawer drawer-right ${rightOpen ? "open" : ""}`} aria-hidden={!rightOpen}>
+            <RightSidebarBody />
+          </aside>
+        </>
+      )}
+
+      {isMobile ? null : (
+        <ResizeHandle
+          axis="y"
+          onDrag={(d) => setBottomHeight((h) => Math.min(500, Math.max(100, h - d)))}
+        />
+      )}
 
       {/* Bottom panel */}
       <div className="bottom-panel" style={{ height: bottomHeight }}>
@@ -827,7 +755,161 @@ export default function App() {
 
       {/* Cloud auth modal — auto-shows on any 401 from a cloud action */}
       <AuthDialog />
+      {/* Web build: full-page sign-in/register until authenticated or skipped */}
+      <AuthScreen />
+      {/* Paywall: raised by 402 plan_required or from the plan chip */}
+      <UpgradeScreen />
     </div>
+  );
+}
+
+// Left rail: project files + collapsible Cloud section. Rendered inside the
+// desktop docked sidebar and the mobile drawer — identical content, host
+// decides placement.
+function ProjectSidebar() {
+  const projectDir = useStore((s) => s.projectDir);
+  const projectFiles = useStore((s) => s.projectFiles);
+  const openFiles = useStore((s) => s.openFiles);
+  const activeFileIndex = useStore((s) => s.activeFileIndex);
+  const openFile = useStore((s) => s.openFile);
+  const setActiveFile = useStore((s) => s.setActiveFile);
+  const refreshProjectFiles = useStore((s) => s.refreshProjectFiles);
+  const [cloudOpen, setCloudOpen] = useState(false);
+
+  const stFiles = projectFiles.filter(
+    (f) => !f.is_dir && (f.name.endsWith(".st") || f.name.endsWith(".txt") || f.name.endsWith(".fbd") || f.name.endsWith(".ld") || f.name.endsWith(".sfc"))
+  );
+
+  return (
+    <>
+      <div className="sidebar-header">
+        Project
+        {projectDir && (
+          <button
+            style={{
+              marginLeft: "auto", fontSize: 10, background: "none",
+              border: "none", color: "var(--accent)", cursor: "pointer",
+            }}
+            onClick={() => refreshProjectFiles()}
+          >
+            Refresh
+          </button>
+        )}
+      </div>
+      {projectDir ? (
+        <ul className="file-list">
+          {stFiles.length === 0 ? (
+            <li className="file-item" style={{ color: "var(--text-muted)" }}>
+              No program files found
+            </li>
+          ) : (
+            stFiles.map((f) => (
+              <li
+                key={f.path}
+                className={`file-item ${openFiles[activeFileIndex]?.path === f.path ? "active" : ""}`}
+                onClick={() => openFile(f.path)}
+              >
+                <span style={{ fontSize: 10 }}>
+                  {(f.name.split(".").pop() || "st").toUpperCase().slice(0, 3)}
+                </span>
+                <span>{f.name}</span>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : (
+        <ul className="file-list">
+          {openFiles.map((file, i) => (
+            <li
+              key={file.path}
+              className={`file-item ${i === activeFileIndex ? "active" : ""}`}
+              onClick={() => setActiveFile(i)}
+            >
+              <span className="icon">
+                {file.modified ? <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="var(--accent)" /></svg> : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 1h5l4 4v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" /><polyline points="9 1 9 5 13 5" /></svg>}
+              </span>
+              <span>{file.name}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Cloud section (PLC-20): collapsible; local project flow above is untouched */}
+      <div
+        className="sidebar-header"
+        role="button"
+        aria-expanded={cloudOpen}
+        style={{ cursor: "pointer", display: "flex", alignItems: "center", marginTop: "auto" }}
+        onClick={() => setCloudOpen(!cloudOpen)}
+      >
+        Cloud
+        <span style={{ marginLeft: "auto", fontSize: 9 }}>{cloudOpen ? "\u25BE" : "\u25B8"}</span>
+      </div>
+      {cloudOpen && (
+        <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>
+          <AccountBadge />
+          <CloudProjectPanel />
+          <AiKeysPanel />
+          <ProvisionPanel />
+        </div>
+      )}
+    </>
+  );
+}
+
+// Right rail: Watch / I/O / Target / AI / Refs tab strip and panels.
+function RightSidebarBody() {
+  const rightPanelTab = useStore((s) => s.rightPanelTab);
+  const setRightPanelTab = useStore((s) => s.setRightPanelTab);
+
+  return (
+    <>
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+        {(["watch", "io", "target", "ai", "refs"] as const).map((tab) => (
+          <button
+            key={tab}
+            className={`bottom-tab ${rightPanelTab === tab ? "active" : ""}`}
+            style={{ flex: 1, justifyContent: "center" }}
+            onClick={() => setRightPanelTab(tab)}
+          >
+            {tab === "watch" ? "Watch" : tab === "io" ? "I/O" : tab === "target" ? "Target" : tab === "ai" ? "AI" : "Refs"}
+          </button>
+        ))}
+      </div>
+      {rightPanelTab === "watch" && (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <div className="sidebar-header">Runtime</div>
+          <RuntimeControls />
+          <div className="sidebar-header">Watch Table</div>
+          <WatchTable />
+        </div>
+      )}
+      {rightPanelTab === "io" && (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <div className="sidebar-header">I/O Driver</div>
+          <IoPanel />
+          <div className="sidebar-header">I/O Mappings</div>
+          <IoMappingPanel />
+        </div>
+      )}
+      {rightPanelTab === "target" && (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <div className="sidebar-header">Target Device</div>
+          <TargetPanel />
+        </div>
+      )}
+      {rightPanelTab === "ai" && (
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+          <AiChatPanel />
+        </div>
+      )}
+      {rightPanelTab === "refs" && (
+        <div style={{ flex: 1, overflow: "auto" }}>
+          <div className="sidebar-header">Cross-Reference</div>
+          <XrefPanel />
+        </div>
+      )}
+    </>
   );
 }
 

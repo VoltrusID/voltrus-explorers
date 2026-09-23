@@ -37,22 +37,24 @@ export default function AuthDialog() {
         <h3 id="cloud-auth-title">{mode === "login" ? "Sign in to Voltrus Cloud" : "Create Voltrus Cloud account"}</h3>
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <input
+            className="auth-input"
             type="email"
             required
+            autoComplete="email"
             placeholder="Email"
             aria-label="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            style={{ fontSize: 12, padding: "4px 6px" }}
           />
           <input
+            className="auth-input"
             type="password"
             required
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
             placeholder="Password"
             aria-label="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ fontSize: 12, padding: "4px 6px" }}
           />
           {error && (
             <div role="alert" style={{ color: "var(--danger)", fontSize: 11 }}>

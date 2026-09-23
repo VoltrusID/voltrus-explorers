@@ -268,10 +268,12 @@ describe("CORS", () => {
   });
 
   it("echoes allowed origin on real responses and withholds it for strangers", async () => {
+    // Same-origin SPA deployment moved the prod origin to app.plc.voltrus.id
+    // (wrangler.toml CORS_ORIGINS); localhost stays for vite dev.
     const allowed = await SELF.fetch("https://example.com/api/health", {
-      headers: { Origin: "https://ide.voltrus.id" },
+      headers: { Origin: "https://app.plc.voltrus.id" },
     });
-    expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe("https://ide.voltrus.id");
+    expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe("https://app.plc.voltrus.id");
 
     const denied = await SELF.fetch("https://example.com/api/health", {
       headers: { Origin: "https://evil.example" },

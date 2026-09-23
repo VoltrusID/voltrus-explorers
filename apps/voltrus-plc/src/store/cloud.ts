@@ -3,6 +3,7 @@ import { invoke, BridgeError } from "../api/bridge";
 import { useStore } from "../store";
 import {
   CloudApiError,
+  PlanRequiredError,
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
   listProjects,
@@ -12,6 +13,7 @@ import {
   type CloudProject,
   type CloudUser,
 } from "../api/cloud-auth";
+import { getPlan, openBillingPortal, type PlanInfo } from "../api/billing";
 import {
   listAiKeys as apiListAiKeys,
   putAiKey as apiPutAiKey,
@@ -36,6 +38,12 @@ interface CloudState {
   // chat panels prefer these over local key inputs in cloud mode.
   aiKeys: CloudAiKey[];
 
+  // Billing: current entitlement (null = not fetched yet), the paywall overlay
+  // flag (any 402 plan_required or explicit user request), and portal state.
+  plan: PlanInfo | null;
+  planGate: boolean;
+  portalBusy: boolean;
+
   // Status fields
   authRequired: boolean; // 401 seen → AuthDialog auto-shows
   busy: boolean; // login/register in flight
@@ -59,14 +67,19 @@ interface CloudState {
   deleteAiKey: (provider: AiProvider) => Promise<void>;
   openAuth: () => void;
   dismissAuth: () => void;
+  refreshPlan: () => Promise<void>;
+  openUpgrade: () => void;
+  dismissUpgrade: () => void;
+  openPortal: () => Promise<void>;
 }
 
-function describeError(e: unknown): { message: string; unauthorized: boolean; unavailable: boolean } {
+function describeError(e: unknown): { message: string; unauthorized: boolean; unavailable: boolean; planRequired?: boolean } {
   if (e instanceof BridgeError) {
     return {
       message: e.message,
       unauthorized: e.code === "unauthorized",
       unavailable: e.code === "cloud_unavailable",
+      planRequired: e.code === "plan_required",
     };
   }
   if (e instanceof CloudApiError) {
@@ -80,13 +93,18 @@ function describeError(e: unknown): { message: string; unauthorized: boolean; un
 }
 
 // Action error tail: surface the message and flag session loss on 401-class
-// failures. `unavailable` drives the panel's desktop-only hint.
-function applyError(e: unknown): { error: string; unavailable: boolean; authRequired?: boolean } {
+// failures. `unavailable` drives the panel's desktop-only hint; a 402
+// plan_required (REST or bridge path) raises the paywall overlay.
+function applyError(e: unknown): { error: string; unavailable: boolean; authRequired?: boolean; planGate?: boolean } {
+  if (e instanceof PlanRequiredError) {
+    return { error: "plan_required", unavailable: false, planGate: true };
+  }
   const d = describeError(e);
   return {
     error: d.message,
     unavailable: d.unavailable,
     ...(d.unauthorized ? { authRequired: true } : {}),
+    ...(d.planRequired ? { planGate: true } : {}),
   };
 }
 
@@ -97,6 +115,9 @@ export const useCloudStore = create<CloudState>((set, get) => ({
   projects: [],
   cloudFiles: [],
   aiKeys: [],
+  plan: null,
+  planGate: false,
+  portalBusy: false,
 
   authRequired: false,
   busy: false,
@@ -113,6 +134,7 @@ export const useCloudStore = create<CloudState>((set, get) => ({
       localStorage.setItem("vplc_token", token);
       set({ token, user, busy: false, authRequired: false });
       await get().refreshProjects();
+      void get().refreshPlan();
     } catch (e) {
       // Keep the dialog open (authRequired untouched) and show the server message.
       set({ busy: false, error: describeError(e).message });
@@ -126,6 +148,7 @@ export const useCloudStore = create<CloudState>((set, get) => ({
       localStorage.setItem("vplc_token", token);
       set({ token, user, busy: false, authRequired: false });
       await get().refreshProjects();
+      void get().refreshPlan();
     } catch (e) {
       // Login failures are credential errors, not session loss: keep the
       // dialog open and show the server message.
@@ -143,6 +166,9 @@ export const useCloudStore = create<CloudState>((set, get) => ({
       projects: [],
       cloudFiles: [],
       aiKeys: [],
+      plan: null,
+      planGate: false,
+      portalBusy: false,
       authRequired: false,
       loadingProjects: false,
       filesLoading: false,
@@ -161,6 +187,7 @@ export const useCloudStore = create<CloudState>((set, get) => ({
     try {
       const { user } = await apiWhoami(token);
       set({ user });
+      void get().refreshPlan();
     } catch (e) {
       const patch = applyError(e);
       // A dead token is a logged-out session, not a transient error.
@@ -295,4 +322,35 @@ export const useCloudStore = create<CloudState>((set, get) => ({
   openAuth: () => set({ authRequired: true }),
 
   dismissAuth: () => set({ authRequired: false }),
+
+  // Best-effort: a failed plan fetch never blocks editing; the paywall UI
+  // treats null plan as "unknown" and still renders free-tier defaults.
+  refreshPlan: async () => {
+    const { token } = get();
+    if (!token) return;
+    try {
+      set({ plan: await getPlan(token) });
+    } catch {
+      // keep the previous plan (or null) — billing is never a hard failure
+    }
+  },
+
+  openUpgrade: () => set({ planGate: true }),
+  dismissUpgrade: () => set({ planGate: false }),
+
+  openPortal: async () => {
+    const { token } = get();
+    if (!token) {
+      set({ authRequired: true });
+      return;
+    }
+    set({ portalBusy: true, error: null });
+    try {
+      await openBillingPortal(token);
+    } catch (e) {
+      set({ error: describeError(e).message });
+    } finally {
+      set({ portalBusy: false });
+    }
+  },
 }));
