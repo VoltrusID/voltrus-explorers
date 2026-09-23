@@ -9,6 +9,9 @@ import IoMappingPanel from "./components/Sidebar/IoMappingPanel";
 import TargetPanel from "./components/Sidebar/TargetPanel";
 import AiChatPanel from "./components/Sidebar/AiChatPanel";
 import LicensePanel from "./components/Sidebar/LicensePanel";
+import AccountBadge from "./components/Cloud/AccountBadge";
+import CloudProjectPanel from "./components/Cloud/CloudProjectPanel";
+import AuthDialog from "./components/Cloud/AuthDialog";
 import CycleGraph from "./components/Bottom/CycleGraph";
 import Histogram from "./components/Bottom/Histogram";
 import SimulationPanel from "./components/Bottom/SimulationPanel";
@@ -75,6 +78,7 @@ export default function App() {
   const [targetConnecting, setTargetConnecting] = useState(false);
   // The Tests overlay lives outside the store's fixed bottomTab union.
   const [testsActive, setTestsActive] = useState(false);
+  const [cloudOpen, setCloudOpen] = useState(false);
 
   const activeFile = openFiles[activeFileIndex];
 
@@ -538,6 +542,24 @@ export default function App() {
               ))}
             </ul>
           )}
+
+          {/* Cloud section (PLC-20): collapsible; local project flow above is untouched */}
+          <div
+            className="sidebar-header"
+            role="button"
+            aria-expanded={cloudOpen}
+            style={{ cursor: "pointer", display: "flex", alignItems: "center", marginTop: "auto" }}
+            onClick={() => setCloudOpen(!cloudOpen)}
+          >
+            Cloud
+            <span style={{ marginLeft: "auto", fontSize: 9 }}>{cloudOpen ? "\u25BE" : "\u25B8"}</span>
+          </div>
+          {cloudOpen && (
+            <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>
+              <AccountBadge />
+              <CloudProjectPanel />
+            </div>
+          )}
         </div>
 
         <ResizeHandle
@@ -798,6 +820,9 @@ export default function App() {
           {bottomTab === "simulation" && <SimulationPanel />}
         </div>
       </div>
+
+      {/* Cloud auth modal — auto-shows on any 401 from a cloud action */}
+      <AuthDialog />
     </div>
   );
 }
