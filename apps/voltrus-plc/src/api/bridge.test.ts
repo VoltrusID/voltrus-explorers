@@ -189,12 +189,15 @@ describe("bridge in cloud mode", () => {
   it("throws cloud_unavailable for commands with no cloud mapping", async () => {
     setCloudEnv();
     const bridge = await loadBridge(false);
-    const err = (await bridge.invoke("target_status").catch((e) => e)) as InstanceType<
+    // get_sample_templates is desktop-only and registered by no cloud-mode
+    // module — unlike target_status, which relay-bridge maps on a retry
+    // timer, so this assertion can't race module registration.
+    const err = (await bridge.invoke("get_sample_templates").catch((e) => e)) as InstanceType<
       typeof bridge.BridgeError
     >;
     expect(err).toBeInstanceOf(bridge.BridgeError);
     expect(err.code).toBe("cloud_unavailable");
-    expect(err.cmd).toBe("target_status");
+    expect(err.cmd).toBe("get_sample_templates");
   });
 
   it("listen registers locally and never fires until an event is emitted", async () => {
