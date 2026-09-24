@@ -10,7 +10,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
-    "build:wasm": "cd ../../crates/mt-stc-wasm && wasm-pack build --release --target web --out-dir pkg && cd ../mt-plc-runtime-wasm && wasm-pack build --release --target web --out-dir pkg",
+    "build:wasm": "cd ../../crates/mt-stc-wasm && wasm-pack build --release --target web --out-dir pkg && cd ../mt-plc-runtime-wasm && wasm-pack build --release --target web --out-dir pkg && cd ../voltrus-lsp-wasm && wasm-pack build --release --target web --out-dir pkg",
     "grammar": "lezer-generator src/lang/iecst/iecst.grammar -o src/lang/iecst/iecst.js"
   },
   "dependencies": {
