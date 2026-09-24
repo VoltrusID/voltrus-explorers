@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke, BridgeError } from "../api/bridge";
-import { useStore } from "../store";
+import { setBridgeErrorHandler, useStore } from "../store";
 import {
   CloudApiError,
   PlanRequiredError,
@@ -95,13 +95,15 @@ function describeError(e: unknown): { message: string; unauthorized: boolean; un
 // Action error tail: surface the message and flag session loss on 401-class
 // failures. `unavailable` drives the panel's desktop-only hint; a 402
 // plan_required (REST or bridge path) raises the paywall overlay.
+const PLAN_GATED_MESSAGE = "Cloud storage limit reached — upgrade for unlimited projects and files.";
+
 function applyError(e: unknown): { error: string; unavailable: boolean; authRequired?: boolean; planGate?: boolean } {
   if (e instanceof PlanRequiredError) {
-    return { error: "plan_required", unavailable: false, planGate: true };
+    return { error: PLAN_GATED_MESSAGE, unavailable: false, planGate: true };
   }
   const d = describeError(e);
   return {
-    error: d.message,
+    error: d.planRequired ? PLAN_GATED_MESSAGE : d.message,
     unavailable: d.unavailable,
     ...(d.unauthorized ? { authRequired: true } : {}),
     ...(d.planRequired ? { planGate: true } : {}),
@@ -354,3 +356,19 @@ export const useCloudStore = create<CloudState>((set, get) => ({
     }
   },
 }));
+
+// Bridge-path actions (Ctrl+S save, open file, sidebar refresh) route their
+// failures here: 401 → login dialog, 402 → paywall — instead of only living
+// in the runtime log.
+setBridgeErrorHandler((e) => {
+  useCloudStore.setState(applyError(e));
+});
+
+// A successful cloud save may have created a new file: refresh the project's
+// file list and the fileCount chips so the sidebar shows it without a reopen.
+window.addEventListener("vplc:saved", () => {
+  const { projectId } = useCloudStore.getState();
+  if (!projectId) return;
+  void useCloudStore.getState().refreshProjects();
+  void useCloudStore.getState().selectProject(projectId);
+});

@@ -35,6 +35,24 @@ import {
   LD_FORMAT_VERSION,
 } from "./types/canonical";
 
+// Bridge-path failures (Ctrl+S save, open file, refresh files) must surface
+// as auth/plan UI, not vanish into the runtime log. The cloud store registers
+// a handler at module load — a function pointer instead of a direct import,
+// which would be circular (cloud.ts already imports this store).
+let bridgeErrorHandler: ((e: unknown) => void) | null = null;
+
+export function setBridgeErrorHandler(fn: ((e: unknown) => void) | null): void {
+  bridgeErrorHandler = fn;
+}
+
+function notifyBridgeError(e: unknown): void {
+  try {
+    bridgeErrorHandler?.(e);
+  } catch {
+    // a broken handler must never break the calling action
+  }
+}
+
 interface AppState {
   // Theme
   theme: "dark" | "light";
@@ -268,6 +286,7 @@ export const useStore = create<AppState>((set, get) => ({
         activeFileIndex: openFiles.length,
       });
     } catch (e) {
+      notifyBridgeError(e);
       get().addLog("system", `Failed to open ${path}: ${e}`);
     }
   },
@@ -342,7 +361,13 @@ export const useStore = create<AppState>((set, get) => ({
       newFiles[index] = { ...newFiles[index], content, modified: false };
       set({ openFiles: newFiles });
       get().addLog("system", `Saved ${file.name}`);
+      // Cloud mode: let the cloud store refresh the project file list so
+      // newly created files show up in the sidebar without a manual reopen.
+      if (bridgeMode === "cloud") {
+        window.dispatchEvent(new CustomEvent("vplc:saved", { detail: { path: file.path } }));
+      }
     } catch (e) {
+      notifyBridgeError(e);
       get().addLog("system", `Failed to save ${file.name}: ${e}`);
     }
   },
@@ -368,6 +393,7 @@ export const useStore = create<AppState>((set, get) => ({
       const files = await invoke<FileEntry[]>("list_project_files", { dir: projectDir });
       set({ projectFiles: files });
     } catch (e) {
+      notifyBridgeError(e);
       get().addLog("system", `Failed to list files: ${e}`);
     }
   },

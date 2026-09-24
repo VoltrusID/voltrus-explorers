@@ -19,6 +19,7 @@ const { invokeMock, BridgeError } = vi.hoisted(() => {
 });
 
 vi.mock("../api/bridge", () => ({
+  bridgeMode: "cloud",
   invoke: (...args: unknown[]) => invokeMock(...args),
   listen: vi.fn().mockResolvedValue(() => {}),
   // Pulled in transitively: store/cloud.ts imports api/ai-bridge, which
@@ -360,5 +361,54 @@ describe("cloud store project flow", () => {
     expect(s.unavailable).toBe(true);
     expect(s.authRequired).toBe(false);
     expect(s.error).toBe("Command 'list_project_files' has no cloud mapping");
+  });
+});
+
+describe("bridge error surfacing (PLC-29)", () => {
+  const OPEN_FILE = {
+    name: "Main.st",
+    path: "Main.st",
+    content: "PROGRAM Main\nEND_PROGRAM",
+    modified: true,
+  };
+
+  it("Ctrl+S save failure with an expired session raises authRequired", async () => {
+    localStorage.setItem("vplc_token", TOKEN);
+    useCloudStore.setState({ token: TOKEN, user: USER });
+    useStore.setState({ openFiles: [OPEN_FILE], activeFileIndex: 0 });
+    invokeMock.mockRejectedValueOnce(new BridgeError("unauthorized", "save_file"));
+
+    await useStore.getState().saveFile(0);
+
+    expect(useCloudStore.getState().authRequired).toBe(true);
+  });
+
+  it("Ctrl+S save failure with a paywall gate raises the upgrade screen", async () => {
+    localStorage.setItem("vplc_token", TOKEN);
+    useCloudStore.setState({ token: TOKEN, user: USER });
+    useStore.setState({ openFiles: [OPEN_FILE], activeFileIndex: 0 });
+    invokeMock.mockRejectedValueOnce(new BridgeError("plan_required", "save_file"));
+
+    await useStore.getState().saveFile(0);
+
+    const s = useCloudStore.getState();
+    expect(s.planGate).toBe(true);
+    expect(s.error).toBe("Cloud storage limit reached — upgrade for unlimited projects and files.");
+  });
+
+  it("a successful cloud save refreshes the project file list", async () => {
+    localStorage.setItem("vplc_token", TOKEN);
+    localStorage.setItem("vplc_project", PROJECT.id);
+    useCloudStore.setState({ token: TOKEN, user: USER, projectId: PROJECT.id });
+    useStore.setState({ openFiles: [OPEN_FILE], activeFileIndex: 0 });
+    invokeMock.mockResolvedValueOnce(undefined); // save_file
+    vi.stubGlobal("fetch", fetchRouter({ ["GET /api/projects"]: () => jsonResponse([PROJECT]) }));
+    invokeMock.mockResolvedValue([{ name: "Main.st", path: "Main.st", is_dir: false }]);
+
+    await useStore.getState().saveFile(0);
+
+    // vplc:saved listener → refreshProjects (fileCount) + selectProject (list)
+    expect(invokeMock).toHaveBeenCalledWith("list_project_files");
+    expect(useCloudStore.getState().cloudFiles).toHaveLength(1);
   });
 });

@@ -200,6 +200,23 @@ describe("bridge in cloud mode", () => {
     expect(err.cmd).toBe("get_sample_templates");
   });
 
+  it("generates ST boilerplate for new_file without a local runtime", async () => {
+    setCloudEnv();
+    const bridge = await loadBridge(false);
+    await expect(
+      bridge.invoke("new_file", { name: "NewProgram", pouType: "program" }),
+    ).resolves.toBe("PROGRAM NewProgram\nVAR\n    \nEND_VAR\n\nEND_PROGRAM");
+    await expect(
+      bridge.invoke("new_file", { name: "Scale", pouType: "function" }),
+    ).resolves.toContain("FUNCTION Scale : INT");
+    await expect(
+      bridge.invoke("new_file", { name: "Counter", pouType: "function_block" }),
+    ).resolves.toContain("FUNCTION_BLOCK Counter");
+    await expect(
+      bridge.invoke("new_file", { name: "X", pouType: "weird" }),
+    ).rejects.toMatchObject({ code: "bad_request" });
+  });
+
   it("listen registers locally and never fires until an event is emitted", async () => {
     setCloudEnv();
     const bridge = await loadBridge(false);

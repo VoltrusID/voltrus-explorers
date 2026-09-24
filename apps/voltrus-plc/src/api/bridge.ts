@@ -43,7 +43,10 @@ function cloudBase(): string {
 function requireProjectId(cmd: string): string {
   const pid = localStorage.getItem("vplc_project");
   if (!pid) {
-    throw new BridgeError("unauthorized", cmd, "No active cloud project (vplc_project is not set)");
+    // Not a session problem (401): the user simply hasn't opened a cloud
+    // project yet — bad_request keeps it in the log instead of triggering
+    // the login dialog via the bridge error hook.
+    throw new BridgeError("bad_request", cmd, "No active cloud project — open one from the Cloud panel");
   }
   return pid;
 }
@@ -126,6 +129,23 @@ function toFileEntries(rows: CloudFileRow[], dir: string): FileEntry[] {
 
 async function cloudInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   switch (cmd) {
+    case "new_file": {
+      // Desktop generates ST boilerplate in Rust (commands::files::new_file);
+      // mirror the templates so New File works in the browser without a
+      // local runtime. Tauri passes camelCase, keep both key spellings.
+      const name = strArg(args, "name", cmd);
+      const pouType = typeof args?.pouType === "string" ? args.pouType : args?.pou_type;
+      switch (pouType) {
+        case "program":
+          return `PROGRAM ${name}\nVAR\n    \nEND_VAR\n\nEND_PROGRAM` as T;
+        case "function":
+          return `FUNCTION ${name} : INT\nVAR_INPUT\n    \nEND_VAR\n\n    ${name} := 0;\nEND_FUNCTION` as T;
+        case "function_block":
+          return `FUNCTION_BLOCK ${name}\nVAR_INPUT\n    \nEND_VAR\n\nEND_FUNCTION_BLOCK` as T;
+        default:
+          throw new BridgeError("bad_request", cmd, `Unknown POU type: ${String(pouType)}`);
+      }
+    }
     case "save_file": {
       const path = strArg(args, "path", cmd);
       const content = strArg(args, "content", cmd);
