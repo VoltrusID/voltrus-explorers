@@ -163,11 +163,11 @@ describe("TestsPanel", () => {
     expect(rows).toHaveLength(2);
 
     const passedIcon = rows[0].firstElementChild as HTMLElement;
-    expect(passedIcon.textContent).toBe("\u2713");
+    expect(passedIcon.querySelector("svg")).not.toBeNull();
     expect(passedIcon.style.color).toBe("rgb(16, 185, 129)");
 
     const failedIcon = rows[1].firstElementChild as HTMLElement;
-    expect(failedIcon.textContent).toBe("\u2717");
+    expect(failedIcon.querySelector("svg")).not.toBeNull();
     expect(failedIcon.style.color).toBe("var(--danger)");
   });
 

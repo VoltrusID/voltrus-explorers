@@ -598,8 +598,10 @@ html, body, #root {
 }
 
 .auth-logo {
-  font-size: 28px;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
   margin-bottom: 4px;
 }
 

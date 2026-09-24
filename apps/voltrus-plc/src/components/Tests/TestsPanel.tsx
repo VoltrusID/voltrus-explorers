@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { invoke, listen, type UnlistenFn } from "../../api/bridge";
+import { Check, X } from "@phosphor-icons/react";
 import { useStore } from "../../store";
 import type { ChatMessage, FileEntry } from "../../types";
 
@@ -34,9 +35,9 @@ export interface TestReportDto {
   suites: TestSuiteDto[];
 }
 
-const OUTCOME_GLYPHS: Record<ScenarioDto["outcome"], string> = {
-  passed: "\u2713",
-  failed: "\u2717",
+const OUTCOME_GLYPHS: Record<ScenarioDto["outcome"], ReactNode> = {
+  passed: <Check size={12} weight="bold" />,
+  failed: <X size={12} weight="bold" />,
   error: "!",
 };
 
@@ -395,7 +396,7 @@ export default function TestsPanel() {
                           color: a.passed ? "#10b981" : "var(--danger)",
                         }}
                       >
-                        {a.passed ? "\u2713" : "\u2717"}
+                        {a.passed ? <Check size={12} weight="bold" /> : <X size={12} weight="bold" />}
                       </span>
                       <span>{a.name}</span>
                       <span>

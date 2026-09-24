@@ -22,6 +22,7 @@ import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
 import { useMediaQuery } from "./lib/useMediaQuery";
+import { ArrowUUpLeft, ArrowUUpRight, CaretDown, CaretRight, GearSix, List, Moon, Sun } from "@phosphor-icons/react";
 import type { SampleTemplate } from "./types";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
 import { LD_SAMPLES } from "./constants/ld-samples";
@@ -203,7 +204,7 @@ export default function App() {
             aria-label="Open project panel"
             title="Project"
           >
-            ☰
+            <List size={16} />
           </button>
         )}
         <span className="toolbar-title">Voltrus PLC</span>
@@ -213,7 +214,7 @@ export default function App() {
           title="Toggle theme"
           aria-label="Toggle theme"
         >
-          {theme === "dark" ? "\u2600" : "\u263D"}
+          {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
         <button className="toolbar-btn" onClick={() => openProjectDir()}>
           Open Folder
@@ -231,8 +232,8 @@ export default function App() {
           Open
         </button>
         <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={undo} title="Undo (Cmd+Z)">↩</button>
-        <button className="toolbar-btn" onClick={redo} title="Redo (Cmd+Shift+Z)">↪</button>
+        <button className="toolbar-btn" onClick={undo} title="Undo (Cmd+Z)"><ArrowUUpLeft size={14} /></button>
+        <button className="toolbar-btn" onClick={redo} title="Redo (Cmd+Shift+Z)"><ArrowUUpRight size={14} /></button>
         <span className="toolbar-divider" />
         <button
           className="toolbar-btn primary"
@@ -303,7 +304,7 @@ export default function App() {
             aria-label="Open watch and tools panel"
             title="Watch / I/O / AI"
           >
-            ⚙
+            <GearSix size={16} />
           </button>
         )}
         {updateVersion && (
@@ -843,7 +844,9 @@ function ProjectSidebar() {
         onClick={() => setCloudOpen(!cloudOpen)}
       >
         Cloud
-        <span style={{ marginLeft: "auto", fontSize: 9 }}>{cloudOpen ? "\u25BE" : "\u25B8"}</span>
+        <span style={{ marginLeft: "auto", fontSize: 9, display: "inline-flex", alignItems: "center" }}>
+          {cloudOpen ? <CaretDown size={10} weight="bold" /> : <CaretRight size={10} weight="bold" />}
+        </span>
       </div>
       {cloudOpen && (
         <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>

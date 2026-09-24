@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Lightning } from "@phosphor-icons/react";
 import { bridgeMode } from "../../api/bridge";
 import { useCloudStore } from "../../store/cloud";
 
@@ -38,7 +39,7 @@ export default function AuthScreen() {
     <div className="auth-screen">
       <div className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-screen-title">
         <div className="auth-brand">
-          <span className="auth-logo">⚡</span>
+          <span className="auth-logo"><Lightning size={28} weight="fill" /></span>
           <h1 id="auth-screen-title">Voltrus PLC Cloud</h1>
           <p className="auth-tagline">IEC 61131-3 programming in your browser.</p>
         </div>
