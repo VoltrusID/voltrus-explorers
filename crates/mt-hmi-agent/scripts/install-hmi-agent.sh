@@ -1,13 +1,18 @@
 #!/bin/bash
 # install-hmi-agent.sh — Install mt-hmi-agent on RPi5/Linux
-# Usage: curl -sL https://dl.voltrus.id/hmi-agent/install.sh | sudo bash
+# Usage: curl -sL https://dl-voltrus-hmi.voltrus.id/agent/install.sh | sudo bash
 
 set -e
 
 BINARY_NAME="mt-hmi-agent"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_NAME="mt-hmi-agent"
-R2_URL="${R2_URL:-https://dl.voltrus.id/hmi-agent/latest/mt-hmi-agent}"
+case "$(uname -m)" in
+  aarch64|arm64) AGENT_ARCH="aarch64" ;;
+  x86_64|amd64)  AGENT_ARCH="x86_64" ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+R2_URL="${R2_URL:-https://dl-voltrus-hmi.voltrus.id/agent/latest/mt-hmi-agent-linux-${AGENT_ARCH}}"
 HMI_DIR="/var/lib/voltrus-hmi"
 
 echo "=== Installing mt-hmi-agent ==="
@@ -18,7 +23,7 @@ mkdir -p "${HMI_DIR}/versions"
 
 # Download binary
 echo "Downloading ${BINARY_NAME}..."
-curl -sL "${R2_URL}" -o "${INSTALL_DIR}/${BINARY_NAME}"
+curl -fsSL "${R2_URL}" -o "${INSTALL_DIR}/${BINARY_NAME}"
 chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
 # Create systemd service
