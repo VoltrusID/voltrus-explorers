@@ -331,8 +331,17 @@ build_windows() {
       break
     fi
   done
+  # Linux hosts: llvm-rc on PATH, or a versioned llvm-rc-NN (Debian/Ubuntu)
   if [[ -z "$llvm_rc" ]]; then
-    err "llvm-rc not found. Install with: brew install llvm"
+    llvm_rc="$(command -v llvm-rc 2>/dev/null || true)"
+  fi
+  if [[ -z "$llvm_rc" ]]; then
+    local llvm_rc_versioned
+    llvm_rc_versioned="$(compgen -c llvm-rc- 2>/dev/null | sort -V | tail -1 || true)"
+    [[ -n "$llvm_rc_versioned" ]] && llvm_rc="$(command -v "$llvm_rc_versioned" 2>/dev/null || true)"
+  fi
+  if [[ -z "$llvm_rc" ]]; then
+    err "llvm-rc not found. Install with: brew install llvm (macOS) or your distro's llvm package (Linux)"
     return 1
   fi
   ok "Using llvm-rc: $llvm_rc"
