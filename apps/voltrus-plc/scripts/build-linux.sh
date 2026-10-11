@@ -59,6 +59,8 @@ step()  { echo -e "\n${BLUE}━━━ $1 ━━━${NC}" >&2; }
 
 LINUX_OUT_DIR="$MONOREPO_DIR/target/linux-release"
 CARGO_CACHE="$MONOREPO_DIR/target/linux-cargo-cache"
+# target/ can be a (possibly dangling) symlink into a build cache
+if [[ -L "$MONOREPO_DIR/target" ]]; then mkdir -p "$(readlink -f "$MONOREPO_DIR/target")"; fi
 mkdir -p "$LINUX_OUT_DIR" "$CARGO_CACHE"
 
 # Tauri names bundles "<productName>_<version>_amd64.{AppImage,deb}"; the shared
@@ -92,7 +94,8 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
   # directory at the same absolute path so the symlink resolves in the container.
   EXTRA_MOUNTS=()
   if [[ -L "$MONOREPO_DIR/target" ]]; then
-    TARGET_REAL="$(cd "$MONOREPO_DIR/target" && pwd -P)"
+    TARGET_REAL="$(readlink -f "$MONOREPO_DIR/target")"
+    mkdir -p "$TARGET_REAL"
     EXTRA_MOUNTS+=(-v "$TARGET_REAL:$TARGET_REAL")
   fi
 
@@ -104,19 +107,26 @@ if [[ "$SKIP_BUILD" != "1" ]]; then
     -w /workspace \
     -e HOME=/root \
     -e CI=true \
+    -e npm_config_verify_deps_before_run=false \
     -e CARGO_HOME=/cargo-cache \
     -e APPIMAGE_EXTRACT_AND_RUN=1 \
     "$DOCKER_IMAGE" \
     bash -c "
       set -e
       export PATH=\"/cargo-cache/bin:\$PATH\"
-      cleanup() { chown -R $HOST_UID:$HOST_GID /workspace/target/release /workspace/apps/$APP_DIR_NAME/dist /cargo-cache 2>/dev/null || true; }
+      cleanup() {
+        chown -R $HOST_UID:$HOST_GID /workspace/target/release /cargo-cache 2>/dev/null || true
+        find /workspace/target/ -maxdepth 1 -user 0 -exec chown -h $HOST_UID:$HOST_GID {} + 2>/dev/null || true
+        find /workspace -path /workspace/target -prune -o -user 0 -exec chown -h $HOST_UID:$HOST_GID {} + 2>/dev/null || true
+      }
       trap cleanup EXIT
       # Reuse the host's node_modules when it is already a Linux x64 install
       # (a container pnpm install would fight over the store path).
       if [[ ! -d node_modules/.pnpm ]]; then pnpm install 2>&1 | tail -3; fi
       cd apps/$APP_DIR_NAME
-      pnpm tauri build --bundles appimage,deb 2>&1 | tail -25
+      # Call the tauri CLI directly: 'pnpm tauri' verifies deps first and, seeing
+      # a different store path, reinstalls the host's node_modules as root.
+      ./node_modules/.bin/tauri build --bundles appimage,deb 2>&1 | tail -25
     " >&2
 
   info "Collecting Linux artifacts..."
