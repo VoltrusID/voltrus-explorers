@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useStore } from "./store";
+import { useStore, CANVAS_W, CANVAS_H } from "./store";
 import { checkForUpdates, installUpdate } from "./updater";
 import { TagBrowser } from "./components/TagBrowser";
 import { AlarmConfig } from "./components/AlarmConfig";
@@ -10,10 +10,6 @@ import { LanguageManager } from "./components/LanguageManager";
 import { CanvasWidget } from "./components/CanvasWidget";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import type { HmiWidget, WidgetType } from "./types";
-
-/** Base canvas size (matches the HMI panel the export targets). */
-const CANVAS_W = 1024;
-const CANVAS_H = 600;
 
 const WIDGET_TYPES: { type: WidgetType; icon: string; label: string }[] = [
   { type: "gauge", icon: "○", label: "Gauge" },
@@ -107,7 +103,8 @@ export default function App() {
   const [showGrid, setShowGrid] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [dragOverWidgetId, setDragOverWidgetId] = useState<string | null>(null);
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  // URL of the Live Preview document (served by the `hmipreview` scheme).
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     widgets: false,
     templates: true,
@@ -199,6 +196,12 @@ export default function App() {
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // The live preview is modal: only Escape (close) applies — editing
+      // shortcuts must not delete/undo widgets hidden behind it.
+      if (previewSrc !== null) {
+        if (e.key === "Escape") setPreviewSrc(null);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
         useStore.getState().saveProject();
@@ -209,10 +212,6 @@ export default function App() {
         }
       }
       if (e.key === "Escape") {
-        if (previewHtml !== null) {
-          setPreviewHtml(null);
-          return;
-        }
         useStore.getState().selectWidget(null);
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
@@ -238,7 +237,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedWidgetId, previewHtml]);
+  }, [selectedWidgetId, previewSrc]);
 
   // Drag and drop from palette
   const handleDragStart = (e: React.DragEvent, type: WidgetType) => {
@@ -320,11 +319,13 @@ export default function App() {
     },
   });
 
-  // Live preview: render the exported runtime in an in-app sandboxed iframe.
+  // Live preview: the exported runtime in an in-app sandboxed iframe. It is
+  // served from the `hmipreview` scheme with its own CSP — a srcdoc iframe
+  // would inherit the app CSP, which blocks the runtime's inline scripts.
   const handleLivePreview = async () => {
     const s = useStore.getState();
     try {
-      const html = await invoke<string>("export_hmi", {
+      await invoke("prepare_preview", {
         request: {
           screens: s.screens,
           plcIp,
@@ -336,7 +337,8 @@ export default function App() {
           kioskMode: s.kioskMode,
         },
       });
-      setPreviewHtml(html);
+      // Unique query per open so the webview never reuses a stale document.
+      setPreviewSrc(`${convertFileSrc("index.html", "hmipreview")}?r=${Date.now()}`);
     } catch (e) {
       s.showToast("error", `Preview failed: ${String(e)}`);
     }
@@ -355,13 +357,15 @@ export default function App() {
           Voltrus HMI{isDirty ? <span className="dirty-dot" title="Unsaved changes" /> : null}
         </span>
         <button
-          className="toolbar-btn"
+          className="toolbar-btn icon"
           onClick={() => useStore.getState().setTheme(theme === "dark" ? "light" : "dark")}
+          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
         >
           {theme === "dark" ? "☀" : "☽"}
         </button>
         <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => useStore.getState().loadProject()}>
+        <button className="toolbar-btn" onClick={() => useStore.getState().loadProject()} title="Open Project">
           Open
         </button>
         <button
@@ -372,11 +376,15 @@ export default function App() {
           Save{isDirty ? " •" : ""}
         </button>
         <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => useStore.getState().addScreen()}>
+        <button className="toolbar-btn" onClick={() => useStore.getState().addScreen()} title="Add Screen">
           + Screen
         </button>
         <span className="toolbar-spacer" />
-        <button className="toolbar-btn primary" onClick={() => useStore.getState().exportHtml()}>
+        <button
+          className="toolbar-btn primary"
+          onClick={() => useStore.getState().exportHtml()}
+          title="Export a standalone HTML file"
+        >
           Export HTML
         </button>
         <button className="toolbar-btn" onClick={handleLivePreview} title="Live Preview">
@@ -388,7 +396,7 @@ export default function App() {
           disabled={checkingUpdate}
           title="Check for Updates"
         >
-          {checkingUpdate ? "…" : "Check for Updates"}
+          {checkingUpdate ? "Checking…" : "Check for Updates"}
         </button>
       </div>
 
@@ -404,12 +412,13 @@ export default function App() {
             {screens.length > 1 && (
               <span
                 className="screen-tab-close"
+                title={`Delete ${screen.name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   useStore.getState().deleteScreen(screen.id);
                 }}
               >
-                x
+                ×
               </span>
             )}
           </div>
@@ -532,7 +541,7 @@ export default function App() {
           {/* Canvas toolbar */}
           <div className="canvas-toolbar">
             <button className="canvas-toolbar-btn" onClick={zoomOut} title="Zoom Out">
-              -
+              −
             </button>
             <span className="canvas-toolbar-label">{Math.round(zoom * 100)}%</span>
             <button className="canvas-toolbar-btn" onClick={zoomIn} title="Zoom In">
@@ -621,19 +630,23 @@ export default function App() {
       </div>
 
       {/* Live preview modal */}
-      {previewHtml !== null && (
-        <div className="preview-modal" onClick={() => setPreviewHtml(null)}>
+      {previewSrc !== null && (
+        <div className="preview-modal" onClick={() => setPreviewSrc(null)}>
           <div className="preview-frame" onClick={(e) => e.stopPropagation()}>
             <div className="preview-toolbar">
               <span>Live Preview</span>
-              <button className="preview-close" onClick={() => setPreviewHtml(null)} title="Close (Esc)">
+              <button className="preview-close" onClick={() => setPreviewSrc(null)} title="Close (Esc)">
                 ×
               </button>
             </div>
             <iframe
               title="HMI Live Preview"
-              srcDoc={previewHtml}
-              sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+              src={previewSrc}
+              // allow-scripts ONLY — never add allow-same-origin. Tauri serves
+              // custom schemes (hmipreview) as a local origin; with
+              // same-origin the exported runtime could reach the app and its
+              // IPC. Pinned by src/previewSandbox.test.ts.
+              sandbox="allow-scripts"
             />
           </div>
         </div>

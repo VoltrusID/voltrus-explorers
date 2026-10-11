@@ -127,6 +127,45 @@ fn export_hmi(request: ExportRequest) -> Result<String, String> {
     export::build_export_html(&request)
 }
 
+// ---------------------------------------------------------------------------
+// Live Preview
+//
+// The exported runtime is one HTML file with inline <script> and inline event
+// handlers. A srcdoc/blob/data iframe inherits the app's CSP (script-src
+// 'self'), which blocks all of it in production builds. The preview is served
+// from its own URI scheme instead, with a response CSP scoped to the runtime;
+// the app CSP only gains `frame-src` for this scheme, and the iframe stays
+// sandboxed (allow-scripts, opaque origin — no access to the app or IPC).
+// ---------------------------------------------------------------------------
+
+pub const PREVIEW_SCHEME: &str = "hmipreview";
+
+/// CSP for the preview document: inline runtime script/styles, PLC + SCADA
+/// connections; nothing may load from elsewhere.
+pub const PREVIEW_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src http: https: ws: wss:; img-src data:";
+
+#[derive(Default)]
+struct PreviewDoc(std::sync::Mutex<String>);
+
+#[tauri::command]
+fn prepare_preview(
+    request: ExportRequest,
+    doc: tauri::State<'_, PreviewDoc>,
+) -> Result<(), String> {
+    let html = export::build_export_html(&request)?;
+    *doc.0.lock().map_err(|e| e.to_string())? = html;
+    Ok(())
+}
+
+fn preview_response(html: String) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Content-Security-Policy", PREVIEW_CSP)
+        .header("Cache-Control", "no-store")
+        .body(html.into_bytes())
+        .expect("static preview response headers are valid")
+}
+
 #[tauri::command]
 async fn deploy_to_esp32(ip: String, html: String) -> Result<String, String> {
     let client = reqwest::Client::builder()
@@ -186,8 +225,21 @@ fn load_project_data(path: String) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(PreviewDoc::default())
+        .register_uri_scheme_protocol(PREVIEW_SCHEME, |ctx, _request| {
+            use tauri::Manager;
+            let html = ctx
+                .app_handle()
+                .state::<PreviewDoc>()
+                .0
+                .lock()
+                .map(|h| h.clone())
+                .unwrap_or_default();
+            preview_response(html)
+        })
         .invoke_handler(tauri::generate_handler![
             export_hmi,
+            prepare_preview,
             deploy_to_esp32,
             deploy_to_rpi5,
             save_project_data,
@@ -216,4 +268,30 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_response_carries_its_own_csp() {
+        let resp = preview_response("<p>x</p>".into());
+        let csp = resp.headers().get("Content-Security-Policy").unwrap().to_str().unwrap();
+        assert_eq!(csp, PREVIEW_CSP);
+        // The runtime needs inline script; it must not be able to load
+        // anything else.
+        assert!(csp.contains("script-src 'unsafe-inline'"));
+        assert!(csp.starts_with("default-src 'none'"));
+        assert_eq!(resp.headers().get("Content-Type").unwrap(), "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn app_csp_allows_framing_only_the_preview_scheme() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = conf["app"]["security"]["csp"].as_str().unwrap();
+        assert!(csp.contains("frame-src hmipreview: http://hmipreview.localhost"));
+        assert!(csp.contains("script-src 'self';"), "app script-src must stay strict");
+    }
 }

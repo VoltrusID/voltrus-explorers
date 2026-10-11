@@ -71,14 +71,13 @@ export function PropertiesPanel() {
             />
           </div>
           <button
-            className="prop-btn"
-            style={{ width: "100%", marginTop: 4 }}
+            className="prop-btn block"
             disabled={!rpi5Ip}
             onClick={() => useStore.getState().deployToRpi5().catch(() => { /* toast shown in store */ })}
           >
             Deploy to RPi5
           </button>
-          <div className="prop-row" style={{ marginTop: 8 }}>
+          <div className="prop-row" style={{ marginTop: 6 }}>
             <span className="prop-label">ESP32 IP</span>
             <input
               className="prop-input"
@@ -88,8 +87,7 @@ export function PropertiesPanel() {
             />
           </div>
           <button
-            className="prop-btn"
-            style={{ width: "100%", marginTop: 4 }}
+            className="prop-btn block"
             disabled={!esp32Ip}
             onClick={() => useStore.getState().deployToEsp32(esp32Ip).catch(() => { /* toast shown in store */ })}
           >
@@ -98,14 +96,14 @@ export function PropertiesPanel() {
         </div>
         <div className="prop-group">
           <div className="prop-group-title">Export</div>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", cursor: "pointer" }}>
+          <label className="prop-check">
             <input type="checkbox" checked={kioskMode} onChange={(e) => useStore.getState().setKioskMode(e.target.checked)} />
             Kiosk Mode
           </label>
         </div>
         <div className="prop-group">
           <div className="prop-group-title">Statistics</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          <div className="prop-stat">
             Widgets: {screen.widgets.length}
           </div>
         </div>
@@ -120,7 +118,7 @@ export function PropertiesPanel() {
         <div className="prop-group-title">Identity</div>
         <div className="prop-row">
           <span className="prop-label">Type</span>
-          <span style={{ fontSize: 12, textTransform: "capitalize" }}>{widget.type}</span>
+          <span className="prop-value">{widget.type}</span>
         </div>
         <div className="prop-row">
           <span className="prop-label">Label</span>
@@ -141,7 +139,7 @@ export function PropertiesPanel() {
             value={Math.round(widget.x)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { x: Number(e.target.value) })}
           />
-          <span className="prop-label">Y</span>
+          <span className="prop-label inline">Y</span>
           <input
             className="prop-input-sm"
             type="number"
@@ -157,7 +155,7 @@ export function PropertiesPanel() {
             value={Math.round(widget.width)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { width: Number(e.target.value) })}
           />
-          <span className="prop-label">Height</span>
+          <span className="prop-label inline">Height</span>
           <input
             className="prop-input-sm"
             type="number"
@@ -212,7 +210,7 @@ export function PropertiesPanel() {
               value={widget.min}
               onChange={(e) => useStore.getState().updateWidget(widget.id, { min: Number(e.target.value) })}
             />
-            <span className="prop-label">Max</span>
+            <span className="prop-label inline">Max</span>
             <input
               className="prop-input-sm"
               type="number"

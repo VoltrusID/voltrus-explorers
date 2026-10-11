@@ -18,6 +18,20 @@ fn js_num(v: f64, fallback: f64) -> String {
     }
 }
 
+/// Number format mode for live values, shared with the designer preview
+/// (`formatValue` in WidgetPreviews.tsx): REAL/LREAL/FLOAT show one decimal,
+/// the listed integer types show whole numbers, untyped or unknown types show
+/// integers as-is and fractions with one decimal. Consumed by `fmtNum` in the runtime.
+pub(crate) fn num_mode(data_type: Option<&str>) -> &'static str {
+    match data_type.unwrap_or("").to_ascii_uppercase().as_str() {
+        "REAL" | "LREAL" | "FLOAT" => "real",
+        "BOOL" | "BYTE" | "SINT" | "USINT" | "INT" | "UINT" | "DINT" | "UDINT" | "LINT"
+        | "ULINT" | "WORD" | "DWORD" | "LWORD" | "TIME" => "int",
+        // Untyped or unknown (e.g. FLOAT64): never round away a fraction.
+        _ => "auto",
+    }
+}
+
 /// Generate HTML for a gauge widget using inline SVG with semicircular arc.
 pub fn render_gauge_html(widget: &HmiWidget, var_access: &str) -> String {
     let cx = 100.0;
@@ -105,9 +119,9 @@ pub fn render_gauge_js(widget: &HmiWidget) -> String {
     format!(
         r#"bindings["{var}"] = bindings["{var}"] || [];
 bindings["{var}"].push(function(v) {{
-    var el = document.querySelector('[data-bind="{var}"] #gauge-val-{id}');
+    var el = document.getElementById('gauge-val-{id}');
     var fill = document.getElementById('gauge-fill-{id}');
-    if (el) el.textContent = typeof v === 'number' ? v.toFixed(1) : v;
+    if (el) el.textContent = fmtNum(v, '{mode}');
     if (fill && typeof v === 'number') {{
         var range = ({max} - {min}) || 1;
         var pct = Math.max(0, Math.min(1, (v - {min}) / range));
@@ -123,6 +137,7 @@ bindings["{var}"].push(function(v) {{
         min = min,
         max = max,
         dash_total = dash_total,
+        mode = num_mode(widget.data_type.as_deref()),
     )
 }
 
@@ -135,7 +150,7 @@ pub fn render_chart_html(widget: &HmiWidget, var_access: &str) -> String {
         r#"<div class="widget chart" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}background:#2a2a3a;border:1px solid #444;border-radius:4px;display:flex;flex-direction:column;align-items:center;padding:4px" {var}>
     <span style="font-size:11px;color:#999;flex-shrink:0" data-i18n="{label_attr}">{label}</span>
     <svg id="chart-svg-{id}" viewBox="0 0 200 80" preserveAspectRatio="none" style="width:100%;flex:1;min-height:0">
-        <polyline id="chart-line-{id}" fill="none" stroke="{color}" stroke-width="1.5" points=""/>
+        <polyline id="chart-line-{id}" fill="none" stroke="{color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" points=""/>
     </svg>
 </div>"#,
         x = widget.x,
@@ -152,18 +167,20 @@ pub fn render_chart_html(widget: &HmiWidget, var_access: &str) -> String {
 }
 
 /// Generate JS binding for chart value updates (keeps last 50 values).
+/// The buffer is per chart widget: two charts on the same variable must not
+/// both append to one shared buffer (every sample would land twice).
 pub fn render_chart_js(widget: &HmiWidget) -> String {
     let var = js_escape(&widget.variable_name);
     let id = safe_id(&widget.id);
 
     format!(
-        r#"if (!chartData["{var}"]) chartData["{var}"] = [];
+        r#"chartData["{id}"] = [];
 bindings["{var}"] = bindings["{var}"] || [];
 bindings["{var}"].push(function(v) {{
     if (typeof v !== 'number') return;
-    chartData["{var}"].push(v);
-    if (chartData["{var}"].length > 50) chartData["{var}"].shift();
-    var data = chartData["{var}"];
+    var data = chartData["{id}"];
+    data.push(v);
+    if (data.length > 50) data.shift();
     var line = document.getElementById('chart-line-{id}');
     if (!line || data.length < 2) return;
     var minV = Math.min.apply(null, data);
@@ -188,10 +205,10 @@ pub fn render_indicator_html(widget: &HmiWidget, var_access: &str) -> String {
     let color = safe_color(&widget.color, "#22c55e");
     let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
     format!(
-        r#"<div class="widget indicator" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;flex-direction:column;align-items:center;justify-content:center" {var}>
-    <div class="indicator-light" id="ind-{id}" style="width:60%;aspect-ratio:1;border-radius:50%;background:#333;border:2px solid {color};transition:all 0.3s;box-shadow:none"></div>
+        r##"<div class="widget indicator" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;flex-direction:column;align-items:center;justify-content:center" {var}>
+    <svg class="indicator-light" viewBox="0 0 60 60" style="width:60%;max-height:60%;overflow:visible"><circle id="ind-{id}" cx="30" cy="30" r="27" fill="#333" stroke="{color}" stroke-width="2" style="transition:fill 0.3s,filter 0.3s"/></svg>
     <span style="font-size:{fs}px;color:#ccc;margin-top:4px" data-i18n="{label_attr}">{label}</span>
-</div>"#,
+</div>"##,
         x = widget.x,
         y = widget.y,
         w = widget.width,
@@ -218,8 +235,8 @@ bindings["{var}"].push(function(v) {{
     var el = document.getElementById('ind-{id}');
     if (el) {{
         var on = v === true || v === 1 || v === '1' || v === 'true';
-        el.style.background = on ? '{color}' : '#333';
-        el.style.boxShadow = on ? '0 0 12px 4px {color}80' : 'none';
+        el.setAttribute('fill', on ? '{color}' : '#333');
+        el.style.filter = on ? 'drop-shadow(0 0 6px {color})' : 'none';
     }}
 }});"#,
         var = var,
@@ -270,10 +287,10 @@ pub fn render_slider_html(widget: &HmiWidget, var_access: &str) -> String {
     format!(
         r#"<div class="widget slider" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;background:#2a2a3a;border-radius:4px" {var}>
     <span style="font-size:11px;color:#999;margin-bottom:4px" data-i18n="{label_attr}">{label}</span>
-    <input type="range" min="{min}" max="{max}" step="any" value="{min}"
+    <input type="range" id="sl-in-{id}" min="{min}" max="{max}" step="any" value="{min}"
            style="width:90%;accent-color:{color}"
            oninput="sendForceVar('{vname}',{type_code},this.value)">
-    <span class="widget-value" style="font-size:{fs}px;color:{color}">--</span>
+    <span class="widget-value" id="sl-val-{id}" style="font-size:{fs}px;color:{color}">--</span>
 </div>"#,
         x = widget.x,
         y = widget.y,
@@ -289,19 +306,39 @@ pub fn render_slider_html(widget: &HmiWidget, var_access: &str) -> String {
         vname = attr_js(&widget.variable_name),
         type_code = type_code,
         z = z_index_style,
+        id = safe_id(&widget.id),
     )
 }
 
 /// Generate JS binding for slider value display.
+/// Every slider widget registers its own binding against its own element ids,
+/// so all sliders bound to one variable follow the PLC.
 pub fn render_slider_js(widget: &HmiWidget) -> String {
     let var = js_escape(&widget.variable_name);
+    let id = safe_id(&widget.id);
     format!(
-        r#"bindings["{var}"] = bindings["{var}"] || [];
-bindings["{var}"].push(function(v) {{
-    var el = document.querySelector('[data-bind="{var}"] .widget-value');
-    if (el) el.textContent = typeof v === 'number' ? v.toFixed(1) : v;
-}});"#,
+        r#"(function() {{
+    var input = document.getElementById('sl-in-{id}');
+    var label = document.getElementById('sl-val-{id}');
+    // The thumb follows the PLC except during an operator drag. A focus check
+    // is not enough: the range keeps focus after the first touch.
+    var dragging = false;
+    var stopDrag = function() {{ dragging = false; }};
+    if (input) {{
+        input.addEventListener('pointerdown', function() {{ dragging = true; }});
+        input.addEventListener('change', stopDrag);
+        window.addEventListener('pointerup', stopDrag);
+        window.addEventListener('pointercancel', stopDrag);
+    }}
+    bindings["{var}"] = bindings["{var}"] || [];
+    bindings["{var}"].push(function(v) {{
+        if (label) label.textContent = fmtNum(v, '{mode}');
+        if (input && typeof v === 'number' && !dragging) input.value = v;
+    }});
+}})();"#,
         var = var,
+        id = id,
+        mode = num_mode(widget.data_type.as_deref()),
     )
 }
 
@@ -316,7 +353,7 @@ pub fn render_text_html(widget: &HmiWidget, var_access: &str) -> String {
     let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
     format!(
         r#"<div class="widget text" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;align-items:center;justify-content:center" {var}>
-    <span class="widget-value" style="font-size:{fs}px;color:{color}" data-i18n="{label_attr}">{text}</span>
+    <span class="widget-value" id="txt-{id}" style="font-size:{fs}px;color:{color}" data-i18n="{label_attr}">{text}</span>
 </div>"#,
         x = widget.x,
         y = widget.y,
@@ -328,18 +365,22 @@ pub fn render_text_html(widget: &HmiWidget, var_access: &str) -> String {
         text = display_text,
         label_attr = html_escape(&widget.label),
         z = z_index_style,
+        id = safe_id(&widget.id),
     )
 }
 
 /// Generate JS binding for text value updates.
 pub fn render_text_js(widget: &HmiWidget) -> String {
     let var = js_escape(&widget.variable_name);
+    let id = safe_id(&widget.id);
     format!(
         r#"bindings["{var}"] = bindings["{var}"] || [];
 bindings["{var}"].push(function(v) {{
-    var el = document.querySelector('[data-bind="{var}"] .widget-value');
-    if (el) el.textContent = typeof v === 'number' ? v.toFixed(1) : String(v);
+    var el = document.getElementById('txt-{id}');
+    if (el) el.textContent = fmtNum(v, '{mode}');
 }});"#,
         var = var,
+        id = id,
+        mode = num_mode(widget.data_type.as_deref()),
     )
 }

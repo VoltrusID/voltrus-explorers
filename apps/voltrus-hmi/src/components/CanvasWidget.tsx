@@ -10,6 +10,9 @@ import {
   TextPreview,
 } from "./WidgetPreviews";
 
+/** Screen-pixel distance before a press becomes a move/resize gesture. */
+const DRAG_THRESHOLD_PX = 3;
+
 export function CanvasWidget({
   widget,
   selected,
@@ -27,7 +30,8 @@ export function CanvasWidget({
   widget: HmiWidget;
   selected: boolean;
   onSelect: () => void;
-  /** Called once at drag/resize start — pushes the single undo checkpoint. */
+  /** Called once when a drag/resize actually starts moving — pushes the
+   *  single undo checkpoint. */
   onDragStart: () => void;
   onMove: (x: number, y: number) => void;
   onResize: (w: number, h: number) => void;
@@ -68,8 +72,10 @@ export function CanvasWidget({
       e.stopPropagation();
       e.preventDefault();
       onSelect();
-      // One checkpoint per gesture; the per-mousemove updates skip the stack.
-      onDragStart();
+      // One checkpoint per gesture, taken on the first real movement — a
+      // plain click to select must not push undo history or mark the
+      // project dirty. Per-mousemove updates skip the stack.
+      let checkpointed = false;
       dragState.current = {
         type,
         handle,
@@ -83,8 +89,17 @@ export function CanvasWidget({
 
       const handleMouseMove = (e: MouseEvent) => {
         if (!dragState.current) return;
-        const dx = (e.clientX - dragState.current.startX) / zoom;
-        const dy = (e.clientY - dragState.current.startY) / zoom;
+        const sx = e.clientX - dragState.current.startX;
+        const sy = e.clientY - dragState.current.startY;
+        if (!checkpointed) {
+          // Ignore click jitter: a gesture starts only after the pointer has
+          // moved a few screen pixels.
+          if (Math.hypot(sx, sy) < DRAG_THRESHOLD_PX) return;
+          checkpointed = true;
+          onDragStart();
+        }
+        const dx = sx / zoom;
+        const dy = sy / zoom;
 
         if (dragState.current.type === "move") {
           onMove(snap(dragState.current.origX + dx), snap(dragState.current.origY + dy));
@@ -128,7 +143,7 @@ export function CanvasWidget({
       case "indicator":
         return <IndicatorPreview widget={widget} liveValue={liveValue} />;
       case "button":
-        return <ButtonPreview widget={widget} liveValue={liveValue} />;
+        return <ButtonPreview widget={widget} />;
       case "slider":
         return <SliderPreview widget={widget} liveValue={liveValue} />;
       case "chart":
@@ -160,11 +175,6 @@ export function CanvasWidget({
 
       {/* Binding status dot */}
       <div className={`widget-binding-dot ${widget.variableName ? "bound" : "unbound"}`} title={widget.variableName || "Not bound"} />
-
-      {/* Variable name label at bottom */}
-      {widget.variableName && !["gauge", "indicator", "slider", "chart", "text"].includes(widget.type) && (
-        <span className="widget-var-label">{widget.variableName}</span>
-      )}
 
       {/* Resize handles */}
       {selected &&

@@ -162,14 +162,19 @@ export function LanguageManager() {
               padding: "3px 6px",
               border: "1px solid var(--border)",
               borderRadius: 4,
-              background: "#1e1e2e",
+              background: "var(--input-bg)",
               color: "var(--text)",
               fontSize: 11,
               outline: "none",
             }}
           >
-            {langCodes.length === 0 && (
-              <option value="">No languages</option>
+            {/* The default may not have a translation column yet (e.g. "en"
+                before any language is added) — still show it truthfully
+                instead of letting the select display a different language. */}
+            {!langCodes.includes(defaultLanguage) && (
+              <option value={defaultLanguage}>
+                {langLabel(defaultLanguage)} ({defaultLanguage})
+              </option>
             )}
             {langCodes.map((code) => (
               <option key={code} value={code}>
@@ -248,10 +253,11 @@ export function LanguageManager() {
               autoFocus
               style={{
                 flex: 1,
+                minWidth: 0,
                 padding: "3px 6px",
                 border: "1px solid var(--accent)",
                 borderRadius: 4,
-                background: "#1e1e2e",
+                background: "var(--input-bg)",
                 color: "var(--text)",
                 fontSize: 11,
                 outline: "none",
@@ -378,7 +384,7 @@ export function LanguageManager() {
                       fontSize: 10,
                       position: "sticky",
                       top: 0,
-                      background: "#1e1e2e",
+                      background: "var(--card)",
                       zIndex: 1,
                     }}
                   >
@@ -396,7 +402,7 @@ export function LanguageManager() {
                         fontSize: 10,
                         position: "sticky",
                         top: 0,
-                        background: "#1e1e2e",
+                        background: "var(--card)",
                         zIndex: 1,
                         minWidth: 80,
                       }}
@@ -452,7 +458,7 @@ export function LanguageManager() {
                                   ? "1px solid var(--accent)"
                                   : "1px solid var(--border)",
                               borderRadius: 3,
-                              background: "#2a2a3a",
+                              background: "var(--input-bg)",
                               color: currentValue
                                 ? "var(--text)"
                                 : "var(--text-muted)",

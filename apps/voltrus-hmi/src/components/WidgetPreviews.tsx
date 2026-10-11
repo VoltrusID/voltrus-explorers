@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+import { useStore } from "../store";
 import type { HmiWidget } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -23,16 +25,42 @@ export function isOn(v: unknown): boolean {
   return v === true || v === 1 || v === "1" || v === "true";
 }
 
-function formatValue(v: unknown, dataType?: string): string {
-  if (typeof v === "number") {
-    return dataType === "REAL" || dataType === "FLOAT" ? v.toFixed(1) : String(Math.round(v));
-  }
-  return String(v);
+const REAL_TYPES = new Set(["REAL", "LREAL", "FLOAT"]);
+const INT_TYPES = new Set([
+  "BOOL", "BYTE", "SINT", "USINT", "INT", "UINT", "DINT", "UDINT",
+  "LINT", "ULINT", "WORD", "DWORD", "LWORD", "TIME",
+]);
+
+/** Same rules as the exported runtime's fmtNum (export/widgets.rs num_mode):
+ *  REAL/LREAL/FLOAT -> one decimal, the listed integer types -> whole number,
+ *  untyped or unknown types (e.g. FLOAT64) -> integers as-is and fractions
+ *  with one decimal. */
+export function formatValue(v: unknown, dataType?: string): string {
+  if (typeof v !== "number") return String(v);
+  const t = (dataType ?? "").toUpperCase();
+  if (REAL_TYPES.has(t)) return v.toFixed(1);
+  if (INT_TYPES.has(t)) return String(Math.round(v));
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
-// Rolling chart buffer per bound variable (designer-side trend preview).
-const chartBuffers = new Map<string, number[]>();
+// Rolling chart buffer per chart widget (designer-side trend preview).
+export const chartBuffers = new Map<string, number[]>();
+const lastFrame = new Map<string, unknown>();
 const CHART_MAX_POINTS = 50;
+
+function polylinePoints(buf: number[]): string {
+  if (buf.length < 2) return "";
+  const minV = Math.min(...buf);
+  const maxV = Math.max(...buf);
+  const range = maxV - minV || 1;
+  return buf
+    .map((v, i) => {
+      const px = (i / (buf.length - 1)) * 200;
+      const py = 80 - ((v - minV) / range) * 76 - 2;
+      return `${px.toFixed(1)},${py.toFixed(1)}`;
+    })
+    .join(" ");
+}
 
 export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
   const { min, max, label, variableName, dataType } = widget;
@@ -40,25 +68,22 @@ export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveVal
   const fraction = hasValue
     ? Math.max(0, Math.min(1, ((liveValue as number) - min) / (max - min || 1)))
     : 0;
-  const arcEndAngle = fraction * 180; // 0 to 180 degrees
+  const arcEndAngle = 180 - fraction * 180; // sweep left (180°) -> right (0°)
 
-  const startPt = arcPoint(0);   // right end (angle 0)
+  const startPt = arcPoint(180);
   const endPt = arcPoint(arcEndAngle);
-  const largeArc = arcEndAngle > 90 ? 1 : 0;
 
   const color = gaugeColor(fraction);
 
   return (
     <div className="widget-preview-gauge">
       <svg viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet">
-        {/* Label above arc */}
-        <text x="50" y="12" textAnchor="middle" fill="#888" fontSize="7" fontFamily="sans-serif">{label}</text>
         {/* Background arc */}
-        <path d="M10,55 A40,40 0 0,1 90,55" fill="none" stroke="#333" strokeWidth="6" strokeLinecap="round" />
+        <path d="M10,55 A40,40 0 0,1 90,55" fill="none" stroke="#444" strokeWidth="6" strokeLinecap="round" />
         {/* Value arc */}
         {fraction > 0 && (
           <path
-            d={`M${startPt.x},${startPt.y} A40,40 0 ${largeArc},1 ${endPt.x},${endPt.y}`}
+            d={`M${startPt.x},${startPt.y} A40,40 0 0,1 ${endPt.x},${endPt.y}`}
             fill="none"
             stroke={color}
             strokeWidth="6"
@@ -66,49 +91,49 @@ export function GaugePreview({ widget, liveValue }: { widget: HmiWidget; liveVal
           />
         )}
         {/* Value text */}
-        <text x="50" y="52" textAnchor="middle" fill="white" fontSize="13" fontWeight="bold" fontFamily="sans-serif">
+        <text x="50" y="48" textAnchor="middle" fill={widget.color} fontSize="14" fontWeight="bold" fontFamily="sans-serif">
           {hasValue ? formatValue(liveValue, dataType) : "--"}
         </text>
       </svg>
-      {variableName && <span className="widget-var-label">{variableName}</span>}
+      <span className="gauge-label">{label}</span>
+      {variableName && <span className="widget-var-label inline">{variableName}</span>}
     </div>
   );
 }
 
 export function IndicatorPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  // Bound without a value yet, or unbound: show OFF (never a fake ON).
+  // Bound without a value yet, or unbound: show OFF (never a fake ON) —
+  // mirrors the runtime: dark fill + colored ring, filled + glow when ON.
   const active = liveValue !== undefined ? isOn(liveValue) : false;
-  const fillColor = active ? "#4ade80" : "#666";
-  const circleColor = active ? "#4ade80" : widget.color;
   return (
-    <div className="widget-preview-indicator" style={{ color: circleColor }}>
-      <svg viewBox="0 0 60 60" width="70%" style={{ maxHeight: "65%" }}>
+    <div className="widget-preview-indicator">
+      <svg viewBox="0 0 60 60" width="60%" style={{ maxHeight: "60%", overflow: "visible" }}>
         <circle
-          cx="30" cy="30" r="22"
-          fill={fillColor}
+          cx="30" cy="30" r="27"
+          fill={active ? widget.color : "#333"}
           stroke={widget.color}
           strokeWidth="2"
+          style={active ? { filter: `drop-shadow(0 0 6px ${widget.color})` } : undefined}
         />
       </svg>
-      <span className="indicator-label">{widget.label}</span>
-      {widget.variableName && <span className="widget-var-label">{widget.variableName}</span>}
+      <span className="indicator-label" style={{ fontSize: widget.fontSize }}>{widget.label}</span>
+      {widget.variableName && <span className="widget-var-label inline">{widget.variableName}</span>}
     </div>
   );
 }
 
-export function ButtonPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const isLit = liveValue !== undefined ? isOn(liveValue) : false;
-  const bg = isLit ? widget.color : "#3b82f6";
+export function ButtonPreview({ widget }: { widget: HmiWidget }) {
+  // Same look as the exported runtime button (dark fill, colored border/text).
   return (
-    <div className="widget-preview-button" style={{ background: bg, borderRadius: 6 }}>
-      <span className="button-label" style={{ fontSize: widget.fontSize, color: "#fff" }}>{widget.label}</span>
+    <div className="widget-preview-button" style={{ color: widget.color }}>
+      <span className="button-label" style={{ fontSize: widget.fontSize }}>{widget.label}</span>
       {widget.variableName && <span className="button-var">{widget.variableName}</span>}
     </div>
   );
 }
 
 export function SliderPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const { min, max, color, label, variableName, dataType } = widget;
+  const { min, max, color, label, variableName, dataType, fontSize } = widget;
   const hasValue = liveValue !== undefined && typeof liveValue === "number";
   const raw = Number(liveValue);
   const fraction = hasValue
@@ -116,76 +141,99 @@ export function SliderPreview({ widget, liveValue }: { widget: HmiWidget; liveVa
     : 0;
   return (
     <div className="widget-preview-slider">
-      <svg viewBox="0 0 100 20" preserveAspectRatio="xMidYMid meet">
+      <span className="slider-label">{label}</span>
+      <svg viewBox="0 0 100 12" preserveAspectRatio="none" style={{ width: "90%", height: 12 }}>
         {/* Track */}
-        <line x1="5" y1="10" x2="95" y2="10" stroke="#444" strokeWidth="3" strokeLinecap="round" />
+        <line x1="5" y1="6" x2="95" y2="6" stroke="#555" strokeWidth="3" strokeLinecap="round" />
         {/* Filled portion */}
-        <line x1="5" y1="10" x2={5 + fraction * 90} y2="10" stroke={color} strokeWidth="3" strokeLinecap="round" />
-        {/* Thumb */}
-        <circle cx={5 + fraction * 90} cy="10" r="5" fill="#fff" stroke={color} strokeWidth="1.5" />
+        <line x1="5" y1="6" x2={5 + fraction * 90} y2="6" stroke={color} strokeWidth="3" strokeLinecap="round" />
       </svg>
-      <span className="slider-value">{hasValue ? formatValue(liveValue, dataType) : "--"}</span>
-      {variableName && <span className="widget-var-label">{variableName}</span>}
+      <span className="slider-value" style={{ fontSize, color }}>
+        {hasValue ? formatValue(liveValue, dataType) : "--"}
+      </span>
+      {variableName && <span className="widget-var-label inline">{variableName}</span>}
     </div>
   );
 }
 
-export function ChartPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
-  const { label, variableName, color } = widget;
+export function ChartPreview({ widget }: { widget: HmiWidget; liveValue?: unknown }) {
+  const { id, label, variableName, color } = widget;
+  const [points, setPoints] = useState("");
+  const prevVariable = useRef<string | null>(null);
+  // Every PLC frame replaces plcVariables, so this changes per frame even when
+  // the value does not — constant signals still advance the trend, like the
+  // runtime chart.
+  const frame = useStore((s) => (variableName ? s.plcVariables : null));
 
-  let points = "";
-  if (variableName && typeof liveValue === "number") {
-    const buf = chartBuffers.get(variableName) ?? [];
-    buf.push(liveValue);
-    if (buf.length > CHART_MAX_POINTS) buf.shift();
-    chartBuffers.set(variableName, buf);
-
-    if (buf.length >= 2) {
-      const minV = Math.min(...buf);
-      const maxV = Math.max(...buf);
-      const range = maxV - minV || 1;
-      points = buf
-        .map((v, i) => {
-          const px = 5 + (i / (buf.length - 1)) * 90;
-          const py = 45 - ((v - minV) / range) * 38;
-          return `${px.toFixed(1)},${py.toFixed(1)}`;
-        })
-        .join(" ");
+  useEffect(() => {
+    // Rebinding starts a fresh trend; reset before appending so the first
+    // sample for the new variable is kept.
+    if (prevVariable.current !== null && prevVariable.current !== variableName) {
+      chartBuffers.delete(id);
+      lastFrame.delete(id);
     }
-  }
+    prevVariable.current = variableName;
+
+    const buf = chartBuffers.get(id) ?? [];
+    // One sample per frame: re-renders, remounts (screen switches) and
+    // StrictMode effect replays must not append the same frame twice.
+    if (variableName && frame && lastFrame.get(id) !== frame) {
+      lastFrame.set(id, frame);
+      const v = frame.find((x) => x.name === variableName)?.value;
+      if (typeof v === "number") {
+        buf.push(v);
+        if (buf.length > CHART_MAX_POINTS) buf.shift();
+        chartBuffers.set(id, buf);
+      }
+    }
+    setPoints(polylinePoints(buf));
+  }, [id, variableName, frame]);
+
+  // Drop the buffer when the widget is deleted (not when its screen is merely
+  // switched away — the widget still exists then).
+  useEffect(
+    () => () => {
+      const exists = useStore
+        .getState()
+        .screens.some((sc) => sc.widgets.some((w) => w.id === id));
+      if (!exists) {
+        chartBuffers.delete(id);
+        lastFrame.delete(id);
+      }
+    },
+    [id]
+  );
 
   return (
     <div className="widget-preview-chart">
-      <svg viewBox="0 0 100 50" preserveAspectRatio="xMidYMid meet">
-        {/* Grid lines */}
-        <line x1="5" y1="5" x2="5" y2="45" stroke="#333" strokeWidth="0.3" />
-        <line x1="5" y1="45" x2="95" y2="45" stroke="#333" strokeWidth="0.3" />
-        <line x1="5" y1="25" x2="95" y2="25" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
-        <line x1="35" y1="5" x2="35" y2="45" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
-        <line x1="65" y1="5" x2="65" y2="45" stroke="#333" strokeWidth="0.3" strokeDasharray="2,2" />
-        {/* Trend line — real data once values stream in */}
+      <span className="chart-label">{label}</span>
+      <div className="chart-plot">
         {points ? (
-          <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+          <svg viewBox="0 0 200 80" preserveAspectRatio="none">
+            <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          </svg>
         ) : (
-          <text x="50" y="30" textAnchor="middle" fill="#555" fontSize="6" fontFamily="sans-serif">
-            {variableName ? "waiting for data" : "unbound"}
-          </text>
+          <span className="chart-empty">{variableName ? "Waiting for data" : "Not bound"}</span>
         )}
-        {/* Label */}
-        <text x="50" y="8" textAnchor="middle" fill="#888" fontSize="6" fontFamily="sans-serif">{label}</text>
-      </svg>
-      {variableName && <span className="widget-var-label">{variableName}</span>}
+      </div>
+      {variableName && <span className="widget-var-label inline">{variableName}</span>}
     </div>
   );
 }
 
 export function TextPreview({ widget, liveValue }: { widget: HmiWidget; liveValue?: unknown }) {
   const { label, variableName, color, fontSize } = widget;
-  const displayValue = liveValue !== undefined ? String(liveValue) : (variableName || label);
+  // Matches the runtime: unbound text shows its label, bound text shows the
+  // value ("--" until the first frame arrives).
+  const displayValue = !variableName
+    ? label
+    : liveValue !== undefined
+      ? formatValue(liveValue, widget.dataType)
+      : "--";
   return (
     <div className="widget-preview-text">
-      <span style={{ fontSize, color }}>{displayValue}</span>
-      {variableName && <span style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2 }}>{variableName}</span>}
+      <span style={{ fontSize, color, lineHeight: 1.2 }}>{displayValue}</span>
+      {variableName && <span className="widget-var-label inline">{variableName}</span>}
     </div>
   );
 }

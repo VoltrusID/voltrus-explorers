@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useStore, _resetUndoHistory } from "./store";
+import { useStore, _resetUndoHistory, freeSpotOffset } from "./store";
 
 describe("Store - Widget CRUD", () => {
   beforeEach(() => {
@@ -139,5 +139,65 @@ describe("Store - Undo/Redo", () => {
 
     useStore.getState().addWidget("button", 20, 20);
     expect(useStore.getState().canRedo).toBe(false);
+  });
+});
+
+describe("Template placement", () => {
+  const rect = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
+  const overlaps = (a: ReturnType<typeof rect>, b: ReturnType<typeof rect>) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+  it("keeps template coordinates on an empty screen", () => {
+    expect(freeSpotOffset([], [rect(20, 20, 100, 50)])).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it("moves a template clear of existing widgets", () => {
+    const existing = [rect(20, 20, 300, 200)];
+    const group = [rect(20, 20, 100, 50), rect(140, 20, 100, 50)];
+    const { dx, dy } = freeSpotOffset(existing, group)!;
+    for (const g of group) {
+      expect(overlaps({ ...g, x: g.x + dx, y: g.y + dy }, existing[0])).toBe(false);
+    }
+  });
+
+  it("addTemplateWidgets does not stack a template on top of itself", () => {
+    _resetUndoHistory();
+    useStore.setState({
+      screens: [{ id: "s", name: "S", backgroundColor: "#1e1e2e", widgets: [] }],
+      activeScreenIndex: 0,
+      selectedWidgetId: null,
+    });
+    const tpl = [
+      { type: "gauge" as const, x: 20, y: 20, width: 120, height: 120, label: "A", variableName: "a", min: 0, max: 100, color: "#22c55e", fontSize: 14 },
+    ];
+    useStore.getState().addTemplateWidgets(tpl);
+    useStore.getState().addTemplateWidgets(tpl);
+    const [a, b] = useStore.getState().screens[0].widgets;
+    expect(overlaps(a, b)).toBe(false);
+  });
+});
+
+describe("Template placement on a full screen", () => {
+  it("returns null when no spot fits", () => {
+    expect(freeSpotOffset([{ x: 0, y: 0, width: 1024, height: 600 }], [{ x: 20, y: 20, width: 100, height: 50 }])).toBeNull();
+  });
+
+  it("does not insert and shows a toast instead of stacking", () => {
+    _resetUndoHistory();
+    useStore.setState({
+      screens: [{ id: "s", name: "S", backgroundColor: "#1e1e2e", widgets: [
+        { id: "big", type: "chart", x: 0, y: 0, width: 1024, height: 600, label: "", variableName: "", min: 0, max: 100, color: "#22c55e", fontSize: 14 },
+      ] }],
+      activeScreenIndex: 0,
+      toast: null,
+      canUndo: false,
+    });
+    useStore.getState().addTemplateWidgets([
+      { type: "gauge", x: 20, y: 20, width: 120, height: 120, label: "A", variableName: "a", min: 0, max: 100, color: "#22c55e", fontSize: 14 },
+    ]);
+    const st = useStore.getState();
+    expect(st.screens[0].widgets).toHaveLength(1);
+    expect(st.toast?.kind).toBe("info");
+    expect(st.canUndo).toBe(false);
   });
 });

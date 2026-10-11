@@ -197,7 +197,10 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
         }
 
         screen_sections.push(format!(
-            r#"<div class="{screen_class}" id="screen-{idx}" style="position:relative;width:100%;height:calc(100vh - 68px);overflow:auto;background:{bg}">
+            // Geometry comes from the .screen class (absolute, between nav bar
+            // and status bar). An inline position/height here used to override
+            // it and stack screens vertically, leaving screens 2+ off-screen.
+            r#"<div class="{screen_class}" id="screen-{idx}" style="overflow:auto;background:{bg}">
 {widgets}
 </div>"#,
             screen_class = screen_class,
@@ -233,7 +236,7 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
 
     // Build feature-flagged JS blocks
     let alarm_html = if has_alarms {
-        alarm::render_alarm_banner_html()
+        alarm::render_alarm_banner_html(screen_top)
     } else {
         String::new()
     };
@@ -309,7 +312,7 @@ body{{background:#1e1e2e;font-family:-apple-system,BlinkMacSystemFont,sans-serif
 .status-dot{{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}}
 .status-dot.connected{{background:#22c55e;box-shadow:0 0 6px #22c55e}}
 .status-dot.disconnected{{background:#666}}
-.screen{{opacity:0;transition:opacity 0.3s ease;pointer-events:none;position:absolute;top:{screen_top}px;left:0;right:0;bottom:28px}}
+.screen{{opacity:0;transition:opacity 0.3s ease;pointer-events:none;position:absolute;top:{screens_top}px;left:0;right:0;bottom:28px}}
 .screen.active{{opacity:1;pointer-events:auto}}
 </style>
 </head>
@@ -332,6 +335,16 @@ var bindings = {{}};
 var chartData = {{}};
 var buttonStates = {{}};
 var currentScreen = 0;
+
+// Live value text. Same rules as the designer preview (formatValue):
+// 'real' -> one decimal, 'int' -> whole number, 'auto' -> integers as-is,
+// fractions with one decimal. Non-numbers pass through as strings.
+function fmtNum(v, mode) {{
+    if (typeof v !== 'number') return String(v);
+    if (mode === 'real') return v.toFixed(1);
+    if (mode === 'int') return String(Math.round(v));
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}}
 
 {bindings_js}
 
@@ -365,7 +378,8 @@ document.getElementById('varCount').textContent = varCount + ' variables bound';
                 .unwrap_or("#2a2a3a"),
             "#2a2a3a"
         ),
-        screen_top = screen_top,
+        // The alarm header strip keeps a fixed slot; its list is an overlay.
+        screens_top = screen_top + if has_alarms { alarm::ALARM_HEADER_PX } else { 0 },
     );
 
     Ok(html)
@@ -492,5 +506,90 @@ mod tests {
         assert!(html.contains("stretchPin"), "stretched pin hashing missing");
         // Translations must be script-safe (no raw </script> from the key)
         assert!(!html.contains("Pompa & Tangki</"), "unsafe translation output");
+    }
+
+    #[test]
+    fn screens_share_one_viewport_and_charts_keep_own_buffers() {
+        let mut req = request("192.168.1.100", "#1e1e2e");
+        let mut second = req.screens[0].clone();
+        second.id = "s2".into();
+        second.widgets = vec![widget("c1", "var1", "chart"), widget("c2", "var1", "chart")];
+        req.screens.push(second);
+        let html = build_export_html(&req).unwrap();
+        // Inline geometry on a screen overrides the .screen class and stacks
+        // screens vertically (screens 2+ rendered below the viewport).
+        assert!(!html.contains(r#"id="screen-1" style="position"#), "inline screen geometry is back");
+        assert!(html.contains(r#"id="screen-1" style="overflow:auto;"#));
+        // Two charts on one variable must not append into one shared buffer.
+        assert!(html.contains(r#"chartData["c1"] = [];"#));
+        assert!(html.contains(r#"chartData["c2"] = [];"#));
+        assert!(!html.contains(r#"chartData["var1"]"#));
+    }
+
+    #[test]
+    fn sliders_follow_plc_unless_dragged_and_never_build_selectors_from_names() {
+        let mut req = request("192.168.1.100", "#1e1e2e");
+        req.screens[0].widgets = vec![
+            widget("s1", "tank\"]level", "slider"),
+            widget("s2", "tank\"]level", "slider"),
+            widget("t1", "tank\"]level", "text"),
+            widget("g1", "tank\"]level", "gauge"),
+        ];
+        let html = build_export_html(&req).unwrap();
+        // Explicit drag flag: set on pointerdown, cleared on pointerup/cancel/change.
+        assert!(html.contains("addEventListener('pointerdown', function() { dragging = true; })"));
+        assert!(html.contains("window.addEventListener('pointerup', stopDrag)"));
+        assert!(html.contains("window.addEventListener('pointercancel', stopDrag)"));
+        assert!(html.contains("input.addEventListener('change', stopDrag)"));
+        assert!(html.contains("!dragging) input.value = v"));
+        assert!(!html.contains("document.activeElement !== input"));
+        // Every slider bound to the variable gets its own binding + element.
+        assert!(html.contains("getElementById('sl-in-s1')"));
+        assert!(html.contains("getElementById('sl-in-s2')"));
+        // No CSS selector is ever built from a variable name.
+        assert!(!html.contains("querySelector('[data-bind="));
+        assert!(html.contains("getElementById('txt-t1')"));
+        assert!(html.contains("getElementById('gauge-val-g1')"));
+    }
+
+    #[test]
+    fn alarm_header_slot_is_fixed_and_alarms_are_edge_triggered() {
+        let html = build_export_html(&request("192.168.1.100", "#1e1e2e")).unwrap();
+        // Single screen (no nav bar): screens start below the 28px alarm strip,
+        // a constant — no runtime offset that moves controls.
+        assert!(html.contains(".screen{opacity:0;transition:opacity 0.3s ease;pointer-events:none;position:absolute;top:28px;"));
+        assert!(!html.contains("--alarm-h"));
+        // Raise timestamp kept; list rebuilt only when the alarm set changes.
+        assert!(html.contains("!acknowledgedPlcAlarms[rule.id] && !plcAlarms[rule.id]"));
+        assert!(html.contains("if (changed) renderAlarms();"));
+        assert!(html.contains("if (key === alarmListKey) return;"));
+        // Never auto-open: the list starts hidden, only an operator toggle
+        // shows it; new alarms pulse the header instead.
+        assert!(html.contains(r#"<div id="alarm-list" style="display:none;"#));
+        assert_eq!(html.matches("list.style.display = 'block'").count(), 0);
+        assert_eq!(html.matches("alarmListOpen = true").count(), 0);
+        assert!(html.contains("alarmListOpen = !alarmListOpen;"));
+        assert!(html.contains("if (!alarmListOpen) {"));
+        assert!(html.contains("setAlarmPulse(top)"));
+        // Ack is armed only ACK_ARM_MS after the list opens.
+        assert!(html.contains("var ACK_ARM_MS = 500;"));
+        assert!(html.contains("if (Date.now() - alarmListOpenedAt < ACK_ARM_MS) return;"));
+    }
+
+    #[test]
+    fn number_format_follows_declared_type() {
+        for t in ["REAL", "LREAL", "FLOAT", "real"] {
+            assert_eq!(widgets::num_mode(Some(t)), "real", "{t}");
+        }
+        for t in [
+            "BOOL", "BYTE", "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT",
+            "WORD", "DWORD", "LWORD", "TIME", "dint",
+        ] {
+            assert_eq!(widgets::num_mode(Some(t)), "int", "{t}");
+        }
+        for t in ["FLOAT64", "STRING", "WSTRING", ""] {
+            assert_eq!(widgets::num_mode(Some(t)), "auto", "{t}");
+        }
+        assert_eq!(widgets::num_mode(None), "auto");
     }
 }

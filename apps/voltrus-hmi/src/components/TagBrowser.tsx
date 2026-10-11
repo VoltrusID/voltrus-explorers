@@ -2,6 +2,14 @@ import { useState, useCallback, useRef } from "react";
 import { useStore } from "../store";
 import type { PlcVariable } from "../types";
 
+/** Compact value for the variable list (raw float32 values are long). */
+function formatVarValue(v: unknown, type: string): string {
+  if (typeof v === "number" && (type === "REAL" || !Number.isInteger(v))) {
+    return Number.isFinite(v) ? v.toFixed(2) : String(v);
+  }
+  return String(v);
+}
+
 export function TagBrowser() {
   const plcIp = useStore((s) => s.plcIp);
   const plcConnected = useStore((s) => s.plcConnected);
@@ -142,10 +150,11 @@ export function TagBrowser() {
             placeholder="192.168.1.100"
             style={{
               flex: 1,
+              minWidth: 0,
               padding: "4px 8px",
               border: "1px solid var(--border)",
               borderRadius: 4,
-              background: "var(--bg)",
+              background: "var(--input-bg)",
               color: "var(--text)",
               fontSize: 12,
               outline: "none",
@@ -163,10 +172,11 @@ export function TagBrowser() {
               fontSize: 11,
               cursor: plcConnecting ? "wait" : "pointer",
               whiteSpace: "nowrap",
+              flexShrink: 0,
             }}
           >
             {plcConnecting
-              ? "..."
+              ? "…"
               : plcConnected
                 ? "Disconnect"
                 : "Connect"}
@@ -205,7 +215,7 @@ export function TagBrowser() {
             {plcConnected
               ? "Connected"
               : plcConnecting
-                ? "Connecting..."
+                ? "Connecting…"
                 : "Disconnected"}
           </span>
         </div>
@@ -233,7 +243,9 @@ export function TagBrowser() {
         >
           Variables ({plcVariables.length})
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 8px" }}>
+        {/* Capped so a large PLC program does not push every other sidebar
+            section off-screen; the list scrolls instead. */}
+        <div style={{ flex: 1, maxHeight: 260, overflowY: "auto", padding: "0 12px 8px" }}>
           {plcVariables.length === 0 ? (
             <div
               style={{
@@ -245,7 +257,7 @@ export function TagBrowser() {
               }}
             >
               {plcConnected
-                ? "Waiting for data..."
+                ? "Waiting for data…"
                 : "Connect to a PLC to browse variables"}
             </div>
           ) : (
@@ -306,9 +318,10 @@ export function TagBrowser() {
                     flexShrink: 0,
                     minWidth: 30,
                     textAlign: "right",
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {String(v.value)}
+                  {formatVarValue(v.value, v.type)}
                 </span>
               </div>
             ))
@@ -358,7 +371,7 @@ export function TagBrowser() {
         >
           Tags ({tags.length})
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 8px" }}>
+        <div style={{ flex: 1, maxHeight: 220, overflowY: "auto", padding: "0 12px 8px" }}>
           {tags.length === 0 ? (
             <div
               style={{

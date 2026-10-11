@@ -26,6 +26,40 @@ const DEFAULT_SCREENS: HmiScreen[] = [
   },
 ];
 
+/** Base canvas size (matches the HMI panel the export targets). */
+export const CANVAS_W = 1024;
+export const CANVAS_H = 600;
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+/**
+ * Offset that places a group of template widgets in the first free spot
+ * (scanning rows on a 20px grid) so inserting a template never stacks it on
+ * top of existing widgets. Returns null when no free spot fits the group.
+ */
+export function freeSpotOffset(existing: Rect[], group: Rect[]): { dx: number; dy: number } | null {
+  if (existing.length === 0 || group.length === 0) return { dx: 0, dy: 0 };
+  const gx = Math.min(...group.map((w) => w.x));
+  const gy = Math.min(...group.map((w) => w.y));
+  const gw = Math.max(...group.map((w) => w.x + w.width)) - gx;
+  const gh = Math.max(...group.map((w) => w.y + w.height)) - gy;
+  const GAP = 10;
+  const STEP = 20;
+  for (let y = 20; y + gh <= CANVAS_H; y += STEP) {
+    for (let x = 20; x + gw <= CANVAS_W; x += STEP) {
+      const clear = existing.every(
+        (e) =>
+          x >= e.x + e.width + GAP ||
+          x + gw + GAP <= e.x ||
+          y >= e.y + e.height + GAP ||
+          y + gh + GAP <= e.y
+      );
+      if (clear) return { dx: x - gx, dy: y - gy };
+    }
+  }
+  return null;
+}
+
 const WIDGET_DEFAULTS: Record<WidgetType, { width: number; height: number }> = {
   gauge: { width: 120, height: 120 },
   button: { width: 120, height: 50 },
@@ -604,8 +638,19 @@ export const useStore = create<AppState>((set, get) => {
 
     addTemplateWidgets: (widgets) => {
       const { screens, activeScreenIndex } = get();
+      const spot = freeSpotOffset(screens[activeScreenIndex].widgets, widgets);
+      if (!spot) {
+        get().showToast("info", "No free space for this template on the current screen. Make room or add a screen.");
+        return;
+      }
+      const { dx, dy } = spot;
       pushUndo(screens, set);
-      const newWidgets: HmiWidget[] = widgets.map((w) => ({ ...w, id: newId() }));
+      const newWidgets: HmiWidget[] = widgets.map((w) => ({
+        ...w,
+        id: newId(),
+        x: w.x + dx,
+        y: w.y + dy,
+      }));
       const newScreens = [...screens];
       newScreens[activeScreenIndex] = {
         ...newScreens[activeScreenIndex],
