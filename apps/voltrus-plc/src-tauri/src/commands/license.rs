@@ -16,12 +16,23 @@ pub struct LicenseState {
 struct ActivateRequest {
     key: String,
     device_id: String,
+    app_version: String,
+    platform: String,
 }
 
 #[derive(Serialize, Deserialize)]
 struct ValidateRequest {
     key: String,
     activation_id: String,
+    device_id: String,
+    app_version: String,
+    platform: String,
+}
+
+/// dl worker platform name (macos-aarch64, windows-x86_64, ...) reported with
+/// license calls so the console can show this machine's version.
+fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,7 +121,10 @@ fn save_license(state: &LicenseState) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn activate_license(license_key: String) -> Result<LicenseState, String> {
+pub async fn activate_license(
+    app: tauri::AppHandle,
+    license_key: String,
+) -> Result<LicenseState, String> {
     // ioreg is a subprocess — keep it off the async worker
     let device_id = tauri::async_runtime::spawn_blocking(generate_device_id)
         .await
@@ -122,6 +136,8 @@ pub async fn activate_license(license_key: String) -> Result<LicenseState, Strin
         .json(&ActivateRequest {
             key: license_key.clone(),
             device_id: device_id.clone(),
+            app_version: app.package_info().version.to_string(),
+            platform: platform(),
         })
         .send()
         .await
@@ -148,7 +164,7 @@ pub async fn activate_license(license_key: String) -> Result<LicenseState, Strin
 }
 
 #[tauri::command]
-pub async fn validate_license() -> Result<LicenseState, String> {
+pub async fn validate_license(app: tauri::AppHandle) -> Result<LicenseState, String> {
     let state = load_license().ok_or("No license found")?;
 
     if !state.activated {
@@ -161,6 +177,9 @@ pub async fn validate_license() -> Result<LicenseState, String> {
         .json(&ValidateRequest {
             key: state.license_key.clone(),
             activation_id: state.activation_id.clone(),
+            device_id: state.device_id.clone(),
+            app_version: app.package_info().version.to_string(),
+            platform: platform(),
         })
         .send()
         .await
@@ -204,6 +223,7 @@ pub async fn deactivate_license() -> Result<(), String> {
             .json(&serde_json::json!({
                 "key": state.license_key,
                 "activation_id": state.activation_id,
+                "device_id": state.device_id,
             }))
             .send()
             .await
