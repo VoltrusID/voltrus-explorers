@@ -191,7 +191,7 @@ npx wrangler d1 execute "$D1_DATABASE" --remote --command \
 
 info "Inserting $PLATFORM into D1 release_files..."
 npx wrangler d1 execute "$D1_DATABASE" --remote --command \
-  "INSERT INTO release_files (version, platform, filename, r2_key, size) VALUES ($BUILD_NUMBER, '$PLATFORM', '$FILENAME', '$FILENAME', $FILESIZE);"
+  "INSERT OR REPLACE INTO release_files (version, platform, filename, r2_key, size) VALUES ($BUILD_NUMBER, '$PLATFORM', '$FILENAME', '$FILENAME', $FILESIZE);"
 ok "D1 record: $PLATFORM"
 
 cd "$PROJECT_DIR"
