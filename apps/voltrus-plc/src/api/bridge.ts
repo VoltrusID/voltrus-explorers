@@ -31,7 +31,7 @@ function requireProjectId(cmd: string): string {
     // Not a session problem (401): the user simply hasn't opened a cloud
     // project yet — bad_request keeps it in the log instead of triggering
     // the login dialog via the bridge error hook.
-    throw new BridgeError("bad_request", cmd, "No active cloud project — open one from the Cloud panel");
+    throw new BridgeError("bad_request", cmd, "No active cloud project. Open one from the Cloud panel");
   }
   return pid;
 }

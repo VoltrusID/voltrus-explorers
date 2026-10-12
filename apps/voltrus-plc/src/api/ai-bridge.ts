@@ -78,7 +78,7 @@ async function openStream(cmd: string, res: Response, label: "Claude" | "Ollama"
     throw new BridgeError(
       "cloud_unavailable",
       cmd,
-      "No API key configured on the server — add one under Cloud → AI Keys",
+      "No API key configured on the server. Add one under Cloud → AI Keys",
     );
   }
   // Mirror the Tauri commands' non-2xx rejection string.

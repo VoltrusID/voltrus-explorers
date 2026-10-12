@@ -269,7 +269,7 @@ END_PROGRAM"#.into(),
         SampleTemplate {
             id: "esp32-blink".into(),
             name: "ESP32 Blink".into(),
-            description: "Blink relay 0 every 500ms — simplest hardware test".into(),
+            description: "Blink relay 0 every 500ms: simplest hardware test".into(),
             category: "ESP32 Hardware".into(),
             source: r#"PROGRAM ESP32_Blink
 VAR

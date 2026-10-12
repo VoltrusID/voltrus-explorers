@@ -233,7 +233,7 @@ export default function App() {
         if (!cancelled && info.available) {
           useStore
             .getState()
-            .showToast("info", `Update ${info.version} available — use Check for Updates to install`);
+            .showToast("info", `Update ${info.version} available. Use Check for Updates to install`);
         }
       } catch {
         // offline / endpoint not deployed yet — silent on launch

@@ -1080,7 +1080,7 @@ export const useStore = create<AppState>((set, get) => ({
     const source = openFiles[activeFileIndex]?.content ?? "";
     const prompt = `Fix this compile error in my IEC 61131-3 Structured Text program:
 
-Error: ${diagnostic.severity} at line ${diagnostic.line}:${diagnostic.col} — ${diagnostic.message}
+Error: ${diagnostic.severity} at line ${diagnostic.line}:${diagnostic.col}, ${diagnostic.message}
 
 Current code (line ${diagnostic.line} highlighted):
 \`\`\`st

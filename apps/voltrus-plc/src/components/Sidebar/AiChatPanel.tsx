@@ -55,7 +55,7 @@ export default function AiChatPanel() {
     const source = activeFile?.content ?? "";
     const diagText = diagnostics
       .slice(0, 10)
-      .map((d) => `  ${d.severity}: line ${d.line} — ${d.message}`)
+      .map((d) => `  ${d.severity}: line ${d.line}, ${d.message}`)
       .join("\n");
 
     return `You are an IEC 61131-3 Structured Text PLC programming assistant.

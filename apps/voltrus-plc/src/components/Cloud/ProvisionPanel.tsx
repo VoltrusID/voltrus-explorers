@@ -156,7 +156,7 @@ export default function ProvisionPanel() {
           <Callout tone="danger">
             Manifest failed: {manifestError}
             <div className="cld-hint" style={{ marginTop: 2 }}>
-              Base: <span className="cld-mono">{provisionBase()}</span> — override with localStorage key{" "}
+              Base: <span className="cld-mono">{provisionBase()}</span>. Override with localStorage key{" "}
               <span className="cld-mono">{PROVISION_BASE_KEY}</span>
             </div>
           </Callout>
@@ -241,7 +241,7 @@ export default function ProvisionPanel() {
       <div className="cld-step">
         <div className="cld-step__title">4. Provision (manual)</div>
         <div className="cld-hint">
-          esptool-js writes raw flash only — it cannot build or write NVS partitions in-browser. After
+          esptool-js writes raw flash only. It cannot build or write NVS partitions in-browser. After
           flashing, provision the board out-of-band:
           <ol className="cld-ol">
             <li>

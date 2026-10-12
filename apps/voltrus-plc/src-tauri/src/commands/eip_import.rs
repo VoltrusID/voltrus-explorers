@@ -46,7 +46,7 @@ pub async fn eip_import_udts(
         .map_err(|e| format!("Browse failed on {host}:{port}: {e}"))?;
     if tags.is_empty() {
         return Err(format!(
-            "No tags returned by {host}:{port} — check the controller is reachable and speaks EtherNet/IP (default port 44818)."
+            "No tags returned by {host}:{port}. Check the controller is reachable and speaks EtherNet/IP (default port 44818)."
         ));
     }
 
