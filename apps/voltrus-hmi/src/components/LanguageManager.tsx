@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { Download, Plus, Upload, X } from "lucide-react";
+import { Button, IconButton } from "@mactools/ui";
 import { useStore } from "../store";
 
 const LANG_LABELS: Record<string, string> = {
@@ -79,7 +82,6 @@ export function LanguageManager() {
 
   const handleExportJson = useCallback(async () => {
     try {
-      const { save } = await import("@tauri-apps/plugin-dialog");
       const path = await save({
         title: "Export Translations",
         filters: [{ name: "JSON", extensions: ["json"] }],
@@ -98,7 +100,6 @@ export function LanguageManager() {
 
   const handleImportJson = useCallback(async () => {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
       const path = await open({
         title: "Import Translations",
         filters: [{ name: "JSON", extensions: ["json"] }],
@@ -121,52 +122,22 @@ export function LanguageManager() {
   }, [addLanguage, setTranslation]);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        fontSize: 12,
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: "10px 12px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "var(--text-muted)",
-            marginBottom: 8,
-          }}
-        >
-          Languages
-        </div>
+    <div className="acc-body">
+      {/* Language list */}
+      <div className="sub-block">
+        <div className="sub-title">Languages</div>
 
         {/* Default language selector */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>
-            Default:
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="prop-label" style={{ width: "auto", flexShrink: 0 }}>
+            Default
           </span>
           <select
             value={defaultLanguage}
             onChange={(e) => setDefaultLanguage(e.target.value)}
-            style={{
-              flex: 1,
-              padding: "3px 6px",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              background: "var(--input-bg)",
-              color: "var(--text)",
-              fontSize: 11,
-              outline: "none",
-            }}
+            aria-label="Default language"
+            className="vt-select vt-input--sm"
+            style={{ flex: 1, minWidth: 0 }}
           >
             {/* The default may not have a translation column yet (e.g. "en"
                 before any language is added) — still show it truthfully
@@ -184,60 +155,39 @@ export function LanguageManager() {
           </select>
         </div>
 
-        {/* Language tabs */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
-          {langCodes.map((code) => (
-            <div
-              key={code}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-                padding: "3px 8px",
-                borderRadius: 4,
-                cursor: "pointer",
-                border:
-                  activeLang === code
-                    ? "1px solid var(--accent)"
-                    : "1px solid var(--border)",
-                background:
-                  activeLang === code ? "var(--accent)" : "var(--surface)",
-                color: activeLang === code ? "#000" : "var(--text)",
-                fontSize: 11,
-                fontWeight: activeLang === code ? 600 : 400,
-                whiteSpace: "nowrap",
-              }}
-              onClick={() => setActiveLang(code)}
-            >
-              <span>{code}</span>
-              {code !== defaultLanguage && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveLanguage(code);
-                  }}
-                  title={`Remove ${langLabel(code)}`}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: activeLang === code ? "#000" : "var(--text-muted)",
-                    cursor: "pointer",
-                    padding: 0,
-                    fontSize: 13,
-                    lineHeight: 1,
-                    marginLeft: 2,
-                  }}
-                >
-                  &times;
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* Language chips */}
+        {langCodes.length > 0 && (
+          <div className="lang-chips">
+            {langCodes.map((code) => (
+              <div
+                key={code}
+                className="lang-chip"
+                aria-pressed={activeLang === code}
+                onClick={() => setActiveLang(code)}
+                title={langLabel(code)}
+              >
+                <span>{code}</span>
+                {code !== defaultLanguage && (
+                  <IconButton
+                    label={`Remove ${langLabel(code)}`}
+                    size="sm"
+                    className="lang-chip-remove"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveLanguage(code);
+                    }}
+                  >
+                    <X size={11} strokeWidth={1.75} />
+                  </IconButton>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Add language */}
         {showAddInput ? (
-          <div style={{ display: "flex", gap: 4 }}>
+          <div className="sub-actions">
             <input
               type="text"
               value={addInput}
@@ -250,167 +200,58 @@ export function LanguageManager() {
                 }
               }}
               placeholder='e.g. "id", "ja", "de"'
+              aria-label="Language code"
               autoFocus
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: "3px 6px",
-                border: "1px solid var(--accent)",
-                borderRadius: 4,
-                background: "var(--input-bg)",
-                color: "var(--text)",
-                fontSize: 11,
-                outline: "none",
-              }}
+              className="vt-input vt-input--sm"
+              style={{ flex: 1, minWidth: 0 }}
             />
-            <button
-              onClick={handleAddLanguage}
-              disabled={!addInput.trim()}
-              style={{
-                padding: "3px 8px",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                background: "var(--accent)",
-                color: "#000",
-                fontSize: 11,
-                cursor: addInput.trim() ? "pointer" : "default",
-                opacity: addInput.trim() ? 1 : 0.5,
-              }}
-            >
+            <Button size="sm" variant="primary" onClick={handleAddLanguage} disabled={!addInput.trim()}>
               Add
-            </button>
-            <button
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={() => {
                 setShowAddInput(false);
                 setAddInput("");
               }}
-              style={{
-                padding: "3px 6px",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                background: "var(--surface)",
-                color: "var(--text-muted)",
-                fontSize: 11,
-                cursor: "pointer",
-              }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         ) : (
-          <button
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<Plus size={14} strokeWidth={1.75} />}
             onClick={() => setShowAddInput(true)}
-            style={{
-              width: "100%",
-              padding: "4px 10px",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              background: "var(--surface)",
-              color: "var(--text)",
-              fontSize: 11,
-              cursor: "pointer",
-            }}
           >
-            + Add Language
-          </button>
+            Add language
+          </Button>
         )}
       </div>
 
-      {/* Translation Table */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            padding: "10px 12px 6px",
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "var(--text-muted)",
-          }}
-        >
-          Translations ({translatableKeys.length})
+      {/* Translation table */}
+      <div className="sub-block" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div className="sub-title">
+          <span>Translations</span>
+          <span className="row-meta">{translatableKeys.length}</span>
         </div>
 
         {langCodes.length === 0 ? (
-          <div
-            style={{
-              color: "var(--text-muted)",
-              fontSize: 11,
-              textAlign: "center",
-              padding: "12px",
-              opacity: 0.6,
-            }}
-          >
-            Add a language to start translating.
-          </div>
+          <div className="sub-empty">Add a language to start translating.</div>
         ) : translatableKeys.length === 0 ? (
-          <div
-            style={{
-              color: "var(--text-muted)",
-              fontSize: 11,
-              textAlign: "center",
-              padding: "12px",
-              opacity: 0.6,
-            }}
-          >
-            No translatable strings yet. Add screens, widgets, or alarms.
-          </div>
+          <div className="sub-empty">No translatable strings yet. Add screens, widgets, or alarms.</div>
         ) : (
-          <div style={{ flex: 1, overflowY: "auto", padding: "0 12px 8px" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: 11,
-              }}
-            >
+          <div className="sub-list" style={{ padding: "0 2px 8px" }}>
+            <table className="vt-table lang-table">
               <thead>
                 <tr>
-                  <th
-                    style={{
-                      textAlign: "left",
-                      padding: "4px 6px",
-                      borderBottom: "1px solid var(--border)",
-                      color: "var(--text-muted)",
-                      fontWeight: 600,
-                      fontSize: 10,
-                      position: "sticky",
-                      top: 0,
-                      background: "var(--card)",
-                      zIndex: 1,
-                    }}
-                  >
-                    Key
-                  </th>
+                  <th>Key</th>
                   {langCodes.map((code) => (
-                    <th
-                      key={code}
-                      style={{
-                        textAlign: "left",
-                        padding: "4px 6px",
-                        borderBottom: "1px solid var(--border)",
-                        color: code === activeLang ? "var(--accent)" : "var(--text-muted)",
-                        fontWeight: 600,
-                        fontSize: 10,
-                        position: "sticky",
-                        top: 0,
-                        background: "var(--card)",
-                        zIndex: 1,
-                        minWidth: 80,
-                      }}
-                    >
+                    <th key={code} className={code === activeLang ? "is-active" : undefined}>
                       {code}
-                      {code === defaultLanguage && (
-                        <span style={{ opacity: 0.5, marginLeft: 2 }}>*</span>
-                      )}
+                      {code === defaultLanguage && <span style={{ opacity: 0.5, marginLeft: 2 }}>*</span>}
                     </th>
                   ))}
                 </tr>
@@ -418,53 +259,18 @@ export function LanguageManager() {
               <tbody>
                 {translatableKeys.map((key) => (
                   <tr key={key}>
-                    <td
-                      style={{
-                        padding: "3px 6px",
-                        borderBottom: "1px solid var(--border)",
-                        color: "var(--text-muted)",
-                        fontSize: 10,
-                        maxWidth: 100,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={key}
-                    >
-                      {key}
-                    </td>
+                    <td title={key}>{key}</td>
                     {langCodes.map((code) => {
                       const currentValue = translations[code]?.[key] ?? "";
                       return (
-                        <td
-                          key={code}
-                          style={{
-                            padding: "2px 4px",
-                            borderBottom: "1px solid var(--border)",
-                          }}
-                        >
+                        <td key={code}>
                           <input
                             type="text"
                             value={currentValue}
-                            onChange={(e) =>
-                              setTranslation(key, code, e.target.value)
-                            }
+                            onChange={(e) => setTranslation(key, code, e.target.value)}
                             placeholder={key}
-                            style={{
-                              width: "100%",
-                              padding: "2px 4px",
-                              border:
-                                code === activeLang
-                                  ? "1px solid var(--accent)"
-                                  : "1px solid var(--border)",
-                              borderRadius: 3,
-                              background: "var(--input-bg)",
-                              color: currentValue
-                                ? "var(--text)"
-                                : "var(--text-muted)",
-                              fontSize: 11,
-                              outline: "none",
-                            }}
+                            aria-label={`Translation of ${key} in ${code}`}
+                            className="vt-input vt-input--sm"
                           />
                         </td>
                       );
@@ -477,46 +283,27 @@ export function LanguageManager() {
         )}
       </div>
 
-      {/* Import/Export */}
-      <div
-        style={{
-          padding: "8px 12px",
-          display: "flex",
-          gap: 6,
-        }}
-      >
-        <button
-          onClick={handleImportJson}
-          style={{
-            flex: 1,
-            padding: "4px 10px",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            background: "var(--surface)",
-            color: "var(--text)",
-            fontSize: 11,
-            cursor: "pointer",
-          }}
-        >
-          Import JSON
-        </button>
-        <button
-          onClick={handleExportJson}
-          disabled={langCodes.length === 0}
-          style={{
-            flex: 1,
-            padding: "4px 10px",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            background: "var(--surface)",
-            color: "var(--text)",
-            fontSize: 11,
-            cursor: langCodes.length > 0 ? "pointer" : "default",
-            opacity: langCodes.length > 0 ? 1 : 0.5,
-          }}
-        >
-          Export JSON
-        </button>
+      {/* Import/export */}
+      <div className="sub-block">
+        <div className="sub-actions">
+          <Button
+            size="sm"
+            variant="default"
+            icon={<Upload size={14} strokeWidth={1.75} />}
+            onClick={handleImportJson}
+          >
+            Import JSON
+          </Button>
+          <Button
+            size="sm"
+            variant="default"
+            icon={<Download size={14} strokeWidth={1.75} />}
+            onClick={handleExportJson}
+            disabled={langCodes.length === 0}
+          >
+            Export JSON
+          </Button>
+        </div>
       </div>
     </div>
   );

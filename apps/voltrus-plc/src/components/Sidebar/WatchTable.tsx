@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
+import { Eye, RotateCcw, X } from "lucide-react";
 import { useStore } from "../../store";
+import { EmptyState, IconButton } from "@mactools/ui";
 
 export default function WatchTable() {
   const { watchedVariables, removeWatch, forceVariable, unforceVariable } = useStore();
@@ -42,8 +44,23 @@ export default function WatchTable() {
     }
   };
 
+  if (watchedVariables.length === 0) {
+    return (
+      <EmptyState
+        compact
+        icon={<Eye size={18} strokeWidth={1.75} />}
+        title="Nothing to watch yet"
+        description={
+          executionMode === "remote"
+            ? "Deploy and run the program to see its variables live."
+            : "Start the runtime to watch its variables live."
+        }
+      />
+    );
+  }
+
   return (
-    <table className="watch-table">
+    <table className="vt-table watch-table">
       <thead>
         <tr>
           <th>Variable</th>
@@ -53,106 +70,69 @@ export default function WatchTable() {
         </tr>
       </thead>
       <tbody>
-        {watchedVariables.length === 0 ? (
-          <tr>
-            <td colSpan={4} style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              {executionMode === "remote"
-                ? "Deploy & run program to see live variables"
-                : "Start runtime to watch variables"}
+        {watchedVariables.map((v, i) => (
+          <tr key={v.name}>
+            <td style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-xs)", color: "var(--text)" }}>{v.name}</td>
+            <td style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>{v.type_name}</td>
+            <td>
+              {isBool(v) ? (
+                <button
+                  className="vt-btn vt-btn--sm"
+                  aria-pressed={v.display_value === "TRUE"}
+                  onClick={() => toggleBool(v)}
+                  title="Click to force the opposite value"
+                  style={{ fontFamily: "var(--font-mono)", height: 20, padding: "0 8px" }}
+                >
+                  {v.display_value}
+                </button>
+              ) : editingIndex === i ? (
+                <input
+                  ref={inputRef}
+                  className="vt-input vt-input--sm vt-input--mono"
+                  type="text"
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(e, v.name)}
+                  onBlur={() => submitEdit(v.name)}
+                  aria-label={`Force value for ${v.name}`}
+                />
+              ) : (
+                <span
+                  className="watch-value"
+                  onClick={() => startEdit(i, v.display_value)}
+                  style={{
+                    color:
+                      v.quality === "forced"
+                        ? "var(--warn)"
+                        : v.quality === "bad"
+                          ? "var(--danger)"
+                          : "var(--accent-text)",
+                  }}
+                  title="Click to force value"
+                >
+                  {v.display_value}
+                </span>
+              )}
+            </td>
+            <td>
+              <div style={{ display: "flex", gap: 2 }}>
+                {v.quality === "forced" && (
+                  <IconButton
+                    label="Unforce"
+                    title="Unforce"
+                    size="sm"
+                    onClick={() => unforceVariable(v.name)}
+                  >
+                    <RotateCcw size={12} strokeWidth={1.75} style={{ color: "var(--warn)" }} />
+                  </IconButton>
+                )}
+                <IconButton label="Remove watch" title="Remove watch" size="sm" onClick={() => removeWatch(i)}>
+                  <X size={12} strokeWidth={1.75} />
+                </IconButton>
+              </div>
             </td>
           </tr>
-        ) : (
-          watchedVariables.map((v, i) => (
-            <tr key={v.name}>
-              <td style={{ color: "var(--text)", fontSize: 12 }}>{v.name}</td>
-              <td style={{ color: "var(--text-muted)", fontSize: 11 }}>{v.type_name}</td>
-              <td>
-                {isBool(v) ? (
-                  <button
-                    className="watch-toggle"
-                    onClick={() => toggleBool(v)}
-                    style={{
-                      background: v.display_value === "TRUE" ? "var(--accent)" : "var(--surface)",
-                      border: `1px solid ${v.display_value === "TRUE" ? "var(--accent)" : "var(--border)"}`,
-                      color: v.display_value === "TRUE" ? "#fff" : "var(--text-muted)",
-                      borderRadius: 3,
-                      padding: "1px 8px",
-                      fontSize: 11,
-                      cursor: "pointer",
-                      fontFamily: '"SF Mono", monospace',
-                    }}
-                  >
-                    {v.display_value}
-                  </button>
-                ) : editingIndex === i ? (
-                  <input
-                    ref={inputRef}
-                    className="watch-edit-input"
-                    type="text"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(e, v.name)}
-                    onBlur={() => submitEdit(v.name)}
-                  />
-                ) : (
-                  <span
-                    className="watch-value"
-                    onClick={() => startEdit(i, v.display_value)}
-                    style={{
-                      color:
-                        v.quality === "forced"
-                          ? "#f59e0b"
-                          : v.quality === "bad"
-                            ? "var(--danger)"
-                            : "var(--accent)",
-                      fontFamily: '"SF Mono", monospace',
-                      fontSize: 12,
-                      cursor: "pointer",
-                      padding: "1px 4px",
-                      borderRadius: 3,
-                    }}
-                    title="Click to force value"
-                  >
-                    {v.display_value}
-                  </span>
-                )}
-              </td>
-              <td>
-                <div style={{ display: "flex", gap: 2 }}>
-                  {v.quality === "forced" && (
-                    <button
-                      onClick={() => unforceVariable(v.name)}
-                      title="Unforce"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "#f59e0b",
-                        cursor: "pointer",
-                        fontSize: 10,
-                        padding: "0 3px",
-                      }}
-                    >
-                      &#x21BA;
-                    </button>
-                  )}
-                  <button
-                    onClick={() => removeWatch(i)}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--text-muted)",
-                      cursor: "pointer",
-                      fontSize: 12,
-                      padding: "0 4px",
-                    }}
-                  >
-                    x
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))
-        )}
+        ))}
       </tbody>
     </table>
   );

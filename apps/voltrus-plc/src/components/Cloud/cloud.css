@@ -1,0 +1,230 @@
+/* Cloud surfaces: left-rail panels (account, projects, AI keys, provisioning),
+   auth screen/dialog, and the plan upgrade dialog. Tokens and .vt-* come from
+   @mactools/ui. Loaded via the Cloud components. */
+
+.cld-panel {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--fs-xs);
+}
+
+.cld-panel__title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cld-row {
+  padding: 8px 12px;
+}
+
+.cld-row--spread {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cld-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.cld-hint {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.cld-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Project/file/key rows reuse the shared .file-list skin, tightened for the rail. */
+.cld-list {
+  margin: 0;
+  padding: 0;
+}
+
+.cld-list .file-item {
+  padding: 4px 8px;
+  gap: 8px;
+}
+
+.cld-key-name {
+  font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+}
+
+.cld-form-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cld-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cld-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.cld-count {
+  color: var(--text-muted);
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Provisioning steps */
+
+.cld-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cld-step__title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 4px;
+}
+
+.cld-ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.cld-token {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+}
+
+.cld-link {
+  color: var(--accent-text);
+}
+
+.cld-link:hover {
+  text-decoration: underline;
+}
+
+.cld-progress {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Auth screen (web build) */
+
+.cld-auth-tabs {
+  margin: 16px 0 12px;
+}
+
+/* Plan upgrade dialog */
+
+.cld-upgrade-sub {
+  margin: 0 0 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.cld-plans {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.cld-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.cld-plan-card--featured {
+  border-color: var(--accent);
+}
+
+.cld-plan-card--current {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.cld-plan-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cld-plan-card__name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cld-plan-card__price {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.cld-plan-card__blurb {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.cld-plan-card__features {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.cld-plan-card__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.cld-plan-card__features svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.cld-plan-card__spacer {
+  flex: 1;
+}
+
+@media (max-width: 860px) {
+  .cld-plans {
+    grid-template-columns: 1fr;
+  }
+}

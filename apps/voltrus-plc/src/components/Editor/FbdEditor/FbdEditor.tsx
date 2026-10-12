@@ -4,6 +4,7 @@ import type { Node, Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import FbdCanvas from "./FbdCanvas";
 import BlockPalette from "./palette/BlockPalette";
+import HotkeyHelp from "../HotkeyHelp";
 import { useFbdHotkeys, FBD_HOTKEYS } from "./useFbdHotkeys";
 import type { BlockNodeData, FbdProgram } from "../../../types/fbd";
 import { parseFbdProgram, serializeFbd } from "../../../types/canonical";
@@ -104,69 +105,7 @@ function FbdEditorInner({ value, onChange }: FbdEditorProps) {
       </div>
       {/* Hotkey help overlay */}
       {showHelp && (
-        <div
-          style={{
-            position: "absolute",
-            top: 10,
-            right: 10,
-            background: "var(--card, #1e1e2e)",
-            border: "1px solid var(--border, #45475a)",
-            borderRadius: 8,
-            padding: "12px 16px",
-            fontSize: 11,
-            zIndex: 100,
-            minWidth: 200,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--accent, #7c3aed)" }}>
-            Keyboard Shortcuts
-          </div>
-          {FBD_HOTKEYS.map((h) => (
-            <div key={h.key} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-              <span style={{ color: "var(--text-muted, #6c7086)" }}>{h.label}</span>
-              <kbd style={{
-                background: "var(--bg, #11111b)",
-                border: "1px solid var(--border, #45475a)",
-                borderRadius: 3,
-                padding: "1px 6px",
-                fontFamily: '"SF Mono", monospace',
-                fontSize: 10,
-              }}>
-                {h.key}
-              </kbd>
-            </div>
-          ))}
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-            <span style={{ color: "var(--text-muted, #6c7086)" }}>Delete selected</span>
-            <kbd style={{
-              background: "var(--bg, #11111b)",
-              border: "1px solid var(--border, #45475a)",
-              borderRadius: 3,
-              padding: "1px 6px",
-              fontFamily: '"SF Mono", monospace',
-              fontSize: 10,
-            }}>
-              Del
-            </kbd>
-          </div>
-          <button
-            onClick={() => setShowHelp(false)}
-            style={{
-              marginTop: 8,
-              width: "100%",
-              background: "var(--accent, #7c3aed)",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              padding: "4px 0",
-              cursor: "pointer",
-              fontSize: 10,
-            }}
-          >
-            Close
-          </button>
-        </div>
+        <HotkeyHelp title="Keyboard shortcuts" entries={FBD_HOTKEYS} onClose={() => setShowHelp(false)} />
       )}
     </div>
   );

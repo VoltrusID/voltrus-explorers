@@ -4,17 +4,67 @@ import { SFC_ELEMENT_DEFS, type SfcElementCategory } from "../../../../types/sfc
 const CATEGORIES: Array<{ id: SfcElementCategory | "all"; label: string }> = [
   { id: "all", label: "All" },
   { id: "step", label: "Steps" },
-  { id: "transition", label: "Trans." },
-  { id: "branch", label: "Branch" },
+  { id: "transition", label: "Transitions" },
+  { id: "branch", label: "Branches" },
   { id: "jump", label: "Jumps" },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
-  step: "#10b981",
-  transition: "#f59e0b",
-  branch: "#a855f7",
-  jump: "#6c7086",
-};
+// Line drawings of each SFC element, replacing the old text glyphs.
+function SfcGlyph({ type }: { type: string }) {
+  const c = "currentColor";
+  if (type === "step") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <rect x="8" y="3" width="14" height="14" rx="2" fill="none" stroke={c} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+  if (type === "initial_step") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <rect x="7" y="2.5" width="16" height="15" rx="2" fill="none" stroke={c} strokeWidth="1.75" />
+        <rect x="10" y="5.5" width="10" height="9" rx="1" fill="none" stroke={c} strokeWidth="1.25" />
+      </svg>
+    );
+  }
+  if (type === "transition") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <line x1="2" y1="10" x2="28" y2="10" stroke={c} strokeWidth="2" />
+      </svg>
+    );
+  }
+  if (type === "or_diverge") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <line x1="15" y1="1" x2="15" y2="7" stroke={c} strokeWidth="1.75" />
+        <line x1="15" y1="7" x2="6" y2="13" stroke={c} strokeWidth="1.75" />
+        <line x1="15" y1="7" x2="24" y2="13" stroke={c} strokeWidth="1.75" />
+        <line x1="6" y1="13" x2="6" y2="19" stroke={c} strokeWidth="1.75" />
+        <line x1="24" y1="13" x2="24" y2="19" stroke={c} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+  if (type === "or_converge") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <line x1="6" y1="1" x2="6" y2="7" stroke={c} strokeWidth="1.75" />
+        <line x1="24" y1="1" x2="24" y2="7" stroke={c} strokeWidth="1.75" />
+        <line x1="6" y1="7" x2="15" y2="13" stroke={c} strokeWidth="1.75" />
+        <line x1="24" y1="7" x2="15" y2="13" stroke={c} strokeWidth="1.75" />
+        <line x1="15" y1="13" x2="15" y2="19" stroke={c} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+  if (type === "jump") {
+    return (
+      <svg viewBox="0 0 30 20">
+        <path d="M5 10 H22 M18 5.5 L22.5 10 L18 14.5" fill="none" stroke={c} strokeWidth="1.75" />
+      </svg>
+    );
+  }
+  return null;
+}
 
 export default function SfcPalette() {
   const [filter, setFilter] = useState<SfcElementCategory | "all">("all");
@@ -31,68 +81,38 @@ export default function SfcPalette() {
   };
 
   return (
-    <div style={{
-      width: 140,
-      background: "var(--card, #1e1e2e)",
-      borderRight: "1px solid var(--border, #45475a)",
-      overflowY: "auto",
-      fontSize: 10,
-      padding: 4,
-    }}>
-      <div style={{ fontWeight: 700, color: "var(--accent, #7c3aed)", padding: "4px 4px 8px", fontSize: 10 }}>
-        SFC
-      </div>
+    <div className="ed-palette">
+      <div className="ed-palette__title">SFC elements</div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginBottom: 6 }}>
+      <div className="ed-chips">
         {CATEGORIES.map((cat) => (
           <button
             key={cat.id}
+            type="button"
+            className="ed-chip"
+            aria-pressed={filter === cat.id}
             onClick={() => setFilter(cat.id)}
-            style={{
-              padding: "2px 6px",
-              fontSize: 8,
-              background: filter === cat.id ? "var(--accent, #7c3aed)" : "var(--bg, #11111b)",
-              color: filter === cat.id ? "#fff" : "var(--text-muted, #6c7086)",
-              border: "1px solid var(--border, #45475a)",
-              borderRadius: 3,
-              cursor: "pointer",
-            }}
           >
             {cat.label}
           </button>
         ))}
       </div>
 
-      {elements.map((def) => (
-        <div
-          key={def.type}
-          draggable
-          onDragStart={(e) => onDragStart(e, def)}
-          style={{
-            padding: "4px 6px",
-            marginBottom: 2,
-            background: "var(--bg, #11111b)",
-            border: `1px solid var(--border, #45475a)`,
-            borderRadius: 4,
-            cursor: "grab",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span style={{
-            color: CATEGORY_COLORS[def.category] || "#6c7086",
-            fontFamily: '"SF Mono", monospace',
-            fontSize: 10,
-            fontWeight: 700,
-            minWidth: 28,
-            textAlign: "center",
-          }}>
-            {def.symbol}
-          </span>
-          <span style={{ color: "var(--text, #cdd6f4)" }}>{def.label}</span>
-        </div>
-      ))}
+      <div className="ed-palette__list">
+        {elements.map((def) => (
+          <div
+            key={def.type}
+            className="ed-tile"
+            draggable
+            onDragStart={(e) => onDragStart(e, def)}
+          >
+            <span className="ed-tile__sym">
+              <SfcGlyph type={def.type} />
+            </span>
+            <span>{def.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { bridgeMode, invoke } from "../../api/bridge";
 import { useStore } from "../../store";
+import { Button, Field, Segmented, StatusDot } from "@mactools/ui";
+import { CloudUpload, Radar, Plug, Unplug } from "lucide-react";
 import type { DeployResult, DiscoveredTarget, TargetStatus } from "../../types";
 import { compareCrc, formatCrcHex, type DriftInfo } from "./compareCrc";
-import "./ToggleGroup.css";
 
 const TARGET_PRESETS = [
   { label: "192.168.1.100", ip: "192.168.1.100" },
@@ -11,11 +12,17 @@ const TARGET_PRESETS = [
   { label: "10.0.0.1", ip: "10.0.0.1" },
 ];
 
-const DRIFT_BADGE: Record<DriftInfo["status"], { color: string; label: string }> = {
-  sync: { color: "#22c55e", label: "Running program in sync with project" },
-  drift: { color: "#f59e0b", label: "Running program differs from project" },
-  unknown: { color: "var(--text-muted)", label: "Running program version unknown" },
-}
+const DRIFT_TONE: Record<DriftInfo["status"], "success" | "warn" | "neutral"> = {
+  sync: "success",
+  drift: "warn",
+  unknown: "neutral",
+};
+
+const DRIFT_LABEL: Record<DriftInfo["status"], string> = {
+  sync: "Running program in sync with project",
+  drift: "Running program differs from project",
+  unknown: "Running program version unknown",
+};
 
 export default function TargetPanel() {
   const targetIp = useStore((s) => s.targetIp);
@@ -122,203 +129,172 @@ export default function TargetPanel() {
     }
   };
 
+  const driftTone = DRIFT_TONE[drift.status];
+  const driftColor = drift.status === "sync" ? "var(--accent-text)" : drift.status === "drift" ? "var(--warn)" : "var(--text-muted)";
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 0" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: "var(--fs-sm)" }}>
       {/* Execution Mode */}
-      <div className="io-section">
-        <div className="io-label">Execution Mode</div>
-        <div className="toggle-group">
-          <button
-            className={`toggle-group-btn ${!isRemote ? "active" : ""}`}
-            onClick={() => setExecutionMode("local")}
-          >
-            Local
-          </button>
-          <button
-            className={`toggle-group-btn ${isRemote ? "active" : ""}`}
-            onClick={() => setExecutionMode("remote")}
-          >
-            Remote
-          </button>
-        </div>
-      </div>
+      <Field label="Execution mode">
+        <Segmented
+          block
+          label="Execution mode"
+          value={executionMode}
+          onChange={(m) => setExecutionMode(m)}
+          options={[
+            { value: "local", label: "Local" },
+            { value: "remote", label: "Remote" },
+          ]}
+        />
+      </Field>
 
       {/* Target Connection */}
-      <div className="io-section">
-        <div className="io-label">Target Device</div>
-        <div className="toggle-group" style={{ marginBottom: 4 }}>
-          <button
-            className={`toggle-group-btn ${targetKind === "websocket" ? "active" : ""}`}
-            onClick={() => setTargetKind("websocket")}
-            style={{ fontSize: 10, padding: "2px 4px" }}
-          >
-            ESP32 (WS)
-          </button>
-          <button
-            className={`toggle-group-btn ${targetKind === "grpc" ? "active" : ""}`}
-            onClick={() => setTargetKind("grpc")}
-            style={{ fontSize: 10, padding: "2px 4px" }}
-          >
-            Linux (gRPC)
-          </button>
-        </div>
-        {isCloud && (
-          <div style={{ marginTop: 4 }}>
-            <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>Relay Device ID</div>
+      <Field label="Target device">
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Segmented
+            block
+            label="Target transport"
+            value={targetKind}
+            onChange={(k) => setTargetKind(k)}
+            options={[
+              { value: "websocket", label: "ESP32 (WS)" },
+              { value: "grpc", label: "Linux (gRPC)" },
+            ]}
+          />
+          {isCloud && (
+            <Field label="Relay device ID" htmlFor="target-device-id">
+              <input
+                id="target-device-id"
+                type="text"
+                className="vt-input vt-input--mono"
+                placeholder="device id from the cloud pairing"
+                value={deviceId}
+                onChange={(e) => {
+                  setDeviceId(e.target.value);
+                  if (e.target.value) localStorage.setItem("vplc_device", e.target.value);
+                  else localStorage.removeItem("vplc_device");
+                }}
+                disabled={targetConnected}
+              />
+            </Field>
+          )}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input
               type="text"
-              className="io-input"
-              style={{ width: "100%", fontSize: 12 }}
-              placeholder="device id from the cloud pairing"
-              value={deviceId}
-              onChange={(e) => {
-                setDeviceId(e.target.value);
-                if (e.target.value) localStorage.setItem("vplc_device", e.target.value);
-                else localStorage.removeItem("vplc_device");
-              }}
+              className="vt-input vt-input--mono"
+              style={{ flex: 1 }}
+              placeholder="192.168.1.100"
+              value={targetIp}
+              onChange={(e) => setTargetIp(e.target.value)}
               disabled={targetConnected}
+              aria-label="Target IP address"
             />
+            <StatusDot tone={targetConnected ? "success" : "neutral"} label={targetConnected ? "Connected" : "Disconnected"} />
           </div>
-        )}
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <input
-            type="text"
-            className="io-input"
-            style={{ flex: 1, fontSize: 12 }}
-            placeholder="192.168.1.100"
-            value={targetIp}
-            onChange={(e) => setTargetIp(e.target.value)}
-            disabled={targetConnected}
-          />
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: targetConnected ? "var(--accent)" : "var(--text-muted)",
-              flexShrink: 0,
-            }}
-          />
-        </div>
-        <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-          <button
-            className="io-btn"
-            style={{ fontSize: 10, padding: "2px 6px", flex: 1 }}
+          <Button
+            size="sm"
+            variant="default"
+            icon={<Radar size={14} strokeWidth={1.75} />}
             onClick={scanTargets}
             disabled={scanningTargets || targetConnected}
           >
-            {scanningTargets ? "Scanning..." : "Scan Network"}
-          </button>
+            {scanningTargets ? "Scanning..." : "Scan network"}
+          </Button>
+          {discoveredTargets.length > 0 && !targetConnected && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {discoveredTargets.map((t, i) => (
+                <button
+                  key={i}
+                  className="vt-btn vt-btn--sm vt-btn--ghost"
+                  style={{ justifyContent: "flex-start", fontFamily: "var(--font-mono)" }}
+                  onClick={() => setTargetIp(t.ip)}
+                >
+                  {t.name.split(".")[0]} ({t.ip})
+                </button>
+              ))}
+            </div>
+          )}
+          {discoveredTargets.length === 0 && !scanningTargets && !targetConnected && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {TARGET_PRESETS.map((p) => (
+                <Button
+                  key={p.ip}
+                  size="sm"
+                  variant="ghost"
+                  style={{ flex: "1 1 auto", fontFamily: "var(--font-mono)" }}
+                  onClick={() => setTargetIp(p.ip)}
+                  disabled={targetConnected}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          )}
+          <Button
+            variant={targetConnected ? "danger" : "primary"}
+            block
+            icon={targetConnected ? <Unplug size={14} strokeWidth={1.75} /> : <Plug size={14} strokeWidth={1.75} />}
+            loading={connecting}
+            onClick={handleConnect}
+            disabled={(isCloud ? !deviceId.trim() : !targetIp.trim()) || connecting}
+          >
+            {connecting ? "Connecting..." : targetConnected ? "Disconnect" : "Connect"}
+          </Button>
         </div>
-        {discoveredTargets.length > 0 && !targetConnected && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
-            {discoveredTargets.map((t, i) => (
-              <button
-                key={i}
-                className="io-btn"
-                style={{ fontSize: 10, padding: "2px 6px", textAlign: "left" }}
-                onClick={() => setTargetIp(t.ip)}
-              >
-                {t.name.split(".")[0]} ({t.ip})
-              </button>
-            ))}
-          </div>
-        )}
-        {discoveredTargets.length === 0 && !scanningTargets && !targetConnected && (
-          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
-            {TARGET_PRESETS.map((p) => (
-              <button
-                key={p.ip}
-                className="io-btn"
-                style={{ fontSize: 10, padding: "2px 6px" }}
-                onClick={() => setTargetIp(p.ip)}
-                disabled={targetConnected}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        )}
-        <button
-          className="io-btn"
-          style={{
-            width: "100%",
-            marginTop: 6,
-            background: targetConnected ? "var(--danger)" : "var(--accent)",
-            color: "#fff",
-          }}
-          onClick={handleConnect}
-          disabled={(isCloud ? !deviceId.trim() : !targetIp.trim()) || connecting}
-        >
-          {connecting ? "Connecting..." : targetConnected ? "Disconnect" : "Connect"}
-        </button>
-      </div>
+      </Field>
 
       {/* Deploy */}
-      <div className="io-section">
-        <div className="io-label">Deploy Program</div>
-        <button
-          className="io-btn"
-          style={{
-            width: "100%",
-            background: targetConnected ? "var(--accent)" : "var(--border)",
-            color: "#fff",
-          }}
-          onClick={isCloud ? cloudDeploy : targetDeploy}
-          disabled={!isRemote || !targetConnected || (isCloud ? cloudDeploying : targetDeploying)}
-        >
-          {(isCloud ? cloudDeploying : targetDeploying) ? "Deploying..." : "Build & Deploy"}
-        </button>
-        {isRemote && targetConnected && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 10 }}>
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: DRIFT_BADGE[drift.status].color,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ color: DRIFT_BADGE[drift.status].color }}>
-              {DRIFT_BADGE[drift.status].label}
-              {drift.status === "drift" &&
-                ` (${formatCrcHex(drift.projectCrc ?? 0)} vs ${formatCrcHex(drift.runningCrc ?? 0)})`}
-            </span>
-          </div>
-        )}
-      </div>
+      <Field label="Deploy program">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <Button
+            variant="primary"
+            block
+            icon={<CloudUpload size={14} strokeWidth={1.75} />}
+            loading={isCloud ? cloudDeploying : targetDeploying}
+            onClick={isCloud ? cloudDeploy : targetDeploy}
+            disabled={!isRemote || !targetConnected || (isCloud ? cloudDeploying : targetDeploying)}
+          >
+            {(isCloud ? cloudDeploying : targetDeploying) ? "Deploying..." : "Build & deploy"}
+          </Button>
+          {isRemote && targetConnected && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-xs)" }}>
+              <StatusDot tone={driftTone} />
+              <span style={{ color: driftColor }}>
+                {DRIFT_LABEL[drift.status]}
+                {drift.status === "drift" &&
+                  ` (${formatCrcHex(drift.projectCrc ?? 0)} vs ${formatCrcHex(drift.runningCrc ?? 0)})`}
+              </span>
+            </div>
+          )}
+        </div>
+      </Field>
 
       {/* SCADA Connection */}
-      <div className="io-section">
-        <div className="io-label">Connect to SCADA</div>
-        <input
-          type="text"
-          className="io-input"
-          style={{ width: "100%", fontSize: 12 }}
-          placeholder="http://localhost:3000"
-          value={scadaUrl}
-          onChange={(e) => setScadaUrl(e.target.value)}
-        />
-        <button
-          className="io-btn"
-          style={{
-            width: "100%",
-            marginTop: 6,
-            background: "#7c3aed",
-            color: "#fff",
-          }}
-          onClick={connectScada}
-          disabled={!targetConnected || !scadaUrl.trim()}
-        >
-          Register in SCADA
-        </button>
-        {targetConnected && scadaUrl && (
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
-            Device: ESP32-{targetIp} | Transport: websocket
-          </div>
-        )}
-      </div>
+      <Field label="Connect to SCADA">
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <input
+            type="text"
+            className="vt-input vt-input--mono"
+            placeholder="http://localhost:3000"
+            value={scadaUrl}
+            onChange={(e) => setScadaUrl(e.target.value)}
+            aria-label="SCADA server URL"
+          />
+          <Button
+            variant="default"
+            block
+            onClick={connectScada}
+            disabled={!targetConnected || !scadaUrl.trim()}
+          >
+            Register in SCADA
+          </Button>
+          {targetConnected && scadaUrl && (
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+              Device: ESP32-{targetIp} | Transport: websocket
+            </div>
+          )}
+        </div>
+      </Field>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import StEditor from "./StEditor";
 import FbdEditor from "./FbdEditor/FbdEditor";
 import GridLdEditor from "./LdEditor/GridLdEditor";
 import SfcEditor from "./SfcEditor/SfcEditor";
+import "./editor.css";
 
 interface EditorRouterProps {
   filePath: string;

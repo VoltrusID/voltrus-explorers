@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { LD_ELEMENT_DEFS, type LdElementCategory } from "../../../../types/ld";
+import { SvgSymbol } from "../ElementCell";
 
 const CATEGORIES: Array<{ id: LdElementCategory | "all"; label: string }> = [
   { id: "all", label: "All" },
@@ -9,14 +10,6 @@ const CATEGORIES: Array<{ id: LdElementCategory | "all"; label: string }> = [
   { id: "counter", label: "Counters" },
   { id: "function", label: "Functions" },
 ];
-
-const CATEGORY_COLORS: Record<string, string> = {
-  contact: "#10b981",
-  coil: "#3b82f6",
-  timer: "#f59e0b",
-  counter: "#a855f7",
-  function: "#6c7086",
-};
 
 export default function LdPalette() {
   const [filter, setFilter] = useState<LdElementCategory | "all">("all");
@@ -34,68 +27,38 @@ export default function LdPalette() {
   };
 
   return (
-    <div style={{
-      width: 140,
-      background: "var(--card, #1e1e2e)",
-      borderRight: "1px solid var(--border, #45475a)",
-      overflowY: "auto",
-      fontSize: 10,
-      padding: 4,
-    }}>
-      <div style={{ fontWeight: 700, color: "var(--accent, #7c3aed)", padding: "4px 4px 8px", fontSize: 10 }}>
-        LADDER
-      </div>
+    <div className="ed-palette">
+      <div className="ed-palette__title">Ladder elements</div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 2, marginBottom: 6 }}>
+      <div className="ed-chips">
         {CATEGORIES.map((cat) => (
           <button
             key={cat.id}
+            type="button"
+            className="ed-chip"
+            aria-pressed={filter === cat.id}
             onClick={() => setFilter(cat.id)}
-            style={{
-              padding: "2px 6px",
-              fontSize: 8,
-              background: filter === cat.id ? "var(--accent, #7c3aed)" : "var(--bg, #11111b)",
-              color: filter === cat.id ? "#fff" : "var(--text-muted, #6c7086)",
-              border: "1px solid var(--border, #45475a)",
-              borderRadius: 3,
-              cursor: "pointer",
-            }}
           >
             {cat.label}
           </button>
         ))}
       </div>
 
-      {elements.map((def, i) => (
-        <div
-          key={`${def.type}-${def.blockType ?? i}`}
-          draggable
-          onDragStart={(e) => onDragStart(e, def)}
-          style={{
-            padding: "4px 6px",
-            marginBottom: 2,
-            background: "var(--bg, #11111b)",
-            border: `1px solid var(--border, #45475a)`,
-            borderRadius: 4,
-            cursor: "grab",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <span style={{
-            color: CATEGORY_COLORS[def.category] || "#6c7086",
-            fontFamily: '"SF Mono", monospace',
-            fontSize: 10,
-            fontWeight: 700,
-            minWidth: 28,
-            textAlign: "center",
-          }}>
-            {def.symbol}
-          </span>
-          <span style={{ color: "var(--text, #cdd6f4)" }}>{def.label}</span>
-        </div>
-      ))}
+      <div className="ed-palette__list">
+        {elements.map((def, i) => (
+          <div
+            key={`${def.type}-${def.blockType ?? i}`}
+            className="ed-tile"
+            draggable
+            onDragStart={(e) => onDragStart(e, def)}
+          >
+            <span className="ed-tile__sym">
+              <SvgSymbol type={def.type} blockType={def.blockType} />
+            </span>
+            <span>{def.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

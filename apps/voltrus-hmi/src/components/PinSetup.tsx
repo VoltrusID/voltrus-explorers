@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import { stretchPin } from "../crypto";
 import type { AccessConfig } from "../types";
+import { Badge, Button } from "@mactools/ui";
 
 function generateSalt(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -9,96 +10,6 @@ function generateSalt(): string {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
-
-const styles = {
-  container: {
-    display: "flex",
-    flexDirection: "column" as const,
-    height: "100%",
-    fontSize: 12,
-  },
-  section: {
-    padding: "10px 12px",
-    borderBottom: "1px solid var(--border)",
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: 600,
-    textTransform: "uppercase" as const,
-    letterSpacing: 0.5,
-    color: "var(--text-muted)",
-    marginBottom: 8,
-  },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 6,
-  },
-  input: {
-    flex: 1,
-    minWidth: 0,
-    padding: "4px 8px",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    background: "var(--input-bg)",
-    color: "var(--text)",
-    fontSize: 12,
-    outline: "none",
-  },
-  btn: {
-    padding: "4px 10px",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    background: "var(--surface)",
-    color: "var(--text)",
-    fontSize: 11,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  btnActive: {
-    padding: "4px 10px",
-    border: "1px solid var(--accent)",
-    borderRadius: 4,
-    background: "var(--accent)",
-    color: "#000",
-    fontSize: 11,
-    cursor: "pointer",
-    whiteSpace: "nowrap" as const,
-  },
-  statusSet: {
-    fontSize: 10,
-    color: "#22c55e",
-    flexShrink: 0,
-  },
-  statusUnset: {
-    fontSize: 10,
-    color: "#ef4444",
-    flexShrink: 0,
-  },
-  note: {
-    fontSize: 11,
-    color: "var(--text-muted)",
-    padding: "8px 12px",
-    lineHeight: 1.5,
-  },
-  numberInput: {
-    width: 60,
-    padding: "4px 8px",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    background: "var(--input-bg)",
-    color: "var(--text)",
-    fontSize: 12,
-    outline: "none",
-    textAlign: "right" as const,
-  },
-  label: {
-    fontSize: 11,
-    color: "var(--text)",
-    minWidth: 72,
-  },
-};
 
 export function PinSetup() {
   const accessConfig = useStore((s) => s.accessConfig);
@@ -159,94 +70,102 @@ export function PinSetup() {
   const supervisorSet = !!accessConfig?.supervisorPinHash;
 
   return (
-    <div style={styles.container}>
+    <div className="acc-body">
       {/* Operator PIN */}
-      <div style={styles.section}>
-        <div style={styles.sectionTitle}>Operator PIN</div>
-        <div style={styles.row}>
+      <div className="sub-block">
+        <div className="sub-title">
+          <span>Operator PIN</span>
+          {operatorSet ? <Badge tone="success">PIN set</Badge> : <Badge>No PIN set</Badge>}
+        </div>
+        <div className="sub-actions">
           <input
             type="password"
             maxLength={4}
             placeholder="4-digit PIN"
+            aria-label="Operator PIN"
             value={operatorPin}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 4);
               setOperatorPin(v);
             }}
-            style={styles.input}
+            className="vt-input vt-input--mono"
+            style={{ flex: 1, minWidth: 0 }}
           />
-          <button
+          <Button
+            size="sm"
+            variant="primary"
             onClick={() => handleSetPin("operator")}
             disabled={operatorPin.length !== 4 || setting === "operator"}
-            style={
-              operatorPin.length === 4 && setting !== "operator"
-                ? styles.btnActive
-                : { ...styles.btn, opacity: operatorPin.length === 4 ? 1 : 0.5 }
-            }
+            loading={setting === "operator"}
+            style={{ flexShrink: 0 }}
           >
-            {setting === "operator" ? "..." : "Set"}
-          </button>
-          <span style={operatorSet ? styles.statusSet : styles.statusUnset}>
-            {operatorSet ? "PIN set" : "No PIN set"}
-          </span>
+            Set
+          </Button>
         </div>
       </div>
 
       {/* Supervisor PIN */}
-      <div style={styles.section}>
-        <div style={styles.sectionTitle}>Supervisor PIN</div>
-        <div style={styles.row}>
+      <div className="sub-block">
+        <div className="sub-title">
+          <span>Supervisor PIN</span>
+          {supervisorSet ? <Badge tone="success">PIN set</Badge> : <Badge>No PIN set</Badge>}
+        </div>
+        <div className="sub-actions">
           <input
             type="password"
             maxLength={4}
             placeholder="4-digit PIN"
+            aria-label="Supervisor PIN"
             value={supervisorPin}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "").slice(0, 4);
               setSupervisorPin(v);
             }}
-            style={styles.input}
+            className="vt-input vt-input--mono"
+            style={{ flex: 1, minWidth: 0 }}
           />
-          <button
+          <Button
+            size="sm"
+            variant="primary"
             onClick={() => handleSetPin("supervisor")}
             disabled={supervisorPin.length !== 4 || setting === "supervisor"}
-            style={
-              supervisorPin.length === 4 && setting !== "supervisor"
-                ? styles.btnActive
-                : { ...styles.btn, opacity: supervisorPin.length === 4 ? 1 : 0.5 }
-            }
+            loading={setting === "supervisor"}
+            style={{ flexShrink: 0 }}
           >
-            {setting === "supervisor" ? "..." : "Set"}
-          </button>
-          <span style={supervisorSet ? styles.statusSet : styles.statusUnset}>
-            {supervisorSet ? "PIN set" : "No PIN set"}
-          </span>
+            Set
+          </Button>
         </div>
       </div>
 
       {/* Auto-logout timer */}
-      <div style={styles.section}>
-        <div style={styles.sectionTitle}>Auto-Logout</div>
-        <div style={styles.row}>
-          <span style={styles.label}>Timeout</span>
+      <div className="sub-block">
+        <div className="sub-title">Auto-logout</div>
+        <div className="sub-actions">
+          <span className="prop-label" style={{ width: "auto" }}>
+            Timeout
+          </span>
           <input
             type="number"
             min={1}
             max={120}
+            aria-label="Auto-logout timeout in minutes"
             value={autoLogout}
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
               if (!isNaN(v) && v >= 1) handleAutoLogoutChange(Math.min(v, 120));
             }}
-            style={styles.numberInput}
+            className="vt-input vt-input--sm"
+            style={{ width: 60, textAlign: "right", flexShrink: 0 }}
           />
-          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>min</span>
+          <span className="row-meta">min</span>
         </div>
       </div>
 
       {/* Per-widget note */}
-      <div style={styles.note}>
-        Set per-widget role in the Properties panel when a widget is selected.
+      <div className="sub-block">
+        <div className="sub-empty" style={{ textAlign: "left", padding: 0 }}>
+          Set the per-widget role in the properties panel when a widget is selected.
+        </div>
       </div>
     </div>
   );

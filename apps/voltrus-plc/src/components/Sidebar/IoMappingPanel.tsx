@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../../store";
+import { Badge, Button, EmptyState, IconButton, Segmented } from "@mactools/ui";
+import { Pencil, Plus, Trash2, WandSparkles } from "lucide-react";
 import type { IoMapping } from "../../types";
 import { PROTOCOLS } from "../../constants/protocols";
 
@@ -80,40 +82,48 @@ export default function IoMappingPanel() {
 
   if (compiledVariables.length === 0) {
     return (
-      <div style={{ padding: "10px 12px", color: "var(--text-muted)", fontSize: 11 }}>
-        Build a program to see available variables for mapping.
-      </div>
+      <EmptyState
+        compact
+        icon={<Pencil size={18} strokeWidth={1.75} />}
+        title="Nothing to map yet"
+        description="Build a program to see its variables here for mapping to I/O."
+      />
     );
   }
 
   return (
-    <div style={{ padding: "6px 0", fontSize: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "var(--fs-sm)" }}>
       {/* Toolbar */}
-      <div style={{ display: "flex", gap: 4, padding: "0 10px", marginBottom: 6 }}>
-        <button
-          className="io-btn"
-          style={{ flex: 1, fontSize: 10, padding: "3px 0" }}
+      <div style={{ display: "flex", gap: 4 }}>
+        <Button
+          size="sm"
+          variant="default"
+          icon={<WandSparkles size={14} strokeWidth={1.75} />}
+          style={{ flex: 1 }}
           onClick={autoMapGpio}
           title="Auto-map relay0-5, buzzer, red/green/blue to GPIO"
         >
-          Auto-Map
-        </button>
-        <button
-          className="io-btn"
-          style={{ fontSize: 10, padding: "3px 8px" }}
+          Auto-map
+        </Button>
+        <Button
+          size="sm"
+          variant="default"
+          icon={<Plus size={14} strokeWidth={1.75} />}
           onClick={() => startAdd()}
           title="Add mapping manually"
         >
-          + Map
-        </button>
+          Map
+        </Button>
         {ioMappings.length > 0 && (
-          <button
-            className="io-btn"
-            style={{ fontSize: 10, padding: "3px 6px", color: "#e55" }}
+          <Button
+            size="sm"
+            variant="danger"
+            icon={<Trash2 size={14} strokeWidth={1.75} />}
             onClick={clearIoMappings}
+            title="Remove all mappings"
           >
             Clear
-          </button>
+          </Button>
         )}
       </div>
 
@@ -121,43 +131,51 @@ export default function IoMappingPanel() {
       {editing && (
         <div
           style={{
-            margin: "0 8px 6px",
-            background: "var(--surface)",
-            borderRadius: 4,
+            background: "var(--card)",
+            borderRadius: "var(--radius)",
             padding: 8,
-            border: "1px solid var(--accent)",
+            border: "1px solid var(--border-light)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
           }}
         >
           {/* Row 1: Variable + Direction */}
-          <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+          <div style={{ display: "flex", gap: 6 }}>
             <select
+              className="vt-select vt-select--sm"
               value={form.variable}
               onChange={(e) => setForm({ ...form, variable: e.target.value })}
-              style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
+              style={{ flex: 1 }}
               disabled={editIndex !== null}
+              aria-label="Variable"
             >
-              <option value="">Variable...</option>
+              <option value="">Variable</option>
               {editIndex === null
                 ? unmapped.map((v) => (
                     <option key={v.name} value={v.name}>{v.name}</option>
                   ))
                 : <option value={form.variable}>{form.variable}</option>}
             </select>
-            <select
+            <Segmented
+              size="sm"
+              label="Direction"
               value={form.direction}
-              onChange={(e) => setForm({ ...form, direction: e.target.value as "input" | "output" })}
-              style={{ flexShrink: 0, width: 52, fontSize: 11, padding: "2px 4px" }}
-            >
-              <option value="output">OUT</option>
-              <option value="input">IN</option>
-            </select>
+              onChange={(d) => setForm({ ...form, direction: d })}
+              options={[
+                { value: "output", label: "Out" },
+                { value: "input", label: "In" },
+              ]}
+            />
           </div>
           {/* Row 2: Protocol + Address */}
-          <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
+          <div style={{ display: "flex", gap: 6 }}>
             <select
+              className="vt-select vt-select--sm"
               value={form.driver_id}
               onChange={(e) => setForm({ ...form, driver_id: e.target.value, address: "" })}
-              style={{ flexShrink: 0, width: 68, fontSize: 11, padding: "2px 4px" }}
+              style={{ width: 90, flexShrink: 0 }}
+              aria-label="Protocol"
             >
               {PROTOCOLS.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
@@ -165,46 +183,46 @@ export default function IoMappingPanel() {
             </select>
             {form.driver_id === "gpio" ? (
               <select
+                className="vt-select vt-select--sm"
                 value={form.address}
                 onChange={(e) =>
                   setForm({ ...form, address: e.target.value, protocol_address: `GPIO${e.target.value}` })
                 }
-                style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
+                style={{ flex: 1 }}
+                aria-label="GPIO pin"
               >
-                <option value="">Pin...</option>
+                <option value="">Pin</option>
                 {GPIO_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
             ) : (
               <input
+                className="vt-input vt-input--sm vt-input--mono"
                 type="text"
                 value={form.address}
                 onChange={(e) => setForm({ ...form, address: e.target.value, protocol_address: e.target.value })}
                 placeholder={ADDR_PLACEHOLDERS[form.driver_id] || "Address"}
-                style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
+                style={{ flex: 1 }}
+                aria-label="Protocol address"
               />
             )}
           </div>
           {/* Row 3: Actions */}
           <div style={{ display: "flex", gap: 4 }}>
-            <button
-              className="io-btn"
-              style={{ flex: 1, fontSize: 10, background: "var(--accent)", color: "#fff", border: "none" }}
-              onClick={save}
-            >
+            <Button size="sm" variant="primary" style={{ flex: 1 }} onClick={save}>
               Save
-            </button>
-            <button className="io-btn" style={{ fontSize: 10 }} onClick={cancel}>
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancel}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* Active mappings — compact rows */}
       {ioMappings.length > 0 && (
-        <div style={{ marginBottom: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           {ioMappings.map((m, i) => {
             const stillExists = compiledVariables.some((v) => v.name === m.variable);
             const gpioLabel = m.driver_id === "gpio"
@@ -218,80 +236,44 @@ export default function IoMappingPanel() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 4,
-                  padding: "3px 10px",
+                  gap: 6,
+                  padding: "3px 0",
                   opacity: stillExists ? 1 : 0.5,
                   borderBottom: "1px solid var(--border)",
                 }}
               >
-                {/* Direction badge */}
+                <Badge tone={m.direction === "output" ? "info" : "accent"}>{m.direction === "output" ? "Out" : "In"}</Badge>
                 <span
                   style={{
-                    fontSize: 9,
-                    fontWeight: 700,
-                    color: m.direction === "output" ? "#3b82f6" : "#10b981",
-                    width: 18,
-                    flexShrink: 0,
-                  }}
-                >
-                  {m.direction === "output" ? "OUT" : "IN"}
-                </span>
-                {/* Variable name */}
-                <span
-                  style={{
-                    fontSize: 11,
+                    fontSize: "var(--fs-xs)",
+                    fontFamily: "var(--font-mono)",
                     color: stillExists ? "var(--text)" : "var(--danger)",
                     flex: 1,
+                    minWidth: 0,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
-                    fontFamily: '"SF Mono", monospace',
                   }}
-                  title={!stillExists ? `${m.variable} — variable no longer exists` : m.variable}
+                  title={!stillExists ? `${m.variable}: variable no longer exists` : m.variable}
                 >
                   {m.variable}{!stillExists && " !"}
                 </span>
-                {/* Protocol + Address */}
                 <span
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--fs-xs)",
+                    fontFamily: "var(--font-mono)",
                     color: "var(--text-muted)",
                     flexShrink: 0,
                   }}
                 >
                   {gpioLabel || `${protoLabel}:${m.address}`}
                 </span>
-                {/* Edit/Delete */}
-                <button
-                  onClick={() => startEdit(i)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--text-muted)",
-                    cursor: "pointer",
-                    fontSize: 10,
-                    padding: "0 2px",
-                    lineHeight: 1,
-                  }}
-                  title="Edit mapping"
-                >
-                  &#x270E;
-                </button>
-                <button
-                  onClick={() => removeIoMapping(i)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "#e55",
-                    cursor: "pointer",
-                    fontSize: 10,
-                    padding: "0 2px",
-                    lineHeight: 1,
-                  }}
-                  title="Remove mapping"
-                >
-                  &#x2715;
-                </button>
+                <IconButton label="Edit mapping" title="Edit mapping" size="sm" onClick={() => startEdit(i)}>
+                  <Pencil size={12} strokeWidth={1.75} />
+                </IconButton>
+                <IconButton label="Remove mapping" title="Remove mapping" size="sm" danger onClick={() => removeIoMapping(i)}>
+                  <Trash2 size={12} strokeWidth={1.75} />
+                </IconButton>
               </div>
             );
           })}
@@ -300,16 +282,16 @@ export default function IoMappingPanel() {
 
       {/* Unmapped variables — compact chip list */}
       {unmapped.length > 0 && !editing && (
-        <div style={{ padding: "0 10px" }}>
-          <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>
+        <div>
+          <div className="vt-label" style={{ marginBottom: 4 }}>
             Unmapped ({unmapped.length})
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
             {unmapped.map((v) => (
               <button
                 key={v.name}
-                className="io-btn"
-                style={{ fontSize: 10, padding: "1px 6px", fontFamily: '"SF Mono", monospace' }}
+                className="vt-btn vt-btn--sm vt-btn--ghost"
+                style={{ fontFamily: "var(--font-mono)", height: 22, padding: "0 6px" }}
                 onClick={() => startAdd(v.name)}
                 title={`Map ${v.name} to I/O`}
               >
@@ -322,7 +304,7 @@ export default function IoMappingPanel() {
 
       {/* Mapped count summary */}
       {compiledVariables.length > 0 && (
-        <div style={{ padding: "4px 10px 0", fontSize: 10, color: "var(--text-muted)" }}>
+        <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
           {ioMappings.length}/{compiledVariables.length} mapped
         </div>
       )}

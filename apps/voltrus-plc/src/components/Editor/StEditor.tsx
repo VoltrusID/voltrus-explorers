@@ -155,7 +155,7 @@ export default function StEditor({ value, onChange, filePath = "untitled.st" }: 
             fontSize: "13px",
           },
           ".cm-content": {
-            fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", monospace',
+            fontFamily: "var(--font-mono)",
             lineHeight: "1.6",
             padding: "12px 0",
           },
@@ -169,13 +169,13 @@ export default function StEditor({ value, onChange, filePath = "untitled.st" }: 
             background: "var(--border)",
           },
           ".cm-activeLine": {
-            background: "rgba(255, 255, 255, 0.03)",
+            background: "var(--hover-overlay)",
           },
           ".cm-cursor": {
             borderLeftColor: "var(--accent)",
           },
           ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-            background: "rgba(34, 197, 94, 0.15) !important",
+            background: "var(--selection) !important",
           },
           ".cm-lint-marker": {
             fontSize: "12px",
@@ -189,7 +189,7 @@ export default function StEditor({ value, onChange, filePath = "untitled.st" }: 
             padding: "4px 8px",
           },
           ".cm-completionLabel": {
-            fontFamily: '"SF Mono", monospace',
+            fontFamily: "var(--font-mono)",
             fontSize: "12px",
           },
           ".cm-foldGutter": {

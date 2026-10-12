@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
+import { Badge, Button, Callout, EmptyState } from "@mactools/ui";
+import { KeyRound } from "lucide-react";
 import { useCloudStore } from "../../store/cloud";
 import type { AiProvider } from "../../api/ai-bridge";
+import "./cloud.css";
 
 const PROVIDERS: AiProvider[] = ["claude", "ollama"];
 
@@ -26,9 +29,9 @@ export default function AiKeysPanel() {
 
   if (!token) {
     return (
-      <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
-        <div style={{ fontWeight: 600 }}>AI Keys</div>
-        <div style={{ color: "var(--text-muted)" }}>Sign in to manage cloud AI keys.</div>
+      <div className="cld-panel">
+        <div className="cld-panel__title">AI keys</div>
+        <div className="cld-hint">Sign in to manage cloud AI keys.</div>
       </div>
     );
   }
@@ -50,43 +53,47 @@ export default function AiKeysPanel() {
   };
 
   return (
-    <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
-      <div style={{ fontWeight: 600 }}>AI Keys</div>
+    <div className="cld-panel">
+      <div className="cld-panel__title">AI keys</div>
       {error && (
-        <div role="alert" style={{ color: "var(--danger)" }}>
+        <Callout tone="danger" icon={<KeyRound size={14} strokeWidth={1.75} />}>
           {error}
-        </div>
+        </Callout>
       )}
       {aiKeys.length === 0 ? (
-        <div style={{ color: "var(--text-muted)" }}>
-          No keys stored. Add one to use AI chat without a local API key.
-        </div>
+        <EmptyState
+          compact
+          title="No keys stored"
+          description="Add one to use AI chat without a local API key."
+        />
       ) : (
-        <ul className="file-list">
+        <ul className="cld-list file-list">
           {aiKeys.map((k) => (
             <li key={k.provider} className="file-item" style={{ justifyContent: "space-between" }}>
-              <span title={`Updated ${k.updatedAt}`}>
-                <span style={{ textTransform: "capitalize" }}>{k.provider}</span>
-                <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>{k.masked}</span>
+              <span title={`Updated ${k.updatedAt}`} style={{ minWidth: 0 }}>
+                <span className="cld-key-name">{k.provider}</span>
+                <Badge mono>{k.masked}</Badge>
               </span>
-              <button
-                className="toolbar-btn danger"
-                style={{ fontSize: 10, padding: "0 6px" }}
+              <Button
+                size="sm"
+                variant="danger"
                 disabled={busy}
                 onClick={() => remove(k.provider as AiProvider)}
               >
                 Delete
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       )}
 
-      <div style={{ display: "flex", gap: 4 }}>
+      <div className="cld-form-row">
         <select
+          className="vt-select vt-select--sm"
+          style={{ width: "auto" }}
           value={provider}
           onChange={(e) => setProvider(e.target.value as AiProvider)}
-          style={{ fontSize: 11, padding: "2px 4px", background: "var(--bg-highlight)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 4 }}
+          aria-label="AI provider"
         >
           {PROVIDERS.map((p) => (
             <option key={p} value={p}>
@@ -95,23 +102,24 @@ export default function AiKeysPanel() {
           ))}
         </select>
         <input
+          className="vt-input vt-input--sm cld-grow"
           type="password"
           placeholder={provider === "claude" ? "sk-ant-api03-..." : "optional key"}
+          aria-label="API key"
           value={key}
           onChange={(e) => setKey(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
-          style={{ flex: 1, fontSize: 11, padding: "2px 4px", minWidth: 0 }}
         />
-        <button
-          className="toolbar-btn"
-          style={{ fontSize: 10, padding: "0 8px" }}
+        <Button
+          size="sm"
+          variant="primary"
           disabled={busy || key.trim().length === 0}
           onClick={submit}
         >
           Save
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from "react";
+import { Button, Callout, Dialog, Field } from "@mactools/ui";
 import { useCloudStore } from "../../store/cloud";
+import "./cloud.css";
 
 // Cloud sign-in / registration modal. Auto-shows when the cloud store sets
 // authRequired (401 from any cloud action); server error messages from 4xx
@@ -26,56 +28,58 @@ export default function AuthDialog() {
   };
 
   return (
-    <div className="modal-overlay" onClick={dismissAuth}>
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="cloud-auth-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 id="cloud-auth-title">{mode === "login" ? "Sign in to Voltrus Cloud" : "Create Voltrus Cloud account"}</h3>
-        <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <input
-            className="auth-input"
-            type="email"
-            required
-            autoComplete="email"
-            placeholder="Email"
-            aria-label="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          <input
-            className="auth-input"
-            type="password"
-            required
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            placeholder="Password"
-            aria-label="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {error && (
-            <div role="alert" style={{ color: "var(--danger)", fontSize: 11 }}>
-              {error}
-            </div>
-          )}
-          <button className="toolbar-btn primary" type="submit" disabled={busy}>
+    <Dialog
+      open
+      onClose={dismissAuth}
+      title={mode === "login" ? "Sign in to Voltrus Cloud" : "Create Voltrus Cloud account"}
+      width={360}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+            {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
+          </Button>
+          <Button onClick={dismissAuth}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="cld-auth-form" disabled={busy}>
             {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Register"}
-          </button>
-        </form>
-        <button
-          className="toolbar-btn"
-          style={{ marginTop: 8 }}
-          onClick={() => setMode(mode === "login" ? "register" : "login")}
-        >
-          {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
-        </button>
-        <button className="toolbar-btn" style={{ marginTop: 8 }} onClick={dismissAuth}>
-          Cancel
-        </button>
-      </div>
-    </div>
+          </Button>
+        </>
+      }
+    >
+      <form id="cld-auth-form" onSubmit={submit} className="cld-form">
+        <Field label="Email">
+          {(id) => (
+            <input
+              id={id}
+              className="vt-input"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="Email"
+              aria-label="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          )}
+        </Field>
+        <Field label="Password">
+          {(id) => (
+            <input
+              id={id}
+              className="vt-input"
+              type="password"
+              required
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              placeholder="Password"
+              aria-label="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          )}
+        </Field>
+        {error && <Callout tone="danger">{error}</Callout>}
+      </form>
+    </Dialog>
   );
 }

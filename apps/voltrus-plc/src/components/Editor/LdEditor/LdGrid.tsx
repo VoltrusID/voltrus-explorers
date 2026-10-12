@@ -1,3 +1,4 @@
+import { EmptyState } from "@mactools/ui";
 import type { LdProgram, LdCursor, LdElement } from "../../../types/ld";
 import RungRow from "./RungRow";
 
@@ -42,19 +43,17 @@ export default function LdGrid({ program, cursor, editing, onKeyDown, onUpdateEl
           background: "var(--bg)",
           padding: "8px 0",
           minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         {program.rungs.length === 0 ? (
-          <div style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--text-muted)",
-            fontSize: 13,
-            height: 200,
-          }}>
-            Empty program — press F5 to add a contact or Ctrl+Enter to add a rung
+          <div className="ed-ld-empty">
+            <EmptyState
+              compact
+              title="Empty program"
+              description="Drag an element from the palette, press F5 to add a contact, or Ctrl+Enter to add a rung."
+            />
           </div>
         ) : (
           program.rungs.map((rung, ri) => (
@@ -81,7 +80,7 @@ export default function LdGrid({ program, cursor, editing, onKeyDown, onUpdateEl
           top: 0,
           bottom: 0,
           width: RAIL_BAR,
-          background: "var(--text-muted)",
+          background: "var(--border-light)",
           borderRadius: 2,
         }} />
       </div>

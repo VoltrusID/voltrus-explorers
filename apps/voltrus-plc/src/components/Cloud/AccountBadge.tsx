@@ -1,5 +1,8 @@
 import { useEffect } from "react";
+import { Button } from "@mactools/ui";
+import { LogIn } from "lucide-react";
 import { useCloudStore } from "../../store/cloud";
+import "./cloud.css";
 
 // Signed-in identity row for the Cloud sidebar section: email + plan chip +
 // logout, or a sign-in prompt when there is no session.
@@ -19,10 +22,16 @@ export default function AccountBadge() {
 
   if (!token) {
     return (
-      <div style={{ padding: "8px 12px" }}>
-        <button className="toolbar-btn" style={{ width: "100%" }} onClick={openAuth}>
+      <div className="cld-row">
+        <Button
+          size="sm"
+          variant="primary"
+          block
+          icon={<LogIn size={14} strokeWidth={1.75} />}
+          onClick={openAuth}
+        >
           Sign in to Voltrus Cloud
-        </button>
+        </Button>
       </div>
     );
   }
@@ -30,17 +39,9 @@ export default function AccountBadge() {
   const planName = plan && (plan.plan === "solo" || plan.plan === "team") ? plan.plan : plan ? "free" : "…";
 
   return (
-    <div
-      style={{
-        padding: "8px 12px",
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 11,
-      }}
-    >
+    <div className="cld-row cld-row--spread">
       <span
-        style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        className="cld-email"
         title={user ? `Signed in as ${user.email}` : "Restoring session…"}
       >
         {user ? user.email : "Restoring session…"}
@@ -52,9 +53,9 @@ export default function AccountBadge() {
       >
         {planName}
       </button>
-      <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={logout}>
+      <Button size="sm" variant="ghost" onClick={logout}>
         Log out
-      </button>
+      </Button>
     </div>
   );
 }

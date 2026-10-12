@@ -1,5 +1,7 @@
 import React from "react";
 import { useStore } from "../../store";
+import { Badge, Button, EmptyState } from "@mactools/ui";
+import { Play, RotateCcw } from "lucide-react";
 
 function groupByPrefix(names: string[]): Map<string, string[]> {
   const groups = new Map<string, string[]>();
@@ -16,8 +18,8 @@ function groupByPrefix(names: string[]): Map<string, string[]> {
 const PREFIX_LABELS: Record<string, string> = {
   X: "Inputs",
   Y: "Outputs",
-  M: "Internal Relays",
-  D: "Data Registers",
+  M: "Internal relays",
+  D: "Data registers",
   T: "Timers",
   C: "Counters",
 };
@@ -36,17 +38,23 @@ export default function SimulationPanel() {
 
   if (runtimeState === "stopped") {
     return (
-      <div style={{ color: "var(--text-muted)", padding: "8px 0" }}>
-        Compile and run the program to enable simulation.
-      </div>
+      <EmptyState
+        compact
+        icon={<Play size={18} strokeWidth={1.75} />}
+        title="Simulation unavailable"
+        description="Compile and run the program to enable simulation."
+      />
     );
   }
 
   if (compiledVariables.length === 0) {
     return (
-      <div style={{ color: "var(--text-muted)", padding: "8px 0" }}>
-        No compiled variables. Compile the program first.
-      </div>
+      <EmptyState
+        compact
+        icon={<Play size={18} strokeWidth={1.75} />}
+        title="No compiled variables"
+        description="Compile the program first to simulate its variables."
+      />
     );
   }
 
@@ -94,60 +102,29 @@ export default function SimulationPanel() {
     if (!orderedOtherPrefixes.includes(p)) orderedOtherPrefixes.push(p);
   }
 
+  const forcedTag = (
+    <Badge tone="warn">Forced</Badge>
+  );
+
   const renderToggle = (name: string) => {
     const forced = simulationInputs.has(name);
     const value = forced ? simulationInputs.get(name) : watchMap.get(name)?.value;
     const isOn = value === true || value === 1 || value === "TRUE" || value === "1";
 
     return (
-      <div
-        key={name}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "3px 0",
-          fontSize: 11,
-          fontFamily: "'SF Mono', 'Fira Code', monospace",
-        }}
-      >
+      <div key={name} className="sim-row">
         <button
+          className="sim-toggle"
+          aria-pressed={isOn}
           onClick={() => handleToggle(name)}
-          style={{
-            width: 32,
-            height: 18,
-            borderRadius: 9,
-            border: "none",
-            cursor: "pointer",
-            background: isOn ? "var(--accent)" : "var(--border)",
-            position: "relative",
-            transition: "background 0.15s",
-            flexShrink: 0,
-          }}
-          title={forced ? "Forced — click to unforce" : "Click to force toggle"}
-        >
-          <div
-            style={{
-              width: 14,
-              height: 14,
-              borderRadius: 7,
-              background: "#fff",
-              position: "absolute",
-              top: 2,
-              left: isOn ? 16 : 2,
-              transition: "left 0.15s",
-            }}
-          />
-        </button>
-        <span style={{ color: forced ? "var(--accent)" : "var(--text-muted)", minWidth: 60 }}>
-          {name}
-        </span>
-        <span style={{ color: isOn ? "#10b981" : "var(--text-muted)" }}>
+          title={forced ? "Forced. Click to unforce" : "Click to force toggle"}
+          aria-label={`Toggle ${name}`}
+        />
+        <span className="sim-name">{name}</span>
+        <span style={{ color: isOn ? "var(--accent-text)" : "var(--text-muted)" }}>
           {isOn ? "ON" : "OFF"}
         </span>
-        {forced && (
-          <span style={{ fontSize: 9, color: "#f59e0b" }}>FORCED</span>
-        )}
+        {forced && forcedTag}
       </div>
     );
   };
@@ -158,35 +135,13 @@ export default function SimulationPanel() {
     const quality = getQuality(name);
 
     return (
-      <div
-        key={name}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "3px 0",
-          fontSize: 11,
-          fontFamily: "'SF Mono', 'Fira Code', monospace",
-        }}
-      >
-        <div
-          style={{
-            width: 14,
-            height: 14,
-            borderRadius: 3,
-            background: isOn ? "#10b981" : "var(--border)",
-            boxShadow: isOn ? "0 0 6px #10b98180" : "none",
-            flexShrink: 0,
-            transition: "background 0.15s",
-          }}
-        />
-        <span style={{ color: "var(--text-muted)", minWidth: 60 }}>{name}</span>
-        <span style={{ color: isOn ? "#10b981" : "var(--text-muted)" }}>
+      <div key={name} className="sim-row">
+        <div className={`sim-led ${isOn ? "is-on" : ""}`} />
+        <span className="sim-name">{name}</span>
+        <span style={{ color: isOn ? "var(--accent-text)" : "var(--text-muted)" }}>
           {getDisplayValue(name)}
         </span>
-        {quality === "forced" && (
-          <span style={{ fontSize: 9, color: "#f59e0b" }}>FORCED</span>
-        )}
+        {quality === "forced" && forcedTag}
       </div>
     );
   };
@@ -199,52 +154,20 @@ export default function SimulationPanel() {
     if (isBoolVar) {
       const isOn = w?.value === true || w?.value === 1;
       return (
-        <div
-          key={name}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "3px 0",
-            fontSize: 11,
-            fontFamily: "'SF Mono', 'Fira Code', monospace",
-          }}
-        >
-          <div
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 2,
-              background: isOn ? "#10b981" : "var(--border)",
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ color: "var(--text-muted)", minWidth: 60 }}>{name}</span>
-          <span>{getDisplayValue(name)}</span>
-          {quality === "forced" && (
-            <span style={{ fontSize: 9, color: "#f59e0b" }}>FORCED</span>
-          )}
+        <div key={name} className="sim-row">
+          <div className={`sim-pin-led ${isOn ? "is-on" : ""}`} />
+          <span className="sim-name">{name}</span>
+          <span style={{ color: "var(--text)" }}>{getDisplayValue(name)}</span>
+          {quality === "forced" && forcedTag}
         </div>
       );
     }
 
     return (
-      <div
-        key={name}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "3px 0",
-          fontSize: 11,
-          fontFamily: "'SF Mono', 'Fira Code', monospace",
-        }}
-      >
-        <span style={{ color: "var(--text-muted)", minWidth: 60 }}>{name}</span>
+      <div key={name} className="sim-row">
+        <span className="sim-name">{name}</span>
         <span style={{ color: "var(--text)" }}>{getDisplayValue(name)}</span>
-        {quality === "forced" && (
-          <span style={{ fontSize: 9, color: "#f59e0b" }}>FORCED</span>
-        )}
+        {quality === "forced" && forcedTag}
       </div>
     );
   };
@@ -254,17 +177,8 @@ export default function SimulationPanel() {
     names: string[],
     renderer: (name: string) => React.ReactNode,
   ) => (
-    <div key={prefix} style={{ marginBottom: 12 }}>
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 600,
-          color: "var(--text-muted)",
-          textTransform: "uppercase",
-          letterSpacing: 1,
-          marginBottom: 4,
-        }}
-      >
+    <div key={prefix} className="sim-group">
+      <div className="vt-label" style={{ marginBottom: 4 }}>
         {PREFIX_LABELS[prefix] ?? prefix} ({names.length})
       </div>
       {names.map(renderer)}
@@ -272,9 +186,9 @@ export default function SimulationPanel() {
   );
 
   return (
-    <div style={{ display: "flex", gap: 24, padding: "4px 0" }}>
+    <div className="sim-columns">
       {/* Inputs */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="sim-col">
         <div
           style={{
             display: "flex",
@@ -283,27 +197,20 @@ export default function SimulationPanel() {
             marginBottom: 6,
           }}
         >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--accent)",
-            }}
-          >
-            Inputs (Toggle)
-          </span>
+          <span className="vt-section__title" style={{ fontSize: "var(--fs-sm)" }}>Inputs (toggle)</span>
           {simulationInputs.size > 0 && (
-            <button
-              className="toolbar-btn"
-              style={{ fontSize: 10, padding: "2px 8px" }}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RotateCcw size={12} strokeWidth={1.75} />}
               onClick={resetSimulationInputs}
             >
-              Reset All ({simulationInputs.size})
-            </button>
+              Reset all ({simulationInputs.size})
+            </Button>
           )}
         </div>
         {inputNames.length === 0 ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+          <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
             No X* input variables
           </span>
         ) : (
@@ -314,19 +221,19 @@ export default function SimulationPanel() {
       </div>
 
       {/* Outputs */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="sim-col">
         <div
           style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "#10b981",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
             marginBottom: 6,
           }}
         >
-          Outputs (Monitor)
+          <span className="vt-section__title" style={{ fontSize: "var(--fs-sm)" }}>Outputs (monitor)</span>
         </div>
         {outputNames.length === 0 ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+          <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
             No Y* output variables
           </span>
         ) : (
@@ -337,19 +244,19 @@ export default function SimulationPanel() {
       </div>
 
       {/* Internal */}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="sim-col">
         <div
           style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: "var(--text-muted)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
             marginBottom: 6,
           }}
         >
-          Internal Variables
+          <span className="vt-section__title" style={{ fontSize: "var(--fs-sm)" }}>Internal variables</span>
         </div>
         {otherNames.length === 0 ? (
-          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+          <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
             No internal variables
           </span>
         ) : (

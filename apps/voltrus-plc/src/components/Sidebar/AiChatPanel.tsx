@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { bridgeMode, invoke, listen, type UnlistenFn } from "../../api/bridge";
 import { useStore } from "../../store";
 import { useCloudStore } from "../../store/cloud";
+import { Button, EmptyState, Field, IconButton } from "@mactools/ui";
+import { Bot, SendHorizontal, Settings } from "lucide-react";
 import type { ChatMessage, CompileResult } from "../../types";
 
 const MAX_MESSAGES = 100;
@@ -193,135 +195,117 @@ Help the user write, debug, explain, or optimize their PLC Structured Text progr
     }
   };
 
-  const selectStyle: React.CSSProperties = {
-    width: "100%",
-    background: "var(--bg-highlight)",
-    border: "1px solid var(--border)",
-    borderRadius: 4,
-    color: "var(--text-primary)",
-    padding: "4px 6px",
-    fontSize: 12,
-  };
-
-  const labelStyle: React.CSSProperties = {
-    display: "block",
-    color: "var(--text-muted)",
-    fontSize: 11,
-    marginBottom: 2,
-  };
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", fontSize: 12 }}>
-      {/* Header with gear toggle */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        padding: "6px 10px",
-        borderBottom: "1px solid var(--border)",
-        gap: 8,
-      }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
-          AI Chat
-        </span>
-        <span style={{ fontSize: 10, color: "var(--text-muted)", opacity: 0.6 }}>
-          {aiProvider === "claude" ? "Claude" : "Ollama"} / {aiModel.split(":")[0].split("-").slice(-1)[0]}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, fontSize: "var(--fs-sm)" }}>
+      {/* Header with settings toggle */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border)",
+          gap: 8,
+        }}
+      >
+        <span className="vt-section__title">AI chat</span>
+        <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+          {aiProvider === "claude" ? "Claude" : "Ollama"} · {aiModel.split(":")[0].split("-").slice(-1)[0]}
         </span>
         <span style={{ flex: 1 }} />
-        <button
+        <IconButton
+          label="AI settings"
+          title="AI settings"
+          size="sm"
+          pressed={showSettings}
+          aria-expanded={showSettings}
           onClick={() => setShowSettings(!showSettings)}
-          style={{
-            background: showSettings ? "var(--border)" : "none",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--text-muted)",
-            fontSize: 14,
-            padding: "2px 4px",
-            borderRadius: 4,
-            lineHeight: 1,
-          }}
-          title="AI Settings"
         >
-          &#9881;
-        </button>
+          <Settings size={14} strokeWidth={1.75} />
+        </IconButton>
       </div>
 
       {/* Collapsible settings */}
       {showSettings && (
-        <div style={{
-          padding: "8px 10px",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface)",
-        }}>
-          <div style={{ marginBottom: 8 }}>
-            <label style={labelStyle}>Provider</label>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            padding: "10px 12px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--surface)",
+          }}
+        >
+          <Field label="Provider" htmlFor="ai-provider">
             <select
+              id="ai-provider"
+              className="vt-select"
               value={aiProvider}
               onChange={(e) => {
                 setAiProvider(e.target.value as "claude" | "ollama");
                 const newModels = e.target.value === "claude" ? claudeModels : ollamaModels;
                 if (!newModels.includes(aiModel)) setAiModel(newModels[0]);
               }}
-              style={selectStyle}
             >
               <option value="claude">Claude (Anthropic)</option>
               <option value="ollama">Ollama (Local)</option>
             </select>
-          </div>
+          </Field>
 
           {aiProvider === "claude" && (
-            <div style={{ marginBottom: 8 }}>
-              <label style={labelStyle}>API Key</label>
+            <Field label="API key">
               {cloudClaudeKey ? (
-                <div style={{ color: "var(--text-muted)" }}>
+                <div style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
                   Using cloud key ({cloudClaudeKey.masked})
                 </div>
               ) : (
                 <input
                   type="password"
-                  className="scan-cycle-input"
-                  style={{ width: "100%", textAlign: "left" }}
+                  className="vt-input vt-input--mono"
                   value={aiApiKey}
                   onChange={(e) => setAiApiKey(e.target.value)}
                   placeholder="sk-ant-api03-..."
+                  aria-label="API key"
                 />
               )}
-            </div>
+            </Field>
           )}
 
           {aiProvider === "ollama" && (
-            <div style={{ marginBottom: 8 }}>
-              <label style={labelStyle}>Endpoint</label>
+            <Field label="Endpoint" htmlFor="ai-endpoint">
               <input
-                className="scan-cycle-input"
-                style={{ width: "100%", textAlign: "left" }}
+                id="ai-endpoint"
+                className="vt-input vt-input--mono"
                 value={ollamaEndpoint}
                 onChange={(e) => setOllamaEndpoint(e.target.value)}
                 placeholder="localhost:11434"
               />
-            </div>
+            </Field>
           )}
 
-          <div>
-            <label style={labelStyle}>Model</label>
-            <select value={aiModel} onChange={(e) => setAiModel(e.target.value)} style={selectStyle}>
+          <Field label="Model" htmlFor="ai-model">
+            <select id="ai-model" className="vt-select" value={aiModel} onChange={(e) => setAiModel(e.target.value)}>
               {models.map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
-          </div>
+          </Field>
         </div>
       )}
 
       {/* Messages */}
-      <div style={{ flex: 1, overflow: "auto", padding: "8px 0" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 0" }}>
         {aiMessages.length === 0 && (
-          <div style={{ color: "var(--text-muted)", padding: 16, textAlign: "center" }}>
-            Ask me about PLC programming, debugging, or code generation.
-            {aiProvider === "claude" && (
-              <div style={{ marginTop: 8, fontSize: 10, opacity: 0.7 }}>
-                Note: your PLC source code will be sent to Anthropic's API.
-              </div>
-            )}
+          <EmptyState
+            compact
+            icon={<Bot size={18} strokeWidth={1.75} />}
+            title="No messages yet"
+            description="Ask about PLC programming, debugging, or code generation."
+          />
+        )}
+        {aiMessages.length > 0 && aiProvider === "claude" && (
+          <div style={{ padding: "0 12px 8px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+            Your PLC source code is sent to Anthropic's API.
           </div>
         )}
         {aiMessages.map((msg, i) => (
@@ -329,12 +313,13 @@ Help the user write, debug, explain, or optimize their PLC Structured Text progr
             key={`${msg.role}-${i}`}
             style={{
               marginBottom: 8,
-              padding: "4px 8px",
-              borderRadius: 6,
-              background: msg.role === "user" ? "var(--bg-highlight)" : "transparent",
+              margin: "0 8px 8px",
+              padding: "6px 8px",
+              borderRadius: "var(--radius)",
+              background: msg.role === "user" ? "var(--hover-overlay)" : "transparent",
             }}
           >
-            <span style={{ color: "var(--accent)", fontSize: 10, fontWeight: 600 }}>
+            <span style={{ color: msg.role === "user" ? "var(--accent-text)" : "var(--text-dim)", fontSize: "var(--fs-xs)", fontWeight: 600 }}>
               {msg.role === "user" ? "You" : "AI"}
             </span>
             <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 2 }}>
@@ -350,38 +335,40 @@ Help the user write, debug, explain, or optimize their PLC Structured Text progr
               const vKey = code.slice(0, 80);
               const vs = validationState.get(vKey);
               return (
-                <div key={`code-${i}-${j}`} style={{ marginTop: 4 }}>
+                <div key={`code-${i}-${j}`} style={{ marginTop: 6 }}>
                   <pre style={{
-                    background: "var(--bg-highlight)",
+                    background: "var(--sunken)",
                     padding: 8,
-                    borderRadius: 4,
-                    fontSize: 11,
+                    borderRadius: "var(--radius-sm)",
+                    fontSize: "var(--fs-xs)",
+                    fontFamily: "var(--font-mono)",
                     maxHeight: 200,
                     overflow: "auto",
                     border: vs?.result
                       ? vs.result.success
-                        ? "1px solid #22c55e"
+                        ? "1px solid var(--accent)"
                         : "1px solid var(--danger)"
-                      : "1px solid transparent",
+                      : "1px solid var(--border)",
                   }}>
                     <code>{code}</code>
                   </pre>
-                  <div style={{ display: "flex", gap: 4, marginTop: 2, alignItems: "center" }}>
-                    <button
-                      className="toolbar-btn primary"
-                      style={{ fontSize: 10, padding: "2px 8px" }}
+                  <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={vs?.checking}
                       onClick={() => validateAndApply(code)}
                       disabled={vs?.checking}
                     >
-                      {vs?.checking ? "Validating..." : "Validate & Apply"}
-                    </button>
+                      {vs?.checking ? "Validating..." : "Validate & apply"}
+                    </Button>
                     {vs?.result && !vs.result.success && (
-                      <span style={{ fontSize: 10, color: "var(--danger)" }}>
+                      <span style={{ fontSize: "var(--fs-xs)", color: "var(--danger)" }}>
                         {vs.result.diagnostics.length} error{vs.result.diagnostics.length > 1 ? "s" : ""}
                       </span>
                     )}
                     {vs?.result?.success && (
-                      <span style={{ fontSize: 10, color: "#22c55e" }}>Valid</span>
+                      <span style={{ fontSize: "var(--fs-xs)", color: "var(--accent-text)" }}>Valid</span>
                     )}
                   </div>
                 </div>
@@ -393,43 +380,37 @@ Help the user write, debug, explain, or optimize their PLC Structured Text progr
       </div>
 
       {/* Input */}
-      <div style={{ borderTop: "1px solid var(--border)", padding: "8px 8px 0" }}>
+      <div style={{ borderTop: "1px solid var(--border)", padding: "8px 8px 8px" }}>
         <textarea
+          className="vt-textarea"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={aiProvider === "claude" ? "Ask Claude..." : "Ask Ollama..."}
+          placeholder={aiProvider === "claude" ? "Ask Claude" : "Ask Ollama"}
           disabled={aiStreaming}
           style={{
             width: "100%",
-            background: "var(--bg-highlight)",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            color: "var(--text-primary)",
-            padding: "6px 8px",
-            fontSize: 12,
+            boxSizing: "border-box",
             resize: "none",
             minHeight: 40,
             maxHeight: 120,
           }}
           rows={2}
+          aria-label="Message the AI assistant"
         />
-        <div style={{ display: "flex", gap: 6, marginTop: 4, paddingBottom: 8 }}>
-          <button
-            className="toolbar-btn primary"
-            style={{ flex: 1, fontSize: 11 }}
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <Button
+            variant="primary"
+            style={{ flex: 1 }}
+            icon={<SendHorizontal size={14} strokeWidth={1.75} />}
             onClick={sendMessage}
             disabled={aiStreaming || !input.trim()}
           >
             {aiStreaming ? "Streaming..." : "Send"}
-          </button>
-          <button
-            className="toolbar-btn"
-            style={{ fontSize: 11 }}
-            onClick={clearAiMessages}
-          >
+          </Button>
+          <Button variant="ghost" onClick={clearAiMessages}>
             Clear
-          </button>
+          </Button>
         </div>
       </div>
     </div>

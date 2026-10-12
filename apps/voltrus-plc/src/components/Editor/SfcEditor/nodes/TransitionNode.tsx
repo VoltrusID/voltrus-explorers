@@ -12,29 +12,20 @@ function SfcTransitionNode({ id, data }: NodeProps<Node<SfcNodeData>>) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <Handle type="target" position={Position.Top} id="T" style={{ background: "#f59e0b", width: 8, height: 8 }} />
+    <div className="ed-sfc-transition">
+      <Handle type="target" position={Position.Top} id="T" />
 
-      <div style={{
-        width: 180, height: 3,
-        background: "#f59e0b",
-        borderRadius: 1,
-      }} />
+      <div className="ed-sfc-transition__bar" />
 
       <input
+        className="ed-sfc-transition__cond"
         value={data.condition ?? ""}
         onChange={handleConditionChange}
         placeholder="Condition (ST expression)"
-        style={{
-          width: 180, border: "1px solid #f59e0b40",
-          borderRadius: 3, padding: "2px 6px", marginTop: 2,
-          background: "var(--card, #1e1e2e)",
-          color: "var(--text)", fontSize: 10,
-          textAlign: "center", outline: "none",
-        }}
+        aria-label="Transition condition"
       />
 
-      <Handle type="source" position={Position.Bottom} id="B" style={{ background: "#f59e0b", width: 8, height: 8 }} />
+      <Handle type="source" position={Position.Bottom} id="B" />
     </div>
   );
 }

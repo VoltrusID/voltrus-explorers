@@ -1,0 +1,722 @@
+/* Editor chrome (ST/FBD/LD/SFC): palettes, graph nodes, ladder grid, canvases.
+   Tokens and .vt-* come from @mactools/ui; this file only styles the
+   editor-specific surfaces. Loaded via EditorRouter.tsx. */
+
+/* ── Palettes (FBD blocks, LD elements, SFC elements) ────────────────────── */
+
+.ed-palette {
+  width: 168px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 10px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ed-palette__title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+  padding: 0 2px;
+}
+
+.ed-palette__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ed-palette__group-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 0 2px;
+}
+
+.ed-palette__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ed-palette__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ed-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+
+.ed-chip:hover {
+  background: var(--card-hover);
+  border-color: var(--border-light);
+  color: var(--text);
+}
+
+.ed-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.ed-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  cursor: grab;
+  user-select: none;
+}
+
+.ed-tile:hover {
+  background: var(--card-hover);
+  border-color: var(--border-light);
+  color: var(--text);
+}
+
+.ed-tile:active {
+  cursor: grabbing;
+}
+
+.ed-tile__sym {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.ed-tile__sym svg {
+  width: 30px;
+  height: 20px;
+}
+
+/* ── Graph nodes (FBD + SFC) ─────────────────────────────────────────────── */
+
+.ed-node {
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: var(--font-sans);
+  box-shadow: var(--shadow);
+}
+
+.react-flow__node.selected .ed-node {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.ed-node__head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.ed-node__head svg {
+  color: var(--text-dim);
+}
+
+.ed-node__instance {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ed-node__instance input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px 4px;
+  outline: none;
+}
+
+.ed-node__instance input:focus {
+  border-color: var(--accent);
+}
+
+.ed-node__instance input::placeholder {
+  color: var(--text-muted);
+}
+
+.ed-node__pins {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.ed-pin {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 2px 8px 2px 12px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+.ed-pin--out {
+  padding: 2px 12px 2px 8px;
+  flex-direction: row-reverse;
+}
+
+.ed-pin__value {
+  width: 54px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  outline: none;
+}
+
+.ed-pin__value:focus {
+  border-bottom-color: var(--accent);
+}
+
+.ed-pin__value::placeholder {
+  color: var(--text-muted);
+}
+
+/* I/O pin nodes */
+
+.ed-io {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  position: relative;
+}
+
+.ed-io__tag {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.ed-io__select {
+  width: 40px;
+  height: 20px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-family: var(--font-sans);
+  padding: 0 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ed-io__select:focus {
+  border-color: var(--accent);
+}
+
+.ed-io__addr {
+  width: 48px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  outline: none;
+}
+
+.ed-io__addr:focus {
+  border-bottom-color: var(--accent);
+}
+
+/* SFC nodes */
+
+.ed-sfc-step {
+  min-width: 160px;
+  max-width: 220px;
+  padding: 8px 10px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ed-sfc-step--initial {
+  border-color: var(--info);
+  box-shadow: 0 0 0 3px var(--info-soft);
+}
+
+.ed-sfc-step__init {
+  position: absolute;
+  top: -7px;
+  right: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--info);
+  background: var(--card);
+  border: 1px solid var(--info);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  line-height: 1.3;
+}
+
+.ed-sfc-step__name {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  outline: none;
+  padding: 0;
+}
+
+.ed-sfc-step__name::placeholder {
+  color: var(--text-muted);
+}
+
+.ed-sfc-action {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.ed-sfc-qualifier {
+  width: 38px;
+  height: 20px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 0 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.ed-sfc-qualifier:focus {
+  border-color: var(--accent);
+}
+
+.ed-sfc-action input {
+  flex: 1;
+  min-width: 0;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 1px 4px;
+  outline: none;
+}
+
+.ed-sfc-action input:focus {
+  border-color: var(--accent);
+}
+
+.ed-sfc-action input::placeholder {
+  color: var(--text-muted);
+}
+
+.ed-sfc-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ed-sfc-remove:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.ed-sfc-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  font-size: var(--fs-xs);
+  font-family: var(--font-sans);
+  padding: 2px 0;
+  background: transparent;
+  border: 1px dashed var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.ed-sfc-add:hover {
+  background: var(--hover-overlay);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.ed-sfc-transition {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ed-sfc-transition__bar {
+  width: 180px;
+  height: 3px;
+  background: var(--text-muted);
+  border-radius: 2px;
+}
+
+.ed-sfc-transition__cond {
+  width: 180px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  margin-top: 3px;
+  background: var(--card);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: center;
+  outline: none;
+}
+
+.ed-sfc-transition__cond:focus {
+  border-color: var(--accent);
+}
+
+.ed-sfc-transition__cond::placeholder {
+  color: var(--text-muted);
+}
+
+.ed-sfc-jump {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ed-sfc-jump__card {
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: var(--shadow);
+}
+
+.ed-sfc-jump__card svg {
+  color: var(--text-dim);
+}
+
+.ed-sfc-jump__card input {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  outline: none;
+  width: 76px;
+}
+
+.ed-sfc-jump__card input::placeholder {
+  color: var(--text-muted);
+}
+
+.ed-sfc-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ed-sfc-branch__card {
+  width: 32px;
+  height: 32px;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+  box-shadow: var(--shadow);
+}
+
+/* ── React Flow canvas chrome ────────────────────────────────────────────── */
+
+.ed-canvas .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border-light);
+  border: 1px solid var(--card);
+}
+
+.ed-canvas .react-flow__handle:hover {
+  background: var(--accent);
+}
+
+.ed-canvas .react-flow__controls {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.ed-canvas .react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  width: 24px;
+  height: 24px;
+}
+
+.ed-canvas .react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.ed-canvas .react-flow__controls-button:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+.ed-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.ed-canvas .react-flow__minimap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.ed-canvas .react-flow__minimap-svg {
+  background-color: var(--surface);
+}
+
+.ed-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent);
+}
+
+.ed-canvas .react-flow__attribution {
+  background: transparent;
+}
+
+.ed-canvas .react-flow__attribution a {
+  color: var(--text-muted);
+}
+
+/* ── Hotkey help overlay ─────────────────────────────────────────────────── */
+
+.ed-help {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 100;
+  min-width: 220px;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  padding: 12px 14px;
+  font-size: var(--fs-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ed-help__title {
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.ed-help__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.ed-help__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 0;
+  color: var(--text-dim);
+}
+
+/* ── Ladder grid ─────────────────────────────────────────────────────────── */
+
+.ed-ld-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ed-ld-toolbar__name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ed-ld-toolbar__meta {
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-ld-toolbar__hints {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.ed-ld-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ed-ld-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.ed-cell {
+  box-sizing: border-box;
+  height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.ed-cell:hover {
+  border-color: var(--border-light);
+}
+
+.ed-cell--selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ed-cell--empty {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.ed-cell__var {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ed-cell__edit {
+  width: 68px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: center;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  outline: none;
+}
+
+.ed-cell__plus {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+/* Junction/wire strokes are drawn as SVG inside RungRow; keep symbol color
+   neutral so the accent stays on selection and the power rail. */
+.ed-rung {
+  position: relative;
+  margin-bottom: 6px;
+}

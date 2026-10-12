@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { Kbd } from "@mactools/ui";
 import type { LdProgram, LdCursor, LdElement, LdElementType } from "../../../types/ld";
 import { migrateLdProgram } from "./migrate";
 import { serializeLd } from "../../../types/canonical";
@@ -163,28 +164,25 @@ export default function GridLdEditor({ value, onChange }: Props) {
         onDragOver={handleDragOver}
       >
         {/* Toolbar */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "4px 12px",
-          background: "var(--card)",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 11,
-          color: "var(--text-muted)",
-          flexShrink: 0,
-        }}>
-          <span style={{ fontWeight: 600, color: "var(--text)" }}>{program.programName}</span>
-          <span>|</span>
-          <span>{program.rungs.length} rung{program.rungs.length !== 1 ? "s" : ""}</span>
+        <div className="ed-ld-toolbar">
+          <span className="ed-ld-toolbar__name">{program.programName}</span>
+          <span className="ed-ld-toolbar__meta">
+            {program.rungs.length} rung{program.rungs.length !== 1 ? "s" : ""}
+          </span>
           {cursor && (
-            <>
-              <span>|</span>
-              <span>R{cursor.rungIndex + 1}:P{cursor.pathIndex + 1}:C{cursor.colIndex + 1}</span>
-            </>
+            <span className="ed-ld-toolbar__meta">
+              R{cursor.rungIndex + 1}:P{cursor.pathIndex + 1}:C{cursor.colIndex + 1}
+            </span>
           )}
-          <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, opacity: 0.6 }}>F5-NO F6-NC F7-RE F8-Coil F9-Set F10-Reset F11-FB</span>
+          <div className="ed-ld-toolbar__hints">
+            <span className="ed-ld-hint"><Kbd>F5</Kbd>NO</span>
+            <span className="ed-ld-hint"><Kbd>F6</Kbd>NC</span>
+            <span className="ed-ld-hint"><Kbd>F7</Kbd>RE</span>
+            <span className="ed-ld-hint"><Kbd>F8</Kbd>Coil</span>
+            <span className="ed-ld-hint"><Kbd>F9</Kbd>Set</span>
+            <span className="ed-ld-hint"><Kbd>F10</Kbd>Reset</span>
+            <span className="ed-ld-hint"><Kbd>F11</Kbd>FB</span>
+          </div>
         </div>
         <LdGrid
           program={program}
