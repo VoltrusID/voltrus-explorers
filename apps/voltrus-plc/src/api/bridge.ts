@@ -2,33 +2,18 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileEntry, RuntimeConfig } from "../types";
 import { getSimHost, setSimEventHandler } from "../wasm/sim-host";
+import { BridgeError, cloudCommandHandlers, cloudListeners, emitLocalEvent } from "./bridge-core";
+// Feature modules register their cloud commands into bridge-core on load.
 import "./relay-bridge";
 import "./ai-bridge";
+
+export { BridgeError, emitLocalEvent, registerCloudCommands, type BridgeErrorCode } from "./bridge-core";
 
 export type { UnlistenFn };
 
 export type BridgeMode = "tauri" | "cloud";
 
 export const bridgeMode: BridgeMode = "__TAURI_INTERNALS__" in window ? "tauri" : "cloud";
-
-export type BridgeErrorCode =
-  | "cloud_unavailable"
-  | "unauthorized"
-  | "plan_required"
-  | "not_found"
-  | "bad_request"
-  | "network";
-
-export class BridgeError extends Error {
-  constructor(
-    public code: BridgeErrorCode,
-    public cmd: string,
-    message?: string,
-  ) {
-    super(message ?? `${code} (${cmd})`);
-    this.name = "BridgeError";
-  }
-}
 
 // Production serves the API from the same origin as the SPA (one worker);
 // localhost dev targets the local wrangler dev server. vplc_base overrides.
@@ -256,21 +241,6 @@ async function simInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
   }
 }
 
-// Extension point for feature modules (relay, ai) that add cloud-mode command
-// handlers without editing this file's switch. Register from your module:
-//   registerCloudCommands({ my_cmd: (cmd, args) => ... })
-// and side-effect-import the module here so it registers on load.
-const cloudCommandHandlers = new Map<
-  string,
-  (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
->();
-
-export function registerCloudCommands(
-  handlers: Record<string, (cmd: string, args?: Record<string, unknown>) => Promise<unknown>>,
-): void {
-  for (const [cmd, handler] of Object.entries(handlers)) cloudCommandHandlers.set(cmd, handler);
-}
-
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (bridgeMode === "tauri") return tauriInvoke<T>(cmd, args);
   if (cmd in SIM_COMMANDS) return simInvoke<T>(cmd, args);
@@ -280,11 +250,8 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
 }
 
 // Cloud events: Tauri events ride the native bus; cloud-mode listeners
-// register locally and are fed by the wasm sim worker (watch-update /
-// runtime-state / breakpoint-hit) plus nothing else — remote transports have
-// no event mapping in this wave.
-const cloudListeners = new Map<string, Set<(e: { payload: unknown }) => void>>();
-
+// register locally (bridge-core) and are fed by the wasm sim worker
+// (watch-update / runtime-state / breakpoint-hit) and the feature bridges.
 export function listen<T = unknown>(
   event: string,
   cb: (e: { payload: T }) => void,
@@ -300,13 +267,6 @@ export function listen<T = unknown>(
   return Promise.resolve(() => {
     set.delete(handler);
   });
-}
-
-// Delivers a local event to cloud-mode listen() subscribers.
-export function emitLocalEvent(event: string, payload: unknown): void {
-  const set = cloudListeners.get(event);
-  if (!set) return;
-  for (const handler of set) handler({ payload });
 }
 
 // Worker events (watch-update / runtime-state / breakpoint-hit) ride the same

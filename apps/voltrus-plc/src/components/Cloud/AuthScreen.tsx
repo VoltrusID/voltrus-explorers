@@ -7,7 +7,7 @@ import "./cloud.css";
 
 // Full-page sign-in/register for the web build. The cloud IDE requires an
 // account for sync, but local (in-browser simulation) editing stays available
-// via "Continue without an account" — the paywall gates cloud storage, not
+// via "Continue without an account": the paywall gates cloud storage, not
 // the editor. Desktop (tauri mode) keeps the lazy AuthDialog instead.
 const SKIP_KEY = "vplc_auth_skipped";
 
@@ -91,7 +91,7 @@ export default function AuthScreen() {
         </form>
 
         <button className="auth-skip" onClick={skip}>
-          Continue without an account — edit locally
+          Continue without an account
         </button>
         <p className="auth-footnote">
           Free plan: 1 cloud project, 25 files. Your programs stay on your device until you

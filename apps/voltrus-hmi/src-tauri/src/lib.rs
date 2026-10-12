@@ -19,8 +19,12 @@ fn default_color() -> String {
 fn default_font_size() -> f64 {
     14.0
 }
+/// Background for screens with no (or an invalid) colour; matches the editor's
+/// default for new screens (`src/store.ts`).
+pub const DEFAULT_SCREEN_BG: &str = "#0b0b0a";
+
 fn default_bg() -> String {
-    "#1e1e2e".to_string()
+    DEFAULT_SCREEN_BG.to_string()
 }
 fn default_false() -> bool {
     false
