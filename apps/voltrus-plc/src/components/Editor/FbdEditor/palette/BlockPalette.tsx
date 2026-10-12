@@ -12,18 +12,6 @@ const CATEGORIES: { id: BlockCategory | "io"; label: string }[] = [
   { id: "edge", label: "Edge" },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
-  io: "#10b981",
-  logic: "#7c3aed",
-  arithmetic: "#3b82f6",
-  comparison: "#f59e0b",
-  timer: "#f59e0b",
-  counter: "#8b5cf6",
-  move: "#6c7086",
-  bistable: "#ef4444",
-  edge: "#06b6d4",
-};
-
 export default function BlockPalette() {
   const onDragStart = (event: React.DragEvent, blockType: string) => {
     event.dataTransfer.setData("application/fbd-block", blockType);
@@ -31,48 +19,22 @@ export default function BlockPalette() {
   };
 
   return (
-    <div style={{
-      width: 140,
-      borderRight: "1px solid var(--border, #45475a)",
-      background: "var(--card, #1e1e2e)",
-      overflowY: "auto",
-      padding: "6px 4px",
-      fontSize: 10,
-      flexShrink: 0,
-    }}>
+    <div className="ed-palette">
       {CATEGORIES.map((cat) => {
         const blocks = BLOCK_LIBRARY.filter((b) =>
           cat.id === "io" ? (b.category === "input" || b.category === "output") : b.category === cat.id,
         );
         if (blocks.length === 0) return null;
         return (
-          <div key={cat.id} style={{ marginBottom: 6 }}>
-            <div style={{
-              color: CATEGORY_COLORS[cat.id],
-              fontWeight: 700,
-              fontSize: 9,
-              marginBottom: 3,
-              paddingLeft: 2,
-              textTransform: "uppercase",
-            }}>
-              {cat.label}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+          <div key={cat.id} className="ed-palette__group">
+            <div className="ed-palette__group-title">{cat.label}</div>
+            <div className="ed-palette__items">
               {blocks.map((b) => (
                 <div
                   key={b.type}
+                  className="ed-tile"
                   draggable
                   onDragStart={(e) => onDragStart(e, b.type)}
-                  style={{
-                    padding: "2px 6px",
-                    background: `${CATEGORY_COLORS[cat.id]}22`,
-                    border: `1px solid ${CATEGORY_COLORS[cat.id]}44`,
-                    borderRadius: 3,
-                    cursor: "grab",
-                    color: CATEGORY_COLORS[cat.id],
-                    fontWeight: 500,
-                    fontSize: 9,
-                  }}
                 >
                   {b.label}
                 </div>

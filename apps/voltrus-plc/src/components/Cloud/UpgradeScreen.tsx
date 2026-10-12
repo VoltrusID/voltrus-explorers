@@ -1,5 +1,8 @@
 import { useEffect } from "react";
+import { Button, Dialog } from "@mactools/ui";
+import { Check } from "lucide-react";
 import { useCloudStore } from "../../store/cloud";
+import "./cloud.css";
 
 // Paywall overlay. Raised automatically by any 402 plan_required from the
 // cloud API (project/file free-tier caps) or manually from AccountBadge.
@@ -34,10 +37,6 @@ const PLANS: Array<{
   },
 ];
 
-function planLabel(plan: string | null | undefined): string {
-  return plan === "solo" || plan === "team" ? plan : "free";
-}
-
 export default function UpgradeScreen() {
   const planGate = useCloudStore((s) => s.planGate);
   const plan = useCloudStore((s) => s.plan);
@@ -70,83 +69,88 @@ export default function UpgradeScreen() {
 
   if (!open) return null;
 
-  const current = planLabel(plan?.plan);
-
-  const checkoutFor = (id: "solo" | "team"): string | null => plan?.checkout[id] ?? null;
+  const current = plan?.plan === "solo" || plan?.plan === "team" ? plan.plan : "free";
 
   const upgrade = (id: "solo" | "team") => {
-    const url = checkoutFor(id);
+    const url = plan?.checkout[id] ?? null;
     if (url) window.open(url, "_blank", "noopener");
   };
 
   return (
-    <div className="modal-overlay" onClick={dismissUpgrade}>
-      <div
-        className="upgrade-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="upgrade-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="upgrade-head">
-          <h3 id="upgrade-title">Cloud plans</h3>
-          <span className={`plan-chip plan-chip-${current}`}>{current}</span>
-        </div>
-        <p className="upgrade-sub">
+    <Dialog
+      open
+      onClose={dismissUpgrade}
+      title="Cloud plans"
+      width={760}
+      footer={
+        <>
+          {token && (
+            <Button variant="ghost" onClick={() => void openPortal()} disabled={portalBusy}>
+              {portalBusy ? "Opening portal…" : "Manage billing"}
+            </Button>
+          )}
+          <Button onClick={dismissUpgrade}>Not now</Button>
+        </>
+      }
+    >
+      <div className="cld-row" style={{ padding: 0 }}>
+        <span className={`plan-chip plan-chip-${current}`}>{current}</span>
+        <p className="cld-upgrade-sub">
           {plan?.limits.maxProjects != null
             ? `Free plan: ${plan.limits.maxProjects} cloud project, ${plan.limits.maxFilesPerProject} files per project. Upgrade for unlimited cloud sync.`
             : "Pick the plan that fits how you ship projects."}
         </p>
 
-        <div className="plan-cards">
+        <div className="cld-plans">
           {PLANS.map((p) => {
             const isCurrent = p.id === current;
-            const url = p.id === "free" ? null : checkoutFor(p.id);
+            const url = p.id === "free" ? null : plan?.checkout[p.id] ?? null;
             return (
-              <div key={p.id} className={`plan-card ${p.id === "solo" ? "featured" : ""} ${isCurrent ? "current" : ""}`}>
-                <div className="plan-card-head">
-                  <strong>{p.name}</strong>
-                  <span className="plan-price">{p.price}</span>
+              <div
+                key={p.id}
+                className={`cld-plan-card${p.id === "solo" ? " cld-plan-card--featured" : ""}${isCurrent ? " cld-plan-card--current" : ""}`}
+              >
+                <div className="cld-plan-card__head">
+                  <span className="cld-plan-card__name">{p.name}</span>
+                  <span className="cld-plan-card__price">{p.price}</span>
                 </div>
-                <div className="plan-blurb">{p.blurb}</div>
-                <ul className="plan-features">
+                <div className="cld-plan-card__blurb">{p.blurb}</div>
+                <ul className="cld-plan-card__features">
                   {p.features.map((f) => (
-                    <li key={f}>{f}</li>
+                    <li key={f}>
+                      <Check size={12} strokeWidth={1.75} />
+                      {f}
+                    </li>
                   ))}
                 </ul>
+                <div className="cld-plan-card__spacer" />
                 {isCurrent ? (
-                  <button className="toolbar-btn" disabled>
+                  <Button block size="sm" disabled>
                     Current plan
-                  </button>
+                  </Button>
                 ) : url ? (
-                  <button className="toolbar-btn primary" onClick={() => upgrade(p.id as "solo" | "team")}>
+                  <Button
+                    block
+                    size="sm"
+                    variant={p.id === "solo" ? "primary" : "default"}
+                    onClick={() => upgrade(p.id as "solo" | "team")}
+                  >
                     Upgrade to {p.name}
-                  </button>
+                  </Button>
                 ) : p.id === "free" ? (
-                  <button className="toolbar-btn" onClick={dismissUpgrade}>
+                  <Button block size="sm" onClick={dismissUpgrade}>
                     Keep using Free
-                  </button>
+                  </Button>
                 ) : (
-                  <button className="toolbar-btn" disabled title="Checkout link not configured yet">
+                  <Button block size="sm" disabled title="Checkout link not configured yet">
                     Coming soon
-                  </button>
+                  </Button>
                 )}
               </div>
             );
           })}
         </div>
-
-        <div className="upgrade-actions">
-          {token && (
-            <button className="toolbar-btn" onClick={() => void openPortal()} disabled={portalBusy}>
-              {portalBusy ? "Opening portal…" : "Manage billing"}
-            </button>
-          )}
-          <button className="toolbar-btn" onClick={dismissUpgrade}>
-            Not now
-          </button>
-        </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

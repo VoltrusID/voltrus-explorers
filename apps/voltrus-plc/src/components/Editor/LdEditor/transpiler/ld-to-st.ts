@@ -124,7 +124,7 @@ export function transpileLdToSt(program: LdProgram): TranspileResult {
           break;
         case "coil_toggle":
           body.push(`    IF ${rungExpr} THEN ${outVar} := NOT ${outVar}; END_IF;`);
-          diagnostics.push({ message: `Toggle coil "${outVar}" toggles every scan cycle — consider using R_TRIG`, severity: "warning" });
+          diagnostics.push({ message: `Toggle coil "${outVar}" toggles every scan cycle; consider using R_TRIG`, severity: "warning" });
           break;
       }
     } else if (outputEl.type === "fb_block") {

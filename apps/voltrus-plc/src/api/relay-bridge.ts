@@ -3,34 +3,11 @@
 // deploy command surface onto a RelayClient WebSocket while tauri mode keeps
 // using the native commands untouched.
 //
-// ./bridge side-effect-imports THIS module, so importing it back statically
-// would close a cycle: the partial-namespace capture registers into a Map no
-// invoke() reads. The runtime module is therefore fetched dynamically, and
-// registration RETRIES until it succeeds — vite-node's transformed imports
-// cross real macrotask boundaries, so even a setTimeout can fire while
-// bridge.ts's body (and its cloudCommandHandlers map) is still pending. In
-// static ESM the first attempt always succeeds immediately.
+// Imports only the bridge-core leaf (never ./bridge, which side-effect-imports
+// this module), so registration runs synchronously when the module loads.
+import { BridgeError, emitLocalEvent, registerCloudCommands } from "./bridge-core";
 import { RelayClient } from "./relay-client";
 import type { DeployResult, IoMapping, ScadaRegistration, TargetStatus } from "../types";
-
-// The ./bridge module namespace, fetched dynamically at registration time.
-type BridgeModule = typeof import("./bridge");
-
-// Set before whenRegistered resolves; every handler runs after that.
-let bridge: BridgeModule | null = null;
-
-function bridgeMod(): BridgeModule {
-  if (!bridge) throw new Error("relay-bridge: bridge module not initialized");
-  return bridge;
-}
-
-// Resolves once the command handlers are actually registered. Code that runs
-// during module-load time (e.g. tests) can await this instead of guessing at
-// scheduler behavior.
-let resolveRegistered: () => void = () => {};
-export const whenRegistered = new Promise<void>((resolve) => {
-  resolveRegistered = resolve;
-});
 
 // One relay session per browser tab; deploy CRC persists across reconnects
 // like the desktop app's last_deployed_crc32 does across target sessions.
@@ -38,7 +15,6 @@ let client: RelayClient | null = null;
 let lastDeployedCrc32: number | null = null;
 
 function selectedDeviceId(cmd: string): string {
-  const { BridgeError } = bridgeMod();
   const id = localStorage.getItem("vplc_device");
   if (!id) {
     throw new BridgeError("bad_request", cmd, "No relay device selected (vplc_device is not set)");
@@ -47,7 +23,6 @@ function selectedDeviceId(cmd: string): string {
 }
 
 function requireClient(cmd: string): RelayClient {
-  const { BridgeError } = bridgeMod();
   if (!client) {
     throw new BridgeError("bad_request", cmd, `Not connected to a relay device (${cmd})`);
   }
@@ -76,14 +51,12 @@ function mapStatus(payload: unknown): TargetStatus {
 // The relay wire protocol has no start/stop/step ops yet — fail loudly rather
 // than pretending the remote runtime changed state.
 function unsupportedOverRelay(cmd: string): Promise<never> {
-  const { BridgeError } = bridgeMod();
   return Promise.reject(
     new BridgeError("bad_request", cmd, `${cmd} is not supported over the device relay yet`),
   );
 }
 
 async function connectAndReadStatus(cmd: string): Promise<TargetStatus> {
-  const { BridgeError, emitLocalEvent } = bridgeMod();
   // Never accumulate sockets: close any previous client before dialing.
   if (client) {
     client.close();
@@ -116,7 +89,6 @@ async function connectAndReadStatus(cmd: string): Promise<TargetStatus> {
 }
 
 async function deployOverRelay(cmd: string, args?: Record<string, unknown>): Promise<DeployResult> {
-  const { BridgeError } = bridgeMod();
   const relay = requireClient(cmd);
   const module = args?.module;
   if (!module || typeof module !== "object") {
@@ -154,7 +126,6 @@ async function deployOverRelay(cmd: string, args?: Record<string, unknown>): Pro
 // Browser mirror of commands::target::register_scada_device: same endpoint,
 // same payload, so the SCADA registration works identically in cloud mode.
 async function registerScada(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
-  const { BridgeError } = bridgeMod();
   const reg = args?.registration as ScadaRegistration | undefined;
   if (!reg || typeof reg.scada_url !== "string") {
     throw new BridgeError("bad_request", cmd, `${cmd} requires a registration object`);
@@ -185,50 +156,33 @@ async function registerScada(cmd: string, args?: Record<string, unknown>): Promi
   return res.json();
 }
 
-function register(mod: BridgeModule, attempts: number): void {
-  try {
-    mod.registerCloudCommands({
-      target_connect: (cmd) => connectAndReadStatus(cmd),
-      target_disconnect: async () => {
-        client?.close();
-        client = null;
-      },
-      target_status: async (cmd) => {
-        const { BridgeError } = bridgeMod();
-        const relay = requireClient(cmd);
-        try {
-          return mapStatus(await relay.request("status"));
-        } catch (e) {
-          throw new BridgeError("network", cmd, e instanceof Error ? e.message : String(e));
-        }
-      },
-      // Both desktop deploy commands map onto the single relay deploy op; the
-      // agent-side driver picks the transport encoding.
-      deploy_to_target: (cmd, args) => deployOverRelay(cmd, args),
-      deploy_via_grpc: (cmd, args) => deployOverRelay(cmd, args),
-      target_start: (cmd) => unsupportedOverRelay(cmd),
-      target_stop: (cmd) => unsupportedOverRelay(cmd),
-      target_step: (cmd) => unsupportedOverRelay(cmd),
-      grpc_start: (cmd) => unsupportedOverRelay(cmd),
-      grpc_stop: (cmd) => unsupportedOverRelay(cmd),
-      grpc_step: (cmd) => unsupportedOverRelay(cmd),
-      // Device-side concern; the store fire-and-forgets this in cloud mode.
-      set_target_kind: async () => undefined,
-      // No LAN visibility from the cloud: an empty list, not an error.
-      scan_mdns_targets: async () => [],
-      register_scada_device: (cmd, args) => registerScada(cmd, args),
-    });
-  } catch (e) {
-    // TDZ: bridge.ts's body has not reached cloudCommandHandlers yet (vite-node
-    // import boundaries). Retry on a later macrotask, bounded.
-    if (attempts >= 100) throw e;
-    setTimeout(() => register(mod, attempts + 1), 0);
-    return;
-  }
-  bridge = mod;
-  resolveRegistered();
-}
-
-setTimeout(() => {
-  void import("./bridge").then((mod) => register(mod, 0));
+registerCloudCommands({
+  target_connect: (cmd) => connectAndReadStatus(cmd),
+  target_disconnect: async () => {
+    client?.close();
+    client = null;
+  },
+  target_status: async (cmd) => {
+    const relay = requireClient(cmd);
+    try {
+      return mapStatus(await relay.request("status"));
+    } catch (e) {
+      throw new BridgeError("network", cmd, e instanceof Error ? e.message : String(e));
+    }
+  },
+  // Both desktop deploy commands map onto the single relay deploy op; the
+  // agent-side driver picks the transport encoding.
+  deploy_to_target: (cmd, args) => deployOverRelay(cmd, args),
+  deploy_via_grpc: (cmd, args) => deployOverRelay(cmd, args),
+  target_start: (cmd) => unsupportedOverRelay(cmd),
+  target_stop: (cmd) => unsupportedOverRelay(cmd),
+  target_step: (cmd) => unsupportedOverRelay(cmd),
+  grpc_start: (cmd) => unsupportedOverRelay(cmd),
+  grpc_stop: (cmd) => unsupportedOverRelay(cmd),
+  grpc_step: (cmd) => unsupportedOverRelay(cmd),
+  // Device-side concern; the store fire-and-forgets this in cloud mode.
+  set_target_kind: async () => undefined,
+  // No LAN visibility from the cloud: an empty list, not an error.
+  scan_mdns_targets: async () => [],
+  register_scada_device: (cmd, args) => registerScada(cmd, args),
 });

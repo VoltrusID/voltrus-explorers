@@ -4,6 +4,7 @@ import type { Node, Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import SfcCanvas from "./SfcCanvas";
 import SfcPalette from "./palette/SfcPalette";
+import HotkeyHelp from "../HotkeyHelp";
 import { useSfcHotkeys, SFC_HOTKEYS } from "./useSfcHotkeys";
 import type { SfcNodeData, SfcProgram } from "../../../types/sfc";
 import { parseSfcProgram, serializeSfc } from "../../../types/canonical";
@@ -93,21 +94,7 @@ function SfcEditorInner({ value, onChange }: SfcEditorProps) {
         />
       </div>
       {showHelp && (
-        <div style={{
-          position: "absolute", top: 10, right: 10,
-          background: "var(--card, #1e1e2e)", border: "1px solid var(--border, #45475a)",
-          borderRadius: 8, padding: "12px 16px", fontSize: 11, zIndex: 100,
-          minWidth: 200, boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-        }}>
-          <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--accent, #7c3aed)" }}>Keyboard Shortcuts</div>
-          {SFC_HOTKEYS.map((h) => (
-            <div key={h.key} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-              <span style={{ color: "var(--text-muted)" }}>{h.label}</span>
-              <kbd style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 3, padding: "1px 6px", fontFamily: '"SF Mono", monospace', fontSize: 10 }}>{h.key}</kbd>
-            </div>
-          ))}
-          <button onClick={() => setShowHelp(false)} style={{ marginTop: 8, width: "100%", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 4, padding: "4px 0", cursor: "pointer", fontSize: 10 }}>Close</button>
-        </div>
+        <HotkeyHelp title="Keyboard shortcuts" entries={SFC_HOTKEYS} onClose={() => setShowHelp(false)} />
       )}
     </div>
   );

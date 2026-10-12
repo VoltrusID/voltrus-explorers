@@ -1,6 +1,9 @@
 import { useState } from "react";
+import { Button, Callout, EmptyState } from "@mactools/ui";
+import { RefreshCw } from "lucide-react";
 import { useCloudStore } from "../../store/cloud";
 import { useStore } from "../../store";
+import "./cloud.css";
 
 // Cloud project browser: project list (open/delete), create field, and the
 // file list of the active project. File ops go through the bridge, so an
@@ -29,82 +32,90 @@ export default function CloudProjectPanel() {
   const active = projects.find((p) => p.id === projectId);
 
   return (
-    <div style={{ padding: "0 12px 10px", display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
+    <div className="cld-panel">
       {error && (
-        <div role="alert" style={{ color: "var(--danger)" }}>
-          {unavailable ? "Desktop-only feature — this command needs the Voltrus PLC desktop app" : error}
-        </div>
+        <Callout tone={unavailable ? "info" : "danger"}>
+          {unavailable
+            ? "Desktop-only feature: this command needs the Voltrus PLC desktop app"
+            : error}
+        </Callout>
       )}
       {dirtyCount > 0 && (
-        <div style={{ color: "var(--amber)" }}>
-          {dirtyCount} unsaved change{dirtyCount === 1 ? "" : "s"} — Cmd+S saves to the active cloud project
-        </div>
+        <Callout tone="warn">
+          {dirtyCount} unsaved change{dirtyCount === 1 ? "" : "s"}. Cmd+S saves to the active cloud project.
+        </Callout>
       )}
 
       {!token ? (
-        <div style={{ color: "var(--text-muted)" }}>Sign in to open cloud projects.</div>
+        <div className="cld-hint">Sign in to open cloud projects.</div>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <span style={{ fontWeight: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontWeight: 600, color: "var(--text)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {active ? `Active: ${active.name}` : "No active project"}
             </span>
-            <button
-              className="toolbar-btn"
-              style={{ marginLeft: "auto", fontSize: 10, padding: "1px 6px" }}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RefreshCw size={14} strokeWidth={1.75} />}
+              style={{ marginLeft: "auto" }}
               onClick={() => void refreshProjects()}
               disabled={loadingProjects}
             >
-              {loadingProjects ? "…" : "Refresh"}
-            </button>
+              Refresh
+            </Button>
           </div>
 
           {projects.length === 0 && !loadingProjects && (
-            <div style={{ color: "var(--text-muted)" }}>No cloud projects yet.</div>
+            <EmptyState
+              compact
+              title="No cloud projects yet."
+              description="Create one below to sync programs across devices."
+            />
           )}
-          <ul className="file-list">
+          <ul className="cld-list file-list">
             {projects.map((p) => (
               <li
                 key={p.id}
                 className={`file-item ${p.id === projectId ? "active" : ""}`}
                 style={{ justifyContent: "space-between" }}
               >
-                <span title={`${p.fileCount} file(s)`}>
+                <span title={`${p.fileCount} file(s)`} style={{ minWidth: 0 }}>
                   {p.name}
-                  <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>{p.fileCount}</span>
+                  <span className="cld-count">{p.fileCount}</span>
                 </span>
                 <span style={{ display: "flex", gap: 4 }}>
-                  <button
-                    className="toolbar-btn"
-                    style={{ fontSize: 10, padding: "0 6px" }}
+                  <Button
+                    size="sm"
                     onClick={() => void selectProject(p.id)}
                     disabled={filesLoading}
                   >
                     Open
-                  </button>
-                  <button
-                    className="toolbar-btn danger"
-                    style={{ fontSize: 10, padding: "0 6px" }}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
                     onClick={() => void deleteProject(p.id)}
                   >
                     Delete
-                  </button>
+                  </Button>
                 </span>
               </li>
             ))}
           </ul>
 
-          <div style={{ display: "flex", gap: 4 }}>
+          <div className="cld-form-row">
             <input
               type="text"
+              className="vt-input vt-input--sm cld-grow"
               placeholder="New project name"
+              aria-label="New project name"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
             />
-            <button
-              className="toolbar-btn"
-              style={{ fontSize: 10, padding: "0 8px" }}
+            <Button
+              size="sm"
+              variant="primary"
               disabled={newName.trim().length === 0}
               onClick={() => {
                 void createProject(newName.trim());
@@ -112,18 +123,22 @@ export default function CloudProjectPanel() {
               }}
             >
               Create
-            </button>
+            </Button>
           </div>
 
           {projectId && (
             <>
-              <div style={{ fontWeight: 600, marginTop: 4 }}>Files</div>
+              <div className="cld-panel__title" style={{ marginTop: 4 }}>Files</div>
               {filesLoading ? (
-                <div style={{ color: "var(--text-muted)" }}>Loading files…</div>
+                <div className="cld-hint">Loading files…</div>
               ) : cloudFiles.length === 0 ? (
-                <div style={{ color: "var(--text-muted)" }}>No files in this project.</div>
+                <EmptyState
+                  compact
+                  title="No files in this project"
+                  description="Save an open program with Cmd+S to add it here."
+                />
               ) : (
-                <ul className="file-list">
+                <ul className="cld-list file-list">
                   {cloudFiles.map((f) => (
                     <li
                       key={f.path}
@@ -133,7 +148,7 @@ export default function CloudProjectPanel() {
                     >
                       <span>{f.name}</span>
                       {openingPath === f.path && (
-                        <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>Opening…</span>
+                        <span className="cld-hint" style={{ marginLeft: "auto" }}>Opening…</span>
                       )}
                     </li>
                   ))}

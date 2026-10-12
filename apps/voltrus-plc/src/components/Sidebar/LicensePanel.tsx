@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "../../api/bridge";
+import { Button, StatusDot } from "@mactools/ui";
 
 interface LicenseInfo {
   activated: boolean;
@@ -68,81 +69,57 @@ export default function LicensePanel() {
   };
 
   return (
-    <div style={{ padding: "8px 12px", fontSize: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "var(--fs-sm)" }}>
       {license?.activated ? (
-        <div>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            color: "var(--accent)", marginBottom: 8,
-          }}>
-            <span style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: "var(--accent)", display: "inline-block",
-            }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <StatusDot tone="success" label="Licensed" />
             <span style={{ fontWeight: 600 }}>Licensed</span>
           </div>
-          <div style={{ color: "var(--text-secondary)", marginBottom: 4 }}>
+          <div style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-xs)" }}>
             Key: {license.license_key.slice(0, 8)}...{license.license_key.slice(-4)}
           </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <button
-              className="toolbar-btn"
-              style={{ fontSize: 10, padding: "2px 8px" }}
-              onClick={validate}
-              disabled={loading}
-            >
+          <div style={{ display: "flex", gap: 6 }}>
+            <Button size="sm" variant="default" onClick={validate} disabled={loading}>
               Validate
-            </button>
-            <button
-              className="toolbar-btn"
-              style={{ fontSize: 10, padding: "2px 8px", color: "var(--danger)" }}
-              onClick={deactivate}
-              disabled={loading}
-            >
+            </Button>
+            <Button size="sm" variant="ghost" style={{ color: "var(--danger)" }} onClick={deactivate} disabled={loading}>
               Deactivate
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
-        <div>
-          <div style={{ color: "var(--text-secondary)", marginBottom: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ color: "var(--text-dim)" }}>
             Enter your license key to activate Voltrus PLC.
           </div>
           <input
+            className="vt-input vt-input--mono"
             type="text"
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder="XXXX-XXXX-XXXX-XXXX"
-            style={{
-              width: "100%",
-              background: "var(--bg-highlight)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--text-primary)",
-              padding: "6px 8px",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              marginBottom: 8,
-            }}
+            aria-label="License key"
             onKeyDown={(e) => {
               if (e.key === "Enter") activate();
             }}
           />
-          <button
-            className="toolbar-btn primary"
-            style={{ width: "100%", fontSize: 11 }}
+          <Button
+            variant="primary"
+            block
+            loading={loading}
             onClick={activate}
             disabled={loading || !key.trim()}
           >
-            {loading ? "Activating..." : "Activate License"}
-          </button>
-          <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+            {loading ? "Activating..." : "Activate license"}
+          </Button>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
             Don't have a key?{" "}
             <a
               href="https://voltrus.id/voltrus-plc/#buy"
               target="_blank"
               rel="noopener"
-              style={{ color: "var(--accent)", textDecoration: "none" }}
+              style={{ color: "var(--accent-text)", textDecoration: "none" }}
             >
               Get one here
             </a>
@@ -151,12 +128,12 @@ export default function LicensePanel() {
       )}
 
       {error && (
-        <div style={{ marginTop: 8, color: "var(--danger)", fontSize: 11 }}>
+        <div role="alert" style={{ color: "var(--danger)", fontSize: "var(--fs-xs)" }}>
           {error}
         </div>
       )}
       {success && (
-        <div style={{ marginTop: 8, color: "var(--accent)", fontSize: 11 }}>
+        <div style={{ color: "var(--accent-text)", fontSize: "var(--fs-xs)" }}>
           {success}
         </div>
       )}

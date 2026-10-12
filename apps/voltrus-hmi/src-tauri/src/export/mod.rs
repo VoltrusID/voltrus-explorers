@@ -205,7 +205,7 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
 </div>"#,
             screen_class = screen_class,
             idx = screen_idx,
-            bg = safe_color(&screen.background_color, "#1e1e2e"),
+            bg = safe_color(&screen.background_color, DEFAULT_SCREEN_BG),
             widgets = widgets_html,
         ));
     }
@@ -302,7 +302,7 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
 <title>Voltrus HMI</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#1e1e2e;font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#ccc;overflow:hidden;width:100vw;height:100vh;position:relative}}
+body{{background:{page_bg};font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#ccc;overflow:hidden;width:100vw;height:100vh;position:relative}}
 .widget{{user-select:none}}
 .nav-bar{{position:fixed;top:0;left:0;right:0;height:40px;background:#111;display:flex;align-items:center;padding:0 8px;gap:4px;z-index:100;border-bottom:1px solid #333}}
 .nav-btn{{background:#2a2a3a;color:#ccc;border:1px solid #444;border-radius:4px;padding:6px 14px;font-size:12px;cursor:pointer;transition:all 0.2s}}
@@ -378,6 +378,7 @@ document.getElementById('varCount').textContent = varCount + ' variables bound';
                 .unwrap_or("#2a2a3a"),
             "#2a2a3a"
         ),
+        page_bg = DEFAULT_SCREEN_BG,
         // The alarm header strip keeps a fixed slot; its list is an overlay.
         screens_top = screen_top + if has_alarms { alarm::ALARM_HEADER_PX } else { 0 },
     );
@@ -451,7 +452,10 @@ mod tests {
         let html = build_export_html(&request("evil'\"}));alert(1);//", "red;}body{display:none")).unwrap();
         assert!(html.contains("ws://192.168.1.100/ws/plc"), "host fell through validation");
         assert!(!html.contains("ws://evil"), "host injection survived");
-        assert!(html.contains("#1e1e2e"), "invalid color did not fall back to default");
+        assert!(
+            html.contains(&format!("overflow:auto;background:{DEFAULT_SCREEN_BG}\"")),
+            "invalid color did not fall back to default"
+        );
         assert!(!html.contains("display:none}"), "css injection survived");
     }
 

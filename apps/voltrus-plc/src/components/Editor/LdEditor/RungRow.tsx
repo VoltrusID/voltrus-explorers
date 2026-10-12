@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import type { LdRung, LdCursor, LdElement, LdElementType } from "../../../types/ld";
 import { isContactType, isOutputType, MIN_CONTACT_COLS } from "../../../types/ld";
 import ElementCell, { CELL_W, CELL_H } from "./ElementCell";
@@ -47,23 +48,12 @@ function EmptyCell({
   return (
     <div
       onClick={onClick}
-      style={{
-        width: CELL_W,
-        height: CELL_H,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        border: selected ? "2px dashed var(--accent)" : "1px dashed transparent",
-        borderRadius: 4,
-        cursor: "pointer",
-        flexShrink: 0,
-        background: selected ? "rgba(22, 163, 74, 0.04)" : "transparent",
-        transition: "border-color 0.15s",
-      }}
+      className={`ed-cell ed-cell--empty${selected ? " ed-cell--selected" : ""}`}
+      style={{ width: CELL_W, height: CELL_H }}
     >
       {selected && (
-        <span style={{ fontSize: 12, color: "var(--accent)", opacity: 0.6, fontWeight: 700 }}>
-          +
+        <span className="ed-cell__plus">
+          <Plus size={12} strokeWidth={1.75} />
         </span>
       )}
     </div>
@@ -86,7 +76,7 @@ export default function RungRow({
   const totalH = rung.paths.length * ROW_H;
 
   return (
-    <div style={{ position: "relative", marginBottom: 6 }}>
+    <div className="ed-rung">
       {/* OR junction SVG for parallel paths */}
       {hasMultiplePaths && (
         <svg
@@ -107,7 +97,7 @@ export default function RungRow({
             y1={ROW_H / 2}
             x2="8"
             y2={totalH - ROW_H / 2}
-            stroke="var(--accent)"
+            stroke="var(--text-muted)"
             strokeWidth="2"
           />
           {/* Horizontal branches to each path */}

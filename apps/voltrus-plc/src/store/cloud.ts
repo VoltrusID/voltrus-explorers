@@ -95,7 +95,7 @@ function describeError(e: unknown): { message: string; unauthorized: boolean; un
 // Action error tail: surface the message and flag session loss on 401-class
 // failures. `unavailable` drives the panel's desktop-only hint; a 402
 // plan_required (REST or bridge path) raises the paywall overlay.
-const PLAN_GATED_MESSAGE = "Cloud storage limit reached — upgrade for unlimited projects and files.";
+const PLAN_GATED_MESSAGE = "Cloud storage limit reached. Upgrade for unlimited projects and files.";
 
 function applyError(e: unknown): { error: string; unavailable: boolean; authRequired?: boolean; planGate?: boolean } {
   if (e instanceof PlanRequiredError) {

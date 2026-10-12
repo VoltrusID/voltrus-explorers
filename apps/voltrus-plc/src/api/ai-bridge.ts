@@ -21,7 +21,7 @@
 // session token, JSON error bodies as CloudApiError).
 
 import { CloudApiError, cloudApiBase } from "./cloud-auth";
-import { BridgeError, emitLocalEvent, registerCloudCommands } from "./bridge";
+import { BridgeError, emitLocalEvent, registerCloudCommands } from "./bridge-core";
 
 export interface CloudAiKey {
   provider: string;
@@ -78,7 +78,7 @@ async function openStream(cmd: string, res: Response, label: "Claude" | "Ollama"
     throw new BridgeError(
       "cloud_unavailable",
       cmd,
-      "No API key configured on the server — add one under Cloud → AI Keys",
+      "No API key configured on the server. Add one under Cloud → AI Keys",
     );
   }
   // Mirror the Tauri commands' non-2xx rejection string.
@@ -218,29 +218,9 @@ async function chatOllamaStream(cmd: string, args?: Record<string, unknown>): Pr
   emitLocalEvent("ai-done", null);
 }
 
-// Registered from a macrotask: this module is side-effect-imported by
-// bridge.ts, so its body evaluates before bridge.ts's own (the
-// `cloudCommandHandlers` map is still in TDZ during the cyclic import).
-// A single timer is not enough — the module runner's transformed imports
-// cross real macrotask boundaries, so the first attempt can still fire
-// before bridge.ts's body — hence the bounded retry on ReferenceError.
-// The retry is safe: either both commands register or neither does.
-// Tests (and any future caller) await aiCommandsRegistered instead of
-// guessing at the timing.
-export const aiCommandsRegistered: Promise<void> = new Promise<void>((resolve) => {
-  const register = (attempt: number): void => {
-    try {
-      registerCloudCommands({
-        chat_claude_stream: chatClaudeStream,
-        chat_ollama_stream: chatOllamaStream,
-      });
-      resolve();
-    } catch (e) {
-      if (e instanceof ReferenceError && attempt < 100) setTimeout(() => register(attempt + 1), 0);
-      else throw e;
-    }
-  };
-  setTimeout(() => register(0), 0);
+registerCloudCommands({
+  chat_claude_stream: chatClaudeStream,
+  chat_ollama_stream: chatOllamaStream,
 });
 
 // --- AI key management REST (mirrors cloud-auth.ts request conventions) ---

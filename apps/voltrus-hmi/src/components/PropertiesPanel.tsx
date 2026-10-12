@@ -21,13 +21,13 @@ export function PropertiesPanel() {
   if (!widget) {
     return (
       <>
-        <div className="sidebar-header">Screen Properties</div>
+        <div className="sidebar-header">Screen properties</div>
         <div className="prop-group">
           <div className="prop-group-title">General</div>
           <div className="prop-row">
             <span className="prop-label">Name</span>
             <input
-              className="prop-input"
+              className="prop-input vt-input"
               value={screen.name}
               onChange={(e) => useStore.getState().updateScreen(screen.id, { name: e.target.value })}
             />
@@ -41,7 +41,7 @@ export function PropertiesPanel() {
               onChange={(e) => useStore.getState().updateScreen(screen.id, { backgroundColor: e.target.value })}
             />
             <input
-              className="prop-input"
+              className="prop-input vt-input"
               value={screen.backgroundColor}
               onChange={(e) => useStore.getState().updateScreen(screen.id, { backgroundColor: e.target.value })}
             />
@@ -52,7 +52,7 @@ export function PropertiesPanel() {
           <div className="prop-row">
             <span className="prop-label">RPi5 IP</span>
             <input
-              className="prop-input"
+              className="prop-input vt-input"
               value={rpi5Ip}
               onChange={(e) => useStore.getState().setRpi5Ip(e.target.value)}
               placeholder="192.168.1.50"
@@ -61,7 +61,7 @@ export function PropertiesPanel() {
           <div className="prop-row">
             <span className="prop-label">Port</span>
             <input
-              className="prop-input-sm"
+              className="prop-input-sm vt-input vt-input--sm"
               type="number"
               value={rpi5Port}
               onChange={(e) => {
@@ -71,7 +71,7 @@ export function PropertiesPanel() {
             />
           </div>
           <button
-            className="prop-btn block"
+            className="vt-btn vt-btn--sm vt-btn--block"
             disabled={!rpi5Ip}
             onClick={() => useStore.getState().deployToRpi5().catch(() => { /* toast shown in store */ })}
           >
@@ -80,14 +80,14 @@ export function PropertiesPanel() {
           <div className="prop-row" style={{ marginTop: 6 }}>
             <span className="prop-label">ESP32 IP</span>
             <input
-              className="prop-input"
+              className="prop-input vt-input"
               value={esp32Ip}
               onChange={(e) => setEsp32Ip(e.target.value)}
               placeholder="192.168.1.120"
             />
           </div>
           <button
-            className="prop-btn block"
+            className="vt-btn vt-btn--sm vt-btn--block"
             disabled={!esp32Ip}
             onClick={() => useStore.getState().deployToEsp32(esp32Ip).catch(() => { /* toast shown in store */ })}
           >
@@ -96,7 +96,7 @@ export function PropertiesPanel() {
         </div>
         <div className="prop-group">
           <div className="prop-group-title">Export</div>
-          <label className="prop-check">
+          <label className="vt-check">
             <input type="checkbox" checked={kioskMode} onChange={(e) => useStore.getState().setKioskMode(e.target.checked)} />
             Kiosk Mode
           </label>
@@ -113,7 +113,7 @@ export function PropertiesPanel() {
 
   return (
     <>
-      <div className="sidebar-header">Widget Properties</div>
+      <div className="sidebar-header">Widget properties</div>
       <div className="prop-group">
         <div className="prop-group-title">Identity</div>
         <div className="prop-row">
@@ -123,25 +123,25 @@ export function PropertiesPanel() {
         <div className="prop-row">
           <span className="prop-label">Label</span>
           <input
-            className="prop-input"
+            className="prop-input vt-input"
             value={widget.label}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { label: e.target.value })}
           />
         </div>
       </div>
       <div className="prop-group">
-        <div className="prop-group-title">Position & Size</div>
+        <div className="prop-group-title">Position &amp; size</div>
         <div className="prop-row">
           <span className="prop-label">X</span>
           <input
-            className="prop-input-sm"
+            className="prop-input-sm vt-input vt-input--sm"
             type="number"
             value={Math.round(widget.x)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { x: Number(e.target.value) })}
           />
           <span className="prop-label inline">Y</span>
           <input
-            className="prop-input-sm"
+            className="prop-input-sm vt-input vt-input--sm"
             type="number"
             value={Math.round(widget.y)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { y: Number(e.target.value) })}
@@ -150,14 +150,14 @@ export function PropertiesPanel() {
         <div className="prop-row">
           <span className="prop-label">Width</span>
           <input
-            className="prop-input-sm"
+            className="prop-input-sm vt-input vt-input--sm"
             type="number"
             value={Math.round(widget.width)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { width: Number(e.target.value) })}
           />
           <span className="prop-label inline">Height</span>
           <input
-            className="prop-input-sm"
+            className="prop-input-sm vt-input vt-input--sm"
             type="number"
             value={Math.round(widget.height)}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { height: Number(e.target.value) })}
@@ -165,11 +165,11 @@ export function PropertiesPanel() {
         </div>
       </div>
       <div className="prop-group">
-        <div className="prop-group-title">Data Binding</div>
+        <div className="prop-group-title">Data binding</div>
         <div className="prop-row">
           <span className="prop-label">Variable</span>
           <input
-            className="prop-input"
+            className="prop-input vt-input"
             placeholder="e.g. motor_speed"
             value={widget.variableName}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { variableName: e.target.value })}
@@ -178,7 +178,7 @@ export function PropertiesPanel() {
         <div className="prop-row">
           <span className="prop-label">Data Type</span>
           <select
-            className="prop-input"
+            className="prop-input vt-input"
             value={widget.dataType ?? ""}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { dataType: e.target.value || undefined })}
             title="PLC type used for writes in the exported runtime"
@@ -192,7 +192,7 @@ export function PropertiesPanel() {
         <div className="prop-row">
           <span className="prop-label">Role</span>
           <select
-            className="prop-input"
+            className="prop-input vt-input"
             value={widget.requiredRole || "none"}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { requiredRole: e.target.value as "none" | "operator" | "supervisor" })}
           >
@@ -205,14 +205,14 @@ export function PropertiesPanel() {
           <div className="prop-row">
             <span className="prop-label">Min</span>
             <input
-              className="prop-input-sm"
+              className="prop-input-sm vt-input vt-input--sm"
               type="number"
               value={widget.min}
               onChange={(e) => useStore.getState().updateWidget(widget.id, { min: Number(e.target.value) })}
             />
             <span className="prop-label inline">Max</span>
             <input
-              className="prop-input-sm"
+              className="prop-input-sm vt-input vt-input--sm"
               type="number"
               value={widget.max}
               onChange={(e) => useStore.getState().updateWidget(widget.id, { max: Number(e.target.value) })}
@@ -231,7 +231,7 @@ export function PropertiesPanel() {
             onChange={(e) => useStore.getState().updateWidget(widget.id, { color: e.target.value })}
           />
           <input
-            className="prop-input"
+            className="prop-input vt-input"
             value={widget.color}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { color: e.target.value })}
           />
@@ -239,7 +239,7 @@ export function PropertiesPanel() {
         <div className="prop-row">
           <span className="prop-label">Font Size</span>
           <input
-            className="prop-input-sm"
+            className="prop-input-sm vt-input vt-input--sm"
             type="number"
             value={widget.fontSize}
             onChange={(e) => useStore.getState().updateWidget(widget.id, { fontSize: Number(e.target.value) })}
@@ -249,16 +249,16 @@ export function PropertiesPanel() {
       <div className="prop-group">
         <div className="prop-group-title">Layer</div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="prop-btn" style={{ flex: 1 }} onClick={() => useStore.getState().bringToFront(widget.id)}>
+          <button className="vt-btn vt-btn--sm" style={{ flex: 1 }} onClick={() => useStore.getState().bringToFront(widget.id)}>
             Bring to Front
           </button>
-          <button className="prop-btn" style={{ flex: 1 }} onClick={() => useStore.getState().sendToBack(widget.id)}>
+          <button className="vt-btn vt-btn--sm" style={{ flex: 1 }} onClick={() => useStore.getState().sendToBack(widget.id)}>
             Send to Back
           </button>
         </div>
       </div>
       <div className="prop-group">
-        <button className="prop-btn danger" onClick={() => useStore.getState().deleteWidget(widget.id)}>
+        <button className="vt-btn vt-btn--sm vt-btn--danger" onClick={() => useStore.getState().deleteWidget(widget.id)}>
           Delete Widget
         </button>
       </div>

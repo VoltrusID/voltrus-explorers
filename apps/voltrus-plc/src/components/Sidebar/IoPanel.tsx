@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "../../api/bridge";
 import { useStore } from "../../store";
+import { Button, Field, StatusDot } from "@mactools/ui";
+import { Plug, Unplug } from "lucide-react";
 import type { IoStatus, IoReadResult } from "../../types";
 import { PROTOCOLS } from "../../constants/protocols";
 import {
@@ -44,6 +46,16 @@ export default function IoPanel() {
   const [eipImportSelected, setEipImportSelected] = useState<Set<string>>(new Set());
   const [eipImportGlob, setEipImportGlob] = useState("*");
   const [eipImportAccepting, setEipImportAccepting] = useState(false);
+
+  // Close the UDT import dialog on Escape.
+  useEffect(() => {
+    if (!eipImportOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEipImportOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [eipImportOpen]);
 
   const handleProtocolChange = (p: string) => {
     setProtocol(p);
@@ -163,15 +175,11 @@ export default function IoPanel() {
   const connected = status?.connected ?? false;
 
   return (
-    <div style={{ padding: 12, fontSize: 12 }}>
-      {/* Protocol selector */}
-      <div style={{ marginBottom: 8 }}>
-        <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-          Protocol
-        </label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "var(--fs-sm)" }}>
+      <Field label="Protocol" htmlFor="io-protocol">
         <select
-          className="scan-cycle-input"
-          style={{ width: "100%", textAlign: "left", padding: "2px 6px" }}
+          id="io-protocol"
+          className="vt-select"
           value={protocol}
           onChange={(e) => handleProtocolChange(e.target.value)}
           disabled={connected}
@@ -180,226 +188,196 @@ export default function IoPanel() {
             <option key={p.id} value={p.id}>{p.label}</option>
           ))}
         </select>
-      </div>
+      </Field>
 
       {/* Quick presets for Modbus */}
       {protocol === "modbus" && !connected && (
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-            Quick Preset
-          </label>
+        <Field label="Quick preset">
           <div style={{ display: "flex", gap: 4 }}>
             {QUICK_PRESETS.map((p) => (
-              <button
+              <Button
                 key={p.label}
-                className="toolbar-btn"
-                style={{ flex: 1, fontSize: 10, padding: "2px 4px" }}
+                size="sm"
+                variant="ghost"
+                style={{ flex: 1 }}
                 onClick={() => { setHost(p.host); setPort(p.port); setUnitId(p.unitId); }}
               >
                 {p.label}
-              </button>
+              </Button>
             ))}
           </div>
-        </div>
+        </Field>
       )}
 
-      {/* Host */}
-      <div style={{ marginBottom: 8 }}>
-        <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-          Host
-        </label>
+      <Field label="Host" htmlFor="io-host">
         <input
-          className="scan-cycle-input"
-          style={{ width: "100%", textAlign: "left" }}
+          id="io-host"
+          className="vt-input vt-input--mono"
           value={host}
           onChange={(e) => setHost(e.target.value)}
           disabled={connected}
           placeholder="127.0.0.1"
         />
-      </div>
+      </Field>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <div style={{ flex: 1 }}>
-          <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-            Port
-          </label>
+      <div className="vt-field-row">
+        <Field label="Port" htmlFor="io-port">
           <input
-            className="scan-cycle-input"
-            style={{ width: "100%", textAlign: "left" }}
+            id="io-port"
+            className="vt-input"
             type="number"
             value={port}
             onChange={(e) => setPort(Number(e.target.value))}
             disabled={connected}
           />
-        </div>
+        </Field>
         {protocol === "modbus" && (
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-              Unit ID
-            </label>
+          <Field label="Unit ID" htmlFor="io-unit">
             <input
-              className="scan-cycle-input"
-              style={{ width: "100%", textAlign: "left" }}
+              id="io-unit"
+              className="vt-input"
               type="number"
               min={0} max={255}
               value={unitId}
               onChange={(e) => setUnitId(Number(e.target.value))}
               disabled={connected}
             />
-          </div>
+          </Field>
         )}
       </div>
 
       {/* OPC-UA specific */}
       {protocol === "opcua" && (
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-            Endpoint URL (leave blank for default)
-          </label>
+        <Field label="Endpoint URL (leave blank for default)" htmlFor="io-endpoint">
           <input
-            className="scan-cycle-input"
-            style={{ width: "100%", textAlign: "left" }}
+            id="io-endpoint"
+            className="vt-input vt-input--mono"
             value={opcuaEndpoint}
             onChange={(e) => setOpcuaEndpoint(e.target.value)}
             disabled={connected}
             placeholder={`opc.tcp://${host}:${port}/`}
           />
-        </div>
+        </Field>
       )}
 
       {/* S7 specific */}
       {protocol === "s7" && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-              Rack
-            </label>
+        <div className="vt-field-row">
+          <Field label="Rack" htmlFor="io-rack">
             <input
-              className="scan-cycle-input"
-              style={{ width: "100%", textAlign: "left" }}
+              id="io-rack"
+              className="vt-input"
               type="number" min={0} max={15}
               value={s7Rack}
               onChange={(e) => setS7Rack(Number(e.target.value))}
               disabled={connected}
             />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-              Slot
-            </label>
+          </Field>
+          <Field label="Slot" htmlFor="io-slot">
             <input
-              className="scan-cycle-input"
-              style={{ width: "100%", textAlign: "left" }}
+              id="io-slot"
+              className="vt-input"
               type="number" min={0} max={15}
               value={s7Slot}
               onChange={(e) => setS7Slot(Number(e.target.value))}
               disabled={connected}
             />
-          </div>
+          </Field>
         </div>
       )}
 
       {/* MQTT specific */}
       {protocol === "mqtt" && (
-        <div style={{ marginBottom: 8 }}>
-          <label style={{ display: "block", color: "var(--text-muted)", fontSize: 11, marginBottom: 2 }}>
-            Topic Prefix
-          </label>
+        <Field label="Topic prefix" htmlFor="io-topic-prefix">
           <input
-            className="scan-cycle-input"
-            style={{ width: "100%", textAlign: "left" }}
+            id="io-topic-prefix"
+            className="vt-input vt-input--mono"
             value={mqttPrefix}
             onChange={(e) => setMqttPrefix(e.target.value)}
             disabled={connected}
             placeholder="plc"
           />
-        </div>
+        </Field>
       )}
 
       {/* Connection status */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span
-          style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: connected ? "var(--accent)" : "var(--text-muted)",
-            boxShadow: connected ? "0 0 6px var(--accent)" : "none",
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ color: connected ? "var(--accent)" : "var(--text-muted)", fontSize: 11 }}>
-          {connected ? `Connected ${host}:${port}` : "Disconnected"}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-xs)" }}>
+        <StatusDot tone={connected ? "success" : "neutral"} label={connected ? "Connected" : "Disconnected"} />
+        <span style={{ color: connected ? "var(--accent-text)" : "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+          {connected ? `${host}:${port}` : "Disconnected"}
         </span>
       </div>
 
       {status?.error && (
-        <div style={{ color: "var(--danger)", fontSize: 11, marginBottom: 8 }}>
+        <div className="vt-callout vt-callout--danger" role="alert">
           {status.error}
         </div>
       )}
 
-      <button
-        className={`toolbar-btn ${connected ? "danger" : "primary"}`}
-        style={{ width: "100%" }}
+      <Button
+        variant={connected ? "danger" : "primary"}
+        block
+        icon={connected ? <Unplug size={14} strokeWidth={1.75} /> : <Plug size={14} strokeWidth={1.75} />}
+        loading={connecting}
         onClick={connected ? handleDisconnect : handleConnect}
         disabled={connecting}
       >
         {connecting ? "Connecting..." : connected ? "Disconnect" : "Connect"}
-      </button>
+      </Button>
 
       {protocol === "enip" && (
-        <button
-          className="toolbar-btn"
-          style={{ width: "100%", marginTop: 6 }}
+        <Button
+          variant="default"
+          block
           onClick={() => openEipImport(eipImportGlob)}
           disabled={eipImportLoading}
         >
-          {eipImportLoading ? "Browsing..." : "Import UDTs from controller…"}
-        </button>
+          {eipImportLoading ? "Browsing..." : "Import UDTs from controller"}
+        </Button>
       )}
 
       {connected && (
-        <>
-          <div style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 11, fontWeight: 600 }}>
-            Register Test
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-            <input
-              className="scan-cycle-input"
-              style={{ flex: 1, textAlign: "left", padding: "2px 6px" }}
-              type="number"
-              min={0} max={65535}
-              value={testAddr}
-              onChange={(e) => setTestAddr(Number(e.target.value))}
-              placeholder="Address/Offset"
-            />
-            <button className="toolbar-btn" onClick={handleTestRead} disabled={testing} style={{ padding: "2px 8px", fontSize: 11 }}>
-              Read
-            </button>
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-            <input
-              className="scan-cycle-input"
-              style={{ flex: 1, textAlign: "left", padding: "2px 6px" }}
-              type="number"
-              value={testValue}
-              onChange={(e) => setTestValue(Number(e.target.value))}
-              placeholder="Value"
-            />
-            <button className="toolbar-btn" onClick={handleTestWrite} disabled={testing} style={{ padding: "2px 8px", fontSize: 11 }}>
-              Write
-            </button>
-          </div>
-          {readResult && (
-            <div style={{ marginTop: 4, fontSize: 11, color: readResult.success ? "var(--accent)" : "var(--danger)" }}>
-              {readResult.success ? `Result: ${readResult.value}` : `Error: ${readResult.error}`}
+        <Field label="Register test">
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="vt-input vt-input--sm vt-input--mono"
+                type="number"
+                min={0} max={65535}
+                value={testAddr}
+                onChange={(e) => setTestAddr(Number(e.target.value))}
+                placeholder="Address"
+                aria-label="Test address"
+              />
+              <Button size="sm" variant="default" onClick={handleTestRead} disabled={testing}>
+                Read
+              </Button>
             </div>
-          )}
-          {testing && (
-            <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-muted)" }}>
-              Testing...
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                className="vt-input vt-input--sm vt-input--mono"
+                type="number"
+                value={testValue}
+                onChange={(e) => setTestValue(Number(e.target.value))}
+                placeholder="Value"
+                aria-label="Test value"
+              />
+              <Button size="sm" variant="default" onClick={handleTestWrite} disabled={testing}>
+                Write
+              </Button>
             </div>
-          )}
-        </>
+            {readResult && (
+              <div style={{ fontSize: "var(--fs-xs)", color: readResult.success ? "var(--accent-text)" : "var(--danger)", fontFamily: "var(--font-mono)" }}>
+                {readResult.success ? `Result: ${readResult.value}` : `Error: ${readResult.error}`}
+              </div>
+            )}
+            {testing && (
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+                Testing...
+              </div>
+            )}
+          </div>
+        </Field>
       )}
 
       {eipImportOpen && (
@@ -414,12 +392,12 @@ export default function IoPanel() {
           >
             <h3 id="eip-import-title">Import UDTs from controller</h3>
             {eipImportError && (
-              <div style={{ color: "var(--danger)", fontSize: 11, marginBottom: 8, whiteSpace: "pre-wrap" }}>
+              <div className="vt-callout vt-callout--danger" role="alert" style={{ marginBottom: 8, whiteSpace: "pre-wrap" }}>
                 {eipImportError}
               </div>
             )}
             {eipImportLoading && (
-              <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 8 }}>
+              <div style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)", marginBottom: 8, fontFamily: "var(--font-mono)" }}>
                 Browsing {host}:{port}...
               </div>
             )}
@@ -427,49 +405,52 @@ export default function IoPanel() {
               <>
                 <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
                   <input
-                    className="scan-cycle-input"
-                    style={{ flex: 1, textAlign: "left", padding: "2px 6px" }}
+                    className="vt-input"
                     value={eipImportGlob}
                     onChange={(e) => setEipImportGlob(e.target.value)}
                     placeholder="Tag glob, e.g. Motor*"
+                    aria-label="Tag glob filter"
                   />
-                  <button
-                    className="toolbar-btn"
-                    style={{ padding: "2px 8px", fontSize: 11 }}
+                  <Button
+                    size="md"
+                    variant="default"
                     onClick={() => openEipImport(eipImportGlob)}
                     disabled={eipImportLoading}
                   >
                     Browse
-                  </button>
+                  </Button>
                 </div>
-                <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid var(--border)", marginBottom: 8 }}>
+                <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--radius)", marginBottom: 8 }}>
                   {eipImportResult.tags.map((t) => (
                     <label
                       key={t.name}
-                      style={{ display: "flex", gap: 6, alignItems: "center", padding: "2px 6px", fontSize: 11, cursor: "pointer" }}
+                      className="vt-check"
+                      style={{ padding: "3px 8px", display: "flex" }}
                     >
                       <input
                         type="checkbox"
                         checked={eipImportSelected.has(t.name)}
                         onChange={(e) => toggleEipImportTag(t.name, e.target.checked)}
                       />
-                      <span>{t.name}</span>
-                      <span style={{ color: "var(--text-muted)" }}>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-xs)" }}>{t.name}</span>
+                      <span style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
                         {t.template} ({t.members.length} members)
                       </span>
                     </label>
                   ))}
                 </div>
-                <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 4 }}>
-                  Preview — eip_types.st
+                <div style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)", marginBottom: 4 }}>
+                  Preview: eip_types.st
                 </div>
                 <pre
                   style={{
                     maxHeight: 180,
                     overflowY: "auto",
-                    fontSize: 10,
-                    background: "var(--card)",
+                    fontSize: "var(--fs-xs)",
+                    fontFamily: "var(--font-mono)",
+                    background: "var(--sunken)",
                     border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)",
                     padding: 8,
                     margin: 0,
                     whiteSpace: "pre-wrap",
@@ -480,17 +461,18 @@ export default function IoPanel() {
               </>
             )}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button
-                className="toolbar-btn primary"
+              <Button
+                variant="primary"
                 style={{ flex: 1 }}
+                loading={eipImportAccepting}
                 disabled={!eipImportResult || eipImportSelected.size === 0 || eipImportAccepting}
                 onClick={handleEipImportAccept}
               >
                 {eipImportAccepting ? "Writing..." : "Accept"}
-              </button>
-              <button className="toolbar-btn" style={{ flex: 1 }} onClick={() => setEipImportOpen(false)}>
+              </Button>
+              <Button variant="default" style={{ flex: 1 }} onClick={() => setEipImportOpen(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         </div>

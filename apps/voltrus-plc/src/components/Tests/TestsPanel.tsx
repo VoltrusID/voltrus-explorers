@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke, listen, type UnlistenFn } from "../../api/bridge";
-import { Check, X } from "@phosphor-icons/react";
+import { Check, FolderOpen, ListChecks, Play, Sparkles, X } from "lucide-react";
 import { useStore } from "../../store";
+import { Button, EmptyState } from "@mactools/ui";
 import type { ChatMessage, FileEntry } from "../../types";
 
 // Mirrors the wire format of commands::tests::TestReportDto (snake_case fields).
@@ -35,16 +36,18 @@ export interface TestReportDto {
   suites: TestSuiteDto[];
 }
 
+// Pass/fail indicator colours double as chart-colour exceptions in the
+// design contract; the panel tests pin the pass colour to this exact value.
 const OUTCOME_GLYPHS: Record<ScenarioDto["outcome"], ReactNode> = {
-  passed: <Check size={12} weight="bold" />,
-  failed: <X size={12} weight="bold" />,
+  passed: <Check size={12} strokeWidth={2.5} />,
+  failed: <X size={12} strokeWidth={2.5} />,
   error: "!",
 };
 
 const OUTCOME_COLORS: Record<ScenarioDto["outcome"], string> = {
   passed: "#10b981",
   failed: "var(--danger)",
-  error: "#f59e0b",
+  error: "var(--warn)",
 };
 
 export function collectTestFiles(files: FileEntry[]): FileEntry[] {
@@ -103,6 +106,16 @@ export default function TestsPanel() {
       .then((files) => setTestFiles(collectTestFiles(files)))
       .catch((e) => setError(String(e)));
   }, [projectDir]);
+
+  // Close the review dialog on Escape.
+  useEffect(() => {
+    if (!reviewOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setReviewOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reviewOpen]);
 
   const runTests = async (focus: string | null) => {
     if (!projectDir || running) return;
@@ -237,38 +250,38 @@ export default function TestsPanel() {
     : 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button
-          className="toolbar-btn primary"
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+        <Button
+          variant="primary"
+          icon={<Play size={14} strokeWidth={1.75} />}
+          loading={running}
           onClick={() => runTests(null)}
           disabled={!projectDir || running}
         >
           {running ? "Running..." : "Run All"}
-        </button>
-        <button
-          className="toolbar-btn"
+        </Button>
+        <Button
+          variant="default"
+          icon={<Sparkles size={14} strokeWidth={1.75} />}
           onClick={generateTest}
           disabled={!activeProgram || generating}
           title="AI: generate a *.test.yaml scenario file for the open program"
         >
           Generate test
-        </button>
+        </Button>
         {focusFile && (
-          <button
-            className="toolbar-btn"
-            style={{ color: "var(--accent)", fontSize: 10 }}
-            onClick={() => setFocusFile(null)}
-          >
+          <Button size="sm" variant="ghost" onClick={() => setFocusFile(null)}>
             Show all files
-          </button>
+          </Button>
         )}
         {report && (
           <span
             style={{
               marginLeft: "auto",
-              color: report.passed ? "#10b981" : "var(--danger)",
-              alignSelf: "center",
+              color: report.passed ? "var(--accent-text)" : "var(--danger)",
+              fontSize: "var(--fs-xs)",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {totalScenarios - failedScenarios}/{totalScenarios} scenarios passed
@@ -279,41 +292,54 @@ export default function TestsPanel() {
       </div>
 
       {error && (
-        <div style={{ color: "var(--danger)", marginBottom: 8 }}>{error}</div>
+        <div className="vt-callout vt-callout--danger" role="alert" style={{ marginBottom: 8 }}>
+          {error}
+        </div>
       )}
       {report?.error && (
-        <div style={{ color: "var(--danger)", marginBottom: 8 }}>
+        <div className="vt-callout vt-callout--danger" role="alert" style={{ marginBottom: 8 }}>
           {report.error}
         </div>
       )}
 
       {!projectDir && (
-        <span style={{ color: "var(--text-muted)" }}>
-          Open a folder to run tests
-        </span>
+        <EmptyState
+          compact
+          icon={<FolderOpen size={18} strokeWidth={1.75} />}
+          title="No project open"
+          description="Open a folder to run its test scenarios."
+        />
       )}
 
       {projectDir && testFiles.length === 0 && (
-        <div style={{ color: "var(--text-muted)" }}>
-          No *.test.yaml files in this project. A test file pairs a program with
-          virtual-time scenarios (<code>program:</code>, <code>given:</code>,{" "}
-          <code>steps:</code> with <code>advance:</code>/<code>expect:</code>)
-          and runs deterministically — see{" "}
-          <code>voltrus-plc test --help</code> or ask AI to generate one from
-          the open program.
-        </div>
+        <EmptyState
+          compact
+          icon={<ListChecks size={18} strokeWidth={1.75} />}
+          title="No test files"
+          description={
+            <>
+              No *.test.yaml files in this project. A test file pairs a program with
+              virtual-time scenarios (<code>program:</code>, <code>given:</code>,{" "}
+              <code>steps:</code> with <code>advance:</code>/<code>expect:</code>)
+              and runs deterministically. See{" "}
+              <code>voltrus-plc test --help</code> or ask AI to generate one from
+              the open program.
+            </>
+          }
+        />
       )}
       {projectDir && testFiles.length > 0 && !report && (
         <div style={{ color: "var(--text-muted)" }}>
-          {testFiles.length} test file{testFiles.length === 1 ? "" : "s"} found
-          — Run All or run a single file to see results
+          {testFiles.length} test file{testFiles.length === 1 ? "" : "s"} found.
+          Run All or run a single file to see results:
           {testFiles.map((f) => (
-            <div key={f.path} className="location">
+            <div key={f.path} className="location" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-xs)", color: "var(--accent-text)" }}>
               {f.name}
             </div>
           ))}
         </div>
       )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
       {files.map((f) => (
         <div key={f.path} style={{ marginBottom: 10 }}>
           <div
@@ -325,15 +351,15 @@ export default function TestsPanel() {
               marginTop: 4,
             }}
           >
-            <span className="location">{f.path}</span>
-            <button
-              className="toolbar-btn"
-              style={{ fontSize: 10, padding: "1px 6px", color: "var(--accent)" }}
+            <span className="location" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-xs)", color: "var(--accent-text)" }}>{f.path}</span>
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={() => runTests(f.path)}
               disabled={running}
             >
               Run
-            </button>
+            </Button>
           </div>
           {f.scenarios.length === 0 && (
             <div style={{ color: "var(--text-muted)", paddingLeft: 24 }}>
@@ -358,8 +384,8 @@ export default function TestsPanel() {
                   >
                     {OUTCOME_GLYPHS[s.outcome]}
                   </span>
-                  <span style={{ flex: 1 }}>{s.name}</span>
-                  <span style={{ color: "var(--text-muted)" }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>{s.name}</span>
+                  <span style={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
                     {failedChecks > 0
                       ? `${failedChecks}/${s.assertions.length} failed`
                       : `${s.assertions.length} checks`}
@@ -372,7 +398,7 @@ export default function TestsPanel() {
                       display: "flex",
                       gap: 8,
                       paddingLeft: 24,
-                      color: "#f59e0b",
+                      color: "var(--warn)",
                     }}
                   >
                     <span>{s.error}</span>
@@ -392,18 +418,19 @@ export default function TestsPanel() {
                       <span
                         style={{
                           width: 16,
-                          textAlign: "center",
-                          color: a.passed ? "#10b981" : "var(--danger)",
+                          display: "inline-flex",
+                          justifyContent: "center",
+                          color: a.passed ? "var(--accent-text)" : "var(--danger)",
                         }}
                       >
-                        {a.passed ? <Check size={12} weight="bold" /> : <X size={12} weight="bold" />}
+                        {a.passed ? <Check size={12} strokeWidth={2.5} /> : <X size={12} strokeWidth={2.5} />}
                       </span>
                       <span>{a.name}</span>
                       <span>
-                        expected <strong>{a.expected}</strong>
+                        expected <strong style={{ fontFamily: "var(--font-mono)" }}>{a.expected}</strong>
                         {!a.passed && (
                           <>
-                            {" , "}got <strong>{a.actual}</strong>
+                            {" , "}got <strong style={{ fontFamily: "var(--font-mono)" }}>{a.actual}</strong>
                           </>
                         )}
                       </span>
@@ -414,6 +441,7 @@ export default function TestsPanel() {
           })}
         </div>
       ))}
+      </div>
 
       {reviewOpen && (
         <div className="modal-overlay" onClick={() => setReviewOpen(false)}>
@@ -433,8 +461,13 @@ export default function TestsPanel() {
                 margin: 0,
                 maxHeight: 300,
                 overflow: "auto",
-                fontSize: 11,
+                fontSize: "var(--fs-xs)",
+                fontFamily: "var(--font-mono)",
                 whiteSpace: "pre-wrap",
+                background: "var(--sunken)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius)",
+                padding: 8,
                 color: "var(--text)",
               }}
             >
@@ -446,40 +479,27 @@ export default function TestsPanel() {
                   marginTop: 8,
                   color: validateSummary.startsWith("0/")
                     ? "var(--danger)"
-                    : "#10b981",
+                    : "var(--accent-text)",
                 }}
               >
                 {validateSummary}
               </div>
             )}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button
-                className="toolbar-btn"
-                onClick={saveGenerated}
-                disabled={generating || saving}
-              >
+              <Button variant="default" onClick={saveGenerated} disabled={generating || saving}>
                 {saving ? "Saving..." : "Save"}
-              </button>
-              <button
-                className="toolbar-btn primary"
-                onClick={validateGenerated}
-                disabled={!savedPath || validating}
-              >
+              </Button>
+              <Button variant="primary" loading={validating} onClick={validateGenerated} disabled={!savedPath || validating}>
                 {validating ? "Running..." : "Validate"}
-              </button>
-              <button
-                className="toolbar-btn"
-                onClick={() => setReviewOpen(false)}
-              >
+              </Button>
+              <Button variant="ghost" onClick={() => setReviewOpen(false)}>
                 Close
-              </button>
+              </Button>
             </div>
-            <div
-              style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 8 }}
-            >
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", marginTop: 8 }}>
               {savedPath
                 ? `Saved to ${savedPath}`
-                : "Save, then Validate — the file must be saved into the project before it can run."}
+                : "Save, then validate: the file must be saved into the project before it can run."}
             </div>
           </div>
         </div>

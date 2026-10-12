@@ -393,7 +393,7 @@ describe("bridge error surfacing (PLC-29)", () => {
 
     const s = useCloudStore.getState();
     expect(s.planGate).toBe(true);
-    expect(s.error).toBe("Cloud storage limit reached — upgrade for unlimited projects and files.");
+    expect(s.error).toBe("Cloud storage limit reached. Upgrade for unlimited projects and files.");
   });
 
   it("a successful cloud save refreshes the project file list", async () => {

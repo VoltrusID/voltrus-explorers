@@ -1,6 +1,59 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "./store";
 import { invoke, listen } from "./api/bridge";
+import {
+  ArrowDownToLine,
+  Blocks,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  CircleCheck,
+  Ellipsis,
+  Eye,
+  FileCode,
+  FilePlus,
+  FileText,
+  FlaskConical,
+  Folder,
+  FolderOpen,
+  Hammer,
+  Info,
+  KeyRound,
+  List,
+  Milestone,
+  Moon,
+  Network,
+  Play,
+  RefreshCw,
+  Redo2,
+  ScrollText,
+  Save,
+  Search,
+  Sigma,
+  SkipForward,
+  SlidersHorizontal,
+  Sparkles,
+  Square,
+  StepForward,
+  Sun,
+  Terminal,
+  TextSearch,
+  TriangleAlert,
+  Undo2,
+  Workflow,
+  X,
+} from "lucide-react";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  IconButton,
+  StatusDot,
+  Tabs,
+  Toolbar,
+} from "@mactools/ui";
+import type { SampleTemplate } from "./types";
 import EditorRouter from "./components/Editor/EditorRouter";
 import WatchTable from "./components/Sidebar/WatchTable";
 import RuntimeControls from "./components/Sidebar/RuntimeControls";
@@ -22,12 +75,22 @@ import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
 import { useMediaQuery } from "./lib/useMediaQuery";
-import { ArrowUUpLeft, ArrowUUpRight, CaretDown, CaretRight, GearSix, List, Moon, Sun } from "@phosphor-icons/react";
-import type { SampleTemplate } from "./types";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
 import { LD_SAMPLES } from "./constants/ld-samples";
 import { SFC_SAMPLES } from "./constants/sfc-samples";
 import { checkForUpdates, installUpdate } from "./updater";
+import appIcon from "../src-tauri/icons/128x128.png";
+
+// Local mirrors of the store's tab unions (AppState is not exported).
+type BottomTab = "diagnostics" | "log" | "output" | "timing" | "histogram" | "search" | "simulation";
+type RightTab = "watch" | "io" | "ai" | "target" | "refs";
+
+const RUNTIME_TONES = {
+  running: "success",
+  paused: "info",
+  error: "danger",
+  stopped: "neutral",
+} as const;
 
 export default function App() {
   const {
@@ -71,7 +134,8 @@ export default function App() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
   const [showLicense, setShowLicense] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(220);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(264);
   const [rightWidth, setRightWidth] = useState(280);
   const [bottomHeight, setBottomHeight] = useState(200);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -81,6 +145,10 @@ export default function App() {
   const [testsActive, setTestsActive] = useState(false);
   const [cloudOpen, setCloudOpen] = useState(false);
   const isMobile = useMediaQuery("(max-width: 768px)");
+  // Below this width the secondary toolbar actions collapse into the
+  // overflow menu so the row never wraps or overflows, even with the
+  // paused badge and the update button visible.
+  const isCompact = useMediaQuery("(max-width: 1183px)");
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
 
@@ -114,6 +182,50 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // Close the toolbar overflow menu on Escape or click-away.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  const handleInstallUpdate = async () => {
+    if (updating) return;
+    setUpdating(true);
+    try {
+      await installUpdate();
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleCheckUpdates = async () => {
+    const result = await checkForUpdates();
+    if (result.available && result.version) {
+      setUpdateVersion(result.version);
+    }
+  };
+
+  const runContinue = async () => {
+    try {
+      const result = await invoke<{ state: string; current_line: number | null }>("continue_execution");
+      if (result.current_line) setCurrentExecutionLine(result.current_line);
+      if (result.state === "paused") setDebugState("paused");
+      else setDebugState("stopped");
+    } catch (e) { console.error("continue:", e); }
+  };
+
+  const runStepInto = async () => {
+    try {
+      const result = await invoke<{ state: string; current_line: number | null }>("step_instruction");
+      if (result.current_line) setCurrentExecutionLine(result.current_line);
+      setDebugState("paused");
+    } catch (e) { console.error("step:", e); }
+  };
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -158,14 +270,14 @@ export default function App() {
       }
       if (e.key === "F5") {
         e.preventDefault();
-        invoke("continue_execution").then((r: any) => {
+        invoke<{ state: string; current_line: number | null }>("continue_execution").then((r) => {
           if (r.current_line) setCurrentExecutionLine(r.current_line);
           setDebugState(r.state === "paused" ? "paused" : "stopped");
         }).catch(console.error);
       }
       if (e.key === "F11") {
         e.preventDefault();
-        invoke("step_instruction").then((r: any) => {
+        invoke<{ state: string; current_line: number | null }>("step_instruction").then((r) => {
           if (r.current_line) setCurrentExecutionLine(r.current_line);
           setDebugState("paused");
         }).catch(console.error);
@@ -193,213 +305,253 @@ export default function App() {
     return () => { unlisten?.(); };
   }, [setCurrentExecutionLine, setDebugState]);
 
+  const toolbarActions = (
+    <>
+      {isMobile && (
+        <IconButton
+          label="Project"
+          title="Project"
+          size="sm"
+          onClick={() => { setLeftOpen(true); setRightOpen(false); }}
+        >
+          <List size={16} strokeWidth={1.75} />
+        </IconButton>
+      )}
+      <IconButton
+        label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+        size="sm"
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      >
+        {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
+      </IconButton>
+      <span className="vt-divider--v" />
+      <IconButton label="Open folder" title="Open project folder" size="sm" onClick={() => openProjectDir()}>
+        <FolderOpen size={16} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton label="New file" title="New file" size="sm" onClick={() => setShowNewFile(true)}>
+        <FilePlus size={16} strokeWidth={1.75} />
+      </IconButton>
+      {!isCompact && (
+        <IconButton label="Examples" title="Example programs" size="sm" onClick={() => setShowTemplates(!showTemplates)}>
+          <BookOpen size={16} strokeWidth={1.75} />
+        </IconButton>
+      )}
+      <IconButton label="Save project" title="Save project (Cmd+Shift+S)" size="sm" onClick={() => saveProject()}>
+        <Save size={16} strokeWidth={1.75} />
+      </IconButton>
+      {!isCompact && (
+        <IconButton label="Open project file" title="Open project file" size="sm" onClick={() => loadProject()}>
+          <Folder size={16} strokeWidth={1.75} />
+        </IconButton>
+      )}
+      <span className="vt-divider--v" />
+      <IconButton label="Undo" title="Undo (Cmd+Z)" size="sm" onClick={undo}>
+        <Undo2 size={16} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton label="Redo" title="Redo (Cmd+Shift+Z)" size="sm" onClick={redo}>
+        <Redo2 size={16} strokeWidth={1.75} />
+      </IconButton>
+      <span className="vt-divider--v" />
+      {runtimeState === "running" ? (
+        <Button size="sm" variant="danger" icon={<Square size={14} strokeWidth={1.75} />} onClick={() => plcStop()}>
+          Stop
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="primary"
+          icon={<Play size={14} strokeWidth={1.75} />}
+          onClick={() => plcRun()}
+          disabled={!lastCompileResult?.success}
+        >
+          Run
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        icon={<Hammer size={14} strokeWidth={1.75} />}
+        onClick={() => compile()}
+        disabled={compiling}
+        title="Build (Cmd+B)"
+      >
+        {compiling ? "Compiling..." : "Build"}
+      </Button>
+      {!isCompact && (
+        <>
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<FlaskConical size={14} strokeWidth={1.75} />}
+            onClick={() => sendAiTestGeneration()}
+            title="AI: generate test scenarios for current POU"
+          >
+            Test gen
+          </Button>
+          <IconButton label="Single scan" title="Run a single scan cycle" size="sm" onClick={() => plcStep()}>
+            <StepForward size={16} strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Continue" title="Continue (F5)" size="sm" onClick={runContinue}>
+            <SkipForward size={16} strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label="Step into" title="Step into (F11)" size="sm" onClick={runStepInto}>
+            <ArrowDownToLine size={16} strokeWidth={1.75} />
+          </IconButton>
+        </>
+      )}
+      {debugState === "paused" && currentExecutionLine && (
+        <Badge tone="warn">Paused at line {currentExecutionLine}</Badge>
+      )}
+      <span className="vt-divider--v" />
+      {updateVersion && (
+        <Button
+          size="sm"
+          variant="primary"
+          loading={updating}
+          disabled={updating}
+          onClick={handleInstallUpdate}
+          title={`Install update v${updateVersion}`}
+        >
+          {updating ? "Installing..." : `Update to ${updateVersion}`}
+        </Button>
+      )}
+      <div className="tool-menu">
+        {menuOpen && <div className="tool-menu__backdrop" onClick={() => setMenuOpen(false)} />}
+        <IconButton
+          label="More options"
+          title="More options"
+          size="sm"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          pressed={menuOpen}
+          onClick={() => setMenuOpen(!menuOpen)}
+        >
+          <Ellipsis size={16} strokeWidth={1.75} />
+        </IconButton>
+        {menuOpen && (
+          <div className="tool-menu__pop" role="menu">
+            {isCompact && (
+              <>
+                <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); setShowTemplates(!showTemplates); }}>
+                  <BookOpen size={14} strokeWidth={1.75} />
+                  Examples
+                </button>
+                <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); loadProject(); }}>
+                  <Folder size={14} strokeWidth={1.75} />
+                  Open project file
+                </button>
+                <button className="vt-menu-item" role="menuitem" onClick={() => sendAiTestGeneration()}>
+                  <FlaskConical size={14} strokeWidth={1.75} />
+                  Test gen
+                </button>
+                <button className="vt-menu-item" role="menuitem" onClick={() => plcStep()}>
+                  <StepForward size={14} strokeWidth={1.75} />
+                  Single scan
+                </button>
+                <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); void runContinue(); }}>
+                  <SkipForward size={14} strokeWidth={1.75} />
+                  Continue
+                </button>
+                <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); void runStepInto(); }}>
+                  <ArrowDownToLine size={14} strokeWidth={1.75} />
+                  Step into
+                </button>
+                <hr className="vt-divider" style={{ margin: "4px 0" }} />
+              </>
+            )}
+            <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); void handleCheckUpdates(); }}>
+              <RefreshCw size={14} strokeWidth={1.75} />
+              Check for updates
+            </button>
+            <button className="vt-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); setShowLicense(true); }}>
+              <KeyRound size={14} strokeWidth={1.75} />
+              License
+            </button>
+          </div>
+        )}
+      </div>
+      {isMobile && (
+        <IconButton
+          label="Watch and tools"
+          title="Watch / I/O / AI"
+          size="sm"
+          onClick={() => { setRightOpen(true); setLeftOpen(false); }}
+        >
+          <SlidersHorizontal size={16} strokeWidth={1.75} />
+        </IconButton>
+      )}
+    </>
+  );
+
   return (
     <div className="app-layout">
-      {/* Toolbar */}
-      <div className="toolbar">
-        {isMobile && (
-          <button
-            className="toolbar-btn"
-            onClick={() => { setLeftOpen(true); setRightOpen(false); }}
-            aria-label="Open project panel"
-            title="Project"
-          >
-            <List size={16} />
-          </button>
-        )}
-        <span className="toolbar-title">Voltrus PLC</span>
-        <button
-          className="toolbar-btn theme-toggle"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          title="Toggle theme"
-          aria-label="Toggle theme"
-        >
-          {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
-        <button className="toolbar-btn" onClick={() => openProjectDir()}>
-          Open Folder
-        </button>
-        <button className="toolbar-btn" onClick={() => setShowNewFile(true)}>
-          New File
-        </button>
-        <button className="toolbar-btn" onClick={() => setShowTemplates(!showTemplates)}>
-          Examples
-        </button>
-        <button className="toolbar-btn" onClick={() => saveProject()} title="Save Project (Cmd+Shift+S)">
-          Save
-        </button>
-        <button className="toolbar-btn" onClick={() => loadProject()} title="Open Project">
-          Open
-        </button>
-        <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={undo} title="Undo (Cmd+Z)"><ArrowUUpLeft size={14} /></button>
-        <button className="toolbar-btn" onClick={redo} title="Redo (Cmd+Shift+Z)"><ArrowUUpRight size={14} /></button>
-        <span className="toolbar-divider" />
-        <button
-          className="toolbar-btn primary"
-          onClick={() => compile()}
-          disabled={compiling}
-        >
-          {compiling ? "Compiling..." : "Build"}
-        </button>
-        <button
-          className="toolbar-btn"
-          onClick={() => sendAiTestGeneration()}
-          title="AI: Generate test scenarios for current POU"
-        >
-          Test Gen
-        </button>
-        {runtimeState === "running" ? (
-          <button className="toolbar-btn danger" onClick={() => plcStop()}>
-            Stop
-          </button>
-        ) : (
-          <button
-            className="toolbar-btn primary"
-            onClick={() => plcRun()}
-            disabled={!lastCompileResult?.success}
-          >
-            Run
-          </button>
-        )}
-        <button className="toolbar-btn" onClick={() => plcStep()}>
-          Single Scan
-        </button>
-        <span className="toolbar-divider" />
-        <button
-          className="toolbar-btn"
-          onClick={async () => {
-            try {
-              const result = await invoke<{ state: string; current_line: number | null }>("continue_execution");
-              if (result.current_line) setCurrentExecutionLine(result.current_line);
-              if (result.state === "paused") setDebugState("paused");
-              else setDebugState("stopped");
-            } catch (e) { console.error("continue:", e); }
-          }}
-          title="Continue (F5)"
-        >
-          Continue
-        </button>
-        <button
-          className="toolbar-btn"
-          onClick={async () => {
-            try {
-              const result = await invoke<{ state: string; current_line: number | null }>("step_instruction");
-              if (result.current_line) setCurrentExecutionLine(result.current_line);
-              setDebugState("paused");
-            } catch (e) { console.error("step:", e); }
-          }}
-          title="Step Into (F11)"
-        >
-          Step Into
-        </button>
-        {debugState === "paused" && currentExecutionLine && (
-          <span className="debug-info">Paused at line {currentExecutionLine}</span>
-        )}
-        <span className="toolbar-spacer" />
-        {isMobile && (
-          <button
-            className="toolbar-btn"
-            onClick={() => { setRightOpen(true); setLeftOpen(false); }}
-            aria-label="Open watch and tools panel"
-            title="Watch / I/O / AI"
-          >
-            <GearSix size={16} />
-          </button>
-        )}
-        {updateVersion && (
-          <button
-            className="toolbar-btn"
-            style={{ fontSize: 10, color: "var(--amber)" }}
-            onClick={async () => {
-              setUpdating(true);
-              await installUpdate();
-              setUpdating(false);
-            }}
-            disabled={updating}
-          >
-            {updating ? "Installing..." : `Update to ${updateVersion}`}
-          </button>
-        )}
-        <button
-          className="toolbar-btn"
-          style={{ fontSize: 10 }}
-          onClick={async () => {
-            const result = await checkForUpdates();
-            if (result.available && result.version) {
-              setUpdateVersion(result.version);
-            }
-          }}
-          title="Check for updates"
-        >
-          Check Updates
-        </button>
-        <button
-          className="toolbar-btn"
-          style={{ fontSize: 10 }}
-          onClick={() => setShowLicense(true)}
-          title="License"
-        >
-          License
-        </button>
-        <div className="runtime-indicator">
-          <span className={`runtime-led ${runtimeState}`} />
-          <span>{runtimeState.toUpperCase()}</span>
-        </div>
-      </div>
+      <Toolbar
+        title="Voltrus PLC"
+        icon={appIcon}
+        connected={false}
+        onInfo={() => setShowLicense(true)}
+        context={
+          <Badge tone={RUNTIME_TONES[runtimeState]}>
+            <StatusDot tone={RUNTIME_TONES[runtimeState]} />
+            {runtimeState.charAt(0).toUpperCase() + runtimeState.slice(1)}
+          </Badge>
+        }
+        actions={toolbarActions}
+      />
 
       {/* New File Modal */}
       {showNewFile && (
         <div className="modal-overlay" onClick={() => setShowNewFile(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title" onClick={(e) => e.stopPropagation()}>
-            <h3 id="new-file-title">New File</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button className="toolbar-btn" onClick={() => {
+            <h3 id="new-file-title">New file</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newFile("NewProgram", "program");
                 setShowNewFile(false);
               }}>
-                PROGRAM
+                <FileCode size={14} strokeWidth={1.75} /> Program
               </button>
-              <button className="toolbar-btn" onClick={() => {
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newFile("NewFunction", "function");
                 setShowNewFile(false);
               }}>
-                FUNCTION
+                <Sigma size={14} strokeWidth={1.75} /> Function
               </button>
-              <button className="toolbar-btn" onClick={() => {
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newFile("NewFB", "function_block");
                 setShowNewFile(false);
               }}>
-                FUNCTION_BLOCK
+                <Blocks size={14} strokeWidth={1.75} /> Function block
               </button>
-              <button className="toolbar-btn" onClick={() => {
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newFbdFile("NewFBD");
                 setShowNewFile(false);
               }}>
-                FBD DIAGRAM
+                <Workflow size={14} strokeWidth={1.75} /> FBD diagram
               </button>
-              <button className="toolbar-btn" onClick={() => {
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newLdFile("NewLD");
                 setShowNewFile(false);
               }}>
-                LADDER DIAGRAM
+                <Network size={14} strokeWidth={1.75} /> Ladder diagram
               </button>
-              <button className="toolbar-btn" onClick={() => {
+              <button className="vt-menu-item" onClick={() => {
                 const store = useStore.getState();
                 store.newSfcFile("NewSFC");
                 setShowNewFile(false);
               }}>
-                SFC DIAGRAM
+                <Milestone size={14} strokeWidth={1.75} /> SFC diagram
               </button>
             </div>
-            <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowNewFile(false)}>
-              Cancel
-            </button>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <Button size="sm" variant="ghost" onClick={() => setShowNewFile(false)}>Cancel</Button>
+            </div>
           </div>
         </div>
       )}
@@ -408,88 +560,70 @@ export default function App() {
       {showTemplates && (
         <div className="modal-overlay" onClick={() => setShowTemplates(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="templates-title" onClick={(e) => e.stopPropagation()}>
-            <h3 id="templates-title">Example Programs</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  className="toolbar-btn"
-                  style={{ textAlign: "left", display: "block" }}
-                  onClick={() => {
-                    loadSampleTemplate(t);
-                    setShowTemplates(false);
-                  }}
-                >
-                  <strong>{t.name}</strong>
-                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
-                    {t.category} — {t.description}
-                  </span>
-                </button>
-              ))}
-              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
-              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
-                FBD DIAGRAMS
-              </div>
-              {FBD_SAMPLES.map((s) => (
-                <button
-                  key={s.id}
-                  className="toolbar-btn"
-                  style={{ textAlign: "left", display: "block" }}
-                  onClick={() => {
-                    useStore.getState().loadFbdSample(s);
-                    setShowTemplates(false);
-                  }}
-                >
-                  <strong style={{ color: "var(--accent, #7c3aed)" }}>{s.name}</strong>
-                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
-                    {s.category} — {s.description}
-                  </span>
-                </button>
-              ))}
-              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
-              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
-                LADDER DIAGRAMS
-              </div>
-              {LD_SAMPLES.map((s) => (
-                <button
-                  key={s.id}
-                  className="toolbar-btn"
-                  style={{ textAlign: "left", display: "block" }}
-                  onClick={() => {
-                    useStore.getState().loadLdSample(s);
-                    setShowTemplates(false);
-                  }}
-                >
-                  <strong style={{ color: "#10b981" }}>{s.name}</strong>
-                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
-                    {s.category} — {s.description}
-                  </span>
-                </button>
-              ))}
-              <div style={{ borderTop: "1px solid var(--border, #45475a)", margin: "6px 0" }} />
-              <div style={{ fontSize: 9, color: "var(--text-muted, #6c7086)", fontWeight: 600, marginBottom: 2 }}>
-                SFC DIAGRAMS
-              </div>
-              {SFC_SAMPLES.map((s) => (
-                <button
-                  key={s.id}
-                  className="toolbar-btn"
-                  style={{ textAlign: "left", display: "block" }}
-                  onClick={() => {
-                    useStore.getState().loadSfcSample(s);
-                    setShowTemplates(false);
-                  }}
-                >
-                  <strong style={{ color: "#a855f7" }}>{s.name}</strong>
-                  <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 11 }}>
-                    {s.category} — {s.description}
-                  </span>
-                </button>
-              ))}
+            <h3 id="templates-title">Example programs</h3>
+            {templates.length > 0 && (
+              <>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    className="sample-item"
+                    onClick={() => {
+                      loadSampleTemplate(t);
+                      setShowTemplates(false);
+                    }}
+                  >
+                    <strong>{t.name}</strong>
+                    <span>{t.category} · {t.description}</span>
+                  </button>
+                ))}
+                <div className="menu-divider" />
+              </>
+            )}
+            <div className="menu-caption">FBD diagrams</div>
+            {FBD_SAMPLES.map((s) => (
+              <button
+                key={s.id}
+                className="sample-item"
+                onClick={() => {
+                  useStore.getState().loadFbdSample(s);
+                  setShowTemplates(false);
+                }}
+              >
+                <strong>{s.name}</strong>
+                <span>{s.category} · {s.description}</span>
+              </button>
+            ))}
+            <div className="menu-caption">Ladder diagrams</div>
+            {LD_SAMPLES.map((s) => (
+              <button
+                key={s.id}
+                className="sample-item"
+                onClick={() => {
+                  useStore.getState().loadLdSample(s);
+                  setShowTemplates(false);
+                }}
+              >
+                <strong>{s.name}</strong>
+                <span>{s.category} · {s.description}</span>
+              </button>
+            ))}
+            <div className="menu-caption">SFC diagrams</div>
+            {SFC_SAMPLES.map((s) => (
+              <button
+                key={s.id}
+                className="sample-item"
+                onClick={() => {
+                  useStore.getState().loadSfcSample(s);
+                  setShowTemplates(false);
+                }}
+              >
+                <strong>{s.name}</strong>
+                <span>{s.category} · {s.description}</span>
+              </button>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <Button size="sm" variant="ghost" onClick={() => setShowTemplates(false)}>Cancel</Button>
             </div>
-            <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowTemplates(false)}>
-              Cancel
-            </button>
           </div>
         </div>
       )}
@@ -500,9 +634,9 @@ export default function App() {
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="license-title" onClick={(e) => e.stopPropagation()} style={{ minWidth: 360, maxWidth: 420 }}>
             <h3 id="license-title">License</h3>
             <LicensePanel />
-            <button className="toolbar-btn" style={{ marginTop: 12 }} onClick={() => setShowLicense(false)}>
-              Close
-            </button>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <Button size="sm" variant="ghost" onClick={() => setShowLicense(false)}>Close</Button>
+            </div>
           </div>
         </div>
       )}
@@ -512,7 +646,7 @@ export default function App() {
         {/* Left sidebar: File explorer */}
         {isMobile ? null : (
           <div className="sidebar-left" style={{ width: leftWidth }}>
-            <ProjectSidebar />
+            <ProjectSidebar cloudOpen={cloudOpen} setCloudOpen={setCloudOpen} />
           </div>
         )}
 
@@ -525,29 +659,32 @@ export default function App() {
 
         {/* Center: Editor */}
         <div className="editor-area">
-          <div className="editor-tabs">
-            {openFiles.map((file, i) => (
-              <button
-                key={file.path}
-                className={`editor-tab ${i === activeFileIndex ? "active" : ""}`}
-                onClick={() => setActiveFile(i)}
-              >
-                {file.modified && <span className="dot" />}
-                {file.name}
-                <span
-                  className="close-btn"
-                  role="button"
-                  aria-label={`Close ${file.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeFile(i);
-                  }}
+          {openFiles.length > 0 && (
+            <div className="vt-tabs editor-tabs">
+              {openFiles.map((file, i) => (
+                <button
+                  key={file.path}
+                  className="vt-tab editor-tab"
+                  aria-selected={i === activeFileIndex}
+                  onClick={() => setActiveFile(i)}
                 >
-                  x
-                </span>
-              </button>
-            ))}
-          </div>
+                  {file.modified && <span className="tab-dirty" />}
+                  {file.name}
+                  <span
+                    className="tab-close"
+                    role="button"
+                    aria-label={`Close ${file.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeFile(i);
+                    }}
+                  >
+                    <X size={12} strokeWidth={1.75} />
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="editor-container">
             {activeFile ? (
               <EditorRouter
@@ -557,9 +694,11 @@ export default function App() {
                 onChange={(value) => updateFileContent(activeFileIndex, value)}
               />
             ) : (
-              <div className="placeholder-editor">
-                Open or create a file to start coding
-              </div>
+              <EmptyState
+                icon={<FileCode size={20} strokeWidth={1.75} />}
+                title="No file open"
+                description="Open a project folder or create a new program to start coding."
+              />
             )}
           </div>
         </div>
@@ -586,7 +725,7 @@ export default function App() {
             onClick={() => { setLeftOpen(false); setRightOpen(false); }}
           />
           <aside className={`drawer drawer-left ${leftOpen ? "open" : ""}`} aria-hidden={!leftOpen}>
-            <ProjectSidebar />
+            <ProjectSidebar cloudOpen={cloudOpen} setCloudOpen={setCloudOpen} />
           </aside>
           <aside className={`drawer drawer-right ${rightOpen ? "open" : ""}`} aria-hidden={!rightOpen}>
             <RightSidebarBody />
@@ -603,147 +742,115 @@ export default function App() {
 
       {/* Bottom panel */}
       <div className="bottom-panel" style={{ height: bottomHeight }}>
-        <div className="bottom-tabs">
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "diagnostics" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("diagnostics"); }}
-          >
-            Diagnostics
-            {diagnostics.length > 0 && (
-              <span
-                style={{
-                  marginLeft: 4,
-                  color: diagnostics.some((d) => d.severity === "error")
-                    ? "var(--danger)"
-                    : "#f59e0b",
-                }}
-              >
-                ({diagnostics.length})
-              </span>
-            )}
-          </button>
-          <button
-            className={`bottom-tab ${testsActive ? "active" : ""}`}
-            onClick={() => setTestsActive(true)}
-          >
-            Tests
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "log" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("log"); }}
-          >
-            Runtime Log
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "output" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("output"); }}
-          >
-            Output
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "timing" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("timing"); }}
-          >
-            Timing
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "histogram" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("histogram"); }}
-          >
-            Histogram
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "search" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("search"); }}
-          >
-            Search
-          </button>
-          <button
-            className={`bottom-tab ${!testsActive && bottomTab === "simulation" ? "active" : ""}`}
-            onClick={() => { setTestsActive(false); setBottomTab("simulation"); }}
-          >
-            Simulation
-          </button>
-        </div>
+        <Tabs
+          label="Bottom panel"
+          value={testsActive ? "tests" : bottomTab}
+          onChange={(v) => {
+            if (v === "tests") {
+              setTestsActive(true);
+            } else {
+              setTestsActive(false);
+              setBottomTab(v as BottomTab);
+            }
+          }}
+          items={[
+            { value: "diagnostics", label: "Diagnostics", count: diagnostics.length || undefined },
+            { value: "tests", label: "Tests" },
+            { value: "log", label: "Runtime log" },
+            { value: "output", label: "Output" },
+            { value: "timing", label: "Timing" },
+            { value: "histogram", label: "Histogram" },
+            { value: "search", label: "Search" },
+            { value: "simulation", label: "Simulation" },
+          ]}
+        />
         <div className="bottom-content">
           {testsActive && <TestsPanel />}
           {!testsActive && bottomTab === "diagnostics" && (
-            <>
-              {diagnostics.length === 0 ? (
-                <span style={{ color: "var(--text-muted)" }}>No diagnostics</span>
-              ) : (
-                diagnostics.map((d, i) => (
-                  <div
-                    key={i}
-                    className="diagnostic-item"
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+            diagnostics.length === 0 ? (
+              <EmptyState
+                compact
+                icon={<CircleCheck size={18} strokeWidth={1.75} />}
+                title="No diagnostics"
+                description="Build the program to check it for errors."
+              />
+            ) : (
+              diagnostics.map((d, i) => (
+                <div key={i} className="diagnostic-item">
+                  <span
+                    className={`severity ${d.severity}`}
+                    style={d.line > 0 ? { cursor: "pointer" } : undefined}
+                    onClick={() => {
+                      if (d.line > 0) {
+                        window.dispatchEvent(new CustomEvent("editor-goto", { detail: { line: d.line } }));
+                      }
+                    }}
                   >
-                    <span
-                      className={`severity ${d.severity}`}
-                      style={d.line > 0 ? { cursor: "pointer" } : undefined}
-                      onClick={() => {
-                        if (d.line > 0) {
-                          window.dispatchEvent(new CustomEvent("editor-goto", { detail: { line: d.line } }));
-                        }
-                      }}
-                    >
-                      {d.severity === "error" ? "!" : d.severity === "warning" ? "?" : "i"}
-                    </span>
-                    <span className="location">{d.line}:{d.col}</span>
-                    <span style={{ flex: 1 }}>{d.message}</span>
-                    <button
-                      className="toolbar-btn"
-                      style={{ fontSize: 10, padding: "1px 6px", color: "var(--accent)" }}
-                      onClick={() => sendAiErrorFix(d)}
-                      title="Ask AI to fix this error"
-                    >
-                      Fix
-                    </button>
-                  </div>
-                ))
-              )}
-            </>
-          )}
-          {bottomTab === "log" && (
-            <>
-              {log.map((entry, i) => (
-                <div key={i} style={{ color: "var(--text-muted)" }}>
-                  <span style={{ color: "var(--accent)", marginRight: 8 }}>
-                    [{entry.direction}]
+                    {d.severity === "error" ? (
+                      <CircleAlert size={12} strokeWidth={1.75} />
+                    ) : d.severity === "warning" ? (
+                      <TriangleAlert size={12} strokeWidth={1.75} />
+                    ) : (
+                      <Info size={12} strokeWidth={1.75} />
+                    )}
                   </span>
-                  {entry.message}
+                  <span className="location">{d.line}:{d.col}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{d.message}</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Sparkles size={12} strokeWidth={1.75} />}
+                    onClick={() => sendAiErrorFix(d)}
+                    title="Ask AI to fix this error"
+                  >
+                    Fix
+                  </Button>
+                </div>
+              ))
+            )
+          )}
+          {!testsActive && bottomTab === "log" && (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {log.map((entry, i) => (
+                <div key={i} className="log-line">
+                  <span className="log-line__dir">[{entry.direction}]</span>
+                  <span className="log-line__msg">{entry.message}</span>
                 </div>
               ))}
               {log.length === 0 && (
-                <span style={{ color: "var(--text-muted)" }}>No log entries</span>
+                <EmptyState
+                  compact
+                  icon={<ScrollText size={18} strokeWidth={1.75} />}
+                  title="No log entries"
+                  description="Runtime messages appear here once the program runs."
+                />
               )}
-            </>
+            </div>
           )}
           {bottomTab === "output" && (
-            <div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {lastCompileResult ? (
-                <div style={{ color: lastCompileResult.success ? "var(--accent)" : "var(--danger)", marginBottom: 8 }}>
+                <div className={`output-line ${lastCompileResult.success ? "output-line--ok" : "output-line--err"}`}>
                   {lastCompileResult.success
                     ? `Build successful: ${lastCompileResult.pou_count} POU, ${lastCompileResult.variable_count} variables`
                     : `Build failed: ${lastCompileResult.diagnostics.filter(d => d.severity === "error").length} errors`}
                 </div>
               ) : (
-                <div style={{ color: "var(--text-muted)" }}>Build output will appear here</div>
+                <EmptyState
+                  compact
+                  icon={<Hammer size={18} strokeWidth={1.75} />}
+                  title="No build yet"
+                  description="Build the program to see compiler output here."
+                />
               )}
               {runtimeState === "error" && (
-                <div style={{ color: "var(--danger)", marginTop: 8 }}>
-                  Runtime error — check the Runtime Log tab for details
-                </div>
+                <div className="output-line output-line--err">Runtime error. Check the Runtime log tab for details.</div>
               )}
               {runtimeState === "running" && (
-                <div style={{ color: "var(--accent)", marginTop: 8 }}>
-                  Runtime is running. Watch variables update in the Watch Table.
-                </div>
+                <div className="output-line output-line--ok">Runtime is running. Watch variables update in the watch table.</div>
               )}
               {runtimeState === "stopped" && lastCompileResult?.success && (
-                <div style={{ color: "var(--text-muted)", marginTop: 8 }}>
-                  Ready. Press Run to start the softPLC runtime.
-                </div>
+                <div className="output-line output-line--muted">Ready. Press Run to start the runtime.</div>
               )}
             </div>
           )}
@@ -764,10 +871,22 @@ export default function App() {
   );
 }
 
+// File-type icon for tree rows.
+function FileIcon({ name }: { name: string }) {
+  const ext = name.split(".").pop()?.toLowerCase();
+  const size = 14;
+  const common = { size, strokeWidth: 1.75 };
+  if (ext === "fbd") return <Workflow {...common} />;
+  if (ext === "ld") return <Network {...common} />;
+  if (ext === "sfc") return <Milestone {...common} />;
+  if (ext === "txt") return <FileText {...common} />;
+  return <FileCode {...common} />;
+}
+
 // Left rail: project files + collapsible Cloud section. Rendered inside the
 // desktop docked sidebar and the mobile drawer — identical content, host
 // decides placement.
-function ProjectSidebar() {
+function ProjectSidebar({ cloudOpen, setCloudOpen }: { cloudOpen: boolean; setCloudOpen: (v: boolean) => void }) {
   const projectDir = useStore((s) => s.projectDir);
   const projectFiles = useStore((s) => s.projectFiles);
   const openFiles = useStore((s) => s.openFiles);
@@ -775,7 +894,6 @@ function ProjectSidebar() {
   const openFile = useStore((s) => s.openFile);
   const setActiveFile = useStore((s) => s.setActiveFile);
   const refreshProjectFiles = useStore((s) => s.refreshProjectFiles);
-  const [cloudOpen, setCloudOpen] = useState(false);
 
   const stFiles = projectFiles.filter(
     (f) => !f.is_dir && (f.name.endsWith(".st") || f.name.endsWith(".txt") || f.name.endsWith(".fbd") || f.name.endsWith(".ld") || f.name.endsWith(".sfc"))
@@ -783,79 +901,80 @@ function ProjectSidebar() {
 
   return (
     <>
-      <div className="sidebar-header">
-        Project
-        {projectDir && (
-          <button
-            style={{
-              marginLeft: "auto", fontSize: 10, background: "none",
-              border: "none", color: "var(--accent)", cursor: "pointer",
-            }}
-            onClick={() => refreshProjectFiles()}
-          >
-            Refresh
-          </button>
-        )}
-      </div>
-      {projectDir ? (
-        <ul className="file-list">
-          {stFiles.length === 0 ? (
-            <li className="file-item" style={{ color: "var(--text-muted)" }}>
-              No program files found
-            </li>
-          ) : (
-            stFiles.map((f) => (
-              <li
-                key={f.path}
-                className={`file-item ${openFiles[activeFileIndex]?.path === f.path ? "active" : ""}`}
-                onClick={() => openFile(f.path)}
-              >
-                <span style={{ fontSize: 10 }}>
-                  {(f.name.split(".").pop() || "st").toUpperCase().slice(0, 3)}
-                </span>
-                <span>{f.name}</span>
-              </li>
-            ))
+      <section className="vt-section">
+        <div className="vt-section__header">
+          <span className="vt-section__title">Project</span>
+          {projectDir && (
+            <IconButton label="Refresh project files" title="Refresh" size="sm" onClick={() => refreshProjectFiles()}>
+              <RefreshCw size={14} strokeWidth={1.75} />
+            </IconButton>
           )}
-        </ul>
-      ) : (
-        <ul className="file-list">
-          {openFiles.map((file, i) => (
-            <li
-              key={file.path}
-              className={`file-item ${i === activeFileIndex ? "active" : ""}`}
-              onClick={() => setActiveFile(i)}
-            >
-              <span className="icon">
-                {file.modified ? <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="var(--accent)" /></svg> : <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"><path d="M4 1h5l4 4v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" /><polyline points="9 1 9 5 13 5" /></svg>}
-              </span>
-              <span>{file.name}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+        </div>
+        {projectDir ? (
+          stFiles.length === 0 ? (
+            <EmptyState
+              compact
+              icon={<FolderOpen size={18} strokeWidth={1.75} />}
+              title="No program files"
+              description="No .st, .fbd, .ld or .sfc files in this folder yet."
+            />
+          ) : (
+            <ul className="file-tree">
+              {stFiles.map((f) => (
+                <li
+                  key={f.path}
+                  className={`file-row ${openFiles[activeFileIndex]?.path === f.path ? "is-active" : ""}`}
+                  onClick={() => openFile(f.path)}
+                >
+                  <FileIcon name={f.name} />
+                  <span className="file-row__name">{f.name}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        ) : openFiles.length === 0 ? (
+          <EmptyState
+            compact
+            icon={<FolderOpen size={18} strokeWidth={1.75} />}
+            title="No project open"
+            description="Open a project folder to browse its program files."
+          />
+        ) : (
+          <ul className="file-tree">
+            {openFiles.map((file, i) => (
+              <li
+                key={file.path}
+                className={`file-row ${i === activeFileIndex ? "is-active" : ""}`}
+                onClick={() => setActiveFile(i)}
+              >
+                <FileIcon name={file.name} />
+                <span className="file-row__name">{file.name}</span>
+                {file.modified && <span className="tab-dirty" title="Unsaved changes" />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Cloud section (PLC-20): collapsible; local project flow above is untouched */}
-      <div
-        className="sidebar-header"
-        role="button"
-        aria-expanded={cloudOpen}
-        style={{ cursor: "pointer", display: "flex", alignItems: "center", marginTop: "auto" }}
-        onClick={() => setCloudOpen(!cloudOpen)}
-      >
-        Cloud
-        <span style={{ marginLeft: "auto", fontSize: 9, display: "inline-flex", alignItems: "center" }}>
-          {cloudOpen ? <CaretDown size={10} weight="bold" /> : <CaretRight size={10} weight="bold" />}
-        </span>
-      </div>
-      {cloudOpen && (
-        <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%" }}>
-          <AccountBadge />
-          <CloudProjectPanel />
-          <AiKeysPanel />
-          <ProvisionPanel />
-        </div>
-      )}
+      <section className="vt-section sidebar-cloud">
+        <button
+          className="cloud-toggle"
+          aria-expanded={cloudOpen}
+          onClick={() => setCloudOpen(!cloudOpen)}
+        >
+          <span className="vt-section__title">Cloud</span>
+          {cloudOpen ? <ChevronDown size={14} strokeWidth={1.75} /> : <ChevronRight size={14} strokeWidth={1.75} />}
+        </button>
+        {cloudOpen && (
+          <div style={{ overflow: "auto", flexShrink: 0, maxHeight: "60%", display: "flex", flexDirection: "column", gap: 8, paddingTop: 10 }}>
+            <AccountBadge />
+            <CloudProjectPanel />
+            <AiKeysPanel />
+            <ProvisionPanel />
+          </div>
+        )}
+      </section>
     </>
   );
 }
@@ -867,49 +986,73 @@ function RightSidebarBody() {
 
   return (
     <>
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-        {(["watch", "io", "target", "ai", "refs"] as const).map((tab) => (
-          <button
-            key={tab}
-            className={`bottom-tab ${rightPanelTab === tab ? "active" : ""}`}
-            style={{ flex: 1, justifyContent: "center" }}
-            onClick={() => setRightPanelTab(tab)}
-          >
-            {tab === "watch" ? "Watch" : tab === "io" ? "I/O" : tab === "target" ? "Target" : tab === "ai" ? "AI" : "Refs"}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        label="Inspector panels"
+        value={rightPanelTab}
+        onChange={(t) => setRightPanelTab(t as RightTab)}
+        items={[
+          { value: "watch", label: "Watch" },
+          { value: "io", label: "I/O" },
+          { value: "target", label: "Target" },
+          { value: "ai", label: "AI" },
+          { value: "refs", label: "Refs" },
+        ]}
+      />
       {rightPanelTab === "watch" && (
-        <div style={{ flex: 1, overflow: "auto" }}>
-          <div className="sidebar-header">Runtime</div>
-          <RuntimeControls />
-          <div className="sidebar-header">Watch Table</div>
-          <WatchTable />
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">Runtime</span>
+            </div>
+            <RuntimeControls />
+          </section>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">Watch table</span>
+            </div>
+            <WatchTable />
+          </section>
         </div>
       )}
       {rightPanelTab === "io" && (
-        <div style={{ flex: 1, overflow: "auto" }}>
-          <div className="sidebar-header">I/O Driver</div>
-          <IoPanel />
-          <div className="sidebar-header">I/O Mappings</div>
-          <IoMappingPanel />
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">I/O driver</span>
+            </div>
+            <IoPanel />
+          </section>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">I/O mappings</span>
+            </div>
+            <IoMappingPanel />
+          </section>
         </div>
       )}
       {rightPanelTab === "target" && (
-        <div style={{ flex: 1, overflow: "auto" }}>
-          <div className="sidebar-header">Target Device</div>
-          <TargetPanel />
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">Target device</span>
+            </div>
+            <TargetPanel />
+          </section>
         </div>
       )}
       {rightPanelTab === "ai" && (
-        <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minHeight: 0 }}>
           <AiChatPanel />
         </div>
       )}
       {rightPanelTab === "refs" && (
-        <div style={{ flex: 1, overflow: "auto" }}>
-          <div className="sidebar-header">Cross-Reference</div>
-          <XrefPanel />
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <section className="vt-section">
+            <div className="vt-section__header">
+              <span className="vt-section__title">Cross-reference</span>
+            </div>
+            <XrefPanel />
+          </section>
         </div>
       )}
     </>
@@ -941,18 +1084,19 @@ function SearchPanel() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input
-          className="scan-cycle-input"
-          style={{ flex: 1, textAlign: "left", width: "auto" }}
+          className="vt-input"
+          style={{ flex: 1 }}
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-          placeholder="Search in project..."
+          placeholder="Search in project"
+          aria-label="Search in project"
         />
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted)", cursor: "pointer" }}>
+        <label className="vt-check">
           <input
             type="checkbox"
             checked={searchUseRegex}
@@ -960,25 +1104,27 @@ function SearchPanel() {
           />
           Regex
         </label>
-        <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={handleSearch}>
+        <Button size="sm" variant="default" icon={<Search size={14} strokeWidth={1.75} />} onClick={handleSearch}>
           Search
-        </button>
+        </Button>
       </div>
       {searchResults.length === 0 ? (
-        <span style={{ color: "var(--text-muted)" }}>
-          {searchQuery ? "No results" : "Type a query and press Enter or Search"}
-        </span>
+        <EmptyState
+          compact
+          icon={<Search size={18} strokeWidth={1.75} />}
+          title={searchQuery ? "No results" : "Search the project"}
+          description={searchQuery ? "No matches for this query." : "Type a query and press Enter to search every open project file."}
+        />
       ) : (
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
           {searchResults.map((r, i) => (
             <div
               key={i}
               className="diagnostic-item"
-              style={{ cursor: "pointer", padding: "2px 0" }}
               onClick={() => gotoResult(r.file, r.line)}
             >
-              <span style={{ color: "var(--accent)", whiteSpace: "nowrap", fontSize: 11 }}>{r.file}:{r.line}:{r.col}</span>
-              <span style={{ color: "var(--text-muted)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span className="location">{r.file}:{r.line}:{r.col}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-xs)" }}>
                 {r.text}
               </span>
             </div>
@@ -1008,54 +1154,53 @@ function XrefPanel() {
     }
   };
 
-  const kindLabel: Record<string, { label: string; color: string }> = {
-    declare: { label: "DEC", color: "#a855f7" },
-    write: { label: "W", color: "#3b82f6" },
-    read: { label: "R", color: "#10b981" },
+  const kindTone: Record<string, "accent" | "info" | "neutral"> = {
+    declare: "accent",
+    write: "info",
+    read: "neutral",
+  };
+  const kindLabel: Record<string, string> = {
+    declare: "DEC",
+    write: "W",
+    read: "R",
   };
 
   return (
-    <div style={{ padding: "0 12px", fontSize: 12 }}>
-      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", gap: 6 }}>
         <select
+          className="vt-select"
           value={xrefVariable}
           onChange={(e) => setXrefVariable(e.target.value)}
-          style={{ flex: 1, fontSize: 11, padding: "2px 4px" }}
+          aria-label="Variable"
         >
-          <option value="">Select variable...</option>
+          <option value="">Select variable</option>
           {compiledVariables.map((v) => (
             <option key={v.name} value={v.name}>{v.name}</option>
           ))}
         </select>
-        <button className="toolbar-btn" style={{ fontSize: 10, padding: "2px 8px" }} onClick={findReferences}>
+        <Button size="sm" variant="default" icon={<TextSearch size={14} strokeWidth={1.75} />} onClick={findReferences}>
           Find
-        </button>
+        </Button>
       </div>
       {xrefResults.length === 0 ? (
-        <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
-          {xrefVariable ? "No references found" : "Select a variable to find all references"}
-        </div>
+        <EmptyState
+          compact
+          icon={<TextSearch size={18} strokeWidth={1.75} />}
+          title={xrefVariable ? "No references found" : "No variable selected"}
+          description={xrefVariable ? "This variable is not referenced in any program." : "Select a variable to find every place it is declared, read or written."}
+        />
       ) : (
         <div>
           {xrefResults.map((r, i) => (
             <div
               key={i}
-              style={{ display: "flex", gap: 4, padding: "3px 0", cursor: "pointer", borderBottom: "1px solid var(--border)" }}
+              className="diagnostic-item"
               onClick={() => gotoRef(r.file, r.line)}
             >
-              <span style={{
-                fontSize: 9, fontWeight: 700, width: 24, flexShrink: 0,
-                color: kindLabel[r.kind]?.color || "var(--text-muted)",
-              }}>
-                {kindLabel[r.kind]?.label || "?"}
-              </span>
-              <span style={{ fontSize: 11, color: "var(--accent)", whiteSpace: "nowrap" }}>
-                {r.file}:{r.line}
-              </span>
-              <span style={{
-                fontSize: 10, color: "var(--text-muted)", overflow: "hidden",
-                textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
-              }}>
+              <Badge tone={kindTone[r.kind] ?? "neutral"}>{kindLabel[r.kind] ?? "?"}</Badge>
+              <span className="location">{r.file}:{r.line}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
                 {r.context}
               </span>
             </div>

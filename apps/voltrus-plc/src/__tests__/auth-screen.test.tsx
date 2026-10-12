@@ -104,7 +104,7 @@ describe("AuthScreen", () => {
     await renderNode(<AuthScreen />);
     expect(container.querySelector<HTMLInputElement>('input[placeholder="Email"]')).toBeTruthy();
     expect(buttonByText("Sign in")).toBeTruthy();
-    expect(buttonByText("Continue without an account — edit locally")).toBeTruthy();
+    expect(buttonByText("Continue without an account")).toBeTruthy();
   });
 
   it("renders nothing in tauri mode", async () => {
@@ -173,7 +173,7 @@ describe("AuthScreen", () => {
 
   it("skip stores the session flag and hides the screen", async () => {
     await renderNode(<AuthScreen />);
-    await click(buttonByText("Continue without an account — edit locally")!);
+    await click(buttonByText("Continue without an account")!);
     expect(sessionStorage.getItem("vplc_auth_skipped")).toBe("1");
     expect(container.querySelector('input[placeholder="Email"]')).toBeNull();
   });

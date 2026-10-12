@@ -21,7 +21,10 @@ const DEFAULT_SCREENS: HmiScreen[] = [
   {
     id: newId(),
     name: "Main Screen",
-    backgroundColor: "#1e1e2e",
+    // Matches the shared theme's dark --bg so a fresh project reads as part of
+    // the editor chrome instead of a foreign palette. Persisted data: existing
+    // projects keep whatever color they were saved with.
+    backgroundColor: "#0b0b0a",
     widgets: [],
   },
 ];
@@ -507,7 +510,7 @@ export const useStore = create<AppState>((set, get) => {
       const newScreen: HmiScreen = {
         id: newId(),
         name: `Screen ${screens.length + 1}`,
-        backgroundColor: "#1e1e2e",
+        backgroundColor: "#0b0b0a",
         widgets: [],
       };
       set({

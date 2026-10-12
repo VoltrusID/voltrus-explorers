@@ -97,7 +97,7 @@ export default function SfcCanvas({ nodes, edges, onNodesChange, onEdgesChange, 
   );
 
   return (
-    <div ref={reactFlowWrapper} style={{ width: "100%", height: "100%" }}>
+    <div ref={reactFlowWrapper} className="ed-canvas" style={{ width: "100%", height: "100%" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -110,16 +110,13 @@ export default function SfcCanvas({ nodes, edges, onNodesChange, onEdgesChange, 
         fitView
         snapToGrid={true}
         snapGrid={[120, 100]}
-        style={{ background: "var(--bg, #11111b)" }}
-        connectionLineStyle={{ stroke: "var(--accent, #7c3aed)", strokeWidth: 2 }}
-        defaultEdgeOptions={{ type: "straight", style: { stroke: "var(--text-muted, #6c7086)", strokeWidth: 2 } }}
+        style={{ background: "var(--bg)" }}
+        connectionLineStyle={{ stroke: "var(--accent)", strokeWidth: 2 }}
+        defaultEdgeOptions={{ type: "straight", style: { stroke: "var(--text-muted)", strokeWidth: 2 } }}
       >
-        <Background gap={100} size={1} color="var(--border, #45475a)" />
-        <Controls style={{ background: "var(--card, #1e1e2e)", border: "1px solid var(--border, #45475a)" }} />
-        <MiniMap
-          style={{ background: "var(--card, #1e1e2e)", border: "1px solid var(--border, #45475a)" }}
-          nodeColor={() => "var(--accent, #7c3aed)"}
-        />
+        <Background gap={100} size={1} color="var(--border)" />
+        <Controls />
+        <MiniMap maskColor="var(--scrim)" nodeColor={() => "var(--text-muted)"} pannable zoomable />
       </ReactFlow>
     </div>
   );

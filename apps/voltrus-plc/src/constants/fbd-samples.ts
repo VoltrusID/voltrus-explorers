@@ -39,7 +39,7 @@ export const FBD_SAMPLES: FbdSample[] = [
   {
     id: "timer-delay",
     name: "Timer Delay",
-    description: "TON timer — output activates after input is TRUE for 500ms",
+    description: "TON timer: output activates after input is TRUE for 500ms",
     category: "Timer",
     program: {
       version: "1.0",
@@ -60,7 +60,7 @@ export const FBD_SAMPLES: FbdSample[] = [
   {
     id: "counter",
     name: "Counter",
-    description: "CTU counter — counts X0 pulses, resets with X1, outputs at count 10",
+    description: "CTU counter: counts X0 pulses, resets with X1, outputs at count 10",
     category: "Counter",
     program: {
       version: "1.0",
@@ -83,7 +83,7 @@ export const FBD_SAMPLES: FbdSample[] = [
   {
     id: "threshold-alarm",
     name: "Threshold Alarm",
-    description: "ADD + GT — alarm when D0 + D1 > 100",
+    description: "ADD + GT: alarm when D0 + D1 > 100",
     category: "Arithmetic",
     program: {
       version: "1.0",
@@ -108,7 +108,7 @@ export const FBD_SAMPLES: FbdSample[] = [
   {
     id: "edge-detect",
     name: "Edge Detect",
-    description: "R_TRIG — one-shot pulse on rising edge of X0",
+    description: "R_TRIG: one-shot pulse on rising edge of X0",
     category: "Edge",
     program: {
       version: "1.0",

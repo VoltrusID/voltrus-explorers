@@ -41,6 +41,8 @@ export default function ResizeHandle({ axis, onDrag }: ResizeHandleProps) {
   return (
     <div
       className={`resize-handle resize-handle-${axis}`}
+      role="separator"
+      aria-orientation={axis === "x" ? "vertical" : "horizontal"}
       onMouseDown={onMouseDown}
     />
   );

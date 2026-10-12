@@ -38,11 +38,6 @@ vi.stubGlobal("fetch", fetchMock);
 localStorage.setItem("vplc_token", "tok-1");
 localStorage.setItem("vplc_base", "http://test-api");
 
-// ai-bridge registers its handlers from a macrotask (queued during the
-// cyclic side-effect import); await its readiness signal before invoking.
-const { aiCommandsRegistered } = await import("../api/ai-bridge");
-await aiCommandsRegistered;
-
 const BASE = "http://test-api";
 
 /** A 200 response whose body drips out one chunk per read() call. */

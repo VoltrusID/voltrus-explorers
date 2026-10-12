@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke, listen } from "../api/bridge";
-// Side-effect import: registers the relay command handlers into the bridge's
-// cloud extension registry (the module retries until the registry exists and
-// exposes whenRegistered for deterministic waiting).
-import { whenRegistered } from "../api/relay-bridge";
+// Side-effect import: registers the relay command handlers on module load.
 import "../api/relay-bridge";
 import { resetRelaySocketFactory, setRelaySocketFactory, type WebSocketFactory } from "../api/relay-client";
 import type { DeployResult, TargetStatus } from "../types";
@@ -96,10 +93,7 @@ async function connectFakeDevice(): Promise<FakeWebSocket> {
   return ws;
 }
 
-beforeEach(async () => {
-  // Registration retries on real macrotasks; settle it BEFORE fake timers
-  // capture the clock, otherwise the retry timer would never fire.
-  await whenRegistered;
+beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   vi.stubGlobal("localStorage", memStorage());
   localStorage.setItem("vplc_base", "http://test-api");

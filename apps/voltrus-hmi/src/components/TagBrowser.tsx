@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef } from "react";
+import { ArrowRight, Plus, Plug, Unplug, X } from "lucide-react";
+import { Button, IconButton, StatusDot } from "@mactools/ui";
 import { useStore } from "../store";
 import type { PlcVariable } from "../types";
 
@@ -108,157 +110,61 @@ export function TagBrowser() {
   );
 
   const handleTagContextMenu = useCallback((e: React.MouseEvent) => {
-    // Suppress the browser menu; deletion happens via the × button
+    // Suppress the browser menu; deletion happens via the delete button
     // (never delete instantly on right-click — users lose tags by accident).
     e.preventDefault();
   }, []);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        fontSize: 12,
-      }}
-    >
-      {/* PLC Connection Section */}
-      <div
-        style={{
-          padding: "10px 12px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "var(--text-muted)",
-            marginBottom: 8,
-          }}
-        >
-          PLC Connection
-        </div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+    <div className="acc-body">
+      {/* PLC connection */}
+      <div className="sub-block">
+        <div className="sub-title">PLC connection</div>
+        <div className="sub-actions">
           <input
             type="text"
             value={plcIp}
             onChange={(e) => setPlcIp(e.target.value)}
             disabled={plcConnected || plcConnecting}
             placeholder="192.168.1.100"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: "4px 8px",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              background: "var(--input-bg)",
-              color: "var(--text)",
-              fontSize: 12,
-              outline: "none",
-            }}
+            aria-label="PLC IP address"
+            className="vt-input vt-input--mono"
+            style={{ flex: 1, minWidth: 0 }}
           />
-          <button
+          <Button
+            size="sm"
+            variant={plcConnected ? "danger" : "primary"}
+            icon={plcConnected ? <Unplug size={14} strokeWidth={1.75} /> : <Plug size={14} strokeWidth={1.75} />}
             onClick={handleConnect}
             disabled={plcConnecting}
-            style={{
-              padding: "4px 10px",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              background: plcConnected ? "var(--danger)" : "var(--accent)",
-              color: plcConnected ? "#fff" : "#000",
-              fontSize: 11,
-              cursor: plcConnecting ? "wait" : "pointer",
-              whiteSpace: "nowrap",
-              flexShrink: 0,
-            }}
+            style={{ flexShrink: 0 }}
           >
-            {plcConnecting
-              ? "…"
-              : plcConnected
-                ? "Disconnect"
-                : "Connect"}
-          </button>
+            {plcConnecting ? "…" : plcConnected ? "Disconnect" : "Connect"}
+          </Button>
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            fontWeight: 500,
-            color: plcConnected ? "#22c55e" : plcConnecting ? "#eab308" : "#ef4444",
-          }}
-        >
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: plcConnected
-                ? "#22c55e"
-                : plcConnecting
-                  ? "#eab308"
-                  : "#ef4444",
-              display: "inline-block",
-              flexShrink: 0,
-              boxShadow: plcConnected
-                ? "0 0 6px #22c55e"
-                : plcConnecting
-                  ? "0 0 6px #eab308"
-                  : "none",
-            }}
+        <div className="status-line">
+          <StatusDot
+            tone={plcConnected ? "success" : plcConnecting ? "warn" : "danger"}
+            label={plcConnected ? "Connected" : plcConnecting ? "Connecting" : "Disconnected"}
           />
           <span>
-            {plcConnected
-              ? "Connected"
-              : plcConnecting
-                ? "Connecting…"
-                : "Disconnected"}
+            {plcConnected ? "Connected" : plcConnecting ? "Connecting…" : "Disconnected"}
           </span>
         </div>
       </div>
 
-      {/* Variables Section */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div
-          style={{
-            padding: "10px 12px 6px",
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "var(--text-muted)",
-          }}
-        >
-          Variables ({plcVariables.length})
+      {/* Variables */}
+      <div className="sub-block" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div className="sub-title">
+          <span>Variables</span>
+          <span className="row-meta">{plcVariables.length}</span>
         </div>
         {/* Capped so a large PLC program does not push every other sidebar
             section off-screen; the list scrolls instead. */}
-        <div style={{ flex: 1, maxHeight: 260, overflowY: "auto", padding: "0 12px 8px" }}>
+        <div className="sub-list" style={{ maxHeight: 260 }}>
           {plcVariables.length === 0 ? (
-            <div
-              style={{
-                color: "var(--text-muted)",
-                fontSize: 11,
-                textAlign: "center",
-                padding: "12px 0",
-                opacity: 0.6,
-              }}
-            >
-              {plcConnected
-                ? "Waiting for data…"
-                : "Connect to a PLC to browse variables"}
+            <div className="sub-empty">
+              {plcConnected ? "Waiting for data…" : "Connect to a PLC to browse variables."}
             </div>
           ) : (
             plcVariables.map((v) => (
@@ -266,61 +172,14 @@ export function TagBrowser() {
                 key={v.name}
                 draggable
                 onDragStart={(e) => handleVarDragStart(e, v)}
-                onClick={() =>
-                  setSelectedVar(selectedVar === v.name ? null : v.name)
-                }
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "4px 6px",
-                  borderRadius: 4,
-                  cursor: "grab",
-                  marginBottom: 2,
-                  background:
-                    selectedVar === v.name ? "var(--hover)" : "transparent",
-                  border:
-                    selectedVar === v.name
-                      ? "1px solid var(--accent)"
-                      : "1px solid transparent",
-                  transition: "background 0.1s",
-                  userSelect: "none",
-                }}
+                onClick={() => setSelectedVar(selectedVar === v.name ? null : v.name)}
+                className={`list-row${selectedVar === v.name ? " is-selected" : ""}`}
               >
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: "var(--text)",
-                  }}
-                  title={v.name}
-                >
+                <span className="row-main" title={v.name}>
                   {v.name}
                 </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: "var(--text-muted)",
-                    background: "var(--surface)",
-                    padding: "1px 4px",
-                    borderRadius: 3,
-                    flexShrink: 0,
-                  }}
-                >
-                  {v.type}
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: "var(--text-muted)",
-                    flexShrink: 0,
-                    minWidth: 30,
-                    textAlign: "right",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
+                <span className="vt-badge vt-badge--mono">{v.type}</span>
+                <span className="row-meta" style={{ minWidth: 30, textAlign: "right" }}>
                   {formatVarValue(v.value, v.type)}
                 </span>
               </div>
@@ -328,61 +187,31 @@ export function TagBrowser() {
           )}
         </div>
         {plcConnected && plcVariables.length > 0 && (
-          <div style={{ padding: "0 12px 10px" }}>
-            <button
+          <div style={{ padding: "0 10px 2px" }}>
+            <Button
+              size="sm"
+              variant="primary"
+              block
+              icon={<Plus size={14} strokeWidth={1.75} />}
               onClick={handleAddTag}
               disabled={!selectedVar}
-              style={{
-                width: "100%",
-                padding: "4px 10px",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                background: selectedVar ? "var(--accent)" : "var(--surface)",
-                color: selectedVar ? "#000" : "var(--text-muted)",
-                fontSize: 11,
-                cursor: selectedVar ? "pointer" : "default",
-                opacity: selectedVar ? 1 : 0.5,
-              }}
             >
-              + Add as Tag
-            </button>
+              Add as tag
+            </Button>
           </div>
         )}
       </div>
 
-      {/* Tags Section */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <div
-          style={{
-            padding: "10px 12px 6px",
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            color: "var(--text-muted)",
-          }}
-        >
-          Tags ({tags.length})
+      {/* Tags */}
+      <div className="sub-block" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <div className="sub-title">
+          <span>Tags</span>
+          <span className="row-meta">{tags.length}</span>
         </div>
-        <div style={{ flex: 1, maxHeight: 220, overflowY: "auto", padding: "0 12px 8px" }}>
+        <div className="sub-list" style={{ maxHeight: 220 }}>
           {tags.length === 0 ? (
-            <div
-              style={{
-                color: "var(--text-muted)",
-                fontSize: 11,
-                textAlign: "center",
-                padding: "12px 0",
-                opacity: 0.6,
-              }}
-            >
-              No tags yet. Select a variable and click "Add as Tag".
+            <div className="sub-empty">
+              No tags yet. Select a variable and click "Add as tag".
             </div>
           ) : (
             tags.map((tag) => (
@@ -390,22 +219,9 @@ export function TagBrowser() {
                 key={tag.id}
                 draggable
                 onDragStart={(e) => handleTagDragStart(e, tag)}
-                onDoubleClick={() =>
-                  handleTagDoubleClick(tag.id, tag.name)
-                }
+                onDoubleClick={() => handleTagDoubleClick(tag.id, tag.name)}
                 onContextMenu={(e) => handleTagContextMenu(e)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "5px 6px",
-                  borderRadius: 4,
-                  cursor: "grab",
-                  marginBottom: 2,
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  userSelect: "none",
-                }}
+                className="list-row is-card"
               >
                 {renamingTagId === tag.id ? (
                   <input
@@ -415,74 +231,31 @@ export function TagBrowser() {
                     onChange={(e) => setRenameValue(e.target.value)}
                     onBlur={() => handleRenameSubmit(tag.id)}
                     onKeyDown={(e) => handleRenameKeyDown(e, tag.id)}
-                    style={{
-                      flex: 1,
-                      padding: "1px 4px",
-                      border: "1px solid var(--accent)",
-                      borderRadius: 3,
-                      background: "var(--bg)",
-                      color: "var(--text)",
-                      fontSize: 12,
-                      outline: "none",
-                    }}
+                    className="row-name-input vt-input"
+                    aria-label="Tag name"
                   />
                 ) : (
                   <>
-                    <span
-                      style={{
-                        flex: 1,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "var(--text)",
-                        fontWeight: 500,
-                      }}
-                      title={tag.name}
-                    >
+                    <span className="row-main" style={{ fontWeight: 500 }} title={tag.name}>
                       {tag.name}
                     </span>
-                    <span
-                      style={{
-                        color: "var(--text-muted)",
-                        fontSize: 10,
-                        flexShrink: 0,
-                      }}
-                    >
-                      &rarr;
+                    <span className="row-arrow" aria-hidden="true">
+                      <ArrowRight size={12} strokeWidth={1.75} />
                     </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color: "var(--accent)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        flexShrink: 0,
-                        maxWidth: 80,
-                      }}
-                      title={tag.plcVariable}
-                    >
+                    <span className="row-target" title={tag.plcVariable}>
                       {tag.plcVariable}
                     </span>
-                    <button
+                    <IconButton
+                      label="Delete tag"
+                      size="sm"
+                      danger
                       onClick={(e) => {
                         e.stopPropagation();
                         removeTag(tag.id);
                       }}
-                      title="Delete tag"
-                      style={{
-                        border: "none",
-                        background: "transparent",
-                        color: "var(--text-muted)",
-                        cursor: "pointer",
-                        padding: "0 2px",
-                        fontSize: 14,
-                        lineHeight: 1,
-                        flexShrink: 0,
-                      }}
                     >
-                      &times;
-                    </button>
+                      <X size={12} strokeWidth={1.75} />
+                    </IconButton>
                   </>
                 )}
               </div>

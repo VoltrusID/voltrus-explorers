@@ -31,7 +31,7 @@ export function transpileFbdToSt(program: FbdProgram): TranspileResult {
   // Check for cycles
   const { order, cycle } = topologicalSort(nodes, edges);
   if (cycle) {
-    diagnostics.push({ message: "Diagram contains a cycle — FBD execution order must be acyclic", severity: "error" });
+    diagnostics.push({ message: "Diagram contains a cycle. FBD execution order must be acyclic.", severity: "error" });
     return { source: "", diagnostics };
   }
 
@@ -104,14 +104,14 @@ export function transpileFbdToSt(program: FbdProgram): TranspileResult {
     if ((data.blockType === "INPUT_PIN" || data.blockType === "OUTPUT_PIN") && data.variableName) {
       if (!isValidIecIdentifier(data.variableName)) {
         diagnostics.push({
-          message: `Invalid variable name: "${data.variableName}" — must match [A-Za-z_][A-Za-z0-9_]*`,
+          message: `Invalid variable name: "${data.variableName}"; must match [A-Za-z_][A-Za-z0-9_]*`,
           severity: "error",
         });
       }
     }
     if (data.instanceName && !isValidIecIdentifier(data.instanceName)) {
       diagnostics.push({
-        message: `Invalid instance name: "${data.instanceName}" — must match [A-Za-z_][A-Za-z0-9_]*`,
+        message: `Invalid instance name: "${data.instanceName}"; must match [A-Za-z_][A-Za-z0-9_]*`,
         severity: "error",
       });
     }

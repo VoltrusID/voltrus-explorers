@@ -55,7 +55,7 @@ export function transpileSfcToSt(program: SfcProgram): TranspileResult {
     diagnostics.push({ message: "SFC must have exactly one initial step", severity: "error" });
   }
   if (initialSteps.length > 1) {
-    diagnostics.push({ message: `Found ${initialSteps.length} initial steps — exactly one required`, severity: "error" });
+    diagnostics.push({ message: `Found ${initialSteps.length} initial steps; exactly one required`, severity: "error" });
   }
   if (diagnostics.some((d) => d.severity === "error")) {
     return { source: "", diagnostics };

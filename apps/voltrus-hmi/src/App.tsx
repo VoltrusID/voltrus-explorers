@@ -1,6 +1,36 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  ChartLine,
+  ChevronDown,
+  ChevronRight,
+  CircleCheck,
+  FolderOpen,
+  Gauge,
+  Grid3x3,
+  GripVertical,
+  Info,
+  Magnet,
+  Minus,
+  Play,
+  Plus,
+  RotateCcw,
+  Save,
+  SlidersHorizontal,
+  SquareDashedMousePointer,
+  SquareMousePointer,
+  CircleDot,
+  Sun,
+  Moon,
+  Type,
+  X,
+  XCircle,
+  Download,
+  RefreshCw,
+} from "lucide-react";
+import { Button, EmptyState, IconButton, Toolbar } from "@mactools/ui";
+import appIcon from "../src-tauri/icons/128x128.png";
 import { useStore, CANVAS_W, CANVAS_H } from "./store";
 import { checkForUpdates, installUpdate } from "./updater";
 import { TagBrowser } from "./components/TagBrowser";
@@ -11,13 +41,13 @@ import { CanvasWidget } from "./components/CanvasWidget";
 import { PropertiesPanel } from "./components/PropertiesPanel";
 import type { HmiWidget, WidgetType } from "./types";
 
-const WIDGET_TYPES: { type: WidgetType; icon: string; label: string }[] = [
-  { type: "gauge", icon: "○", label: "Gauge" },
-  { type: "button", icon: "□", label: "Button" },
-  { type: "indicator", icon: "●", label: "Indicator" },
-  { type: "text", icon: "T", label: "Text" },
-  { type: "slider", icon: "═", label: "Slider" },
-  { type: "chart", icon: "█", label: "Chart" },
+const WIDGET_TYPES: { type: WidgetType; icon: React.ReactNode; label: string }[] = [
+  { type: "gauge", icon: <Gauge size={14} strokeWidth={1.75} />, label: "Gauge" },
+  { type: "button", icon: <SquareMousePointer size={14} strokeWidth={1.75} />, label: "Button" },
+  { type: "indicator", icon: <CircleDot size={14} strokeWidth={1.75} />, label: "Indicator" },
+  { type: "text", icon: <Type size={14} strokeWidth={1.75} />, label: "Text" },
+  { type: "slider", icon: <SlidersHorizontal size={14} strokeWidth={1.75} />, label: "Slider" },
+  { type: "chart", icon: <ChartLine size={14} strokeWidth={1.75} />, label: "Chart" },
 ];
 
 const SCREEN_TEMPLATES: { name: string; desc: string; widgets: Omit<HmiWidget, "id">[] }[] = [
@@ -82,6 +112,48 @@ function isEditableTarget(target: unknown): boolean {
   );
 }
 
+/** Collapsible sidebar block: chevron + sentence-case title, content below. */
+function AccordionSection({
+  id,
+  title,
+  meta,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  meta?: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="acc-section" data-section={id}>
+      <button
+        type="button"
+        className="acc-header"
+        aria-expanded={!collapsed}
+        aria-controls={`acc-${id}`}
+        onClick={onToggle}
+      >
+        {collapsed ? (
+          <ChevronRight size={14} strokeWidth={1.75} className="acc-chevron" />
+        ) : (
+          <ChevronDown size={14} strokeWidth={1.75} className="acc-chevron" />
+        )}
+        <span className="acc-title">{title}</span>
+        {meta !== undefined && <span className="acc-meta">{meta}</span>}
+      </button>
+      {!collapsed && (
+        <div id={`acc-${id}`} className="acc-body">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main App
 // ---------------------------------------------------------------------------
@@ -95,6 +167,7 @@ export default function App() {
   const zoom = useStore((s) => s.zoom);
   const plcIp = useStore((s) => s.plcIp);
   const theme = useStore((s) => s.theme);
+  const alarmCount = useStore((s) => s.alarms.length);
   const isDirty = useStore((s) => s.isDirty);
   const toast = useStore((s) => s.toast);
 
@@ -160,7 +233,7 @@ export default function App() {
         if (!cancelled && info.available) {
           useStore
             .getState()
-            .showToast("info", `Update ${info.version} available — use Check for Updates to install`);
+            .showToast("info", `Update ${info.version} available. Use Check for Updates to install`);
         }
       } catch {
         // offline / endpoint not deployed yet — silent on launch
@@ -344,82 +417,99 @@ export default function App() {
     }
   };
 
-  // Zoom helpers
-  const zoomIn = () => useStore.getState().setZoom(zoom + 0.1);
-  const zoomOut = () => useStore.getState().setZoom(zoom - 0.1);
-  const zoomReset = () => useStore.getState().setZoom(1);
-
   return (
     <div className="app-layout">
       {/* Toolbar */}
-      <div className="toolbar">
-        <span className="toolbar-title">
-          Voltrus HMI{isDirty ? <span className="dirty-dot" title="Unsaved changes" /> : null}
-        </span>
-        <button
-          className="toolbar-btn icon"
-          onClick={() => useStore.getState().setTheme(theme === "dark" ? "light" : "dark")}
-          title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        >
-          {theme === "dark" ? "☀" : "☽"}
-        </button>
-        <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => useStore.getState().loadProject()} title="Open Project">
-          Open
-        </button>
-        <button
-          className="toolbar-btn"
-          onClick={() => useStore.getState().saveProject()}
-          title="Save Project (Cmd+S)"
-        >
-          Save{isDirty ? " •" : ""}
-        </button>
-        <span className="toolbar-divider" />
-        <button className="toolbar-btn" onClick={() => useStore.getState().addScreen()} title="Add Screen">
-          + Screen
-        </button>
-        <span className="toolbar-spacer" />
-        <button
-          className="toolbar-btn primary"
-          onClick={() => useStore.getState().exportHtml()}
-          title="Export a standalone HTML file"
-        >
-          Export HTML
-        </button>
-        <button className="toolbar-btn" onClick={handleLivePreview} title="Live Preview">
-          Preview
-        </button>
-        <button
-          className="toolbar-btn"
-          onClick={handleCheckForUpdates}
-          disabled={checkingUpdate}
-          title="Check for Updates"
-        >
-          {checkingUpdate ? "Checking…" : "Check for Updates"}
-        </button>
-      </div>
+      <Toolbar
+        title="Voltrus HMI"
+        icon={appIcon}
+        connected={false}
+        context={
+          isDirty ? (
+            <span className="toolbar-dirty" title="Unsaved changes">
+              <span className="dirty-dot" />
+              Unsaved changes
+            </span>
+          ) : undefined
+        }
+        actions={
+          <>
+            <IconButton
+              label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              size="sm"
+              onClick={() => useStore.getState().setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
+            </IconButton>
+            <span className="toolbar-sep" aria-hidden="true" />
+            <Button size="sm" variant="ghost" icon={<FolderOpen size={14} strokeWidth={1.75} />} onClick={() => useStore.getState().loadProject()}>
+              Open
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Save size={14} strokeWidth={1.75} />}
+              onClick={() => useStore.getState().saveProject()}
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Plus size={14} strokeWidth={1.75} />}
+              onClick={() => useStore.getState().addScreen()}
+            >
+              Add screen
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Download size={14} strokeWidth={1.75} />}
+              onClick={() => useStore.getState().exportHtml()}
+            >
+              Export HTML
+            </Button>
+            <Button size="sm" variant="ghost" icon={<Play size={14} strokeWidth={1.75} />} onClick={handleLivePreview}>
+              Preview
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RefreshCw size={14} strokeWidth={1.75} />}
+              onClick={handleCheckForUpdates}
+              loading={checkingUpdate}
+            >
+              {checkingUpdate ? "Checking…" : "Check for updates"}
+            </Button>
+          </>
+        }
+      />
 
       {/* Screen tabs */}
-      <div className="screen-tabs">
+      <div className="vt-tabs" role="tablist" aria-label="Screens">
         {screens.map((screen, i) => (
           <div
             key={screen.id}
-            className={`screen-tab ${i === activeScreenIndex ? "active" : ""}`}
+            role="tab"
+            aria-selected={i === activeScreenIndex}
+            tabIndex={i === activeScreenIndex ? 0 : -1}
+            className="vt-tab screen-tab"
             onClick={() => useStore.getState().setActiveScreen(i)}
           >
             {screen.name}
             {screens.length > 1 && (
-              <span
+              <button
+                type="button"
                 className="screen-tab-close"
                 title={`Delete ${screen.name}`}
+                aria-label={`Delete ${screen.name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   useStore.getState().deleteScreen(screen.id);
                 }}
               >
-                ×
-              </span>
+                <X size={12} strokeWidth={1.75} />
+              </button>
             )}
           </div>
         ))}
@@ -427,146 +517,143 @@ export default function App() {
 
       {/* Main content */}
       <div className="main-content">
-        {/* Left sidebar: Widget Palette */}
-        <div className="sidebar-left">
-          {/* Widgets */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("widgets")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.widgets ? "▸" : "▾"}</span>
-              Widgets
+        {/* Left sidebar: Widget palette, tags, templates, alarms, access */}
+        <aside className="vt-sidebar sidebar-left">
+          <AccordionSection
+            id="widgets"
+            title="Widgets"
+            collapsed={collapsedSections.widgets}
+            onToggle={() => toggleSection("widgets")}
+          >
+            <div className="widget-palette">
+              {WIDGET_TYPES.map((w) => (
+                <div
+                  key={w.type}
+                  className="widget-palette-item"
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, w.type)}
+                >
+                  <span className="widget-palette-icon">{w.icon}</span>
+                  <span className="widget-palette-label">{w.label}</span>
+                  <GripVertical
+                    size={12}
+                    strokeWidth={1.75}
+                    className="widget-palette-grip"
+                    aria-hidden="true"
+                  />
+                </div>
+              ))}
             </div>
-            {!collapsedSections.widgets && (
-              <>
-                {WIDGET_TYPES.map((w) => (
-                  <div
-                    key={w.type}
-                    className="widget-palette-item"
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, w.type)}
-                  >
-                    <div className="widget-palette-icon">{w.icon}</div>
-                    <span>{w.label}</span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
+          </AccordionSection>
 
-          {/* PLC & Tags */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ marginTop: 4, cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("tags")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.tags ? "▸" : "▾"}</span>
-              PLC & Tags
+          <AccordionSection
+            id="tags"
+            title="PLC & tags"
+            collapsed={collapsedSections.tags}
+            onToggle={() => toggleSection("tags")}
+          >
+            <TagBrowser />
+          </AccordionSection>
+
+          <AccordionSection
+            id="templates"
+            title="Templates"
+            collapsed={collapsedSections.templates}
+            onToggle={() => toggleSection("templates")}
+          >
+            <div className="template-list">
+              {SCREEN_TEMPLATES.map((t) => (
+                <button
+                  key={t.name}
+                  type="button"
+                  className="template-item"
+                  onClick={() => useStore.getState().addTemplateWidgets(t.widgets)}
+                >
+                  <span className="template-name">{t.name}</span>
+                  <span className="template-desc">{t.desc}</span>
+                </button>
+              ))}
             </div>
-            {!collapsedSections.tags && <TagBrowser />}
-          </div>
+          </AccordionSection>
 
-          {/* Templates */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ marginTop: 4, cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("templates")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.templates ? "▸" : "▾"}</span>
-              Templates
-            </div>
-            {!collapsedSections.templates && (
-              <>
-                {SCREEN_TEMPLATES.map((t) => (
-                  <div
-                    key={t.name}
-                    className="template-item"
-                    onClick={() => useStore.getState().addTemplateWidgets(t.widgets)}
-                  >
-                    <span className="template-name">{t.name}</span>
-                    <span className="template-desc">{t.desc}</span>
-                  </div>
-                ))}
-              </>
-            )}
-          </div>
+          <AccordionSection
+            id="alarms"
+            title="Alarms"
+            meta={alarmCount > 0 ? String(alarmCount) : undefined}
+            collapsed={collapsedSections.alarms}
+            onToggle={() => toggleSection("alarms")}
+          >
+            <AlarmConfig />
+          </AccordionSection>
 
-          {/* Alarms */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ marginTop: 4, cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("alarms")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.alarms ? "▸" : "▾"}</span>
-              Alarms
-            </div>
-            {!collapsedSections.alarms && <AlarmConfig />}
-          </div>
+          <AccordionSection
+            id="access"
+            title="Access control"
+            collapsed={collapsedSections.access}
+            onToggle={() => toggleSection("access")}
+          >
+            <PinSetup />
+          </AccordionSection>
 
-          {/* Access Control */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ marginTop: 4, cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("access")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.access ? "▸" : "▾"}</span>
-              Access Control
-            </div>
-            {!collapsedSections.access && <PinSetup />}
-          </div>
-
-          {/* Languages */}
-          <div>
-            <div
-              className="sidebar-header"
-              style={{ marginTop: 4, cursor: "pointer", userSelect: "none" }}
-              onClick={() => toggleSection("languages")}
-            >
-              <span style={{ marginRight: 4 }}>{collapsedSections.languages ? "▸" : "▾"}</span>
-              Languages
-            </div>
-            {!collapsedSections.languages && <LanguageManager />}
-          </div>
-
-        </div>
+          <AccordionSection
+            id="languages"
+            title="Languages"
+            collapsed={collapsedSections.languages}
+            onToggle={() => toggleSection("languages")}
+          >
+            <LanguageManager />
+          </AccordionSection>
+        </aside>
 
         {/* Center: Canvas area */}
         <div className="canvas-area">
           {/* Canvas toolbar */}
           <div className="canvas-toolbar">
-            <button className="canvas-toolbar-btn" onClick={zoomOut} title="Zoom Out">
-              −
-            </button>
-            <span className="canvas-toolbar-label">{Math.round(zoom * 100)}%</span>
-            <button className="canvas-toolbar-btn" onClick={zoomIn} title="Zoom In">
-              +
-            </button>
-            <button className="canvas-toolbar-btn" onClick={zoomReset} title="Reset Zoom">
-              Reset
-            </button>
+            <div className="canvas-toolbar-group" role="group" aria-label="Zoom">
+              <IconButton
+                label="Zoom out"
+                size="sm"
+                onClick={() => useStore.getState().setZoom(zoom - 0.1)}
+              >
+                <Minus size={14} strokeWidth={1.75} />
+              </IconButton>
+              <span className="canvas-toolbar-label">{Math.round(zoom * 100)}%</span>
+              <IconButton
+                label="Zoom in"
+                size="sm"
+                onClick={() => useStore.getState().setZoom(zoom + 0.1)}
+              >
+                <Plus size={14} strokeWidth={1.75} />
+              </IconButton>
+              <IconButton
+                label="Reset zoom"
+                size="sm"
+                onClick={() => useStore.getState().setZoom(1)}
+              >
+                <RotateCcw size={14} strokeWidth={1.75} />
+              </IconButton>
+            </div>
 
-            <span className="canvas-toolbar-sep" />
+            <span className="toolbar-sep" aria-hidden="true" />
 
-            <button
-              className={`canvas-toolbar-btn ${showGrid ? "active" : ""}`}
+            <Button
+              size="sm"
+              aria-pressed={showGrid}
+              icon={<Grid3x3 size={14} strokeWidth={1.75} />}
               onClick={() => setShowGrid(!showGrid)}
-              title="Toggle Grid"
+              title="Toggle grid"
             >
               Grid
-            </button>
-            <button
-              className={`canvas-toolbar-btn ${snapEnabled ? "active" : ""}`}
+            </Button>
+            <Button
+              size="sm"
+              aria-pressed={snapEnabled}
+              icon={<Magnet size={14} strokeWidth={1.75} />}
               onClick={() => setSnapEnabled(!snapEnabled)}
-              title="Toggle Snap to Grid"
+              title="Toggle snap to grid"
             >
               Snap
-            </button>
+            </Button>
           </div>
 
           {/* Scrollable canvas container.
@@ -585,7 +672,7 @@ export default function App() {
                   height: CANVAS_H,
                   transform: `scale(${zoom})`,
                   transformOrigin: "top left",
-                  backgroundColor: activeScreen?.backgroundColor || "#1e1e2e",
+                  backgroundColor: activeScreen?.backgroundColor || "#0b0b0a",
                 }}
                 onDragOver={handleCanvasDragOver}
                 onDragLeave={handleCanvasDragLeave}
@@ -594,8 +681,12 @@ export default function App() {
               >
                 {activeScreen?.widgets.length === 0 && (
                   <div className="empty-canvas">
-                    <div className="empty-canvas-icon">+</div>
-                    <div className="empty-canvas-text">Drag widgets here</div>
+                    <EmptyState
+                      compact
+                      icon={<SquareDashedMousePointer size={20} strokeWidth={1.75} />}
+                      title="No widgets yet"
+                      description="Drag widgets from the palette onto the canvas."
+                    />
                   </div>
                 )}
                 {activeScreen?.widgets.map((widget) => {
@@ -624,9 +715,9 @@ export default function App() {
         </div>
 
         {/* Right sidebar: Properties */}
-        <div className="sidebar-right">
+        <aside className="vt-sidebar sidebar-right">
           <PropertiesPanel />
-        </div>
+        </aside>
       </div>
 
       {/* Live preview modal */}
@@ -634,10 +725,10 @@ export default function App() {
         <div className="preview-modal" onClick={() => setPreviewSrc(null)}>
           <div className="preview-frame" onClick={(e) => e.stopPropagation()}>
             <div className="preview-toolbar">
-              <span>Live Preview</span>
-              <button className="preview-close" onClick={() => setPreviewSrc(null)} title="Close (Esc)">
-                ×
-              </button>
+              <span>Live preview</span>
+              <IconButton label="Close preview (Esc)" size="sm" onClick={() => setPreviewSrc(null)}>
+                <X size={14} strokeWidth={1.75} />
+              </IconButton>
             </div>
             <iframe
               title="HMI Live Preview"
@@ -655,8 +746,14 @@ export default function App() {
       {/* Toast */}
       {toast && (
         <div className={`toast toast-${toast.kind}`} onClick={() => useStore.getState().dismissToast()}>
-          {toast.kind === "error" ? "✕ " : toast.kind === "success" ? "✓ " : "ℹ "}
-          {toast.message}
+          {toast.kind === "error" ? (
+            <XCircle size={15} strokeWidth={1.75} aria-hidden="true" />
+          ) : toast.kind === "success" ? (
+            <CircleCheck size={15} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <Info size={15} strokeWidth={1.75} aria-hidden="true" />
+          )}
+          <span>{toast.message}</span>
         </div>
       )}
     </div>

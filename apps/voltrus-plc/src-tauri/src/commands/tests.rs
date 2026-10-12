@@ -139,7 +139,7 @@ Rules:
 - The file tests one program: set `program:` to the source file name shown below.
 - Cover normal paths, boundary/edge cases, and timer/counter behavior.
 - `given:` seeds variables before the first scan; values are coerced to the declared types.
-- Each step needs `advance:` (`25scans`, `500ms` or `2s` — virtual time, nothing sleeps).
+- Each step needs `advance:` (`25scans`, `500ms` or `2s`: virtual time, nothing sleeps).
 - `set:` optionally writes variables before the step's scans, coerced like `given:`.
 - `expect:` matchers: `true`/`false` for BOOL, `42` for any numeric, `41.5` for a numeric within 1e-4, `{{approx: 90.0, tol: 0.5}}` for a numeric window, `"RUN"` for STRING/enum equality.
 - Timers run virtually: a TON reaches Q = TRUE after ~(PT / scan_ms) + 1 scans; keep expectations away from the PT boundary.

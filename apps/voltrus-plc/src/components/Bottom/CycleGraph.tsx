@@ -193,7 +193,7 @@ export default function CycleGraph() {
               y={tooltip.y - 8}
               textAnchor="middle" fontSize="9" fill="var(--text)"
             >
-              #{tooltip.index} — {tooltip.value.toFixed(2)}ms
+              #{tooltip.index}: {tooltip.value.toFixed(2)}ms
             </text>
           </>
         )}
