@@ -2,29 +2,41 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
-  DataTable,
   StatusBar,
   Toolbar,
   LogPanel,
-  Badge,
   Segmented,
   ProBadge,
   useProStatus,
+  pickSavePath,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
 
-import type { PortInfo, SerialConfig, TrafficEntry, SidebarMode } from "./types";
+import type { PortInfo, SerialConfig, Session, SidebarMode, TrafficEntry } from "./types";
 import { TEMPLATES } from "./constants";
 import {
   FREE_LOG_LINES, loadMacros, loadProfiles, saveMacros, saveProfiles,
   type PortProfile, type SendMacro,
 } from "./profiles";
+import {
+  FREE_SESSION_LIMIT, appendTraffic, defaultConfig, newSession, pickFreePort, shortPortName,
+} from "./sessions";
 import { formatTimestamp } from "./components/ConnectionHealth";
 import { MonitorSidebar } from "./components/MonitorSidebar";
 import { VirtualPortSidebar } from "./components/VirtualPortSidebar";
 import { SendComposer } from "./components/SendComposer";
+import { SessionPanel } from "./components/SessionPanel";
+import { SessionsSection } from "./components/SessionsSection";
+import { CaptureSection, type CaptureState } from "./components/CaptureSection";
+import { TrafficTable } from "./components/TrafficTable";
 import { InfoModal } from "./components/InfoModal";
+
+interface DataEvent { id: string; hex: string; bytes: number[]; timestamp: number }
+interface DisconnectEvent { id: string; reason: string }
+
+const bytesToHex = (bytes: number[] | Uint8Array) =>
+  Array.from(bytes).map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join(" ");
 
 // ---------------------------------------------------------------------------
 // App
@@ -35,32 +47,19 @@ function App() {
   // The PTY-based virtual port cannot be created inside the App Sandbox, so store builds do not offer it.
   const virtualAvailable = status !== null && !status.store;
 
-  // Connection state
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Open ports. Free keeps one, Pro several side by side.
+  const [sessions, setSessions] = useState<Session[]>(() => [newSession("s1", defaultConfig())]);
+  const [activeId, setActiveId] = useState("s1");
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const nextSessionId = useRef(2);
+  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
 
   // Port enumeration
   const [ports, setPorts] = useState<PortInfo[]>([]);
 
-  // Connection form
-  const [portName, setPortName] = useState("");
-  const [baudRate, setBaudRate] = useState(115200);
-  const [dataBits, setDataBits] = useState(8);
-  const [stopBits, setStopBits] = useState(1);
-  const [parity, setParity] = useState("none");
-  const [timeoutMs, setTimeoutMs] = useState(1000);
-
   // Data display
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [trafficData, setTrafficData] = useState<TrafficEntry[]>([]);
-
-  // Send controls
-  const [sendData, setSendData] = useState("");
-  const [sendFormat, setSendFormat] = useState<"hex" | "ascii">("ascii");
-
-  // Connection health tracking
-  const [lastDataTime, setLastDataTime] = useState<number | null>(null);
 
   // UI state
   const [showInfo, setShowInfo] = useState(false);
@@ -78,33 +77,50 @@ function App() {
   const [virtualSendFormat, setVirtualSendFormat] = useState<"hex" | "ascii">("hex");
   const [virtualTraffic, setVirtualTraffic] = useState<TrafficEntry[]>([]);
 
-  // Saved settings, macros, repeat-send
+  // Saved settings and send macros
   const [profiles, setProfilesState] = useState<PortProfile[]>(loadProfiles);
   const [macros, setMacrosState] = useState<SendMacro[]>(loadMacros);
-  const [repeating, setRepeating] = useState(false);
-  const [repeatMs, setRepeatMs] = useState(1000);
   const setProfiles = useCallback((list: PortProfile[]) => setProfilesState(saveProfiles(list)), []);
   const setMacros = useCallback((list: SendMacro[]) => setMacrosState(saveMacros(list)), []);
   const proRef = useRef(pro);
   proRef.current = pro;
 
-  // Simulation
+  // Simulation (pushes canned frames into one session's table)
   const [simTemplate, setSimTemplate] = useState<string | null>(null);
   const [simRunning, setSimRunning] = useState(false);
+  const [simTarget, setSimTarget] = useState<string | null>(null);
 
-  // Refs for event listeners
-  const unlistenRef = useRef<UnlistenFn[]>([]);
+  // Capture to file
+  const [capture, setCapture] = useState<CaptureState | null>(null);
+
   const virtualUnlistenRef = useRef<UnlistenFn[]>([]);
 
   // -----------------------------------------------------------------------
   // Helpers
   // -----------------------------------------------------------------------
 
-  const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
+  const addLog = useCallback((direction: LogEntry["direction"], message: string, sessionId?: string) => {
+    const list = sessionsRef.current;
+    const port = sessionId && list.length > 1 ? list.find((s) => s.id === sessionId)?.config.port_name : undefined;
+    const text = port ? `[${shortPortName(port)}] ${message}` : message;
     setLog((prev) => {
-      const next = [...prev, { timestamp: Date.now(), direction, message }];
+      const next = [...prev, { timestamp: Date.now(), direction, message: text }];
       return proRef.current || next.length <= FREE_LOG_LINES ? next : next.slice(-FREE_LOG_LINES);
     });
+  }, []);
+
+  const updateSession = useCallback((id: string, patch: Partial<Session>) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }, []);
+
+  const setConfig = useCallback((patch: Partial<SerialConfig>) => {
+    setSessions((prev) => prev.map((s) => (s.id === activeId ? { ...s, config: { ...s.config, ...patch } } : s)));
+  }, [activeId]);
+
+  const pushTraffic = useCallback((id: string, direction: string, data: string, timestamp: string) => {
+    setSessions((prev) => prev.map((s) => (
+      s.id === id ? { ...s, traffic: appendTraffic(s.traffic, { direction, data, timestamp }) } : s
+    )));
   }, []);
 
   // -----------------------------------------------------------------------
@@ -124,12 +140,12 @@ function App() {
 
   useEffect(() => {
     refreshPorts().then((list) => {
-      if (list.length > 0 && !portName) {
-        setPortName(list[0].port_name);
-      }
+      if (list.length === 0) return;
+      setSessions((prev) => prev.map((s) => (
+        s.config.port_name ? s : { ...s, config: { ...s.config, port_name: list[0].port_name } }
+      )));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshPorts]);
 
   // -----------------------------------------------------------------------
   // Mobile detection
@@ -142,50 +158,80 @@ function App() {
   }, []);
 
   // -----------------------------------------------------------------------
-  // Error effect
+  // Backend events (one listener set for every session)
   // -----------------------------------------------------------------------
 
   useEffect(() => {
-    if (error) {
-      addLog("error", error);
-      setError(null);
-    }
-  }, [error, addLog]);
+    let disposed = false;
+    const unlisteners: UnlistenFn[] = [];
+    const register = async () => {
+      const fns = await Promise.all([
+        listen<DataEvent>("serial-data", ({ payload }) => {
+          pushTraffic(payload.id, "RX", payload.hex, formatTimestamp(payload.timestamp));
+          updateSession(payload.id, { lastDataTime: Date.now() });
+          addLog("rx", payload.hex, payload.id);
+        }),
+        listen<DisconnectEvent>("serial-disconnect", ({ payload }) => {
+          updateSession(payload.id, { connected: false, connecting: false, lastDataTime: null, repeating: false });
+          addLog("error", `Disconnected: ${payload.reason}`, payload.id);
+        }),
+        listen<{ reason: string }>("capture-stopped", ({ payload }) => {
+          setCapture(null);
+          addLog("error", payload.reason);
+        }),
+      ]);
+      if (disposed) fns.forEach((fn) => fn());
+      else unlisteners.push(...fns);
+    };
+    register();
+    return () => {
+      disposed = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, [pushTraffic, updateSession, addLog]);
 
   // -----------------------------------------------------------------------
   // Simulation effect
   // -----------------------------------------------------------------------
 
   useEffect(() => {
-    if (!simRunning || !simTemplate) return;
+    if (!simRunning || !simTemplate || !simTarget) return;
     const tmpl = TEMPLATES[simTemplate];
-    const timers: ReturnType<typeof setTimeout>[] = [];
+    const timers: number[] = [];
 
     const cycle = () => {
       tmpl.frames.forEach((frame) => {
-        const timer = setTimeout(() => {
-          const ts = formatTimestamp(Date.now());
-          setTrafficData((prev) => [
-            ...prev.slice(-100),
-            { direction: frame.direction, data: frame.hexData, timestamp: ts },
-          ]);
-          addLog(frame.direction === "TX" ? "tx" : "rx", `${frame.label}: ${frame.hexData}`);
+        const timer = window.setTimeout(() => {
+          pushTraffic(simTarget, frame.direction, frame.hexData, formatTimestamp(Date.now()));
+          addLog(frame.direction === "TX" ? "tx" : "rx", `${frame.label}: ${frame.hexData}`, simTarget);
         }, frame.intervalMs);
         timers.push(timer);
       });
 
       const maxInterval = Math.max(...tmpl.frames.map((f) => f.intervalMs));
-      const nextCycle = setTimeout(cycle, maxInterval + 2000);
+      const nextCycle = window.setTimeout(cycle, maxInterval + 2000);
       timers.push(nextCycle);
     };
 
-    addLog("info", `Simulation started: ${tmpl.name}`);
+    addLog("info", `Simulation started: ${tmpl.name}`, simTarget);
     cycle();
 
     return () => {
       timers.forEach(clearTimeout);
     };
-  }, [simRunning, simTemplate, addLog]);
+  }, [simRunning, simTemplate, simTarget, addLog, pushTraffic]);
+
+  const startSimulation = useCallback(() => {
+    updateSession(activeId, { traffic: [] });
+    setSimTarget(activeId);
+    setSimRunning(true);
+  }, [activeId, updateSession]);
+
+  const stopSimulation = useCallback(() => {
+    setSimRunning(false);
+    if (simTarget) updateSession(simTarget, { traffic: [] });
+    addLog("info", "Simulation stopped");
+  }, [simTarget, updateSession, addLog]);
 
   // -----------------------------------------------------------------------
   // Panel resize handlers
@@ -230,70 +276,52 @@ function App() {
   // Connection handlers
   // -----------------------------------------------------------------------
 
-  const handleConnect = useCallback(async () => {
-    if (connected) return;
-    setConnecting(true);
-    setError(null);
-
+  const handleConnect = useCallback(async (id: string) => {
+    const s = sessionsRef.current.find((x) => x.id === id);
+    if (!s || s.connected || s.connecting) return;
+    updateSession(id, { connecting: true });
     try {
-      const config: SerialConfig = {
-        port_name: portName,
-        baud_rate: baudRate,
-        data_bits: dataBits,
-        stop_bits: stopBits,
-        parity,
-        timeout_ms: timeoutMs,
-      };
-      await invoke("connect", { config });
-      setConnected(true);
-      setLastDataTime(null);
-      addLog("info", `Opened ${config.port_name} @ ${config.baud_rate} baud (timeout: ${timeoutMs}ms)`);
-
-      const unlistenData = await listen<{ hex: string; bytes: number[]; timestamp: number }>(
-        "serial-data",
-        (event) => {
-          const ts = formatTimestamp(event.payload.timestamp);
-          setTrafficData((prev) => [
-            ...prev.slice(-200),
-            { direction: "RX", data: event.payload.hex, timestamp: ts },
-          ]);
-          addLog("rx", event.payload.hex);
-          setLastDataTime(Date.now());
-        },
-      );
-
-      const unlistenDisconnect = await listen<{ reason: string }>(
-        "serial-disconnect",
-        (event) => {
-          setConnected(false);
-          setLastDataTime(null);
-          addLog("error", `Disconnected: ${event.payload.reason}`);
-          unlistenRef.current.forEach((fn) => fn());
-          unlistenRef.current = [];
-        },
-      );
-
-      unlistenRef.current = [unlistenData, unlistenDisconnect];
+      await invoke("connect", { id, config: s.config });
+      updateSession(id, { connected: true, connecting: false, lastDataTime: null });
+      addLog("info", `Opened ${s.config.port_name} @ ${s.config.baud_rate} baud (timeout: ${s.config.timeout_ms}ms)`);
     } catch (e) {
-      setError(String(e));
-      addLog("error", `Connection failed: ${e}`);
-    } finally {
-      setConnecting(false);
+      updateSession(id, { connecting: false });
+      addLog("error", `Connection failed: ${e}`, id);
     }
-  }, [connected, portName, baudRate, dataBits, stopBits, parity, timeoutMs, addLog]);
+  }, [addLog, updateSession]);
 
-  const handleDisconnect = useCallback(async () => {
+  const handleDisconnect = useCallback(async (id: string) => {
+    const s = sessionsRef.current.find((x) => x.id === id);
     try {
-      await invoke("disconnect");
+      await invoke("disconnect", { id });
     } catch (e) {
-      addLog("error", `Disconnect error: ${e}`);
+      addLog("error", `Disconnect error: ${e}`, id);
     }
-    setConnected(false);
-    setLastDataTime(null);
-    unlistenRef.current.forEach((fn) => fn());
-    unlistenRef.current = [];
-    addLog("info", "Port closed");
-  }, [addLog]);
+    updateSession(id, { connected: false, lastDataTime: null, repeating: false });
+    addLog("info", `Closed ${s?.config.port_name ?? "port"}`);
+  }, [addLog, updateSession]);
+
+  const addSession = useCallback(() => {
+    const list = sessionsRef.current;
+    if (list.length >= FREE_SESSION_LIMIT && !requirePro("Several ports side by side")) return;
+    const id = `s${nextSessionId.current++}`;
+    const base = list.find((s) => s.id === activeId)?.config ?? defaultConfig();
+    setSessions((prev) => [...prev, newSession(id, { ...base, port_name: pickFreePort(ports, prev) })]);
+    setActiveId(id);
+  }, [activeId, ports, requirePro]);
+
+  const closeSession = useCallback(async (id: string) => {
+    const list = sessionsRef.current;
+    if (list.length < 2) return;
+    if (list.find((s) => s.id === id)?.connected) await handleDisconnect(id);
+    if (simTarget === id) setSimRunning(false);
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    setActiveId((cur) => (cur === id ? list.find((s) => s.id !== id)!.id : cur));
+  }, [handleDisconnect, simTarget]);
+
+  const disconnectAll = useCallback(() => {
+    sessionsRef.current.filter((s) => s.connected).forEach((s) => void handleDisconnect(s.id));
+  }, [handleDisconnect]);
 
   // -----------------------------------------------------------------------
   // Virtual port handlers
@@ -307,18 +335,16 @@ function App() {
       addLog("info", `Virtual port created: ${path}`);
 
       const updatedList = await refreshPorts();
-      if (updatedList.length > 0 && !updatedList.find((p) => p.port_name === portName)) {
-        setPortName(updatedList[0].port_name);
+      const current = sessionsRef.current.find((s) => s.id === activeId)?.config.port_name;
+      if (updatedList.length > 0 && !updatedList.find((p) => p.port_name === current)) {
+        setConfig({ port_name: updatedList[0].port_name });
       }
 
       const unlistenData = await listen<{ hex: string; bytes: number[]; timestamp: number }>(
         "virtual-data",
         (event) => {
           const ts = formatTimestamp(event.payload.timestamp);
-          setVirtualTraffic((prev) => [
-            ...prev.slice(-200),
-            { direction: "RX", data: event.payload.hex, timestamp: ts },
-          ]);
+          setVirtualTraffic((prev) => appendTraffic(prev, { direction: "RX", data: event.payload.hex, timestamp: ts }));
           addLog("rx", `[VPort] ${event.payload.hex}`);
         },
       );
@@ -338,7 +364,7 @@ function App() {
     } catch (e) {
       addLog("error", `Virtual port failed: ${e}`);
     }
-  }, [addLog, refreshPorts, portName]);
+  }, [addLog, refreshPorts, activeId, setConfig]);
 
   const handleDestroyVirtualPort = useCallback(async () => {
     try {
@@ -359,17 +385,14 @@ function App() {
     if (!virtualSendData || !virtualActive) return;
     try {
       await invoke("send_virtual", { data: virtualSendData, format: virtualSendFormat });
+      const ts = formatTimestamp(Date.now());
       if (virtualSendFormat === "hex") {
         const normalized = virtualSendData.split(/\s+/).filter(Boolean).map((h) => h.toUpperCase()).join(" ");
-        const ts = formatTimestamp(Date.now());
-        setVirtualTraffic((prev) => [...prev.slice(-200), { direction: "TX", data: normalized, timestamp: ts }]);
+        setVirtualTraffic((prev) => appendTraffic(prev, { direction: "TX", data: normalized, timestamp: ts }));
         addLog("tx", `[VPort] ${normalized}`);
       } else {
-        const hex = Array.from(new TextEncoder().encode(virtualSendData))
-          .map((b) => b.toString(16).toUpperCase().padStart(2, "0"))
-          .join(" ");
-        const ts = formatTimestamp(Date.now());
-        setVirtualTraffic((prev) => [...prev.slice(-200), { direction: "TX", data: hex, timestamp: ts }]);
+        const hex = bytesToHex(new TextEncoder().encode(virtualSendData));
+        setVirtualTraffic((prev) => appendTraffic(prev, { direction: "TX", data: hex, timestamp: ts }));
         addLog("tx", `[VPort] ASCII: ${virtualSendData}`);
       }
       setVirtualSendData("");
@@ -393,49 +416,75 @@ function App() {
   // Send handler
   // -----------------------------------------------------------------------
 
-  const handleSend = useCallback(async (keepInput = false) => {
-    if (!sendData || !connected) return;
+  const handleSend = useCallback(async (id: string, keepInput: boolean) => {
+    const s = sessionsRef.current.find((x) => x.id === id);
+    if (!s || !s.sendData || !s.connected) return;
     try {
-      await invoke("send", { data: sendData, format: sendFormat });
-      if (sendFormat === "hex") {
-        const normalized = sendData.split(/\s+/).filter(Boolean).map((h) => h.toUpperCase()).join(" ");
-        const ts = formatTimestamp(Date.now());
-        setTrafficData((prev) => [...prev.slice(-200), { direction: "TX", data: normalized, timestamp: ts }]);
-        addLog("tx", normalized);
+      await invoke("send", { id, data: s.sendData, format: s.sendFormat });
+      const ts = formatTimestamp(Date.now());
+      if (s.sendFormat === "hex") {
+        const normalized = s.sendData.split(/\s+/).filter(Boolean).map((h) => h.toUpperCase()).join(" ");
+        pushTraffic(id, "TX", normalized, ts);
+        addLog("tx", normalized, id);
       } else {
-        const hex = Array.from(new TextEncoder().encode(sendData))
-          .map((b) => b.toString(16).toUpperCase().padStart(2, "0"))
-          .join(" ");
-        const ts = formatTimestamp(Date.now());
-        setTrafficData((prev) => [...prev.slice(-200), { direction: "TX", data: hex, timestamp: ts }]);
-        addLog("tx", `ASCII: ${sendData}`);
+        pushTraffic(id, "TX", bytesToHex(new TextEncoder().encode(s.sendData)), ts);
+        addLog("tx", `ASCII: ${s.sendData}`, id);
       }
-      if (keepInput !== true) setSendData("");
+      if (!keepInput) updateSession(id, { sendData: "" });
     } catch (e) {
-      addLog("error", `Send failed: ${e}`);
-      setRepeating(false);
+      addLog("error", `Send failed: ${e}`, id);
+      updateSession(id, { repeating: false });
     }
-  }, [sendData, sendFormat, connected, addLog]);
-
-  const sendRef = useRef(handleSend);
-  sendRef.current = handleSend;
-  useEffect(() => {
-    if (!repeating || !connected || !pro) {
-      if (repeating && !connected) setRepeating(false);
-      return;
-    }
-    const timer = setInterval(() => { void sendRef.current(true); }, repeatMs);
-    return () => clearInterval(timer);
-  }, [repeating, connected, pro, repeatMs]);
+  }, [addLog, pushTraffic, updateSession]);
 
   const applyProfile = useCallback((p: PortProfile) => {
-    if (p.port_name) setPortName(p.port_name);
-    setBaudRate(p.baud_rate);
-    setDataBits(p.data_bits);
-    setStopBits(p.stop_bits);
-    setParity(p.parity);
-    setTimeoutMs(p.timeout_ms);
-  }, []);
+    setConfig({
+      ...(p.port_name ? { port_name: p.port_name } : {}),
+      baud_rate: p.baud_rate,
+      data_bits: p.data_bits,
+      stop_bits: p.stop_bits,
+      parity: p.parity,
+      timeout_ms: p.timeout_ms,
+    });
+  }, [setConfig]);
+
+  // -----------------------------------------------------------------------
+  // Capture to file
+  // -----------------------------------------------------------------------
+
+  const startCapture = useCallback(async () => {
+    if (!requirePro("Capture to file")) return;
+    try {
+      const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+      const path = await pickSavePath(`serial-capture-${stamp}.csv`);
+      if (!path) return;
+      await invoke("start_capture", { path });
+      setCapture({ path, rows: 0 });
+      addLog("info", `Capturing to ${path}`);
+    } catch (e) {
+      addLog("error", `Capture failed: ${e}`);
+    }
+  }, [requirePro, addLog]);
+
+  const stopCapture = useCallback(async () => {
+    try {
+      const path = capture?.path;
+      const rows = await invoke<number | null>("stop_capture");
+      addLog("info", `Capture stopped: ${rows ?? 0} rows saved to ${path}`);
+    } catch (e) {
+      addLog("error", `Stopping capture failed: ${e}`);
+    }
+    setCapture(null);
+  }, [capture, addLog]);
+
+  const capturing = capture !== null;
+  useEffect(() => {
+    if (!capturing) return;
+    const timer = setInterval(() => {
+      invoke<CaptureState | null>("capture_status").then(setCapture).catch(() => {});
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [capturing]);
 
   // -----------------------------------------------------------------------
   // Cleanup on unmount
@@ -443,7 +492,6 @@ function App() {
 
   useEffect(() => {
     return () => {
-      unlistenRef.current.forEach((fn) => fn());
       virtualUnlistenRef.current.forEach((fn) => fn());
     };
   }, []);
@@ -451,25 +499,6 @@ function App() {
   // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
-
-  const columns = [
-    { key: "direction", label: "Dir", width: "56px" },
-    { key: "data", label: "Data" },
-    { key: "timestamp", label: "Time", width: "120px" },
-  ];
-
-  const renderTrafficCell = (key: string, row: Record<string, unknown>) => {
-    if (key === "direction") {
-      const dir = String(row.direction ?? "");
-      return <Badge tone={dir === "TX" ? "info" : "success"}>{dir}</Badge>;
-    }
-    return String(row[key] ?? "");
-  };
-
-  const emptyMessage =
-    sidebarMode === "virtual"
-      ? "Virtual port is not active. Create one to capture loopback traffic."
-      : "No traffic yet. Connect to a port or start the simulation.";
 
   const logNote =
     !pro && log.length >= FREE_LOG_LINES ? (
@@ -484,7 +513,8 @@ function App() {
       </div>
     ) : null;
 
-  const anyConnected = connected || virtualActive;
+  const anyConnected = sessions.some((s) => s.connected) || virtualActive;
+  const monitorMode = sidebarMode === "monitor";
 
   const modeSegmented = virtualAvailable ? (
     <Segmented
@@ -500,22 +530,27 @@ function App() {
   ) : null;
 
   const monitorSidebar = (
-    <MonitorSidebar
-      connected={connected} connecting={connecting} ports={ports}
-      portName={portName} setPortName={setPortName}
-      baudRate={baudRate} setBaudRate={setBaudRate}
-      dataBits={dataBits} setDataBits={setDataBits}
-      stopBits={stopBits} setStopBits={setStopBits}
-      parity={parity} setParity={setParity}
-      timeoutMs={timeoutMs} setTimeoutMs={setTimeoutMs}
-      lastDataTime={lastDataTime}
-      refreshPorts={refreshPorts}
-      handleConnect={handleConnect} handleDisconnect={handleDisconnect}
-      simTemplate={simTemplate} setSimTemplate={setSimTemplate}
-      simRunning={simRunning} setSimRunning={setSimRunning}
-      setTrafficData={setTrafficData} addLog={addLog}
-      profiles={profiles} setProfiles={setProfiles} applyProfile={applyProfile}
-    />
+    <>
+      <SessionsSection sessions={sessions} activeId={active.id} onSelect={setActiveId} onAdd={addSession} />
+      <MonitorSidebar
+        connected={active.connected} connecting={active.connecting} ports={ports}
+        portName={active.config.port_name} setPortName={(port_name) => setConfig({ port_name })}
+        baudRate={active.config.baud_rate} setBaudRate={(baud_rate) => setConfig({ baud_rate })}
+        dataBits={active.config.data_bits} setDataBits={(data_bits) => setConfig({ data_bits })}
+        stopBits={active.config.stop_bits} setStopBits={(stop_bits) => setConfig({ stop_bits })}
+        parity={active.config.parity} setParity={(parity) => setConfig({ parity })}
+        timeoutMs={active.config.timeout_ms} setTimeoutMs={(timeout_ms) => setConfig({ timeout_ms })}
+        lastDataTime={active.lastDataTime}
+        refreshPorts={refreshPorts}
+        handleConnect={() => handleConnect(active.id)} handleDisconnect={() => handleDisconnect(active.id)}
+        simTemplate={simTemplate} setSimTemplate={setSimTemplate}
+        simRunning={simRunning} setSimRunning={setSimRunning}
+        onSimStart={startSimulation} onSimStop={stopSimulation}
+        busyPorts={sessions.filter((s) => s.id !== active.id).map((s) => s.config.port_name)}
+        profiles={profiles} setProfiles={setProfiles} applyProfile={applyProfile}
+      />
+      <CaptureSection capture={capture} onStart={startCapture} onStop={stopCapture} />
+    </>
   );
 
   const virtualPortSidebar = (
@@ -527,6 +562,66 @@ function App() {
     />
   );
 
+  /** Traffic tables and send bars: every port side by side (desktop) or the selected one (mobile). */
+  const panels = (fill: boolean) => (
+    <>
+      <div
+        style={fill
+          ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }
+          : { display: "flex", gap: 8, flexShrink: 0, overflowX: "auto" }}
+      >
+        {sessions.map((s) => (
+          <SessionPanel
+            key={s.id}
+            session={s}
+            active={s.id === active.id}
+            showHeader={sessions.length > 1}
+            visible={monitorMode && (!fill || s.id === active.id)}
+            fill={fill}
+            tableHeight={tableHeight}
+            onSelect={() => setActiveId(s.id)}
+            onClose={() => closeSession(s.id)}
+            onUpdate={(patch) => updateSession(s.id, patch)}
+            onSend={(keepInput) => handleSend(s.id, keepInput)}
+            macros={macros}
+            onMacrosChange={setMacros}
+          />
+        ))}
+      </div>
+      {!monitorMode && (
+        <>
+          <div
+            style={fill
+              ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }
+              : { height: tableHeight, minHeight: 80, display: "flex", flexDirection: "column", flexShrink: 0 }}
+          >
+            <TrafficTable
+              data={virtualTraffic}
+              emptyMessage="Virtual port is not active. Create one to capture loopback traffic."
+            />
+          </div>
+          <SendComposer
+            format={virtualSendFormat} onFormatChange={setVirtualSendFormat}
+            value={virtualSendData} onValueChange={setVirtualSendData}
+            onSend={handleVirtualSend} disabled={!virtualActive}
+          />
+        </>
+      )}
+    </>
+  );
+
+  const logPanel = (
+    <>
+      {logNote}
+      <LogPanel
+        entries={log}
+        beforeCopyAll={() => requirePro("Copy the full log")}
+        beforeExport={() => requirePro("Log export")}
+        onExport={(f) => addLog("info", `Log exported to ${f}`)}
+      />
+    </>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       <Toolbar
@@ -534,7 +629,7 @@ function App() {
         icon={appIcon}
         connected={anyConnected}
         onDisconnect={() => {
-          if (connected) handleDisconnect();
+          disconnectAll();
           if (virtualActive) handleDestroyVirtualPort();
         }}
         onInfo={() => setShowInfo(true)}
@@ -546,49 +641,19 @@ function App() {
             {mobileTab === "connect" && (
               <div className="vt-sidebar" style={{ borderBottom: "1px solid var(--border)" }}>
                 <div style={{ padding: "12px 12px 0" }}>{modeSegmented}</div>
-                {sidebarMode === "monitor" ? monitorSidebar : virtualPortSidebar}
+                {monitorMode ? monitorSidebar : virtualPortSidebar}
               </div>
             )}
-            {mobileTab === "data" && (
-              <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 8, gap: 8 }}>
-                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-                  <DataTable
-                    columns={columns}
-                    data={sidebarMode === "virtual" ? virtualTraffic : trafficData}
-                    selectable={false}
-                    emptyMessage={emptyMessage}
-                    renderCell={renderTrafficCell}
-                  />
-                </div>
-                {sidebarMode === "monitor" ? (
-                  <SendComposer
-                    format={sendFormat} onFormatChange={setSendFormat}
-                    value={sendData} onValueChange={setSendData}
-                    onSend={() => handleSend()} disabled={!connected}
-                    macros={macros} onMacrosChange={setMacros}
-                    repeating={repeating} onRepeatingChange={setRepeating}
-                    repeatMs={repeatMs} onRepeatMsChange={setRepeatMs}
-                  />
-                ) : (
-                  <SendComposer
-                    format={virtualSendFormat} onFormatChange={setVirtualSendFormat}
-                    value={virtualSendData} onValueChange={setVirtualSendData}
-                    onSend={handleVirtualSend} disabled={!virtualActive}
-                  />
-                )}
-              </div>
-            )}
-            {mobileTab === "log" && (
-              <>
-                {logNote}
-                <LogPanel
-                  entries={log}
-                  beforeCopyAll={() => requirePro("Copy the full log")}
-                  beforeExport={() => requirePro("Log export")}
-                  onExport={(f) => addLog("info", `Log exported to ${f}`)}
-                />
-              </>
-            )}
+            {/* Stays mounted on the other tabs so repeat-send keeps running. */}
+            <div
+              style={{
+                display: mobileTab === "data" ? "flex" : "none",
+                flexDirection: "column", height: "100%", padding: 8, gap: 8,
+              }}
+            >
+              {panels(true)}
+            </div>
+            {mobileTab === "log" && logPanel}
           </div>
           <nav style={{ display: "flex", borderTop: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
             {(["connect", "data", "log"] as const).map((id) => (
@@ -606,7 +671,7 @@ function App() {
               </button>
             ))}
           </nav>
-          <StatusBar connected={anyConnected} error={error ?? undefined} />
+          <StatusBar connected={anyConnected} />
         </div>
       ) : (
         /* Desktop layout */
@@ -621,7 +686,7 @@ function App() {
             }}
           >
             <div style={{ padding: "12px 12px 0" }}>{modeSegmented}</div>
-            {sidebarMode === "monitor" ? monitorSidebar : virtualPortSidebar}
+            {monitorMode ? monitorSidebar : virtualPortSidebar}
           </aside>
           {/* Left drag handle */}
           <div
@@ -635,31 +700,7 @@ function App() {
             onMouseLeave={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "transparent"; }}
           />
           <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", padding: 8, gap: 8, minWidth: 0 }}>
-            <div style={{ height: tableHeight, minHeight: 80, display: "flex", flexDirection: "column", flexShrink: 0 }}>
-              <DataTable
-                columns={columns}
-                data={sidebarMode === "virtual" ? virtualTraffic : trafficData}
-                selectable={false}
-                emptyMessage={emptyMessage}
-                renderCell={renderTrafficCell}
-              />
-            </div>
-            {sidebarMode === "monitor" ? (
-              <SendComposer
-                format={sendFormat} onFormatChange={setSendFormat}
-                value={sendData} onValueChange={setSendData}
-                onSend={() => handleSend()} disabled={!connected}
-                macros={macros} onMacrosChange={setMacros}
-                repeating={repeating} onRepeatingChange={setRepeating}
-                repeatMs={repeatMs} onRepeatMsChange={setRepeatMs}
-              />
-            ) : (
-              <SendComposer
-                format={virtualSendFormat} onFormatChange={setVirtualSendFormat}
-                value={virtualSendData} onValueChange={setVirtualSendData}
-                onSend={handleVirtualSend} disabled={!virtualActive}
-              />
-            )}
+            {panels(false)}
             {/* Horizontal drag handle */}
             <div
               onMouseDown={(e) => handleDragStart("table", e)}
@@ -671,20 +712,12 @@ function App() {
               onMouseEnter={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "var(--border)"; }}
               onMouseLeave={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "transparent"; }}
             />
-            <>
-                {logNote}
-                <LogPanel
-                  entries={log}
-                  beforeCopyAll={() => requirePro("Copy the full log")}
-                  beforeExport={() => requirePro("Log export")}
-                  onExport={(f) => addLog("info", `Log exported to ${f}`)}
-                />
-              </>
+            {logPanel}
           </main>
         </div>
       )}
 
-      {!isMobile && <StatusBar connected={anyConnected} error={error ?? undefined} />}
+      {!isMobile && <StatusBar connected={anyConnected} />}
 
       <InfoModal show={showInfo} onClose={() => setShowInfo(false)} />
     </div>

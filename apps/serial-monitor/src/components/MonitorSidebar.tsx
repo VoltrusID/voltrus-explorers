@@ -1,9 +1,7 @@
 import { RotateCcw, RefreshCw, Play, Square } from "lucide-react";
-import type { PortInfo, TrafficEntry } from "../types";
+import type { PortInfo } from "../types";
 import { BAUD_PRESETS, PARITY_OPTIONS, DATA_BITS_OPTIONS, STOP_BITS_OPTIONS, TEMPLATES } from "../constants";
 import { Button, Field, IconButton, Section } from "@mactools/ui";
-import type { LogEntry } from "@mactools/ui";
-import type { Dispatch, SetStateAction } from "react";
 import { ConnectionHealth } from "./ConnectionHealth";
 import { ProfilesSection } from "./ProfilesSection";
 import type { PortProfile } from "../profiles";
@@ -35,8 +33,10 @@ interface MonitorSidebarProps {
   setSimTemplate: (v: string | null) => void;
   simRunning: boolean;
   setSimRunning: (v: boolean) => void;
-  setTrafficData: Dispatch<SetStateAction<TrafficEntry[]>>;
-  addLog: (direction: LogEntry["direction"], message: string) => void;
+  onSimStart: () => void;
+  onSimStop: () => void;
+  /** Ports another session has picked; they cannot be chosen here. */
+  busyPorts: string[];
   // Saved profiles
   profiles: PortProfile[];
   setProfiles: (list: PortProfile[]) => void;
@@ -67,8 +67,9 @@ export function MonitorSidebar({
   setSimTemplate,
   simRunning,
   setSimRunning,
-  setTrafficData,
-  addLog,
+  onSimStart,
+  onSimStop,
+  busyPorts,
   profiles,
   setProfiles,
   applyProfile,
@@ -88,10 +89,11 @@ export function MonitorSidebar({
               >
                 <option value="">Select port...</option>
                 {ports.map((p) => (
-                  <option key={p.port_name} value={p.port_name}>
+                  <option key={p.port_name} value={p.port_name} disabled={busyPorts.includes(p.port_name)}>
                     {p.port_name}
                     {p.product ? ` (${p.product})` : ""}
                     {p.manufacturer ? ` - ${p.manufacturer}` : ""}
+                    {busyPorts.includes(p.port_name) ? " (in use)" : ""}
                   </option>
                 ))}
               </select>
@@ -277,14 +279,8 @@ export function MonitorSidebar({
             )
           }
           onClick={() => {
-            if (simRunning) {
-              setSimRunning(false);
-              setTrafficData([]);
-              addLog("info", "Simulation stopped");
-            } else if (simTemplate) {
-              setTrafficData([]);
-              setSimRunning(true);
-            }
+            if (simRunning) onSimStop();
+            else if (simTemplate) onSimStart();
           }}
         >
           {simRunning ? "Stop simulation" : "Start simulation"}

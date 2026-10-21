@@ -34,3 +34,17 @@ export interface FrameTemplate {
 }
 
 export type SidebarMode = "monitor" | "virtual";
+
+/** One serial port open (or about to be opened) in the monitor; Pro keeps several side by side. */
+export interface Session {
+  id: string;
+  config: SerialConfig;
+  connected: boolean;
+  connecting: boolean;
+  lastDataTime: number | null;
+  traffic: TrafficEntry[];
+  sendData: string;
+  sendFormat: "hex" | "ascii";
+  repeating: boolean;
+  repeatMs: number;
+}

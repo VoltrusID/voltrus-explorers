@@ -1,6 +1,8 @@
+mod capture;
 mod system;
 mod virtual_port;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,6 +18,8 @@ use serde::Serialize;
 /// Payload emitted on the `serial-data` event for each chunk read.
 #[derive(Debug, Clone, Serialize)]
 struct SerialDataEvent {
+    /// Session id the chunk belongs to (the id passed to `connect`).
+    id: String,
     /// Hex-formatted representation of the received bytes.
     hex: String,
     /// Raw bytes as a Vec<u8>.
@@ -27,11 +31,20 @@ struct SerialDataEvent {
 /// Payload emitted on the `serial-disconnect` event when the port is lost.
 #[derive(Debug, Clone, Serialize)]
 struct SerialDisconnectEvent {
+    id: String,
+    reason: String,
+}
+
+/// Payload emitted on the `capture-stopped` event when writing the capture file fails.
+#[derive(Debug, Clone, Serialize)]
+struct CaptureStoppedEvent {
     reason: String,
 }
 
 /// Internal state held while a serial connection is active.
 struct ActiveConnection {
+    /// System name of the port (`/dev/cu.usbserial-1`), used to refuse opening it twice.
+    port_name: String,
     /// Shared handle to the serial stream (reader task + writer command).
     port: Arc<Mutex<tokio_serial::SerialStream>>,
     /// Cancellation token to gracefully stop the reader task.
@@ -40,9 +53,33 @@ struct ActiveConnection {
     read_task: tokio::task::JoinHandle<()>,
 }
 
+type Connections = Arc<Mutex<HashMap<String, ActiveConnection>>>;
+
 struct AppState {
-    connection: Arc<Mutex<Option<ActiveConnection>>>,
+    connections: Connections,
     virtual_conn: Arc<Mutex<Option<virtual_port::VirtualPortState>>>,
+    capture: Arc<capture::Capture>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// Append a row to the capture file; a write failure closes the capture and tells the frontend.
+fn record_capture(
+    app: &tauri::AppHandle,
+    capture: &capture::Capture,
+    port: &str,
+    direction: &str,
+    bytes: &[u8],
+    ts: u64,
+) {
+    if let Err(reason) = capture.record(port, direction, bytes, ts) {
+        let _ = app.emit("capture-stopped", CaptureStoppedEvent { reason });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -53,8 +90,20 @@ struct AppState {
 async fn connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    id: String,
     config: SerialConfig,
 ) -> Result<(), String> {
+    // One session per id and one session per physical port.
+    {
+        let guard = state.connections.lock().await;
+        if guard.contains_key(&id) {
+            return Err("This session is already connected".into());
+        }
+        if guard.values().any(|c| c.port_name == config.port_name) {
+            return Err(format!("{} is already open in another session", config.port_name));
+        }
+    }
+
     // Build the serial port from the shared config type but open it directly
     // instead of going through SerialClient (which prepends tag names).
     let builder = config
@@ -64,22 +113,16 @@ async fn connect(
     let stream = tokio_serial::SerialStream::open(&builder)
         .map_err(|e| format!("Failed to open {}: {e}", config.port_name))?;
 
-    // Clear any previous connection (should not happen, but be safe).
-    {
-        let mut guard = state.connection.lock().await;
-        if let Some(old) = guard.take() {
-            old.cancel.cancel();
-            old.read_task.abort();
-        }
-    }
-
     // Share the serial stream between the reader task and the send command.
     let shared_port: Arc<Mutex<tokio_serial::SerialStream>> =
         Arc::new(Mutex::new(stream));
 
     let port_for_reader = shared_port.clone();
     let app_for_reader = app.clone();
-    let conn_for_reader = state.connection.clone();
+    let conns_for_reader = state.connections.clone();
+    let capture_for_reader = state.capture.clone();
+    let id_for_reader = id.clone();
+    let port_name_for_reader = config.port_name.clone();
     let cancel_token = CancellationToken::new();
     let cancel_for_reader = cancel_token.clone();
 
@@ -124,12 +167,12 @@ async fn connect(
                     let _ = app_for_reader.emit(
                         "serial-disconnect",
                         SerialDisconnectEvent {
+                            id: id_for_reader.clone(),
                             reason: "Port closed (EOF)".into(),
                         },
                     );
                     // Clear connection state
-                    let mut guard = conn_for_reader.lock().await;
-                    guard.take();
+                    conns_for_reader.lock().await.remove(&id_for_reader);
                     break;
                 }
                 Ok(Ok(n)) => {
@@ -141,14 +184,20 @@ async fn connect(
                         .map(|b| format!("{b:02X}"))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    let ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
+                    let ts = now_ms();
 
+                    record_capture(
+                        &app_for_reader,
+                        &capture_for_reader,
+                        &port_name_for_reader,
+                        "RX",
+                        &data,
+                        ts,
+                    );
                     let _ = app_for_reader.emit(
                         "serial-data",
                         SerialDataEvent {
+                            id: id_for_reader.clone(),
                             hex,
                             bytes: data,
                             timestamp: ts,
@@ -167,10 +216,9 @@ async fn connect(
                     let reason = format!("Read error: {e}");
                     let _ = app_for_reader.emit(
                         "serial-disconnect",
-                        SerialDisconnectEvent { reason },
+                        SerialDisconnectEvent { id: id_for_reader.clone(), reason },
                     );
-                    let mut guard = conn_for_reader.lock().await;
-                    guard.take();
+                    conns_for_reader.lock().await.remove(&id_for_reader);
                     break;
                 }
                 Err(_) => {
@@ -184,11 +232,15 @@ async fn connect(
     });
 
     // Store the connection.
-    *state.connection.lock().await = Some(ActiveConnection {
-        port: shared_port,
-        cancel: cancel_token,
-        read_task,
-    });
+    state.connections.lock().await.insert(
+        id,
+        ActiveConnection {
+            port_name: config.port_name,
+            port: shared_port,
+            cancel: cancel_token,
+            read_task,
+        },
+    );
 
     Ok(())
 }
@@ -221,15 +273,17 @@ fn decode_payload(data: &str, format: &str) -> Result<Vec<u8>, String> {
 
 #[tauri::command]
 async fn send(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    id: String,
     data: String,
     format: String,
 ) -> Result<(), String> {
     // Clone the Arc quickly so we don't hold the connection lock while writing.
-    let port_arc = {
-        let guard = state.connection.lock().await;
-        let conn = guard.as_ref().ok_or("Not connected")?;
-        conn.port.clone()
+    let (port_arc, port_name) = {
+        let guard = state.connections.lock().await;
+        let conn = guard.get(&id).ok_or("Not connected")?;
+        (conn.port.clone(), conn.port_name.clone())
     };
 
     // Decode the data payload based on the requested format.
@@ -248,44 +302,53 @@ async fn send(
     .await;
 
     match write_result {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            record_capture(&app, &state.capture, &port_name, "TX", &bytes, now_ms());
+            Ok(())
+        }
         Ok(Err(e)) => Err(format!("Write failed: {e}")),
         Err(_) => Err("Write timed out (port may be misconfigured)".into()),
     }
 }
 
 #[tauri::command]
-async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    // Cancel + abort with timeout to prevent hanging on misconfigured ports.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        async {
-            let mut guard = state.connection.lock().await;
-            if let Some(conn) = guard.take() {
-                // Signal the reader task to stop gracefully.
-                conn.cancel.cancel();
-                // Drop the port Arc to force-close the serial stream.
-                drop(conn.port);
-                // Wait briefly for the reader task to finish.
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_millis(500),
-                    conn.read_task,
-                )
-                .await;
-            }
-        },
-    )
-    .await;
-
-    if result.is_err() {
-        // Timed out — force-abort by re-acquiring the lock.
-        let mut guard = state.connection.lock().await;
-        if let Some(conn) = guard.take() {
-            conn.read_task.abort();
+async fn disconnect(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    // Take the connection out first so other sessions are not blocked while this one shuts down.
+    let conn = state.connections.lock().await.remove(&id);
+    if let Some(conn) = conn {
+        // Signal the reader task to stop gracefully.
+        conn.cancel.cancel();
+        // Drop the port Arc to force-close the serial stream.
+        drop(conn.port);
+        // Wait briefly for the reader task to finish, then force-abort it.
+        let mut task = conn.read_task;
+        if tokio::time::timeout(std::time::Duration::from_millis(500), &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
         }
     }
-
     Ok(())
+}
+
+/// Start writing every RX and TX chunk of every open session to a CSV file at `path`
+/// (a path the user picked in the save panel). Replaces a capture already running.
+#[tauri::command]
+fn start_capture(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    state.capture.start(&path)
+}
+
+/// Stop the capture; returns the number of rows written, or `None` if none was running.
+#[tauri::command]
+fn stop_capture(state: tauri::State<'_, AppState>) -> Option<u64> {
+    state.capture.stop()
+}
+
+/// Path and row count of the running capture, if any.
+#[tauri::command]
+fn capture_status(state: tauri::State<'_, AppState>) -> Option<capture::CaptureStatus> {
+    state.capture.status()
 }
 
 #[tauri::command]
@@ -304,14 +367,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
-            connection: Arc::new(Mutex::new(None)),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             virtual_conn: Arc::new(Mutex::new(None)),
+            capture: Arc::new(capture::Capture::default()),
         })
         .invoke_handler(tauri::generate_handler![
             connect,
             send,
             disconnect,
             list_available_ports,
+            start_capture,
+            stop_capture,
+            capture_status,
             virtual_port::create_virtual_port,
             virtual_port::destroy_virtual_port,
             virtual_port::send_virtual,
@@ -425,11 +492,13 @@ mod tests {
     #[test]
     fn serial_data_event_serialization() {
         let event = SerialDataEvent {
+            id: "s1".into(),
             hex: "01 03 FF".into(),
             bytes: vec![0x01, 0x03, 0xFF],
             timestamp: 1700000000000,
         };
         let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"id\":\"s1\""));
         assert!(json.contains("\"hex\":\"01 03 FF\""));
         assert!(json.contains("\"timestamp\":1700000000000"));
         // bytes serialize as array of numbers
@@ -439,9 +508,11 @@ mod tests {
     #[test]
     fn serial_disconnect_event_serialization() {
         let event = SerialDisconnectEvent {
+            id: "s2".into(),
             reason: "Port closed (EOF)".into(),
         };
         let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"id\":\"s2\""));
         assert!(json.contains("\"reason\":\"Port closed (EOF)\""));
     }
 

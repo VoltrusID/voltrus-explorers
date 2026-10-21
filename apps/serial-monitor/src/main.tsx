@@ -10,6 +10,8 @@ const PRO_FEATURES = [
   "Unlimited log scrollback",
   "Send macros and repeat-send at a fixed interval",
   "Unlimited saved port profiles",
+  "Several ports open side by side",
+  "Capture all traffic to a CSV file",
 ];
 
 // Center and size the window on launch

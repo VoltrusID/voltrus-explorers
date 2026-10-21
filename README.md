@@ -66,9 +66,9 @@ and the GitHub Releases have everything.
 | Serial Monitor | |
 | --- | --- |
 | Free | Open one port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, the last 200 communication log lines with single-line copy, one saved port profile, Modbus RTU frame simulation templates |
-| Pro | Copy-all and CSV export of the communication log, unlimited log scrollback, send macros, repeat-send at a fixed interval, unlimited saved port profiles |
+| Pro | Several ports open side by side, capture all traffic to a CSV file (timestamp, port, direction, hex, text), copy-all and CSV export of the communication log, unlimited log scrollback, send macros, repeat-send at a fixed interval, unlimited saved port profiles |
 
-The virtual serial port (PTY) is available in source builds and GitHub Releases only; the App Sandbox of the App Store build does not allow creating pseudo-terminals.
+The virtual serial port (PTY, a Pro feature) is available in source builds and GitHub Releases only; the App Sandbox of the App Store build does not allow creating pseudo-terminals.
 
 ### NATS Explorer
 
