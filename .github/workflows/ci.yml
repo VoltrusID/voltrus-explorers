@@ -40,14 +40,14 @@ jobs:
           restore-keys: cargo-test-${{ runner.os }}-
 
       - name: Crate tests
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-store
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store
 
       - name: Install frontend deps
         run: bun install --frozen-lockfile
 
       - name: Typecheck and build frontends
         run: |
-          for app in bacnet-explorer modbus-poll; do
+          for app in bacnet-explorer modbus-poll dnp3-explorer; do
             (cd "apps/$app" && bunx tsc --noEmit -p . && bun run build)
           done
 
@@ -60,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bacnet-explorer, modbus-poll]
+        app: [bacnet-explorer, modbus-poll, dnp3-explorer]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

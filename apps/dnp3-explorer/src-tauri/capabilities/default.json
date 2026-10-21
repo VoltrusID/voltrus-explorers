@@ -1,0 +1,13 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for DNP3 Explorer",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-save",
+    "fs:allow-write-text-file"
+  ]
+}
