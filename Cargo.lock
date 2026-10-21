@@ -1980,6 +1980,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-serial"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-serial",
+ "tracing",
+]
+
+[[package]]
 name = "mt-store"
 version = "2.0.0"
 dependencies = [
@@ -2988,6 +3003,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "serial_monitor"
+version = "2.0.0"
+dependencies = [
+ "libc",
+ "mt-serial",
+ "mt-store",
+ "serde",
+ "serde_json",
+ "serialport",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tokio",
+ "tokio-serial",
+ "tokio-util",
 ]
 
 [[package]]

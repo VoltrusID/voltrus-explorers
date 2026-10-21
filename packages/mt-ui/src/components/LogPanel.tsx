@@ -50,6 +50,8 @@ interface LogPanelProps {
   maxHeight?: string;
   /** Called with the saved path after a successful CSV export. */
   onExport?: (path: string) => void;
+  /** Asked before the CSV save panel opens; return false to cancel (e.g. to show a Pro upsell). */
+  beforeExport?: () => boolean;
   onClear?: () => void;
   filterDirection?: string | null;
   /** Default file name prefix of exported CSVs. */
@@ -58,7 +60,7 @@ interface LogPanelProps {
 
 const VISIBLE_LIMIT = 500;
 
-export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
+export function LogPanel({ entries, maxHeight, onExport, beforeExport, onClear, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showExport, setShowExport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -114,6 +116,7 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirectio
 
   const exportCsv = useCallback(async () => {
     setShowExport(false);
+    if (beforeExport && !beforeExport()) return;
     const header = "Timestamp,Direction,Message";
     const rows = filtered.map((e) => {
       const d = dirConfig[e.direction];
@@ -131,7 +134,7 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirectio
       setExportMsg({ text: `Export failed: ${String(e)}`, failed: true });
       setTimeout(() => setExportMsg(null), 8000);
     }
-  }, [filtered, onExport, exportPrefix]);
+  }, [filtered, onExport, beforeExport, exportPrefix]);
 
   return (
     <div style={{

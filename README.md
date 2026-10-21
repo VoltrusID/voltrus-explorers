@@ -7,6 +7,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **BACnet Explorer** | Discover BACnet/IP devices, browse objects, read/write properties, COV, trend logs, schedules, device simulator | [Mac App Store](https://apps.apple.com/app/id6789600440) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -22,13 +23,21 @@ app while it was paid (before 1.3.0) keep every feature. Builds from source and 
 | Free | Connect to an outstation, poll points on an interval, read analog, binary and counter values, write point values, communication log with CSV export |
 | Pro | Outstation simulator with an event buffer, device templates with live simulated values, class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), live trends |
 
+The App Store build of Serial Monitor is free to download too; Pro is a one-time in-app purchase. Builds from source
+and the GitHub Releases have everything.
+
+| Serial Monitor | |
+| --- | --- |
+| Free | Open a port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, communication log with copy |
+| Pro | Virtual serial port (PTY) for loopback tests and bridging, Modbus RTU frame simulation templates, communication log export to CSV |
+
 ## Build from source
 
 Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh).
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:serial
 ```
 
 Universal release build (unsigned):
@@ -38,7 +47,8 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
+`bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 
 ## Layout
 
@@ -46,8 +56,10 @@ Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-sto
 apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
+apps/serial-monitor    Tauri app (macOS only), serial terminal
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
+crates/mt-serial       RS232/RS485 port configuration, enumeration and client
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
