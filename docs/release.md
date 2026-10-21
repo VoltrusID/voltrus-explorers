@@ -71,7 +71,7 @@ the user starts server mode).
 | EtherNet/IP Explorer | `com.joyodigitama.enipexplorer.pro` | set in App Store Connect |
 | Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | not set yet (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
-| NATS Explorer | `com.joyodigitama.natsexplorer.pro` | set in App Store Connect before release (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
+| NATS Explorer | `com.joyodigitama.natsexplorer.pro` | USD 9.99 (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
 | MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | not created in App Store Connect yet; the app was never paid, so it is free from its first release (`free_since` 1.2.0) |
 | OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | not set yet (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
 

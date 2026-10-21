@@ -62,8 +62,8 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 
 | | |
 | --- | --- |
-| Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export |
-| Pro | JetStream stream and consumer management, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
+| Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), read-only JetStream stream list with message and consumer counts, communication log export |
+| Pro | JetStream stream and consumer create, delete and purge and stored message fetch, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
 
 ### MQTT Explorer
 

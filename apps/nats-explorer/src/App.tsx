@@ -520,6 +520,7 @@ export default function App() {
   }, []);
 
   const handleCreateStream = async () => {
+    if (!requirePro("Creating streams")) return;
     if (!jsStream.trim()) return;
     setJsBusy(true);
     setJsError(null);
@@ -542,6 +543,7 @@ export default function App() {
   };
 
   const handleSelectStream = async (name: string) => {
+    if (!requirePro("Fetching stream messages")) return;
     setSelectedStream(name);
     try {
       const msgs = await invoke<NatsStoredMessage[]>("js_stream_messages", { name, limit: 50 });
@@ -559,6 +561,7 @@ export default function App() {
   };
 
   const handleDeleteStream = async (name: string) => {
+    if (!requirePro("Deleting streams")) return;
     try {
       await invoke("js_delete_stream", { name });
       if (selectedStream === name) { setSelectedStream(null); setStreamMsgs([]); setConsumers([]); }
@@ -570,6 +573,7 @@ export default function App() {
   };
 
   const handlePurgeStream = async (name: string) => {
+    if (!requirePro("Purging streams")) return;
     try {
       await invoke("js_purge_stream", { name });
       await refreshStreams();
@@ -582,6 +586,7 @@ export default function App() {
 
   const handleCreateConsumer = async () => {
     if (!selectedStream || !consumerName.trim()) return;
+    if (!requirePro("Creating consumers")) return;
     try {
       await invoke("js_create_consumer", { stream: selectedStream, durable: consumerName.trim() });
       const info = await invoke<NatsConsumerInfo>("js_consumer_info", {
@@ -596,6 +601,7 @@ export default function App() {
   };
 
   const handleConsumerNext = async (stream: string, durable: string) => {
+    if (!requirePro("Fetching stream messages")) return;
     try {
       const msgs = await invoke<NatsStoredMessage[]>("js_consumer_next", {
         stream,
@@ -612,6 +618,7 @@ export default function App() {
   };
 
   const handleDeleteConsumer = async (stream: string, durable: string) => {
+    if (!requirePro("Deleting consumers")) return;
     try {
       await invoke("js_delete_consumer", { stream, durable });
       setConsumers((prev) => prev.filter((c) => !(c.stream === stream && c.name === durable)));
@@ -714,7 +721,6 @@ export default function App() {
   // Section switch. Replicates the original strip's state updates exactly.
   const handleSectionChange = (t: SectionTab) => {
     const proFeatures: Partial<Record<SectionTab, string>> = {
-      js: "JetStream management",
       kv: "KV store browser",
       obj: "Object store browser",
       monitor: "Server monitor",
@@ -1243,7 +1249,7 @@ export default function App() {
         <EmptyState
           icon={<Server size={18} strokeWidth={1.75} />}
           title="Not connected"
-          description="Connect to a JetStream-enabled server in Client mode to manage streams."
+          description="Connect to a JetStream-enabled server in Client mode to list streams."
         />
       ) : (
         <>
@@ -1297,7 +1303,7 @@ export default function App() {
               )}
             </Field>
             <Button size="sm" variant="primary" loading={jsBusy} onClick={handleCreateStream} disabled={!jsStream.trim()}>
-              Create stream
+              Create stream <ProBadge />
             </Button>
             <div style={{ flex: 1 }} />
             <Button size="sm" variant="ghost" icon={<RefreshCw size={14} strokeWidth={1.75} />} onClick={refreshStreams}>
@@ -1330,7 +1336,7 @@ export default function App() {
                         icon={<Inbox size={14} strokeWidth={1.75} />}
                         onClick={(e) => { e.stopPropagation(); handleSelectStream(s.name); }}
                       >
-                        Messages
+                        Messages <ProBadge />
                       </Button>
                       <Button
                         size="sm"
@@ -1338,7 +1344,7 @@ export default function App() {
                         icon={<Eraser size={14} strokeWidth={1.75} />}
                         onClick={(e) => { e.stopPropagation(); handlePurgeStream(s.name); }}
                       >
-                        Purge
+                        Purge <ProBadge />
                       </Button>
                       <Button
                         size="sm"
@@ -1346,7 +1352,7 @@ export default function App() {
                         icon={<Trash2 size={14} strokeWidth={1.75} />}
                         onClick={(e) => { e.stopPropagation(); handleDeleteStream(s.name); }}
                       >
-                        Delete
+                        Delete <ProBadge />
                       </Button>
                     </div>
                   );
@@ -1453,7 +1459,7 @@ export default function App() {
       onChange={handleSectionChange}
       items={[
         { value: "messages", label: "Messages", count: msgCount },
-        { value: "js", label: <>JetStream <ProBadge /></>, count: streams.length },
+        { value: "js", label: <>JetStream</>, count: streams.length },
         { value: "kv", label: <>KV <ProBadge /></> },
         { value: "obj", label: <>Objects <ProBadge /></> },
         { value: "monitor", label: <>Monitor <ProBadge /></> },
@@ -1576,7 +1582,7 @@ export default function App() {
               { value: "connect", label: "Connect" },
               { value: "data", label: "Data" },
               { value: "subs", label: "Subs" },
-              { value: "js", label: <>JetStream <ProBadge /></> },
+              { value: "js", label: <>JetStream</> },
               { value: "kv", label: <>KV <ProBadge /></> },
               { value: "obj", label: <>Objects <ProBadge /></> },
               { value: "monitor", label: <>Monitor <ProBadge /></> },
