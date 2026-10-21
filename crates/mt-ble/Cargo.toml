@@ -1,0 +1,15 @@
+[package]
+name = "mt-ble"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+btleplug = "0.11"
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = "1"
+log = "0.4"
+futures = "0.3"

@@ -15,7 +15,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, ble-inspector]
       appstore:
         description: Mac App Store .pkg
         type: boolean
