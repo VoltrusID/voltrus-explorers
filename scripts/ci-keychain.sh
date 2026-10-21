@@ -18,6 +18,7 @@ setup)
   mkdir -p "$KEY_DIR"
   printf '%s' "$ASC_KEY_BASE64" | base64 --decode > "$KEY_DIR/AuthKey_$ASC_KEY_ID.p8"
   echo "ASC_KEY_PATH=$KEY_DIR/AuthKey_$ASC_KEY_ID.p8" >> "$GITHUB_ENV"
+  [[ $# -gt 0 ]] || exit 0 # key only (iOS: Tauri imports its own certificate)
 
   kcpass="$(uuidgen)"
   security create-keychain -p "$kcpass" "$KC"

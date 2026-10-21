@@ -1,7 +1,7 @@
 #!/bin/bash
 # Universal macOS build of one app, signed for either the Mac App Store or direct download.
 #
-#   scripts/build-macos.sh <app> appstore [--upload]   # .pkg for App Store Connect (optionally uploaded)
+#   scripts/build-macos.sh <app> appstore [--upload]   # .pkg for App Store Connect (validated, or uploaded)
 #   scripts/build-macos.sh <app> dmg [--notarize]      # Developer ID .dmg (optionally notarized + stapled)
 #   scripts/build-macos.sh <app> unsigned              # compile + bundle only (CI on pull requests)
 #
@@ -11,7 +11,8 @@
 #   appstore: "Apple Distribution" + "3rd Party Mac Developer Installer", and MAS_PROFILE = path to a
 #             MAC_APP_STORE provisioning profile for the app's bundle id (scripts/asc-profile.py).
 #   dmg:      "Developer ID Application".
-# --upload and --notarize use the App Store Connect API key: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH.
+# --upload, --notarize and the App Store validation (when ASC_KEY_ID is set) use the App Store Connect API key:
+# ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH.
 # BUILD_NUMBER (CFBundleVersion) defaults to the Unix time, the scheme the existing App Store builds use.
 set -euo pipefail
 
@@ -81,9 +82,11 @@ appstore)
   PKG="$OUT/$NAME.pkg"
   productbuild --component "$BUNDLE" /Applications --sign "$PKG_ID" "$PKG"
   echo "==> $PKG"
+  # altool reads the key from ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
   if [[ "$FLAG" == --upload ]]; then
-    # altool reads the key from ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
     xcrun altool --upload-app --type macos --file "$PKG" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+  elif [[ -n "${ASC_KEY_ID:-}" ]]; then
+    xcrun altool --validate-app --type macos --file "$PKG" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
   fi
   ;;
 
