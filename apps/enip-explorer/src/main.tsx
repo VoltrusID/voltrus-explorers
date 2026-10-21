@@ -15,6 +15,7 @@ const PRO_FEATURES = [
   "Built-in EtherNet/IP adapter and PLC simulator",
   "Packet log export to CSV",
   "More than one saved tag watch list",
+  "Tag watch list export to CSV",
   "Custom response decoders",
 ];
 
