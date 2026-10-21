@@ -1,20 +1,69 @@
+//! EtherNet/IP adapter used by the Adapter mode and the device simulator.
+//!
+//! The goal of this module is to behave like a real Logix-style target so the
+//! client (and third-party clients) exercise the same wire format they meet on
+//! hardware: session checks, CPF framing, Unconnected_Send + route paths,
+//! Multiple_Service_Packet, partial/fragmented tag transfers, strict write type
+//! checks, Forward_Open/Large_Forward_Open with real status codes, class 3
+//! connected messaging over SendUnitData and class 1 implicit I/O over UDP.
+
 use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::net::tcp::OwnedWriteHalf;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{mpsc, watch, Mutex};
 use tokio::task::JoinHandle;
 
+use crate::cip::*;
+use crate::packets::*;
 use crate::types::*;
-use crate::packets::{build_send_unit_data, encode_cip_value, decode_cip_value};
+
+/// Payload budget of a single message-router reply (type + data). Real
+/// controllers answer ~500-byte unconnected/connected-explicit packets; bigger
+/// transfers come back as status 0x06 and must be continued with the
+/// fragmented services.
+const REPLY_PAYLOAD_LIMIT: usize = 480;
+
+/// Symbol `software control` attribute value flagging a base (non-alias) tag.
+const SOFTWARE_CONTROL_BASE_TAG: u32 = 1 << 26;
 
 // ── Public types ──
 
 pub struct EnipServerState {
     pub tags: Mutex<BTreeMap<String, CipTagEntry>>,
     pub templates: Vec<CipTemplateDef>,
+    /// Last O→T implicit I/O payload received over UDP (run/idle header + data).
+    pub last_output: Mutex<Option<Vec<u8>>>,
+    /// Implicit I/O connections keyed by the O→T connection id the target assigned.
+    io: Mutex<std::collections::HashMap<u32, IoConn>>,
+    io_socket: Option<Arc<UdpSocket>>,
+    next_conn_id: AtomicU32,
+    tcp_port: u16,
+}
+
+impl EnipServerState {
+    /// UDP port the implicit-I/O socket is bound to (2222 when free).
+    pub fn io_port(&self) -> Option<u16> {
+        self.io_socket.as_ref().and_then(|s| s.local_addr().ok()).map(|a| a.port())
+    }
+
+    /// TCP port the listener is actually bound to (useful when configured with port 0).
+    pub fn tcp_port(&self) -> u16 {
+        self.tcp_port
+    }
+
+    /// Number of implicit I/O connections currently open on the target.
+    pub async fn open_io_connections(&self) -> usize {
+        self.io.lock().await.len()
+    }
+}
+
+struct IoConn {
+    last_rx: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +72,29 @@ pub struct CipTagEntry {
     pub element_count: u16,
     pub value: CipValue,
     pub template_id: Option<u16>,
+}
+
+/// Assign a freshly computed scalar to a tag, preserving array shape.
+pub fn assign_scalar(entry: &mut CipTagEntry, value: CipValue) {
+    if entry.element_count > 1 && matches!(entry.value, CipValue::Array(_)) {
+        entry.value = CipValue::Array(vec![value; entry.element_count as usize]);
+    } else {
+        entry.value = value;
+    }
+}
+
+/// Build the (name, entry) pair for a tag definition. A scalar initial value
+/// on a multi-element tag is expanded to an array of that value.
+pub fn tag_entry_from_def(t: CipTagDef) -> (String, CipTagEntry) {
+    let value = if t.element_count > 1 && !matches!(t.initial_value, CipValue::Array(_)) && t.template_id.is_none() {
+        CipValue::Array(vec![t.initial_value; t.element_count as usize])
+    } else {
+        t.initial_value
+    };
+    (
+        t.name,
+        CipTagEntry { data_type: t.data_type, element_count: t.element_count.max(1), value, template_id: t.template_id },
+    )
 }
 
 // ── Start the server ──
@@ -36,30 +108,33 @@ pub async fn start_enip_server(
     mpsc::UnboundedReceiver<EnipServerLogEntry>,
     watch::Sender<bool>,
 )> {
-    let tag_map: BTreeMap<String, CipTagEntry> = tags
-        .into_iter()
-        .map(|t| {
-            (
-                t.name.clone(),
-                CipTagEntry {
-                    data_type: t.data_type,
-                    element_count: t.element_count,
-                    value: t.initial_value,
-                    template_id: t.template_id,
-                },
-            )
-        })
-        .collect();
+    let tag_map: BTreeMap<String, CipTagEntry> = tags.into_iter().map(tag_entry_from_def).collect();
+
+    let listener = TcpListener::bind(format!("{}:{}", config.bind_addr, config.port)).await?;
+
+    // Implicit I/O socket: UDP 2222 on the bind address, falling back to an
+    // ephemeral port when 2222 is taken (e.g. another adapter on this host).
+    let io_socket = match UdpSocket::bind(format!("{}:{}", config.bind_addr, IO_UDP_PORT)).await {
+        Ok(s) => Some(Arc::new(s)),
+        Err(_) => UdpSocket::bind(format!("{}:0", config.bind_addr)).await.ok().map(Arc::new),
+    };
 
     let state = Arc::new(EnipServerState {
         tags: Mutex::new(tag_map),
         templates,
+        last_output: Mutex::new(None),
+        io: Mutex::new(std::collections::HashMap::new()),
+        io_socket,
+        next_conn_id: AtomicU32::new(0x2000_0001),
+        tcp_port: listener.local_addr()?.port(),
     });
 
     let (log_tx, log_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let listener = TcpListener::bind(format!("{}:{}", config.bind_addr, config.port)).await?;
+    if let Some(sock) = state.io_socket.clone() {
+        tokio::spawn(io_receiver(sock, state.clone(), shutdown_rx.clone()));
+    }
 
     let state_clone = state.clone();
     let log_tx_clone = log_tx.clone();
@@ -108,32 +183,45 @@ pub async fn start_enip_server(
     Ok((state, log_rx, shutdown_tx))
 }
 
+fn log(log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>, service: &str, tag: &str, message: String) {
+    let _ = log_tx.send(EnipServerLogEntry {
+        timestamp: now_ms(),
+        service: service.into(),
+        tag_name: tag.into(),
+        message,
+    });
+}
+
 // ── Connection handler ──
+
+/// One CIP connection opened with Forward_Open on this TCP session.
+struct OpenConn {
+    serial: u16,
+    vendor: u16,
+    originator: u32,
+    /// Connection id the originator uses to address the target (assigned here).
+    o_to_t: u32,
+    /// Connection id the target answers with (chosen by the originator).
+    t_to_o: u32,
+    class3: bool,
+    producer: Option<JoinHandle<()>>,
+}
 
 async fn handle_connection(
     stream: tokio::net::TcpStream,
-    addr: std::net::SocketAddr,
+    addr: SocketAddr,
     state: Arc<EnipServerState>,
     log_tx: mpsc::UnboundedSender<EnipServerLogEntry>,
 ) {
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "connect".into(),
-        tag_name: String::new(),
-        message: format!("Client connected from {addr}"),
-    });
+    log(&log_tx, "connect", "", format!("Client connected from {addr}"));
 
-    let (reader, writer) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
     let mut reader = tokio::io::BufReader::new(reader);
-    // Shared writer so a spawned cyclic-IO producer can push unsolicited T→O
-    // frames on the same socket as request replies.
-    let writer: Arc<Mutex<OwnedWriteHalf>> = Arc::new(Mutex::new(writer));
-    let producers: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut conns: Vec<OpenConn> = Vec::new();
     let mut session_handle: u32 = 0;
-    let mut header_buf = [0u8; 24];
+    let mut header_buf = [0u8; ENIP_HEADER_SIZE];
 
     loop {
-        // Read ENIP header (24 bytes)
         if reader.read_exact(&mut header_buf).await.is_err() {
             break;
         }
@@ -141,463 +229,900 @@ async fn handle_connection(
         let command = u16::from_le_bytes([header_buf[0], header_buf[1]]);
         let length = u16::from_le_bytes([header_buf[2], header_buf[3]]);
         let recv_session = u32::from_le_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]]);
-        let sender_context = u64::from_le_bytes([
-            header_buf[12], header_buf[13], header_buf[14], header_buf[15],
-            header_buf[16], header_buf[17], header_buf[18], header_buf[19],
-        ]);
+        let sender_context = u64::from_le_bytes(header_buf[12..20].try_into().unwrap());
 
-        // Read body
         let mut body = vec![0u8; length as usize];
         if length > 0 && reader.read_exact(&mut body).await.is_err() {
             break;
         }
 
-        // ForwardOpen / ForwardClose ride inside SendRRData; peek the CIP service.
-        let cip_service = if command == 0x006F && body.len() >= 17 {
-            body[16]
-        } else {
-            0
+        let session_ok = session_handle != 0 && recv_session == session_handle;
+        let reply: Option<Vec<u8>> = match command {
+            CMD_LIST_IDENTITY => {
+                let mut r = build_list_identity_response([0, 0, 0, 0], state.tcp_port);
+                r[12..20].copy_from_slice(&sender_context.to_le_bytes());
+                Some(r)
+            }
+            CMD_LIST_SERVICES => Some(build_list_services_reply(sender_context)),
+            CMD_LIST_INTERFACES => Some(build_enip_frame(CMD_LIST_INTERFACES, 0, sender_context, 0, &0u16.to_le_bytes())),
+            CMD_REGISTER_SESSION => {
+                let version = body.get(0..2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+                if body.len() != 4 {
+                    Some(build_enip_frame(command, 0, sender_context, 0x0065, &[]))
+                } else if version != Some(1) {
+                    // Unsupported protocol revision: answer with our supported version.
+                    Some(build_enip_frame(command, 0, sender_context, 0x0069, &[1, 0, 0, 0]))
+                } else if session_handle != 0 {
+                    // A second RegisterSession on the same TCP connection is rejected.
+                    Some(build_enip_frame(command, 0, sender_context, 0x0001, &[1, 0, 0, 0]))
+                } else {
+                    session_handle = rand_session_handle();
+                    Some(build_enip_frame(command, session_handle, sender_context, 0, &[1, 0, 0, 0]))
+                }
+            }
+            CMD_UNREGISTER_SESSION => break,
+            CMD_SEND_RR_DATA if !session_ok => {
+                Some(build_enip_frame(command, recv_session, sender_context, 0x0064, &[]))
+            }
+            CMD_SEND_RR_DATA => Some(
+                handle_send_rr(session_handle, sender_context, &body, &state, &log_tx, &mut conns, addr).await,
+            ),
+            CMD_SEND_UNIT_DATA if !session_ok => {
+                Some(build_enip_frame(command, recv_session, sender_context, 0x0064, &[]))
+            }
+            CMD_SEND_UNIT_DATA => handle_send_unit_data(session_handle, &body, &state, &log_tx, &conns).await,
+            _ => Some(build_enip_frame(command, recv_session, sender_context, 0x0001, &[])),
         };
 
-        let mut start_producer: Option<ProducerSpec> = None;
-        let reply = match command {
-            0x0065 => {
-                // RegisterSession
-                session_handle = rand_session_handle();
-                let mut resp_body = vec![0u8; 4];
-                resp_body[0..2].copy_from_slice(&1u16.to_le_bytes()); // protocol version
-                resp_body[2..4].copy_from_slice(&0u16.to_le_bytes()); // options
-                build_enip_reply(0x0065, session_handle, sender_context, &resp_body)
-            }
-            0x0066 => {
-                // UnregisterSession
-                break;
-            }
-            0x006F if cip_service == 0x54 => {
-                // ForwardOpen — accept IO connection; producer starts after reply flush.
-                let (r, spec) =
-                    handle_forward_open(session_handle, sender_context, &body, &state, &log_tx).await;
-                start_producer = spec;
-                r
-            }
-            0x006F if cip_service == 0x4E => {
-                // ForwardClose — cancel cyclic producer(s).
-                handle_forward_close(session_handle, sender_context, &body, &producers, &log_tx)
-                    .await
-            }
-            0x006F => {
-                // SendRRData — CIP request
-                handle_rr_data(session_handle, sender_context, &body, &state, &log_tx).await
-            }
-            0x0070 => {
-                // SendUnitData (connected CIP request) — route the embedded
-                // message-router request, reply on the same connection id/seq.
-                handle_send_unit_data(session_handle, &body, &state, &log_tx).await
-            }
-            _ => {
-                // Unknown command — return error
-                build_enip_reply(command, recv_session, sender_context, &[0u8; 0])
-            }
-        };
-
-        {
-            let mut w = writer.lock().await;
-            if w.write_all(&reply).await.is_err() {
+        if let Some(reply) = reply {
+            if writer.write_all(&reply).await.is_err() {
                 break;
             }
         }
-
-        // Start the cyclic T→O producer only after the ForwardOpen reply is on
-        // the wire, so the client's RRData read never sees a producer frame.
-        if let Some(spec) = start_producer {
-            let h = tokio::spawn(cyclic_producer(
-                session_handle,
-                spec.t_to_o_connection_id,
-                spec.rpi_us,
-                state.clone(),
-                writer.clone(),
-                log_tx.clone(),
-            ));
-            producers.lock().await.push(h);
-        }
     }
 
-    // Abort any cyclic producers for this connection.
-    let mut handles = producers.lock().await;
-    for h in handles.drain(..) {
-        h.abort();
-    }
-
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "disconnect".into(),
-        tag_name: String::new(),
-        message: format!("Client disconnected from {addr}"),
-    });
+    close_all(&mut conns, &state).await;
+    let _ = writer.shutdown().await;
+    log(&log_tx, "disconnect", "", format!("Client disconnected from {addr}"));
 }
 
-// ── Handle SendRRData (contains CIP request) ──
+async fn close_all(conns: &mut Vec<OpenConn>, state: &Arc<EnipServerState>) {
+    for c in conns.drain(..) {
+        if let Some(h) = c.producer {
+            h.abort();
+        }
+        state.io.lock().await.remove(&c.o_to_t);
+    }
+}
 
-async fn handle_rr_data(
+/// ListServices reply: one Communications item advertising CIP encapsulation
+/// over TCP (bit 5) and class 0/1 over UDP (bit 8) — ODVA Vol 2 §2-4.5.
+fn build_list_services_reply(sender_context: u64) -> Vec<u8> {
+    let mut item = Vec::with_capacity(20);
+    item.extend_from_slice(&1u16.to_le_bytes()); // encapsulation protocol version
+    item.extend_from_slice(&0x0120u16.to_le_bytes()); // capability flags
+    let mut name = [0u8; 16];
+    name[..14].copy_from_slice(b"Communications");
+    item.extend_from_slice(&name);
+    let body = build_cpf(&[CpfItem::new(0x0100, item)]);
+    build_enip_frame(CMD_LIST_SERVICES, 0, sender_context, 0, &body)
+}
+
+fn build_rr_reply(session_handle: u32, sender_context: u64, cip_data: &[u8], extra: &[CpfItem]) -> Vec<u8> {
+    let mut items = vec![
+        CpfItem::new(CPF_NULL_ADDRESS, Vec::new()),
+        CpfItem::new(CPF_UNCONNECTED_DATA, cip_data.to_vec()),
+    ];
+    items.extend_from_slice(extra);
+    build_enip_frame(CMD_SEND_RR_DATA, session_handle, sender_context, 0, &wrap_rr_body(0, &build_cpf(&items)))
+}
+
+/// Build a CIP error reply: `service|0x80, 0, status, ext words, ext…`.
+fn err_reply(service: u8, status: u8, ext: &[u16]) -> Vec<u8> {
+    let mut r = vec![service | 0x80, 0x00, status, ext.len() as u8];
+    for e in ext {
+        r.extend_from_slice(&e.to_le_bytes());
+    }
+    r
+}
+
+fn ok_reply(service: u8) -> Vec<u8> {
+    vec![service | 0x80, 0x00, 0x00, 0x00]
+}
+
+// ── SendRRData ──
+
+async fn handle_send_rr(
     session_handle: u32,
     sender_context: u64,
     body: &[u8],
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    conns: &mut Vec<OpenConn>,
+    peer: SocketAddr,
 ) -> Vec<u8> {
-    // Parse RRData wrapper:
-    // [0-3] interface handle (0 for CIP)
-    // [4-5] timeout
-    // [6-7] item count (2)
-    // [8-9] address item type (0x0000 null)
-    // [10-11] address length (0)
-    // [12-13] data item type (0x00B2 unconnected)
-    // [14-15] data length
-    // [16+] CIP payload
-
-    if body.len() < 16 {
-        return build_rr_error(session_handle, sender_context, "RRData too short");
-    }
-
-    let data_len = u16::from_le_bytes([body[14], body[15]]) as usize;
-    if body.len() < 16 + data_len || data_len == 0 {
-        return build_rr_error(session_handle, sender_context, "Invalid data length");
-    }
-
-    let cip_request = &body[16..16 + data_len];
-    if cip_request.len() < 2 {
-        return build_rr_error(session_handle, sender_context, "CIP request too short");
-    }
-
-    let cip_reply = route_cip(cip_request, state, log_tx).await;
-
-    // Wrap CIP reply in RRData
-    build_rr_reply(session_handle, sender_context, &cip_reply)
-}
-
-// ── CIP Read Tag (0x4C) ──
-
-async fn handle_read_tag(
-    request: &[u8],
-    state: &Arc<EnipServerState>,
-    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    let tag_name = match parse_tag_from_path(request) {
-        Some(name) => name,
-        None => {
-            return vec![0xCC, 0x00, 0x04, 0x00]; // path error
-        }
+    let items = match parse_rr_body(body) {
+        Ok(i) => i,
+        Err(_) => return build_enip_frame(CMD_SEND_RR_DATA, session_handle, sender_context, 0x0003, &[]),
+    };
+    let data = match items.iter().find(|i| i.type_id == CPF_UNCONNECTED_DATA) {
+        Some(d) if d.data.len() >= 2 => d.data.clone(),
+        _ => return build_enip_frame(CMD_SEND_RR_DATA, session_handle, sender_context, 0x0003, &[]),
     };
 
-    let tags = state.tags.lock().await;
-    let entry = match tags.get(&tag_name) {
-        Some(e) => e,
-        None => {
-            // Whole-tag miss — try UDT member access (<udt_tag>.<member>), which
-            // is how clients read individual struct fields (e.g. DriveInfo.Poles).
-            if let Some((dt, bytes)) = resolve_udt_member(&tag_name, &tags, &state.templates) {
-                let mut reply = vec![0xCC, 0x00, 0x00, 0x00]; // success
-                reply.extend_from_slice(&(dt.code() as u16).to_le_bytes());
-                reply.extend_from_slice(&bytes);
-                drop(tags);
-                let _ = log_tx.send(EnipServerLogEntry {
-                    timestamp: now_ms(),
-                    service: "read".into(),
-                    tag_name: tag_name.clone(),
-                    message: format!("Read UDT member {tag_name}"),
-                });
-                return reply;
-            }
-            drop(tags);
-            let _ = log_tx.send(EnipServerLogEntry {
-                timestamp: now_ms(),
-                service: "read".into(),
-                tag_name: tag_name.clone(),
-                message: format!("Read tag not found: {tag_name}"),
-            });
-            return vec![0xCC, 0x00, 0x04, 0x00]; // path destination unknown
-        }
+    let service = data[0];
+    let targets_cm = {
+        let pw = data[1] as usize;
+        data.get(2..2 + pw * 2)
+            .map(|p| {
+                let (c, i, _) = parse_logical_path(p);
+                c == Some(CONNECTION_MANAGER_CLASS_ID) && i == Some(1)
+            })
+            .unwrap_or(false)
     };
 
-    let mut reply = vec![
-        0xCC,           // Read Tag reply
-        0x00,           // reserved
-        0x00,           // success
-        0x00,           // no extended status
-    ];
-    if let Some(tid) = entry.template_id {
-        // Structure (UDT) read: typeSize = 4 → [handle:u16][size:u16][struct bytes].
-        // The handle echoes the template id (== the Symbol type word's low bits),
-        // size is the struct byte length, and the bytes are the packed member image.
-        let size = state
-            .templates
+    if targets_cm && (service == CIP_FORWARD_OPEN || service == CIP_LARGE_FORWARD_OPEN) {
+        let t_to_o_sockaddr = items
             .iter()
-            .find(|t| t.id == tid)
-            .map(|t| t.structure_size_bytes())
-            .unwrap_or(0);
-        // Read Tag reply type field for a structure is the CIP STRUCT type code
-        // (0x02A0), NOT the template handle — st-ethernet-ip's parser routes on
-        // `type === Types.STRUCT` (0x02A0) and otherwise tries atomic decode and
-        // throws "Unrecognized Type". Count = struct byte length; bytes = image.
-        reply.extend_from_slice(&0x02A0u16.to_le_bytes());
-        reply.extend_from_slice(&(size as u16).to_le_bytes());
-        if let CipValue::Bytes(b) = &entry.value {
-            reply.extend_from_slice(b);
-        }
-    } else {
-        let (type_code, value_data) = encode_cip_value(&entry.value);
-        // Atomic read: typeSize = 2 → [type:u16][data] (no element-count field).
-        reply.extend_from_slice(&(type_code as u16).to_le_bytes());
-        reply.extend_from_slice(&value_data);
+            .find(|i| i.type_id == CPF_SOCKADDR_T_TO_O)
+            .and_then(|i| parse_sockaddr_item(&i.data));
+        let (cip, extra) = handle_forward_open(&data, t_to_o_sockaddr, peer, state, log_tx, conns).await;
+        return build_rr_reply(session_handle, sender_context, &cip, &extra);
+    }
+    if targets_cm && service == CIP_FORWARD_CLOSE {
+        let cip = handle_forward_close(&data, state, log_tx, conns).await;
+        return build_rr_reply(session_handle, sender_context, &cip, &[]);
     }
 
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "read".into(),
-        tag_name: tag_name.clone(),
-        message: format!("Read {} = {}", tag_name, entry.value.display_value()),
-    });
-
-    reply
+    let reply = route_cip(&data, state, log_tx).await;
+    build_rr_reply(session_handle, sender_context, &reply, &[])
 }
 
-// ── CIP Write Tag (0x4D) ──
+// ── SendUnitData (class 3 connected explicit messaging) ──
 
-async fn handle_write_tag(
-    request: &[u8],
+async fn handle_send_unit_data(
+    session_handle: u32,
+    body: &[u8],
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    let tag_name = match parse_tag_from_path(request) {
-        Some(name) => name,
+    conns: &[OpenConn],
+) -> Option<Vec<u8>> {
+    let (conn_id, seq, cip) = parse_unit_data_body(body).ok()?;
+    let conn = match conns.iter().find(|c| c.class3 && c.o_to_t == conn_id) {
+        Some(c) => c,
         None => {
-            return vec![0xCD, 0x00, 0x04, 0x00];
+            // A target silently drops connected data for unknown connections.
+            log(log_tx, "unit_data", "", format!("SendUnitData for unknown connection 0x{conn_id:08X} dropped"));
+            return None;
         }
     };
-
-    // Parse write data: after service(1) + path_size(1) + path(N) + type(2) + elements(2) + value
-    if request.len() < 4 {
-        return vec![0xCD, 0x00, 0x01, 0x00]; // insufficient data
-    }
-
-    let path_words = request[1] as usize;
-    let path_bytes = path_words * 2;
-    let data_offset = 2 + path_bytes;
-
-    if request.len() < data_offset + 4 {
-        return vec![0xCD, 0x00, 0x01, 0x00];
-    }
-
-    let _type_code = u16::from_le_bytes([request[data_offset], request[data_offset + 1]]);
-    let _elements = u16::from_le_bytes([request[data_offset + 2], request[data_offset + 3]]);
-    let value_data = &request[data_offset + 4..];
-
-    let value = match decode_cip_value(_type_code as u8, value_data) {
-        Ok(v) => v,
-        Err(_) => {
-            return vec![0xCD, 0x00, 0x01, 0x00];
-        }
-    };
-
-    {
-        let mut tags = state.tags.lock().await;
-        if let Some(entry) = tags.get_mut(&tag_name) {
-            let _ = log_tx.send(EnipServerLogEntry {
-                timestamp: now_ms(),
-                service: "write".into(),
-                tag_name: tag_name.clone(),
-                message: format!("Write {} = {} (was {})", tag_name, value.display_value(), entry.value.display_value()),
-            });
-            entry.value = value;
-        } else {
-            drop(tags);
-            let _ = log_tx.send(EnipServerLogEntry {
-                timestamp: now_ms(),
-                service: "write".into(),
-                tag_name: tag_name.clone(),
-                message: format!("Write tag not found: {tag_name}"),
-            });
-            return vec![0xCD, 0x00, 0x04, 0x00];
-        }
-    }
-
-    vec![0xCD, 0x00, 0x00, 0x00] // success
+    let reply = route_cip(&cip, state, log_tx).await;
+    Some(build_send_unit_data(session_handle, conn.t_to_o, seq, &reply))
 }
 
-// ── CIP GetAttributeAll (0x01) — tag browsing ──
+// ── Forward_Open / Forward_Close ──
 
-async fn handle_get_attribute_all(
-    request: &[u8],
+/// Parse a connection path: optional port segments (this simulator sits at
+/// backplane port 1, slot 0) followed by the target object's logical path.
+/// Returns the target class on success, or the extended status to report.
+fn connection_target(path: &[u8]) -> Result<Option<u16>, u16> {
+    let mut i = 0;
+    while i < path.len() && path[i] & 0xE0 == 0x00 {
+        let port = path[i] & 0x0F;
+        if path[i] & 0x10 != 0 || port != 1 {
+            return Err(0x0311); // port not available
+        }
+        if path.get(i + 1) != Some(&0) {
+            return Err(0x0312); // link address not valid
+        }
+        i += 2;
+    }
+    let (class, _, _) = parse_logical_path(&path[i..]);
+    Ok(class)
+}
+
+async fn handle_forward_open(
+    cip: &[u8],
+    t_to_o_sockaddr: Option<([u8; 4], u16)>,
+    peer: SocketAddr,
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    conns: &mut Vec<OpenConn>,
+) -> (Vec<u8>, Vec<CpfItem>) {
+    let service = cip[0];
+    let p = match parse_forward_open_request(cip) {
+        Some(p) => p,
+        None => return (err_reply(service, 0x13, &[]), Vec::new()),
+    };
+
+    let fail = |ext: u16| {
+        let mut r = err_reply(service, 0x01, &[ext]);
+        r.extend_from_slice(&p.connection_serial.to_le_bytes());
+        r.extend_from_slice(&p.vendor_id.to_le_bytes());
+        r.extend_from_slice(&p.originator_serial.to_le_bytes());
+        r.push(0); // remaining path size
+        r.push(0);
+        (r, Vec::new())
+    };
+
+    if conns
+        .iter()
+        .any(|c| c.serial == p.connection_serial && c.vendor == p.vendor_id && c.originator == p.originator_serial)
+    {
+        return fail(0x0100);
+    }
+
+    let target_class = match connection_target(&p.connection_path) {
+        Ok(c) => c,
+        Err(ext) => return fail(ext),
+    };
+    let class = p.transport_class_trigger & 0x0F;
+    let class3 = class == 3;
+    let implicit = class == 0 || class == 1;
+    match (class3, implicit, target_class) {
+        (true, _, Some(0x02)) => {}                // explicit messaging → Message Router
+        (_, true, Some(0x04)) => {}                // implicit I/O → Assembly
+        (_, _, None) => return fail(0x0315),       // no class segment in the path
+        _ => return fail(0x0103),                  // transport class/trigger not supported for this object
+    }
+    if p.o_to_t_rpi_us == 0 || p.t_to_o_rpi_us == 0 {
+        return fail(0x0111);
+    }
+
+    // Network connection parameters: size + connection types.
+    let (o_size, o_type, t_size, t_type) = if p.large {
+        (
+            p.o_to_t_params & 0xFFFF,
+            (p.o_to_t_params >> 29) & 3,
+            p.t_to_o_params & 0xFFFF,
+            (p.t_to_o_params >> 29) & 3,
+        )
+    } else {
+        (
+            p.o_to_t_params & 0x01FF,
+            (p.o_to_t_params >> 13) & 3,
+            p.t_to_o_params & 0x01FF,
+            (p.t_to_o_params >> 13) & 3,
+        )
+    };
+    if !p.large && p.o_to_t_params > 0xFFFF || !p.large && p.t_to_o_params > 0xFFFF {
+        return fail(0x0108);
+    }
+    if class3 {
+        // Explicit connections are bidirectional point-to-point.
+        if o_type != 2 || t_type != 2 {
+            return fail(0x0108);
+        }
+    } else if o_type == 0 && t_type == 0 {
+        return fail(0x0108);
+    }
+    if (o_type == 3 || t_type == 3) || (!class3 && t_type != 0 && t_size < 2) {
+        return fail(if t_size < 2 { 0x0128 } else { 0x0108 });
+    }
+
+    let o_to_t_id = state.next_conn_id.fetch_add(1, Ordering::Relaxed);
+    let t_to_o_id = p.t_to_o_connection_id;
+    let api = p.t_to_o_rpi_us.clamp(10_000, 3_600_000_000);
+    let api_o = p.o_to_t_rpi_us.clamp(10_000, 3_600_000_000);
+
+    let mut extra = Vec::new();
+    let mut producer = None;
+    if implicit {
+        if let Some(sock) = state.io_socket.clone() {
+            let port = sock.local_addr().map(|a| a.port()).unwrap_or(IO_UDP_PORT);
+            extra.push(CpfItem::new(CPF_SOCKADDR_O_TO_T, sockaddr_item_data([0, 0, 0, 0], port)));
+            if t_type != 0 {
+                let dest_port = t_to_o_sockaddr.map(|(_, port)| port).unwrap_or(IO_UDP_PORT);
+                let dest_ip: IpAddr = peer.ip();
+                let dest = SocketAddr::new(dest_ip, dest_port);
+                let watchdog = if o_type != 0 {
+                    // multiplier code n → ×(4 << n)
+                    let factor = 4u64 << (p.timeout_multiplier.min(7) as u32);
+                    Some(Duration::from_micros(api_o as u64 * factor).max(Duration::from_millis(200)))
+                } else {
+                    None
+                };
+                state.io.lock().await.insert(o_to_t_id, IoConn { last_rx: Instant::now() });
+                producer = Some(tokio::spawn(io_producer(
+                    sock,
+                    dest,
+                    state.clone(),
+                    o_to_t_id,
+                    t_to_o_id,
+                    api,
+                    (t_size as usize).saturating_sub(2),
+                    watchdog,
+                    log_tx.clone(),
+                )));
+            } else {
+                state.io.lock().await.insert(o_to_t_id, IoConn { last_rx: Instant::now() });
+            }
+        } else {
+            return fail(0x0113); // out of connections: no UDP socket
+        }
+    }
+
+    log(
+        log_tx,
+        "forward_open",
+        "",
+        format!(
+            "{} class {class} serial=0x{:04X} O→T=0x{o_to_t_id:08X} T→O=0x{t_to_o_id:08X} rpi={}us sizes O→T {o_size} / T→O {t_size}",
+            if p.large { "Large_Forward_Open" } else { "Forward_Open" },
+            p.connection_serial,
+            p.t_to_o_rpi_us,
+        ),
+    );
+
+    let mut r = ok_reply(service);
+    r.extend_from_slice(&o_to_t_id.to_le_bytes());
+    r.extend_from_slice(&t_to_o_id.to_le_bytes());
+    r.extend_from_slice(&p.connection_serial.to_le_bytes());
+    r.extend_from_slice(&p.vendor_id.to_le_bytes());
+    r.extend_from_slice(&p.originator_serial.to_le_bytes());
+    r.extend_from_slice(&api_o.to_le_bytes());
+    r.extend_from_slice(&api.to_le_bytes());
+    r.push(0); // application reply size (words)
+    r.push(0); // reserved
+
+    conns.push(OpenConn {
+        serial: p.connection_serial,
+        vendor: p.vendor_id,
+        originator: p.originator_serial,
+        o_to_t: o_to_t_id,
+        t_to_o: t_to_o_id,
+        class3,
+        producer,
+    });
+    (r, extra)
+}
+
+async fn handle_forward_close(
+    cip: &[u8],
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    conns: &mut Vec<OpenConn>,
 ) -> Vec<u8> {
-    // Identity object (class 0x01), instance 1 — what every CIP client reads at
-    // connect (st-ethernet-ip "readControllerProps" / RSLinx). GetAttributesAll
-    // returns attrs 1..=7 concatenated, matching the standard Identity layout
-    // (revision@6, status@8, serial@10, product-name SHORT_STRING@14).
-    if let Some((class, instance, _)) = parse_cip_class_instance_attr(request) {
-        if class == 0x01 && instance == 1 {
-            let mut reply = vec![0x81, 0x00, 0x00, 0x00]; // success
-            for attr in 1u16..=7 {
-                if let Some(bytes) = identity_attribute(attr) {
-                    reply.extend_from_slice(&bytes);
+    let pw = cip[1] as usize;
+    let b = match cip.get(2 + pw * 2..) {
+        Some(b) if b.len() >= 10 => b,
+        _ => return err_reply(CIP_FORWARD_CLOSE, 0x13, &[]),
+    };
+    let serial = u16::from_le_bytes([b[2], b[3]]);
+    let vendor = u16::from_le_bytes([b[4], b[5]]);
+    let originator = u32::from_le_bytes([b[6], b[7], b[8], b[9]]);
+
+    let mut r;
+    if let Some(pos) = conns
+        .iter()
+        .position(|c| c.serial == serial && c.vendor == vendor && c.originator == originator)
+    {
+        let c = conns.remove(pos);
+        if let Some(h) = c.producer {
+            h.abort();
+        }
+        state.io.lock().await.remove(&c.o_to_t);
+        log(log_tx, "forward_close", "", format!("Forward_Close serial=0x{serial:04X}"));
+        r = ok_reply(CIP_FORWARD_CLOSE);
+    } else {
+        log(log_tx, "forward_close", "", format!("Forward_Close serial=0x{serial:04X}: connection not found"));
+        r = err_reply(CIP_FORWARD_CLOSE, 0x01, &[0x0107]);
+    }
+    r.extend_from_slice(&serial.to_le_bytes());
+    r.extend_from_slice(&vendor.to_le_bytes());
+    r.extend_from_slice(&originator.to_le_bytes());
+    r.push(0); // application reply size / remaining path size
+    r.push(0);
+    r
+}
+
+// ── Class 1 implicit I/O over UDP ──
+
+/// Receives O→T datagrams and refreshes each connection's watchdog.
+async fn io_receiver(sock: Arc<UdpSocket>, state: Arc<EnipServerState>, mut shutdown: watch::Receiver<bool>) {
+    let mut buf = vec![0u8; 2048];
+    loop {
+        tokio::select! {
+            r = sock.recv_from(&mut buf) => {
+                let Ok((n, _peer)) = r else { continue };
+                if let Ok((conn_id, _seq32, _seq16, payload)) = parse_io_packet(&buf[..n]) {
+                    let mut io = state.io.lock().await;
+                    if let Some(c) = io.get_mut(&conn_id) {
+                        c.last_rx = Instant::now();
+                        drop(io);
+                        *state.last_output.lock().await = Some(payload);
+                    }
                 }
             }
-            let _ = log_tx.send(EnipServerLogEntry {
-                timestamp: now_ms(),
-                service: "identity".into(),
-                tag_name: String::new(),
-                message: "GetAttributesAll Identity (controller props)".into(),
-            });
-            return reply;
+            _ = shutdown.changed() => break,
         }
     }
+}
 
-    // Parse path: service(1) + path_size(1) + class segment + instance segment
-    if request.len() < 8 {
-        return vec![0x81, 0x00, 0x01, 0x00]; // error
+/// Cyclic T→O producer: one UDP datagram per RPI carrying the current input
+/// assembly (tag value image) padded/truncated to the negotiated size. Stops
+/// when the O→T watchdog expires, like a real adapter dropping the connection.
+#[allow(clippy::too_many_arguments)]
+async fn io_producer(
+    sock: Arc<UdpSocket>,
+    dest: SocketAddr,
+    state: Arc<EnipServerState>,
+    o_to_t_id: u32,
+    t_to_o_id: u32,
+    api_us: u32,
+    payload_len: usize,
+    watchdog: Option<Duration>,
+    log_tx: mpsc::UnboundedSender<EnipServerLogEntry>,
+) {
+    let mut ticker = tokio::time::interval(Duration::from_micros(api_us as u64));
+    let mut seq32: u32 = 0;
+    let mut seq16: u16 = 0;
+    loop {
+        ticker.tick().await;
+        if let Some(limit) = watchdog {
+            let expired = state
+                .io
+                .lock()
+                .await
+                .get(&o_to_t_id)
+                .map(|c| c.last_rx.elapsed() > limit)
+                .unwrap_or(true);
+            if expired {
+                state.io.lock().await.remove(&o_to_t_id);
+                log(&log_tx, "forward_open", "", format!("I/O connection 0x{o_to_t_id:08X} timed out (no O→T data)"));
+                break;
+            }
+        }
+        let mut assembly = snapshot_input_assembly(&state).await;
+        assembly.resize(payload_len, 0);
+        seq32 = seq32.wrapping_add(1);
+        seq16 = seq16.wrapping_add(1);
+        let frame = build_io_packet(t_to_o_id, seq32, seq16, &assembly);
+        if sock.send_to(&frame, dest).await.is_err() {
+            break;
+        }
     }
+}
 
-    let path_words = request[1] as usize;
-    let path_bytes = path_words * 2;
-    if request.len() < 2 + path_bytes {
-        return vec![0x81, 0x00, 0x01, 0x00];
-    }
-
-    let path = &request[2..2 + path_bytes];
-
-    // Check if it's the Symbol class (0x6B)
-    let is_symbol_class = path.windows(2).any(|w| w[0] == 0x20 && w[1] == SYMBOL_CLASS_ID);
-
-    if !is_symbol_class {
-        return vec![0x81, 0x00, 0x08, 0x00]; // service not supported
-    }
-
-    // Extract instance ID
-    let instance_id = parse_instance_id(path);
+/// Encode the current tag values as a flat input-assembly byte image.
+async fn snapshot_input_assembly(state: &Arc<EnipServerState>) -> Vec<u8> {
     let tags = state.tags.lock().await;
-    let tag_list: Vec<&CipTagEntry> = tags.values().collect();
-
-    // Instance 0 = class-level, instance 1..N = individual symbols
-    let mut reply = vec![0x81, 0x00, 0x00, 0x00]; // success header
-
-    if instance_id == 0 {
-        // Class-level GetAttributeAll — return instance count
-        reply.extend_from_slice(&(tag_list.len() as u16).to_le_bytes());
-    } else {
-        let idx = (instance_id - 1) as usize;
-        if idx >= tag_list.len() {
-            return vec![0x81, 0x00, 0x04, 0x00]; // instance not found
-        }
-
-        let tag_keys: Vec<&String> = tags.keys().collect();
-        let name = tag_keys[idx];
-        let entry = &tag_list[idx];
-
-        // Build symbol instance data: name (CIP STRING) + type word
-        let name_bytes = name.as_bytes();
-        let name_len = name_bytes.len() as u32;
-        reply.extend_from_slice(&name_len.to_le_bytes());
-        reply.extend_from_slice(name_bytes);
-        // Pad to even
-        if name_bytes.len() % 2 != 0 {
-            reply.push(0x00);
-        }
-        // Type word: type_code in low byte, element_count in high byte
-        let type_word = match entry.template_id {
-            // Structure (UDT): bit 15 set + template id in the low bits. Clients
-            // read structure = word & 0x8000, templateId = word & 0x0FFF.
-            Some(tid) => 0x8000 | (tid as u16),
-            // Atomic: type_code in low byte, element_count in high byte.
-            None => ((entry.element_count as u16) << 8) | (entry.data_type.code() as u16),
-        };
-        reply.extend_from_slice(&type_word.to_le_bytes());
+    let mut out = Vec::new();
+    for entry in tags.values() {
+        out.extend_from_slice(&entry_image(entry).bytes);
     }
-
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "browse".into(),
-        tag_name: String::new(),
-        message: format!("Browse instance {instance_id} ({} tags)", tag_list.len()),
-    });
-
-    reply
+    out
 }
 
-// ── CIP GetAttributeSingle (0x0E) — lets the CIP tree read Identity attrs ──
+// ── CIP routing ──
 
-async fn handle_get_attribute_single(
-    request: &[u8],
-    _log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    let (class, instance, attr) = match parse_cip_class_instance_attr(request) {
-        Some(v) => v,
-        None => return vec![0x8E, 0x00, 0x06, 0x00], // amount of data invalid / path
-    };
+type BoxFut<'a> = Pin<Box<dyn Future<Output = Vec<u8>> + Send + 'a>>;
 
-    // Modelled objects: Identity (0x01), Base Energy (0x4F), Electrical Energy
-    // (0x4E) — all instance 1. Others fall through to "service not supported".
-    let payload = if class == 0x01 && instance == 1 {
-        identity_attribute(attr)
-    } else if class == 0x4F && instance == 1 {
-        energy_base_attribute(attr)
-    } else if class == 0x4E && instance == 1 {
-        electrical_energy_attribute(attr)
-    } else {
-        None
-    };
-
-    match payload {
-        Some(bytes) => {
-            let mut reply = vec![0x8E, 0x00, 0x00, 0x00]; // success
-            reply.extend_from_slice(&bytes);
-            reply
-        }
-        None => vec![0x8E, 0x00, 0x08, 0x00], // service not supported / no such attr
-    }
+/// Route a message-router request to its handler and return the bare reply
+/// (no ENIP / CPF wrapping). Shared by unconnected, connected and embedded
+/// (Unconnected_Send / Multiple_Service_Packet) paths.
+fn route_cip<'a>(
+    cip: &'a [u8],
+    state: &'a Arc<EnipServerState>,
+    log_tx: &'a mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> BoxFut<'a> {
+    Box::pin(route_cip_inner(cip, state, log_tx))
 }
 
-// ── CIP GetInstanceAttributeList (0x55) — controller tag enumeration ──
+/// Split a request path into leading symbolic segments (program scope) and the rest.
+fn split_scope(path: &[u8]) -> (&[u8], &[u8]) {
+    let mut i = 0;
+    while i + 1 < path.len() && path[i] == 0x91 {
+        let len = path[i + 1] as usize;
+        i += 2 + len + (len % 2);
+    }
+    let i = i.min(path.len());
+    path.split_at(i)
+}
 
-async fn handle_get_instance_attribute_list(
-    request: &[u8],
+async fn route_cip_inner(
+    cip: &[u8],
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
 ) -> Vec<u8> {
-    // st-ethernet-ip / RSLinx enumerate controller tags via GetInstanceAttributeList
-    // on the Symbol class (0x6B), requesting attrs 1 (name) and 2 (type). Reply
-    // data is, per instance: [id:u32][name_len:u16][name][type:u16]. Return every
-    // tag in one response (status 0). NEVER reply status 6 ("partial transfer"):
-    // the client paginates on 6 and its EPATH segment builder has a null-buffer
-    // bug for instance ids > 65535 (and for NaN), which crashes Node-RED.
-    if request.len() < 2 {
-        return vec![0xD5, 0x00, 0x01, 0x00]; // insufficient data
+    if cip.len() < 2 {
+        // Too short to carry a service byte — reply with a generic error so the
+        // client's parser never sees an empty message-router buffer.
+        return err_reply(cip.first().copied().unwrap_or(0), 0x13, &[]);
     }
-    let pw = request[1] as usize;
-    let path = request.get(2..2 + 2 * pw).unwrap_or(&[]);
-    let is_symbol = path.windows(2).any(|w| w[0] == 0x20 && w[1] == SYMBOL_CLASS_ID)
-        || path.windows(4).any(|w| w[0] == 0x21 && w[2] == SYMBOL_CLASS_ID && w[3] == 0x00);
-    if !is_symbol {
-        return vec![0xD5, 0x00, 0x08, 0x00]; // service not supported
-    }
-    let start = parse_instance_id(path);
-
-    // Scope: a leading "Program:<name>" symbolic segment = program scope;
-    // otherwise controller scope. Mirrors AB program-scoped browsing so the
-    // client discovers one program object per program instead of one per tag
-    // (which made st-ethernet-ip recurse N×N and report 144 tags for 12).
-    let scope = leading_program_scope(path);
-
-    // Build (name, type_code) records for this scope. Program objects are named
-    // "Program:<prog>"; program-scoped tags are emitted with the "Program:<prog>."
-    // prefix stripped — the form clients use to read them back, since the read
-    // path re-prepends the program scope.
-    let type_word_of = |e: &CipTagEntry| -> u16 {
-        e.template_id
-            .map(|t| 0x8000 | t as u16)
-            .unwrap_or_else(|| e.data_type.code() as u16)
+    let service = cip[0];
+    let pw = cip[1] as usize;
+    let path = match cip.get(2..2 + pw * 2) {
+        Some(p) => p,
+        None => return err_reply(service, 0x26, &[]), // path size invalid
     };
-    let mut records: Vec<(String, u16)> = Vec::new();
+    let (scope, rest) = split_scope(path);
+    let (class, instance, _attr) = parse_logical_path(rest);
+
+    match class {
+        Some(0x06) if instance == Some(1) => match service {
+            CIP_UNCONNECTED_SEND => handle_unconnected_send(cip, state, log_tx).await,
+            _ => err_reply(service, 0x08, &[]),
+        },
+        Some(0x02) if instance == Some(1) => match service {
+            CIP_MULTIPLE_SERVICE_PACKET => handle_multiple_service(cip, pw, state, log_tx).await,
+            _ => err_reply(service, 0x08, &[]),
+        },
+        Some(0x6C) => match service {
+            0x03 => handle_template_get_attributes(cip, instance, state, log_tx).await,
+            CIP_READ_TAG => handle_template_read(cip, pw, instance, state, log_tx).await,
+            _ => err_reply(service, 0x08, &[]),
+        },
+        Some(c) if c == SYMBOL_CLASS_ID as u16 => match service {
+            CIP_GET_INSTANCE_ATTRIBUTE_LIST => {
+                handle_get_instance_attribute_list(cip, pw, scope, instance.unwrap_or(0), state, log_tx).await
+            }
+            _ => err_reply(service, 0x08, &[]),
+        },
+        Some(0x01) => handle_identity(service, instance, rest),
+        Some(0x4F) | Some(0x4E) => handle_energy(service, class.unwrap(), instance, rest),
+        Some(_) => err_reply(service, 0x05, &[]),
+        None => match service {
+            CIP_READ_TAG | CIP_READ_TAG_FRAGMENTED => handle_read_tag(cip, pw, service, state, log_tx).await,
+            CIP_WRITE_TAG | CIP_WRITE_TAG_FRAGMENTED => handle_write_tag(cip, pw, service, state, log_tx).await,
+            _ => err_reply(service, 0x08, &[]),
+        },
+    }
+}
+
+/// Unconnected_Send: unwrap the embedded message, check the route path, and
+/// return the embedded reply as-is (the Connection Manager does not wrap
+/// successful replies — cpppo capture `D2 00 00 00 C3 00 …`).
+async fn handle_unconnected_send(
+    cip: &[u8],
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> Vec<u8> {
+    let (msg, route) = match parse_unconnected_send(cip) {
+        Some(v) => v,
+        None => return err_reply(CIP_UNCONNECTED_SEND, 0x01, &[0x0205]),
+    };
+    // The controller sits at backplane port 1, slot 0.
+    let mut i = 0;
+    while i < route.len() {
+        let seg = route[i];
+        if seg & 0xE0 != 0 {
+            return err_reply(CIP_UNCONNECTED_SEND, 0x01, &[0x0315]);
+        }
+        let port = seg & 0x0F;
+        if seg & 0x10 != 0 || port != 1 {
+            return err_reply(CIP_UNCONNECTED_SEND, 0x01, &[0x0311]);
+        }
+        if route.get(i + 1) != Some(&0) {
+            return err_reply(CIP_UNCONNECTED_SEND, 0x01, &[0x0312]);
+        }
+        i += 2;
+    }
+    route_cip(msg, state, log_tx).await
+}
+
+/// Multiple_Service_Packet: run each embedded request and pack the replies.
+/// The packet's own status is 0x1E (embedded service error) when any embedded
+/// reply failed, but the replies are still delivered (Vol 1 §A-5.1).
+async fn handle_multiple_service(
+    cip: &[u8],
+    path_words: usize,
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> Vec<u8> {
+    let data = &cip[2 + path_words * 2..];
+    let parts = match split_multiple_service_data(data) {
+        Ok(p) => p,
+        Err(_) => return err_reply(CIP_MULTIPLE_SERVICE_PACKET, 0x13, &[]),
+    };
+    log(log_tx, "multi_service", "", format!("Multiple_Service_Packet with {} services", parts.len()));
+    let mut replies = Vec::with_capacity(parts.len());
+    let mut any_error = false;
+    for p in &parts {
+        let r = route_cip(p, state, log_tx).await;
+        if r.get(2).copied().unwrap_or(1) != 0 && r.get(2) != Some(&CIP_STATUS_PARTIAL) {
+            any_error = true;
+        }
+        replies.push(r);
+    }
+    let mut out = vec![
+        CIP_MULTIPLE_SERVICE_PACKET | 0x80,
+        0x00,
+        if any_error { 0x1E } else { 0x00 },
+        0x00,
+    ];
+    out.extend_from_slice(&(replies.len() as u16).to_le_bytes());
+    let mut offset = 2 + 2 * replies.len();
+    for r in &replies {
+        out.extend_from_slice(&(offset as u16).to_le_bytes());
+        offset += r.len();
+    }
+    for r in &replies {
+        out.extend_from_slice(r);
+    }
+    out
+}
+
+// ── Tag database access ──
+
+/// A tag's wire image: type, element size, element count and raw bytes.
+struct Image {
+    ty: TagType,
+    es: usize,
+    total: usize,
+    bytes: Vec<u8>,
+}
+
+fn entry_image(entry: &CipTagEntry) -> Image {
+    if let Some(tid) = entry.template_id {
+        let bytes = match &entry.value {
+            CipValue::Bytes(b) => b.clone(),
+            _ => Vec::new(),
+        };
+        return Image { ty: TagType::structure(tid), es: bytes.len().max(1), total: 1, bytes };
+    }
+    let ty = TagType::for_data_type(entry.data_type);
+    let es = ty.element_size().unwrap_or(1);
+    match encode_tag_value(&ty, &entry.value) {
+        Ok((count, bytes)) => Image { ty, es, total: count.max(1) as usize, bytes },
+        Err(_) => Image { ty, es, total: 1, bytes: vec![0u8; es] },
+    }
+}
+
+/// Where a requested tag name lives: map key, first element, and — for UDT
+/// members — the (offset, size) slice inside the structure image.
+struct Resolved {
+    key: String,
+    start: usize,
+    member: Option<(usize, usize, CipDataType)>,
+}
+
+fn resolve_tag(name: &str, tags: &BTreeMap<String, CipTagEntry>, templates: &[CipTemplateDef]) -> Option<Resolved> {
+    if tags.contains_key(name) {
+        return Some(Resolved { key: name.to_string(), start: 0, member: None });
+    }
+    if let Some((base, idx)) = split_element_suffix(name) {
+        if let Some(e) = tags.get(base) {
+            if e.template_id.is_none() && (idx as usize) < entry_image(e).total {
+                return Some(Resolved { key: base.to_string(), start: idx as usize, member: None });
+            }
+        }
+    }
+    resolve_udt_member(name, tags, templates).map(|(key, off, size, dt)| Resolved {
+        key,
+        start: 0,
+        member: Some((off, size, dt)),
+    })
+}
+
+/// Image addressed by `r` (a whole tag, or a UDT member slice).
+fn resolved_image(entry: &CipTagEntry, r: &Resolved) -> Image {
+    let img = entry_image(entry);
+    match r.member {
+        Some((off, size, dt)) => {
+            let end = (off + size).min(img.bytes.len());
+            let bytes = img.bytes[off.min(end)..end].to_vec();
+            let es = dt.element_size().max(1) as usize;
+            Image { ty: TagType::atomic(dt.code()), es, total: (bytes.len() / es).max(1), bytes }
+        }
+        None => img,
+    }
+}
+
+fn aligned_limit(es: usize, limit: usize) -> usize {
+    let align = if es <= 8 { es.max(1) } else { 4 };
+    limit - limit % align
+}
+
+// ── CIP Read Tag (0x4C) / Read Tag Fragmented (0x52) ──
+
+async fn handle_read_tag(
+    cip: &[u8],
+    pw: usize,
+    service: u8,
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> Vec<u8> {
+    let path = &cip[2..2 + pw * 2];
+    let after = &cip[2 + pw * 2..];
+    let Some(name) = decode_symbolic_path(path) else {
+        return err_reply(service, 0x04, &[0x0000]);
+    };
+    let need = if service == CIP_READ_TAG_FRAGMENTED { 6 } else { 2 };
+    if after.len() < need {
+        return err_reply(service, 0x13, &[]);
+    }
+    let count = u16::from_le_bytes([after[0], after[1]]) as usize;
+    let offset = if service == CIP_READ_TAG_FRAGMENTED {
+        u32::from_le_bytes([after[2], after[3], after[4], after[5]]) as usize
+    } else {
+        0
+    };
+
+    let tags = state.tags.lock().await;
+    let Some(r) = resolve_tag(&name, &tags, &state.templates) else {
+        drop(tags);
+        log(log_tx, "read", &name, format!("Read tag not found: {name}"));
+        return err_reply(service, 0x04, &[0x0000]);
+    };
+    let entry = &tags[&r.key];
+    let img = resolved_image(entry, &r);
+    let display = entry.value.display_value();
+    drop(tags);
+
+    let first = r.start * img.es;
+    let want = count.max(1) * img.es;
+    if first + want > img.total * img.es || (img.es == 0) {
+        return err_reply(service, 0xFF, &[0x2105]);
+    }
+    let region = &img.bytes[first..first + want.min(img.bytes.len().saturating_sub(first))];
+    if offset > region.len() {
+        return err_reply(service, 0xFF, &[0x2105]);
+    }
+    let type_bytes = img.ty.encode();
+    let capacity = aligned_limit(img.es, REPLY_PAYLOAD_LIMIT - type_bytes.len());
+    let remaining = &region[offset..];
+    let (chunk, partial) = if remaining.len() > capacity {
+        (&remaining[..capacity], true)
+    } else {
+        (remaining, false)
+    };
+
+    let mut reply = vec![service | 0x80, 0x00, if partial { CIP_STATUS_PARTIAL } else { 0 }, 0x00];
+    reply.extend_from_slice(&type_bytes);
+    reply.extend_from_slice(chunk);
+    log(
+        log_tx,
+        "read",
+        &name,
+        format!("Read {} = {}{}", name, display, if partial { " (partial)" } else { "" }),
+    );
+    reply
+}
+
+// ── CIP Write Tag (0x4D) / Write Tag Fragmented (0x53) ──
+
+async fn handle_write_tag(
+    cip: &[u8],
+    pw: usize,
+    service: u8,
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> Vec<u8> {
+    let path = &cip[2..2 + pw * 2];
+    let after = &cip[2 + pw * 2..];
+    let Some(name) = decode_symbolic_path(path) else {
+        return err_reply(service, 0x04, &[0x0000]);
+    };
+    let Ok((req_ty, used)) = TagType::parse(after) else {
+        return err_reply(service, 0x13, &[]);
+    };
+    let fragmented = service == CIP_WRITE_TAG_FRAGMENTED;
+    let header = used + 2 + if fragmented { 4 } else { 0 };
+    if after.len() < header {
+        return err_reply(service, 0x13, &[]);
+    }
+    let count = u16::from_le_bytes([after[used], after[used + 1]]) as usize;
+    let offset = if fragmented {
+        u32::from_le_bytes(after[used + 2..used + 6].try_into().unwrap()) as usize
+    } else {
+        0
+    };
+    let data = &after[header..];
+
+    let mut tags = state.tags.lock().await;
+    let Some(r) = resolve_tag(&name, &tags, &state.templates) else {
+        drop(tags);
+        log(log_tx, "write", &name, format!("Write tag not found: {name}"));
+        return err_reply(service, 0x04, &[0x0000]);
+    };
+    let entry = tags.get_mut(&r.key).unwrap();
+    let whole = entry_image(entry);
+    let img = resolved_image(entry, &r);
+
+    if req_ty != img.ty {
+        return err_reply(service, 0xFF, &[0x2107]);
+    }
+    if count == 0 || r.start + count > img.total {
+        return err_reply(service, 0xFF, &[0x2105]);
+    }
+    let region_len = count * img.es;
+    if fragmented {
+        if offset + data.len() > region_len {
+            return err_reply(service, 0x15, &[]);
+        }
+    } else if data.len() < region_len {
+        return err_reply(service, 0x13, &[]);
+    } else if data.len() > region_len {
+        return err_reply(service, 0x15, &[]);
+    }
+
+    // Splice the new bytes into the tag image.
+    let mut bytes = whole.bytes.clone();
+    let base = match r.member {
+        Some((off, _, _)) => off,
+        None => 0,
+    } + r.start * img.es;
+    let at = base + offset;
+    if at + data.len() > bytes.len() {
+        return err_reply(service, 0xFF, &[0x2105]);
+    }
+    bytes[at..at + data.len()].copy_from_slice(data);
+
+    let previous = entry.value.display_value();
+    let new_value = if entry.template_id.is_some() {
+        Ok(CipValue::Bytes(bytes))
+    } else {
+        decode_tag_value(&whole.ty, &bytes, whole.total as u16)
+    };
+    match new_value {
+        Ok(v) => {
+            log(
+                log_tx,
+                "write",
+                &name,
+                format!("Write {} = {} (was {})", name, v.display_value(), previous),
+            );
+            entry.value = v;
+            ok_reply(service)
+        }
+        Err(_) => err_reply(service, 0x09, &[]),
+    }
+}
+
+// ── Symbol class: Get_Instance_Attribute_List (0x55) ──
+
+async fn handle_get_instance_attribute_list(
+    cip: &[u8],
+    pw: usize,
+    scope_path: &[u8],
+    start: u32,
+    state: &Arc<EnipServerState>,
+    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+) -> Vec<u8> {
+    let svc = CIP_GET_INSTANCE_ATTRIBUTE_LIST;
+    let after = &cip[2 + pw * 2..];
+    if after.len() < 2 {
+        return err_reply(svc, 0x13, &[]);
+    }
+    let n_attrs = u16::from_le_bytes([after[0], after[1]]) as usize;
+    if after.len() < 2 + n_attrs * 2 {
+        return err_reply(svc, 0x13, &[]);
+    }
+    let attrs: Vec<u16> = (0..n_attrs)
+        .map(|i| u16::from_le_bytes([after[2 + 2 * i], after[3 + 2 * i]]))
+        .collect();
+    if attrs.iter().any(|a| !matches!(a, 1 | 2 | 3 | 5 | 6 | 7 | 8 | 10)) {
+        return err_reply(svc, 0x14, &[]);
+    }
+
+    // A leading "Program:<name>" symbolic segment selects program scope.
+    let scope = decode_symbolic_path(scope_path).and_then(|s| s.strip_prefix("Program:").map(str::to_string));
+
+    struct Rec {
+        name: String,
+        type_word: u16,
+        es: usize,
+        dims: [u32; 3],
+    }
+    let rec_of = |name: String, e: &CipTagEntry| -> Rec {
+        let img = entry_image(e);
+        let (type_word, dims) = if e.template_id.is_some() {
+            (0x8000 | e.template_id.unwrap(), [0, 0, 0])
+        } else if e.data_type == CipDataType::String {
+            (0x8000 | STRUCT_HANDLE_LOGIX_STRING, [0, 0, 0])
+        } else {
+            (e.data_type.code() as u16, [0, 0, 0])
+        };
+        let (type_word, dims) = if img.total > 1 {
+            (type_word | 0x2000, [img.total as u32, 0, 0]) // one array dimension
+        } else {
+            (type_word, dims)
+        };
+        Rec { name, type_word, es: img.es, dims }
+    };
+
+    let mut records: Vec<Rec> = Vec::new();
     {
         let tags = state.tags.lock().await;
         match scope.as_deref() {
@@ -605,55 +1130,129 @@ async fn handle_get_instance_attribute_list(
                 let prefix = format!("Program:{prog}.");
                 for (name, entry) in tags.iter() {
                     if let Some(local) = name.strip_prefix(&prefix) {
-                        records.push((local.to_string(), type_word_of(entry)));
+                        records.push(rec_of(local.to_string(), entry));
                     }
                 }
             }
             None => {
-                let mut seen_programs = std::collections::BTreeSet::new();
+                let mut programs = std::collections::BTreeSet::new();
                 for (name, entry) in tags.iter() {
                     if let Some(rest) = name.strip_prefix("Program:") {
                         if let Some(prog) = rest.split('.').next() {
-                            seen_programs.insert(prog.to_string());
+                            programs.insert(prog.to_string());
                             continue;
                         }
                     }
-                    records.push((name.clone(), type_word_of(entry)));
+                    records.push(rec_of(name.clone(), entry));
                 }
-                for prog in seen_programs {
-                    records.push((format!("Program:{prog}"), 0));
+                for prog in programs {
+                    records.push(Rec { name: format!("Program:{prog}"), type_word: 0, es: 0, dims: [0; 3] });
                 }
             }
         }
     }
 
-    let mut reply = vec![0xD5, 0x00, 0x00, 0x00]; // success header
-    let mut id = 0u32;
-    let mut count = 0u32;
-    for (name, type_code) in &records {
-        id += 1;
-        if id <= start {
-            continue;
+    let mut reply = ok_reply(svc);
+    let mut partial = false;
+    let mut count = 0;
+    for (i, rec) in records.iter().enumerate() {
+        let id = (i + 1) as u32;
+        if id < start {
+            continue; // returns instances >= the requested id
         }
-        reply.extend_from_slice(&id.to_le_bytes());
-        let name_bytes = name.as_bytes();
-        reply.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
-        reply.extend_from_slice(name_bytes);
-        reply.extend_from_slice(&type_code.to_le_bytes());
+        let mut item = Vec::new();
+        item.extend_from_slice(&id.to_le_bytes());
+        for a in &attrs {
+            match a {
+                1 => {
+                    item.extend_from_slice(&(rec.name.len() as u16).to_le_bytes());
+                    item.extend_from_slice(rec.name.as_bytes());
+                }
+                2 => item.extend_from_slice(&rec.type_word.to_le_bytes()),
+                3 | 5 => item.extend_from_slice(&0u32.to_le_bytes()),
+                6 => item.extend_from_slice(&SOFTWARE_CONTROL_BASE_TAG.to_le_bytes()),
+                7 => item.extend_from_slice(&(rec.es as u16).to_le_bytes()),
+                8 => {
+                    for d in rec.dims {
+                        item.extend_from_slice(&d.to_le_bytes());
+                    }
+                }
+                10 => item.push(0), // external access: read/write
+                _ => unreachable!(),
+            }
+        }
+        if reply.len() - 4 + item.len() > REPLY_PAYLOAD_LIMIT && count > 0 {
+            partial = true;
+            break;
+        }
+        reply.extend_from_slice(&item);
         count += 1;
     }
+    if partial {
+        reply[2] = CIP_STATUS_PARTIAL;
+    }
 
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "browse".into(),
-        tag_name: String::new(),
-        message: format!(
-            "GetInstanceAttributeList scope={} ({count} records)",
-            scope.as_deref().unwrap_or("controller")
+    log(
+        log_tx,
+        "browse",
+        "",
+        format!(
+            "Get_Instance_Attribute_List scope={} from {start} ({count} records{})",
+            scope.as_deref().unwrap_or("controller"),
+            if partial { ", partial" } else { "" }
         ),
-    });
-
+    );
     reply
+}
+
+// ── Identity / energy objects ──
+
+fn handle_identity(service: u8, instance: Option<u32>, rest: &[u8]) -> Vec<u8> {
+    if instance != Some(1) {
+        return err_reply(service, 0x05, &[]);
+    }
+    match service {
+        // Get_Attributes_All returns attributes 1..=7 (no state byte) — verified
+        // against a 1756-L61 capture in cpppo's enip_test (`81 00 00 00 01 00 0E 00 36 00 …`).
+        CIP_GET_ATTRIBUTES_ALL => {
+            let mut reply = ok_reply(service);
+            for attr in 1u16..=7 {
+                reply.extend_from_slice(&identity_attribute(attr).unwrap());
+            }
+            reply
+        }
+        CIP_GET_ATTRIBUTE_SINGLE => {
+            let (_, _, attr) = parse_logical_path(rest);
+            match attr.and_then(identity_attribute) {
+                Some(bytes) => {
+                    let mut reply = ok_reply(service);
+                    reply.extend_from_slice(&bytes);
+                    reply
+                }
+                None => err_reply(service, 0x14, &[]),
+            }
+        }
+        _ => err_reply(service, 0x08, &[]),
+    }
+}
+
+fn handle_energy(service: u8, class: u16, instance: Option<u32>, rest: &[u8]) -> Vec<u8> {
+    if instance != Some(1) {
+        return err_reply(service, 0x05, &[]);
+    }
+    if service != CIP_GET_ATTRIBUTE_SINGLE {
+        return err_reply(service, 0x08, &[]);
+    }
+    let (_, _, attr) = parse_logical_path(rest);
+    let payload = attr.and_then(|a| if class == 0x4F { energy_base_attribute(a) } else { electrical_energy_attribute(a) });
+    match payload {
+        Some(bytes) => {
+            let mut reply = ok_reply(service);
+            reply.extend_from_slice(&bytes);
+            reply
+        }
+        None => err_reply(service, 0x14, &[]),
+    }
 }
 
 /// Bytes for an Identity object attribute (class 0x01, instance 1).
@@ -661,7 +1260,7 @@ fn identity_attribute(attr: u16) -> Option<Vec<u8>> {
     let mut b = Vec::new();
     match attr {
         1 => b.extend_from_slice(&1u16.to_le_bytes()),             // Vendor ID (Rockwell)
-        2 => b.extend_from_slice(&0x0Eu16.to_le_bytes()),          // Device Type (communications)
+        2 => b.extend_from_slice(&0x0Eu16.to_le_bytes()),          // Device Type (PLC)
         3 => b.extend_from_slice(&0x0050u16.to_le_bytes()),        // Product Code
         4 => {                                                      // Revision 20.11
             b.push(20);
@@ -674,6 +1273,7 @@ fn identity_attribute(attr: u16) -> Option<Vec<u8>> {
             b.push(name.len() as u8);
             b.extend_from_slice(name);
         }
+        8 => b.push(3),                                             // State: operational
         _ => return None,
     }
     Some(b)
@@ -719,217 +1319,7 @@ fn electrical_energy_attribute(attr: u16) -> Option<Vec<u8>> {
     Some(v.to_le_bytes().to_vec())
 }
 
-/// Parse class/instance/attribute from a CIP request EPath.
-/// Recognizes 8-bit segments (0x20,0x24,0x30) and 16-bit segments (0x21,0x25,0x31).
-fn parse_cip_class_instance_attr(request: &[u8]) -> Option<(u16, u32, u16)> {
-    if request.len() < 2 {
-        return None;
-    }
-    let pw = request[1] as usize;
-    let path = request.get(2..2 + 2 * pw)?;
-    let mut class = None;
-    let mut instance: u32 = 0;
-    let mut attr: u16 = 0;
-    let mut i = 0;
-    while i < path.len() {
-        let seg = path[i];
-        match seg {
-            0x20 if i + 1 < path.len() => {
-                class = Some(path[i + 1] as u16);
-                i += 2;
-            }
-            0x21 if i + 3 < path.len() => {
-                class = Some(u16::from_le_bytes([path[i + 2], path[i + 3]]));
-                i += 4;
-            }
-            0x24 if i + 1 < path.len() => {
-                instance = path[i + 1] as u32;
-                i += 2;
-            }
-            0x25 if i + 2 < path.len() => {
-                instance = u16::from_le_bytes([path[i + 1], path[i + 2]]) as u32;
-                i += 3;
-            }
-            0x30 if i + 1 < path.len() => {
-                attr = path[i + 1] as u16;
-                i += 2;
-            }
-            0x31 if i + 2 < path.len() => {
-                attr = u16::from_le_bytes([path[i + 1], path[i + 2]]);
-                i += 3;
-            }
-            _ => break,
-        }
-    }
-    Some((class?, instance, attr))
-}
-
-// ── Implicit IO: ForwardOpen / ForwardClose / SendUnitData + cyclic producer ──
-
-/// Extract the CIP payload from a SendRRData body.
-fn cip_payload_of(body: &[u8]) -> Option<&[u8]> {
-    if body.len() < 16 {
-        return None;
-    }
-    let data_len = u16::from_le_bytes([body[14], body[15]]) as usize;
-    body.get(16..16 + data_len)
-}
-
-/// A cyclic T→O producer to launch after the ForwardOpen reply is flushed.
-struct ProducerSpec {
-    t_to_o_connection_id: u32,
-    rpi_us: u32,
-}
-
-async fn handle_forward_open(
-    session_handle: u32,
-    sender_context: u64,
-    body: &[u8],
-    _state: &Arc<EnipServerState>,
-    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> (Vec<u8>, Option<ProducerSpec>) {
-    let cip = match cip_payload_of(body) {
-        Some(c) => c,
-        None => return (build_rr_error(session_handle, sender_context, "ForwardOpen bad body"), None),
-    };
-    if cip.len() < 4 {
-        return (build_rr_error(session_handle, sender_context, "ForwardOpen too short"), None);
-    }
-    let pw = cip[1] as usize;
-    let base = 2 + 2 * pw + 1; // skip service + path + timeout_ticks
-    if cip.len() < base + 16 {
-        return (build_rr_error(session_handle, sender_context, "ForwardOpen truncated"), None);
-    }
-    let o_to_t = u32::from_le_bytes(cip[base..base + 4].try_into().unwrap());
-    let t_to_o = u32::from_le_bytes(cip[base + 4..base + 8].try_into().unwrap());
-    let conn_serial = u16::from_le_bytes(cip[base + 8..base + 10].try_into().unwrap());
-    let vendor = u16::from_le_bytes(cip[base + 10..base + 12].try_into().unwrap());
-    let originator = u32::from_le_bytes(cip[base + 12..base + 16].try_into().unwrap());
-    // ForwardOpen fixed fields, offsets relative to `base` (= first byte past the
-    // 1-byte timeout, i.e. the O→T connection id under spec/explorer framing):
-    //   +0 O→T id(4) +4 T→T id(4) +8 conn serial(2) +10 vendor(2) +12 originator(4)
-    //   +16 timeout-mult(4) +20 O→T RPI(4) +24 O→T params(2) +26 T→O RPI(4)
-    //   +30 T→O params(2) +32 transport(1)  → path size → connection path.
-    let rpi_us = if cip.len() >= base + 30 {
-        u32::from_le_bytes(cip[base + 26..base + 30].try_into().unwrap())
-    } else {
-        1_000_000
-    };
-    // The connection path (port + target class) begins at base+35 under BOTH
-    // framings: the explorer uses 1 timeout byte + a 2-byte path size, while
-    // st-ethernet-ip uses 2 timeout bytes + a 1-byte path size — the extra
-    // leading byte is cancelled by the shorter size field, so the path lands at
-    // the same offset. Explicit (class-3) connections target the Message Router
-    // (class 0x02); the explorer's cyclic IO connection targets an Assembly (class 0x04).
-    // Produce cyclic T→O data ONLY for Assembly-targeted connections — pushing producer
-    // frames into any other connection (e.g. st-ethernet-ip's explicit Message Router
-    // connection) makes the client parse them as message-router replies (corruption /
-    // OOB crash / read-reply mismatches).
-    let conn_path = cip.get(base + 35..).unwrap_or(&[]);
-    let is_assembly = conn_path.windows(2).any(|w| w[0] == 0x20 && w[1] == 0x04);
-
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "forward_open".into(),
-        tag_name: String::new(),
-        message: format!(
-            "ForwardOpen conn_serial=0x{conn_serial:04X} t_to_o=0x{t_to_o:08X} rpi={rpi_us}us"
-        ),
-    });
-
-    // Reply 0xD4 success + assigned connection IDs (echo requested ids).
-    let mut payload = Vec::with_capacity(16);
-    payload.extend_from_slice(&o_to_t.to_le_bytes());
-    payload.extend_from_slice(&t_to_o.to_le_bytes());
-    payload.extend_from_slice(&conn_serial.to_le_bytes());
-    payload.extend_from_slice(&vendor.to_le_bytes());
-    payload.extend_from_slice(&originator.to_le_bytes());
-    let mut cip_reply = vec![0xD4, 0x00, 0x00, 0x00];
-    cip_reply.extend_from_slice(&payload);
-    (
-        build_rr_reply(session_handle, sender_context, &cip_reply),
-        if is_assembly {
-            Some(ProducerSpec { t_to_o_connection_id: t_to_o, rpi_us })
-        } else {
-            None
-        },
-    )
-}
-
-async fn handle_forward_close(
-    session_handle: u32,
-    sender_context: u64,
-    body: &[u8],
-    producers: &Arc<Mutex<Vec<JoinHandle<()>>>>,
-    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    let aborted = {
-        let mut handles = producers.lock().await;
-        let n = handles.len();
-        for h in handles.drain(..) {
-            h.abort();
-        }
-        n
-    };
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "forward_close".into(),
-        tag_name: String::new(),
-        message: format!("ForwardClose — aborted {aborted} producer(s)"),
-    });
-    let cip_reply = vec![0xCE, 0x00, 0x00, 0x00]; // success
-    let _ = body;
-    build_rr_reply(session_handle, sender_context, &cip_reply)
-}
-
-/// Route a CIP message-router request to its handler and return the bare
-/// message-router reply (no ENIP / RRData / SendUnitData wrapping). Shared by
-/// the unconnected (SendRRData) and connected (SendUnitData) paths.
-async fn route_cip(
-    cip: &[u8],
-    state: &Arc<EnipServerState>,
-    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    if cip.len() < 2 {
-        // Too short to carry a service byte — reply with a generic error so the
-        // client's parser never sees an empty message-router buffer (OOB crash).
-        return vec![cip.first().copied().unwrap_or(0) | 0x80, 0x00, 0x01, 0x00];
-    }
-    let service = cip[0];
-
-    // Template object (class 0x6C): serve member definitions so structure-typed
-    // tags decode into named members. st-ethernet-ip fetches attrs 4/5/2/1 via
-    // GetAttributeList (0x03), then reads the definition blob via Read Tag (0x4C).
-    if parse_target_class(cip) == Some(0x6C) {
-        return match service {
-            0x03 => handle_template_get_attributes(cip, state, log_tx).await,
-            0x4C => handle_template_read(cip, state, log_tx).await,
-            _ => vec![service | 0x80, 0x00, 0x08, 0x00],
-        };
-    }
-
-    match service {
-        0x4C | 0x52 => handle_read_tag(cip, state, log_tx).await, // Read Tag (+ Fragmented: extra offset/size data is ignored)
-        0x4D => handle_write_tag(cip, state, log_tx).await,
-        0x01 => handle_get_attribute_all(cip, state, log_tx).await,
-        0x0E => handle_get_attribute_single(cip, log_tx).await,
-        0x55 => handle_get_instance_attribute_list(cip, state, log_tx).await,
-        _ => vec![
-            service | 0x80, // reply service
-            0x00,           // reserved
-            0x08,           // service not supported
-            0x00,           // no extended status
-        ],
-    }
-}
-
 // ── Template object (class 0x6C) — UDT member definitions ──
-
-/// Class id targeted by a CIP request EPath, if it carries an 8/16-bit class
-/// segment (0x20/0x21). Symbolic (0x91) tag reads have no class segment → None.
-fn parse_target_class(request: &[u8]) -> Option<u16> {
-    parse_cip_class_instance_attr(request).map(|(c, _, _)| c)
-}
 
 impl CipTemplateDef {
     /// (member, byte offset, byte size) per member, naturally aligned to the
@@ -941,7 +1331,7 @@ impl CipTemplateDef {
             let size = m.data_type.element_size().max(1) as u32;
             let bytes = size * m.array_elements.max(1) as u32;
             let align = size.max(1);
-            offset = (offset + align - 1) / align * align;
+            offset = offset.div_ceil(align) * align;
             out.push((m, offset, bytes as u16));
             offset += bytes;
         }
@@ -958,20 +1348,20 @@ impl CipTemplateDef {
         total as u16
     }
 
-    /// Build the definition blob returned by Read Tag on class 0x6C. The
-    /// message-router reply data IS this blob (st-ethernet-ip parses it from
-    /// offset 0), so its first 4 bytes double as the Read Tag type+count fields.
-    /// Per member: [info:u16][type:u16][offset:u32] (8B); then
-    /// `[struct];\0[m0]\0[m1]\0…`, zero-padded to a 4-byte multiple.
+    /// Build the definition blob returned by Read Tag on class 0x6C. Per
+    /// member: `[array size or bit position:u16][type:u16][offset:u32]` (8
+    /// bytes, matching pycomm3 `_parse_template_data_member_info`); then
+    /// `{name};\0{m0}\0{m1}\0…`, zero-padded to a 4-byte multiple.
     fn build_definition_blob(&self) -> Vec<u8> {
         let mut blob = Vec::new();
         for (m, offset, _) in self.member_layout() {
-            blob.extend_from_slice(&0u16.to_le_bytes()); // info: atomic scalar
+            let info = if m.array_elements > 1 { m.array_elements } else { 0 };
+            blob.extend_from_slice(&info.to_le_bytes());
             blob.extend_from_slice(&(m.data_type.code() as u16).to_le_bytes());
             blob.extend_from_slice(&offset.to_le_bytes());
         }
         blob.extend_from_slice(self.name.as_bytes());
-        blob.push(0x3B); // ';' ends struct-name capture
+        blob.push(0x3B); // ';' ends the template-name field
         blob.push(0x00);
         for m in &self.members {
             blob.extend_from_slice(m.name.as_bytes());
@@ -983,10 +1373,11 @@ impl CipTemplateDef {
         blob
     }
 
-    /// ObjDefinitionSize (template size in 32-bit words). reqSize the client
-    /// reads = objDefSize*4 - 16 = blob length.
+    /// ObjectDefinitionSize in 32-bit words. Clients request
+    /// `words*4 - 23` (ODVA/Rockwell) or `words*4 - 21` (pycomm3) bytes, which
+    /// must cover the whole blob.
     fn obj_definition_size_words(&self) -> u32 {
-        (self.build_definition_blob().len() as u32 + 16) / 4
+        (self.build_definition_blob().len() as u32 + 23).div_ceil(4)
     }
 
     /// Pack member values (one f64 per member, in order) into the struct byte
@@ -994,7 +1385,7 @@ impl CipTemplateDef {
     pub fn pack_instance(&self, values: &[f64]) -> Vec<u8> {
         let mut buf = vec![0u8; self.structure_size_bytes() as usize];
         for ((m, off, _), v) in self.member_layout().iter().zip(values.iter()) {
-            let bytes = encode_atomic(m.data_type, *v);
+            let bytes = encode_member(m.data_type, *v);
             let start = *off as usize;
             if start + bytes.len() <= buf.len() {
                 buf[start..start + bytes.len()].copy_from_slice(&bytes);
@@ -1005,27 +1396,32 @@ impl CipTemplateDef {
 }
 
 /// Encode one atomic scalar value to little-endian bytes for struct packing.
-fn encode_atomic(dt: CipDataType, v: f64) -> Vec<u8> {
+fn encode_member(dt: CipDataType, v: f64) -> Vec<u8> {
     match dt {
         CipDataType::Bool => vec![if v >= 0.5 { 1 } else { 0 }],
         CipDataType::Sint => vec![(v.round() as i8) as u8],
+        CipDataType::Usint => vec![v.round() as u8],
         CipDataType::Int => (v.round() as i16).to_le_bytes().to_vec(),
+        CipDataType::Uint => (v.round() as u16).to_le_bytes().to_vec(),
         CipDataType::Dint => (v.round() as i32).to_le_bytes().to_vec(),
+        CipDataType::Udint | CipDataType::Dword => (v.round() as u32).to_le_bytes().to_vec(),
         CipDataType::Real => (v as f32).to_le_bytes().to_vec(),
         CipDataType::Lint => (v.round() as i64).to_le_bytes().to_vec(),
-        _ => Vec::new(),
+        CipDataType::Ulint => (v.round() as u64).to_le_bytes().to_vec(),
+        CipDataType::Lreal => v.to_le_bytes().to_vec(),
+        CipDataType::String => Vec::new(),
     }
 }
 
-/// Resolve `<udt_tag>.<member>` against the tag map + templates and return the
-/// member's atomic type + packed bytes sliced from the struct image. Used so
-/// clients can read individual struct fields (e.g. DriveInfo.Poles). Single
-/// level only (nested-UDT members return None for now). Case-insensitive member.
+/// Resolve `<udt_tag>.<member>` against the tag map + templates. Returns
+/// (map key, byte offset, byte size, member type) of the member inside the
+/// struct image. Single level only (nested-UDT members return None).
+/// Case-insensitive member.
 fn resolve_udt_member(
     name: &str,
     tags: &BTreeMap<String, CipTagEntry>,
     templates: &[CipTemplateDef],
-) -> Option<(CipDataType, Vec<u8>)> {
+) -> Option<(String, usize, usize, CipDataType)> {
     // Longest UDT tag name that prefixes `name` (most specific owner).
     let mut best: Option<(&str, &str)> = None;
     for (tag_name, entry) in tags.iter() {
@@ -1046,289 +1442,131 @@ fn resolve_udt_member(
     let entry = tags.get(tag_name)?;
     let tid = entry.template_id?;
     let tmpl = templates.iter().find(|t| t.id == tid)?;
-    let bytes = match &entry.value {
-        CipValue::Bytes(b) => b.as_slice(),
+    let image_len = match &entry.value {
+        CipValue::Bytes(b) => b.len(),
         _ => return None,
     };
     for (m, off, size) in tmpl.member_layout() {
         if m.name.eq_ignore_ascii_case(member_path) {
-            let start = off as usize;
-            let end = start + size as usize;
-            if end <= bytes.len() {
-                return Some((m.data_type, bytes[start..end].to_vec()));
+            let (start, len) = (off as usize, size as usize);
+            if start + len <= image_len {
+                return Some((tag_name.to_string(), start, len, m.data_type));
             }
         }
     }
     None
 }
 
-/// GetAttributeList (service 0x03) on a Template object instance — attrs 4, 5,
-/// 2, 1. st-ethernet-ip's `_parseReadTemplateAttributes` reads the four values
-/// at message-router data offsets 6 / 14 / 22 / 28 (relative to the data that
-/// begins AFTER the 4-byte router header). In the full reply buffer those land
-/// at 10 / 18 / 26 / 32:
-///   ObjDefinitionSize(u32@10)  StructureSize(u32@18)
-///   MemberCount(u16@26)        StructureHandle(u16@32)
+/// GetAttributeList (service 0x03) on a Template instance. The reply is
+/// `count u16` then per requested attribute `[id u16][status u16][value]`:
+/// attr 1 StructureHandle (UINT), 2 MemberCount (UINT), 4 ObjectDefinitionSize
+/// (UDINT, 32-bit words), 5 StructureSize (UDINT, bytes).
 async fn handle_template_get_attributes(
-    request: &[u8],
+    cip: &[u8],
+    instance: Option<u32>,
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
 ) -> Vec<u8> {
-    let (_, instance, _) = match parse_cip_class_instance_attr(request) {
-        Some(v) => v,
-        None => return vec![0x83, 0x00, 0x06, 0x00],
+    let svc = 0x03;
+    let Some(instance) = instance else {
+        return err_reply(svc, 0x04, &[]);
     };
-    let tmpl = match state.templates.iter().find(|t| t.id as u32 == instance) {
-        Some(t) => t,
-        None => return vec![0x83, 0x00, 0x04, 0x00],
+    let Some(tmpl) = state.templates.iter().find(|t| t.id as u32 == instance) else {
+        return err_reply(svc, 0x05, &[]);
     };
+    let pw = cip[1] as usize;
+    let after = &cip[2 + pw * 2..];
+    if after.len() < 2 {
+        return err_reply(svc, 0x13, &[]);
+    }
+    let n = u16::from_le_bytes([after[0], after[1]]) as usize;
+    if after.len() < 2 + n * 2 {
+        return err_reply(svc, 0x13, &[]);
+    }
 
-    let obj_def = tmpl.obj_definition_size_words();
-    let struct_size = tmpl.structure_size_bytes() as u32;
-    let member_count = tmpl.members.len() as u16;
-    let handle = tmpl.id;
+    let mut reply = ok_reply(svc);
+    reply.extend_from_slice(&(n as u16).to_le_bytes());
+    for i in 0..n {
+        let id = u16::from_le_bytes([after[2 + 2 * i], after[3 + 2 * i]]);
+        reply.extend_from_slice(&id.to_le_bytes());
+        match id {
+            1 => {
+                reply.extend_from_slice(&0u16.to_le_bytes());
+                reply.extend_from_slice(&tmpl.id.to_le_bytes());
+            }
+            2 => {
+                reply.extend_from_slice(&0u16.to_le_bytes());
+                reply.extend_from_slice(&(tmpl.members.len() as u16).to_le_bytes());
+            }
+            4 => {
+                reply.extend_from_slice(&0u16.to_le_bytes());
+                reply.extend_from_slice(&tmpl.obj_definition_size_words().to_le_bytes());
+            }
+            5 => {
+                reply.extend_from_slice(&0u16.to_le_bytes());
+                reply.extend_from_slice(&(tmpl.structure_size_bytes() as u32).to_le_bytes());
+            }
+            _ => reply.extend_from_slice(&0x0014u16.to_le_bytes()), // attribute not supported, no value
+        }
+    }
 
-    let mut data = vec![0u8; 34];
-    data[0] = 0x83; // GetAttributeList reply | reserved | status 0 | ext-len 0
-    data[4..6].copy_from_slice(&4u16.to_le_bytes()); // attribute count
-    data[10..14].copy_from_slice(&obj_def.to_le_bytes()); // attr 4
-    data[18..22].copy_from_slice(&struct_size.to_le_bytes()); // attr 5
-    data[26..28].copy_from_slice(&member_count.to_le_bytes()); // attr 2
-    data[32..34].copy_from_slice(&handle.to_le_bytes()); // attr 1
-
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "template".into(),
-        tag_name: tmpl.name.clone(),
-        message: format!(
-            "Template {} attrs: objDef={} structSize={} members={} handle={}",
-            tmpl.id, obj_def, struct_size, member_count, handle
-        ),
-    });
-
-    data
-}
-
-/// Read Tag (service 0x4C) on a Template object instance — returns the member
-/// definition blob. Reply is `[0xCC,0,0,0] + blob`; the blob's first 4 bytes
-/// (member 0 info + type) serve as the Read Tag type+count fields, exactly what
-/// st-ethernet-ip's `_parseReadTemplate` reads from offset 0.
-async fn handle_template_read(
-    request: &[u8],
-    state: &Arc<EnipServerState>,
-    log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
-) -> Vec<u8> {
-    let (_, instance, _) = match parse_cip_class_instance_attr(request) {
-        Some(v) => v,
-        None => return vec![0xCC, 0x00, 0x06, 0x00],
-    };
-    let tmpl = match state.templates.iter().find(|t| t.id as u32 == instance) {
-        Some(t) => t,
-        None => return vec![0xCC, 0x00, 0x04, 0x00],
-    };
-
-    let blob = tmpl.build_definition_blob();
-    let mut reply = vec![0xCC, 0x00, 0x00, 0x00]; // Read Tag reply + success
-    reply.extend_from_slice(&blob);
-
-    let _ = log_tx.send(EnipServerLogEntry {
-        timestamp: now_ms(),
-        service: "template".into(),
-        tag_name: tmpl.name.clone(),
-        message: format!("Template {} read: {} blob bytes", tmpl.id, blob.len()),
-    });
-
+    log(
+        log_tx,
+        "template",
+        &tmpl.name,
+        format!("Template {} attributes ({} requested)", tmpl.id, n),
+    );
     reply
 }
 
-/// Split an inbound SendUnitData body into (connection_id, sequence, cip).
-/// Item-typed walk so it tolerates address/data item ordering.
-fn parse_sud_body(body: &[u8]) -> Option<(u32, u16, &[u8])> {
-    if body.len() < 8 {
-        return None;
-    }
-    let mut pos = 8usize; // skip interface(4) + timeout(2) + item count(2)
-    let mut conn_id = 0u32;
-    let mut seq = 0u16;
-    let mut cip: &[u8] = &[];
-    for _ in 0..2 {
-        let header = body.get(pos..pos + 4)?;
-        let type_id = u16::from_le_bytes([header[0], header[1]]);
-        let len = u16::from_le_bytes([header[2], header[3]]) as usize;
-        pos += 4;
-        let item = body.get(pos..pos + len)?;
-        pos += len;
-        match type_id {
-            0x00A1 if item.len() >= 4 => {
-                conn_id = u32::from_le_bytes([item[0], item[1], item[2], item[3]]);
-            }
-            0x00B1 if item.len() >= 2 => {
-                seq = u16::from_le_bytes([item[0], item[1]]);
-                cip = &item[2..];
-            }
-            _ => {}
-        }
-    }
-    Some((conn_id, seq, cip))
-}
-
-/// Handle an inbound connected CIP request (SendUnitData). Routes the embedded
-/// message-router request and replies on the same connection id / sequence.
-/// Replying with an empty data item crashes st-ethernet-ip's message-router
-/// parser (readUInt8 on a zero-length buffer), so the reply is always ≥4 bytes.
-async fn handle_send_unit_data(
-    session_handle: u32,
-    body: &[u8],
+/// Read Tag (service 0x4C) on a Template instance: `offset u32 | bytes u16`
+/// request, definition-blob slice reply. Status 0x06 when the reply budget
+/// truncates the slice.
+async fn handle_template_read(
+    cip: &[u8],
+    pw: usize,
+    instance: Option<u32>,
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
 ) -> Vec<u8> {
-    let (conn_id, seq, cip) = parse_sud_body(body).unwrap_or((0, 0, &[]));
-    let cip_reply = route_cip(cip, state, log_tx).await;
-    build_send_unit_data(session_handle, conn_id, seq, &cip_reply)
-}
-
-/// Cyclic T→O producer: writes a SendUnitData frame encoding the current input
-/// assembly (snapshot of tag values) at the negotiated RPI.
-async fn cyclic_producer(
-    session_handle: u32,
-    t_to_o_connection_id: u32,
-    rpi_us: u32,
-    state: Arc<EnipServerState>,
-    writer: Arc<Mutex<OwnedWriteHalf>>,
-    _log_tx: mpsc::UnboundedSender<EnipServerLogEntry>,
-) {
-    let period_ms = (rpi_us / 1000).clamp(20, 10_000) as u64;
-    let mut ticker = tokio::time::interval(Duration::from_millis(period_ms));
-    let mut seq: u16 = 0;
-    loop {
-        ticker.tick().await;
-        let assembly = snapshot_input_assembly(&state).await;
-        let frame = build_send_unit_data(session_handle, t_to_o_connection_id, seq, &assembly);
-        seq = seq.wrapping_add(1);
-        let mut w = writer.lock().await;
-        if w.write_all(&frame).await.is_err() {
-            break;
-        }
+    let svc = CIP_READ_TAG;
+    let Some(instance) = instance else {
+        return err_reply(svc, 0x04, &[]);
+    };
+    let Some(tmpl) = state.templates.iter().find(|t| t.id as u32 == instance) else {
+        return err_reply(svc, 0x05, &[]);
+    };
+    let after = &cip[2 + pw * 2..];
+    if after.len() < 6 {
+        return err_reply(svc, 0x13, &[]);
     }
-}
+    let offset = u32::from_le_bytes(after[0..4].try_into().unwrap()) as usize;
+    let size = u16::from_le_bytes([after[4], after[5]]) as usize;
 
-/// Encode the current tag values as a flat input-assembly byte image.
-async fn snapshot_input_assembly(state: &Arc<EnipServerState>) -> Vec<u8> {
-    let tags = state.tags.lock().await;
-    let mut out = Vec::new();
-    for entry in tags.values() {
-        let (_type_code, data) = encode_cip_value(&entry.value);
-        out.extend_from_slice(&data);
+    let blob = tmpl.build_definition_blob();
+    if offset > blob.len() {
+        return err_reply(svc, 0xFF, &[0x2105]);
     }
-    out
+    let end = (offset + size).min(blob.len());
+    let want = &blob[offset..end];
+    let (chunk, partial) = if want.len() > REPLY_PAYLOAD_LIMIT {
+        (&want[..REPLY_PAYLOAD_LIMIT], true)
+    } else {
+        (want, false)
+    };
+    let mut reply = vec![svc | 0x80, 0x00, if partial { CIP_STATUS_PARTIAL } else { 0 }, 0x00];
+    reply.extend_from_slice(chunk);
+
+    log(
+        log_tx,
+        "template",
+        &tmpl.name,
+        format!("Template {} read: {} blob bytes @{offset}", tmpl.id, chunk.len()),
+    );
+    reply
 }
 
 // ── Helpers ──
-
-fn parse_tag_from_path(request: &[u8]) -> Option<String> {
-    if request.len() < 3 {
-        return None;
-    }
-    let path_words = request[1] as usize;
-    let path_bytes = path_words * 2;
-    if request.len() < 2 + path_bytes {
-        return None;
-    }
-    let path = &request[2..2 + path_bytes];
-
-    // Walk every ANSI-symbolic segment (0x91) in the path and join with '.'.
-    // Clients split dotted names ("Program:Main.Motor1.Speed") into separate
-    // symbolic segments (Program:Main / Motor1 / Speed); joining reconstructs the
-    // full tag name as stored in the map. Each 0x91 segment is padded to even.
-    let mut parts: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i + 1 < path.len() {
-        if path[i] != 0x91 {
-            break; // non-symbolic segment (element/bit) — stop collecting parts
-        }
-        let name_len = path[i + 1] as usize;
-        let seg = path.get(i + 2..i + 2 + name_len)?;
-        parts.push(std::str::from_utf8(seg).ok()?.to_string());
-        i += 2 + name_len;
-        if i % 2 != 0 {
-            i += 1; // symbolic segment pad byte
-        }
-    }
-    if parts.is_empty() {
-        return None;
-    }
-    Some(parts.join("."))
-}
-
-/// If the EPath contains a "Program:<name>" ANSI-symbolic segment, return
-/// <name> — the requested program scope. None = controller scope.
-fn leading_program_scope(path: &[u8]) -> Option<String> {
-    let mut i = 0;
-    while i + 1 < path.len() {
-        if path[i] == 0x91 {
-            let name_len = path[i + 1] as usize;
-            if let Some(seg) = path.get(i + 2..i + 2 + name_len) {
-                if let Ok(s) = std::str::from_utf8(seg) {
-                    if let Some(prog) = s.strip_prefix("Program:") {
-                        return Some(prog.to_string());
-                    }
-                }
-                i += 2 + name_len;
-                if i % 2 != 0 {
-                    i += 1;
-                }
-                continue;
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-fn parse_instance_id(path: &[u8]) -> u32 {
-    // Look for instance segment: 0x24 (8-bit) or 0x25 (16-bit)
-    let mut i = 0;
-    while i + 1 < path.len() {
-        if path[i] == 0x24 && i + 1 < path.len() {
-            return path[i + 1] as u32;
-        }
-        if path[i] == 0x25 && i + 2 < path.len() {
-            return u16::from_le_bytes([path[i + 1], path[i + 2]]) as u32;
-        }
-        i += 1;
-    }
-    0
-}
-
-fn build_enip_reply(command: u16, session_handle: u32, sender_context: u64, body: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(ENIP_HEADER_SIZE + body.len());
-    buf.extend_from_slice(&command.to_le_bytes());
-    buf.extend_from_slice(&(body.len() as u16).to_le_bytes());
-    buf.extend_from_slice(&session_handle.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes()); // status
-    buf.extend_from_slice(&sender_context.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes()); // options
-    buf.extend_from_slice(body);
-    buf
-}
-
-fn build_rr_reply(session_handle: u32, sender_context: u64, cip_data: &[u8]) -> Vec<u8> {
-    let mut rr_body = Vec::with_capacity(16 + cip_data.len());
-    rr_body.extend_from_slice(&0u32.to_le_bytes()); // interface handle
-    rr_body.extend_from_slice(&0u16.to_le_bytes()); // timeout
-    rr_body.extend_from_slice(&2u16.to_le_bytes()); // item count
-    rr_body.extend_from_slice(&0x0000u16.to_le_bytes()); // null address item
-    rr_body.extend_from_slice(&0u16.to_le_bytes()); // address length
-    rr_body.extend_from_slice(&0x00B2u16.to_le_bytes()); // unconnected data item
-    rr_body.extend_from_slice(&(cip_data.len() as u16).to_le_bytes());
-    rr_body.extend_from_slice(cip_data);
-    build_enip_reply(CMD_SEND_RR_DATA, session_handle, sender_context, &rr_body)
-}
-
-fn build_rr_error(session_handle: u32, sender_context: u64, _msg: &str) -> Vec<u8> {
-    let cip_error = vec![0x80, 0x00, 0x01, 0x00]; // generic error
-    build_rr_reply(session_handle, sender_context, &cip_error)
-}
 
 fn rand_session_handle() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1336,7 +1574,7 @@ fn rand_session_handle() -> u32 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u32;
-    ts.wrapping_mul(2654435761) // Knuth multiplicative hash
+    ts.wrapping_mul(2654435761).max(1) // Knuth multiplicative hash, never 0
 }
 
 fn now_ms() -> u64 {
@@ -1381,10 +1619,11 @@ mod tests {
         assert_eq!(u32::from_le_bytes(blob[12..16].try_into().unwrap()), 4);
         // struct name "DriveInfo" begins right after the 32 bytes of member records
         assert_eq!(&blob[32..41], b"DriveInfo".as_slice());
-        assert_eq!(blob[41], 0x3B); // ';' ends struct-name capture
-        // obj definition size (words) → client reqSize = objDef*4 - 16 = blob length
-        assert_eq!(t.obj_definition_size_words(), 25);
-        assert_eq!(t.obj_definition_size_words() * 4 - 16, blob.len() as u32);
+        assert_eq!(blob[41], 0x3B); // ';' ends the template-name field
+        // Both the ODVA (-23) and pycomm3 (-21) read sizes must cover the blob.
+        let words = t.obj_definition_size_words();
+        assert!(words * 4 - 23 >= blob.len() as u32);
+        assert!(words * 4 - 21 >= blob.len() as u32);
     }
 
     #[test]
@@ -1408,27 +1647,382 @@ mod tests {
             CipTagEntry {
                 data_type: CipDataType::Dint,
                 element_count: 1,
-                value: CipValue::Bytes(bytes),
+                value: CipValue::Bytes(bytes.clone()),
                 template_id: Some(1),
             },
         );
         let templates = vec![t];
 
         // Poles DINT @ offset 12
-        let (dt, slice) = resolve_udt_member("Program:Main.Motor1.DriveInfo.Poles", &tags, &templates)
+        let (key, off, size, dt) = resolve_udt_member("Program:Main.Motor1.DriveInfo.Poles", &tags, &templates)
             .expect("Poles resolves");
-        assert_eq!(dt, CipDataType::Dint);
-        assert_eq!(i32::from_le_bytes(slice[0..4].try_into().unwrap()), 4);
+        assert_eq!(key, "Program:Main.Motor1.DriveInfo");
+        assert_eq!((off, size, dt), (12, 4, CipDataType::Dint));
+        assert_eq!(i32::from_le_bytes(bytes[off..off + size].try_into().unwrap()), 4);
 
         // RatedSpeed REAL @ offset 0
-        let (dt, slice) =
-            resolve_udt_member("Program:Main.Motor1.DriveInfo.RatedSpeed", &tags, &templates)
-                .expect("RatedSpeed resolves");
+        let (_, off, size, dt) = resolve_udt_member("Program:Main.Motor1.DriveInfo.RatedSpeed", &tags, &templates)
+            .expect("RatedSpeed resolves");
         assert_eq!(dt, CipDataType::Real);
-        assert!((f32::from_le_bytes(slice[0..4].try_into().unwrap()) - 1450.0).abs() < 0.1);
+        assert!((f32::from_le_bytes(bytes[off..off + size].try_into().unwrap()) - 1450.0).abs() < 0.1);
 
         // Unknown member + nested member path both miss
         assert!(resolve_udt_member("Program:Main.Motor1.DriveInfo.Nope", &tags, &templates).is_none());
         assert!(resolve_udt_member("Program:Main.Motor1.DriveInfo.Poles.X", &tags, &templates).is_none());
+    }
+
+    // ── Protocol behaviour of the simulated target ──
+
+    fn h(s: &str) -> Vec<u8> {
+        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
+    }
+
+    fn tag(dt: CipDataType, count: u16, v: CipValue) -> CipTagDef {
+        CipTagDef { name: String::new(), data_type: dt, element_count: count, initial_value: v, template_id: None }
+    }
+
+    struct Fx {
+        state: Arc<EnipServerState>,
+        tx: mpsc::UnboundedSender<EnipServerLogEntry>,
+        _rx: mpsc::UnboundedReceiver<EnipServerLogEntry>,
+        _shutdown: watch::Sender<bool>,
+    }
+
+    impl Fx {
+        async fn new() -> Self {
+            let mut tags = vec![
+                CipTagDef { name: "Counter".into(), ..tag(CipDataType::Dint, 1, CipValue::Dint(7)) },
+                CipTagDef { name: "Speed".into(), ..tag(CipDataType::Real, 1, CipValue::Real(1.5)) },
+                CipTagDef { name: "Flag".into(), ..tag(CipDataType::Bool, 1, CipValue::Bool(true)) },
+                CipTagDef { name: "Name".into(), ..tag(CipDataType::String, 1, CipValue::String("Hi".into())) },
+                CipTagDef {
+                    name: "Arr".into(),
+                    ..tag(CipDataType::Dint, 300, CipValue::Array((0..300).map(CipValue::Dint).collect()))
+                },
+                CipTagDef { name: "Program:Main.Motor".into(), ..tag(CipDataType::Real, 1, CipValue::Real(2.5)) },
+            ];
+            for i in 0..60 {
+                tags.push(CipTagDef { name: format!("Bulk{i:03}_with_a_longish_name"), ..tag(CipDataType::Dint, 1, CipValue::Dint(i)) });
+            }
+            let t = drive_info_template();
+            let packed = t.pack_instance(&[1450.0, 12.4, 7.5, 4.0]);
+            tags.push(CipTagDef {
+                name: "Drive".into(),
+                data_type: CipDataType::Dint,
+                element_count: 1,
+                initial_value: CipValue::Bytes(packed),
+                template_id: Some(1),
+            });
+            let (state, rx, shutdown) = start_enip_server(
+                EnipServerConfig { port: 0, bind_addr: "127.0.0.1".into() },
+                tags,
+                vec![t],
+            )
+            .await
+            .unwrap();
+            let (tx, _unused) = mpsc::unbounded_channel();
+            Fx { state, tx, _rx: rx, _shutdown: shutdown }
+        }
+
+        async fn call(&self, req: &[u8]) -> Vec<u8> {
+            route_cip(req, &self.state, &self.tx).await
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_return_wire_exact_types() {
+        let fx = Fx::new().await;
+        assert_eq!(fx.call(&build_read_tag_request("Counter", 1).unwrap()).await, h("cc 00 00 00 c4 00 07 00 00 00"));
+        assert_eq!(fx.call(&build_read_tag_request("Speed", 1).unwrap()).await, h("cc 00 00 00 ca 00 00 00 c0 3f"));
+        // Logix BOOL read: one byte, 0xFF when set
+        assert_eq!(fx.call(&build_read_tag_request("Flag", 1).unwrap()).await, h("cc 00 00 00 c1 00 ff"));
+        // STRING is the structure A0 02 CE 0F + 88-byte image
+        let r = fx.call(&build_read_tag_request("Name", 1).unwrap()).await;
+        assert_eq!(&r[..8], &h("cc 00 00 00 a0 02 ce 0f")[..]);
+        assert_eq!(r.len(), 8 + 88);
+        assert_eq!(&r[8..14], &h("02 00 00 00 48 69")[..]);
+        // program-scoped, split into 0x91 segments
+        let r = fx.call(&build_read_tag_request("Program:Main.Motor", 1).unwrap()).await;
+        assert_eq!(r, h("cc 00 00 00 ca 00 00 00 20 40"));
+    }
+
+    #[tokio::test]
+    async fn unknown_tags_and_ranges_use_logix_status_codes() {
+        let fx = Fx::new().await;
+        // path segment error with one extended status word (Logix: `04 01 00 00`)
+        assert_eq!(fx.call(&build_read_tag_request("Nope", 1).unwrap()).await, h("cc 00 04 01 00 00"));
+        // reading past the end of an array: general 0xFF, ext 0x2105
+        assert_eq!(fx.call(&build_read_tag_request("Arr[299]", 2).unwrap()).await, h("cc 00 ff 01 05 21"));
+        // unsupported service on a tag path
+        assert_eq!(fx.call(&h("2a 03 91 04 54 65 73 74")).await[..3], h("aa 00 08"));
+        // unknown class
+        assert_eq!(fx.call(&h("0e 03 20 99 24 01 30 01")).await, h("8e 00 05 00"));
+    }
+
+    #[tokio::test]
+    async fn array_elements_and_ranges() {
+        let fx = Fx::new().await;
+        let r = fx.call(&build_read_tag_request("Arr[3]", 2).unwrap()).await;
+        assert_eq!(r, h("cc 00 00 00 c4 00 03 00 00 00 04 00 00 00"));
+    }
+
+    #[tokio::test]
+    async fn large_reads_come_back_partial_and_continue_with_fragmented_service() {
+        let fx = Fx::new().await;
+        let first = fx.call(&build_read_tag_request("Arr", 300).unwrap()).await;
+        assert_eq!(first[2], 0x06, "1200 bytes cannot fit one reply");
+        assert!(first.len() <= 4 + 2 + 480);
+        let mut data = first[6..].to_vec();
+        let mut rounds = 0;
+        loop {
+            let r = fx.call(&build_read_tag_fragmented_request("Arr", 300, data.len() as u32).unwrap()).await;
+            assert_eq!(r[0], 0xD2);
+            assert_eq!(&r[4..6], &h("c4 00")[..], "each fragment repeats the type");
+            data.extend_from_slice(&r[6..]);
+            rounds += 1;
+            if r[2] == 0 {
+                break;
+            }
+            assert_eq!(r[2], 0x06);
+        }
+        assert!(rounds >= 2);
+        assert_eq!(data.len(), 1200);
+        for (i, c) in data.chunks_exact(4).enumerate() {
+            assert_eq!(i32::from_le_bytes(c.try_into().unwrap()), i as i32);
+        }
+    }
+
+    #[tokio::test]
+    async fn writes_are_type_and_size_checked() {
+        let fx = Fx::new().await;
+        let dint = TagType::atomic(CIP_TYPE_DINT);
+        // wrong type → 0xFF / 0x2107 (this is what a real Logix answers)
+        let req = build_write_tag_request("Counter", &TagType::atomic(CIP_TYPE_REAL), 1, &1.0f32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 ff 01 07 21"));
+        // BOOL tag written with the old 4-byte encoding → too much data
+        let req = build_write_tag_request("Flag", &TagType::atomic(CIP_TYPE_BOOL), 1, &[0xFF, 0, 0, 0]).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 15 00"));
+        // too little data
+        let req = build_write_tag_request("Counter", &dint, 1, &[1, 2]).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 13 00"));
+        // unknown tag
+        let req = build_write_tag_request("Nope", &dint, 1, &1i32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 04 01 00 00"));
+        // success, then read back
+        let req = build_write_tag_request("Counter", &dint, 1, &42i32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
+        assert_eq!(fx.call(&build_read_tag_request("Counter", 1).unwrap()).await[6..], 42i32.to_le_bytes());
+        // BOOL written the Logix way (one byte)
+        let req = build_write_tag_request("Flag", &TagType::atomic(CIP_TYPE_BOOL), 1, &[0x00]).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
+        assert_eq!(fx.call(&build_read_tag_request("Flag", 1).unwrap()).await, h("cc 00 00 00 c1 00 00"));
+        // STRING write
+        let (_, image) = encode_tag_value(&TagType::logix_string(), &CipValue::String("Bye".into())).unwrap();
+        let req = build_write_tag_request("Name", &TagType::logix_string(), 1, &image).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
+        let r = fx.call(&build_read_tag_request("Name", 1).unwrap()).await;
+        assert_eq!(&r[8..15], &h("03 00 00 00 42 79 65")[..]);
+    }
+
+    #[tokio::test]
+    async fn fragmented_write_assembles_the_array() {
+        let fx = Fx::new().await;
+        let dint = TagType::atomic(CIP_TYPE_DINT);
+        let image: Vec<u8> = (0..300i32).flat_map(|i| (i + 1000).to_le_bytes()).collect();
+        for (n, chunk) in image.chunks(400).enumerate() {
+            let req = build_write_tag_fragmented_request("Arr", &dint, 300, (n * 400) as u32, chunk).unwrap();
+            assert_eq!(fx.call(&req).await, h("d3 00 00 00"));
+        }
+        let r = fx.call(&build_read_tag_request("Arr[299]", 1).unwrap()).await;
+        assert_eq!(&r[6..], &1299i32.to_le_bytes());
+        let r = fx.call(&build_read_tag_request("Arr[0]", 1).unwrap()).await;
+        assert_eq!(&r[6..], &1000i32.to_le_bytes());
+    }
+
+    #[tokio::test]
+    async fn structure_tags_and_members() {
+        let fx = Fx::new().await;
+        let r = fx.call(&build_read_tag_request("Drive", 1).unwrap()).await;
+        // type field A0 02 <handle = template id>, then the 16-byte image
+        assert_eq!(&r[..8], &h("cc 00 00 00 a0 02 01 00")[..]);
+        assert_eq!(r.len(), 8 + 16);
+        let r = fx.call(&build_read_tag_request("Drive.Poles", 1).unwrap()).await;
+        assert_eq!(r, h("cc 00 00 00 c4 00 04 00 00 00"));
+        // write a member through the structure image
+        let req = build_write_tag_request("Drive.Poles", &TagType::atomic(CIP_TYPE_DINT), 1, &6i32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
+        let r = fx.call(&build_read_tag_request("Drive.Poles", 1).unwrap()).await;
+        assert_eq!(&r[6..], &6i32.to_le_bytes());
+        // whole-structure write must carry the structure handle
+        let img = fx.call(&build_read_tag_request("Drive", 1).unwrap()).await[8..].to_vec();
+        let bad = build_write_tag_request("Drive", &TagType::structure(0x7777), 1, &img).unwrap();
+        assert_eq!(fx.call(&bad).await, h("cd 00 ff 01 07 21"));
+        let ok = build_write_tag_request("Drive", &TagType::structure(1), 1, &img).unwrap();
+        assert_eq!(fx.call(&ok).await, h("cd 00 00 00"));
+    }
+
+    #[tokio::test]
+    async fn multiple_service_packet_runs_each_request() {
+        let fx = Fx::new().await;
+        let reqs = vec![
+            build_read_tag_request("Counter", 1).unwrap(),
+            build_read_tag_request("Missing", 1).unwrap(),
+            build_read_tag_request("Speed", 1).unwrap(),
+        ];
+        let reply = fx.call(&build_multiple_service_packet(&reqs)).await;
+        // one embedded reply failed → 0x1E "embedded service error", replies still present
+        assert_eq!(&reply[..4], &h("8a 00 1e 00")[..]);
+        let parts = split_multiple_service_data(&reply[4..]).unwrap();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], h("cc 00 00 00 c4 00 07 00 00 00"));
+        assert_eq!(parts[1], h("cc 00 04 01 00 00"));
+        assert_eq!(parts[2], h("cc 00 00 00 ca 00 00 00 c0 3f"));
+        // all good → status 0
+        let ok = fx.call(&build_multiple_service_packet(&[reqs[0].clone(), reqs[2].clone()])).await;
+        assert_eq!(&ok[..4], &h("8a 00 00 00")[..]);
+    }
+
+    #[tokio::test]
+    async fn unconnected_send_routes_to_slot_zero_only() {
+        let fx = Fx::new().await;
+        let inner = build_read_tag_request("Counter", 1).unwrap();
+        // success: the reply is the embedded reply, not wrapped
+        let r = fx.call(&build_unconnected_send(&inner, &[0x01, 0x00])).await;
+        assert_eq!(r, h("cc 00 00 00 c4 00 07 00 00 00"));
+        // malformed embedded message (odd length, declares a path longer than it has):
+        // exercises the pad byte before the route and must not crash the target
+        let r = fx.call(&build_unconnected_send(&h("0e 02 20 01 24"), &[0x01, 0x00])).await;
+        assert_eq!(r[2], 0x26, "path size invalid: {r:02x?}");
+        // wrong slot / wrong port → Connection Manager errors with extended status
+        assert_eq!(fx.call(&build_unconnected_send(&inner, &[0x01, 0x05])).await, h("d2 00 01 01 12 03"));
+        assert_eq!(fx.call(&build_unconnected_send(&inner, &[0x02, 0x00])).await, h("d2 00 01 01 11 03"));
+    }
+
+    #[tokio::test]
+    async fn identity_object_replies_like_a_controller() {
+        let fx = Fx::new().await;
+        let gaa = fx.call(&build_generic_cip_request(CIP_GET_ATTRIBUTES_ALL, 1, 1, None, &[])).await;
+        assert_eq!(&gaa[..4], &h("81 00 00 00")[..]);
+        assert_eq!(gaa.len(), 4 + 2 + 2 + 2 + 2 + 2 + 4 + 1 + 8, "attributes 1-7, no state byte");
+        // unknown attribute: 0x14; unknown instance: 0x05; unsupported service: 0x08
+        assert_eq!(fx.call(&build_get_attribute_single_request(1, 1, 99)).await, h("8e 00 14 00"));
+        assert_eq!(fx.call(&build_get_attribute_single_request(1, 9, 1)).await, h("8e 00 05 00"));
+        assert_eq!(fx.call(&build_generic_cip_request(0x2A, 1, 1, None, &[])).await, h("aa 00 08 00"));
+    }
+
+    #[tokio::test]
+    async fn symbol_browse_paginates_with_status_6_and_instances_are_inclusive() {
+        let fx = Fx::new().await;
+        let mut start = 0u32;
+        let mut all: Vec<(u32, String)> = Vec::new();
+        let mut pages = 0;
+        loop {
+            let mut path = Vec::new();
+            push_logical(&mut path, 0x20, 0x6B);
+            push_logical(&mut path, 0x24, start);
+            let mut req = vec![CIP_GET_INSTANCE_ATTRIBUTE_LIST, (path.len() / 2) as u8];
+            req.extend_from_slice(&path);
+            req.extend_from_slice(&h("03 00 01 00 02 00 08 00"));
+            let r = fx.call(&req).await;
+            assert!(r[2] == 0 || r[2] == 6, "status {:02x}", r[2]);
+            let (syms, last) = crate::client::parse_symbol_records(&r[4..]).unwrap();
+            if let Some(first) = syms.first() {
+                assert_eq!(first.instance, start.max(1), "records start AT the requested instance");
+            }
+            all.extend(syms.into_iter().map(|s| (s.instance, s.name)));
+            pages += 1;
+            if r[2] == 0 {
+                break;
+            }
+            start = last.unwrap() + 1;
+        }
+        assert!(pages >= 2, "60+ tags must not fit one reply");
+        // contiguous ids, every top-level tag + the program object present exactly once
+        for (i, (id, _)) in all.iter().enumerate() {
+            assert_eq!(*id as usize, i + 1);
+        }
+        assert!(all.iter().any(|(_, n)| n == "Program:Main"));
+        assert!(all.iter().any(|(_, n)| n == "Arr"));
+        assert!(!all.iter().any(|(_, n)| n.contains("Motor")), "program tags only appear in program scope");
+
+        // program scope: leading Program:Main symbolic segment
+        let mut path = encode_symbolic_path("Program:Main").unwrap();
+        push_logical(&mut path, 0x20, 0x6B);
+        push_logical(&mut path, 0x24, 0);
+        let mut req = vec![CIP_GET_INSTANCE_ATTRIBUTE_LIST, (path.len() / 2) as u8];
+        req.extend_from_slice(&path);
+        req.extend_from_slice(&h("02 00 01 00 02 00"));
+        let r = fx.call(&req).await;
+        assert_eq!(r[2], 0);
+        // 02 00 → attributes 1,2 only: id(4) + name(2+5) + type(2)
+        assert_eq!(&r[4..], &h("01 00 00 00 05 00 4d 6f 74 6f 72 ca 00")[..]);
+        // unsupported attribute → 0x14
+        let mut bad = req.clone();
+        let n = bad.len();
+        bad[n - 4..].copy_from_slice(&h("63 00 02 00"));
+        assert_eq!(fx.call(&bad).await[2], 0x14);
+    }
+
+    #[tokio::test]
+    async fn symbol_types_report_arrays_structs_and_strings() {
+        let fx = Fx::new().await;
+        let mut path = Vec::new();
+        push_logical(&mut path, 0x20, 0x6B);
+        push_logical(&mut path, 0x24, 0);
+        let mut req = vec![CIP_GET_INSTANCE_ATTRIBUTE_LIST, (path.len() / 2) as u8];
+        req.extend_from_slice(&path);
+        req.extend_from_slice(&h("03 00 01 00 02 00 08 00"));
+        // collect a few pages so every fixture tag is seen
+        let mut syms = Vec::new();
+        let mut start = 0;
+        loop {
+            let mut r = req.clone();
+            let mut p = Vec::new();
+            push_logical(&mut p, 0x20, 0x6B);
+            push_logical(&mut p, 0x24, start);
+            r.splice(2..2 + path.len(), p);
+            let reply = fx.call(&r).await;
+            let (s, last) = crate::client::parse_symbol_records(&reply[4..]).unwrap();
+            syms.extend(s);
+            if reply[2] == 0 {
+                break;
+            }
+            start = last.unwrap() + 1;
+        }
+        let find = |n: &str| syms.iter().find(|s| s.name == n).unwrap().clone();
+        assert_eq!(find("Counter").type_word, 0x00C4);
+        assert_eq!(find("Name").type_word, 0x8FCE);
+        assert_eq!(find("Drive").type_word, 0x8001);
+        let arr = find("Arr");
+        assert_eq!(arr.type_word, 0x20C4, "one dimension in bits 13-14, not an element count in the high byte");
+        assert_eq!(arr.dims, [300, 0, 0]);
+    }
+
+    #[tokio::test]
+    async fn template_attributes_and_sliced_definition_reads() {
+        let fx = Fx::new().await;
+        let req = build_generic_cip_request(0x03, 0x6C, 1, None, &h("04 00 04 00 05 00 02 00 01 00"));
+        let r = fx.call(&req).await;
+        assert_eq!(&r[..4], &h("83 00 00 00")[..]);
+        let attrs = crate::templates::parse_template_attrs(&r[4..]).expect("attrs");
+        assert_eq!((attrs.structure_size, attrs.member_count, attrs.handle), (16, 4, 1));
+        // pycomm3 reads (words*4 - 21) bytes starting at offset 0; the target clips at the blob end
+        let want = attrs.obj_definition_words as usize * 4 - 21;
+        let mut data = 0u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&(want as u16).to_le_bytes());
+        let blob = fx.call(&build_generic_cip_request(CIP_READ_TAG, 0x6C, 1, None, &data)).await;
+        assert_eq!(blob[2], 0);
+        let (name, members) = crate::templates::parse_template_blob(&blob[4..], attrs.member_count as usize).unwrap();
+        assert_eq!(name, "DriveInfo");
+        assert_eq!(members.len(), 4);
+        assert_eq!(members[3].name, "Poles");
+        // a slice from offset 32 returns the name table onwards
+        let mut data = 32u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&9u16.to_le_bytes());
+        let slice = fx.call(&build_generic_cip_request(CIP_READ_TAG, 0x6C, 1, None, &data)).await;
+        assert_eq!(&slice[4..], b"DriveInfo");
+        // Template without offset/size is malformed
+        let r = fx.call(&build_generic_cip_request(CIP_READ_TAG, 0x6C, 1, None, &[])).await;
+        assert_eq!(r[2], 0x13);
     }
 }

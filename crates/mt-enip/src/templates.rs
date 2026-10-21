@@ -18,7 +18,7 @@
 use mt_protocol::{ProtocolClient, ProtocolError};
 
 use crate::client::EnipClient;
-use crate::types::{CipDataType, CipTemplateDef, CipTemplateMember, CIP_READ_TAG};
+use crate::types::{CipDataType, CipTemplateDef, CipTemplateMember};
 
 /// CIP Template object class id.
 const TEMPLATE_CLASS_ID: u16 = 0x6C;
@@ -28,7 +28,7 @@ const CIP_GET_ATTRIBUTE_LIST: u8 = 0x03;
 /// Attributes of one Template instance, as served by GetAttributeList.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TemplateAttrs {
-    /// ObjDefinitionSize in 32-bit words (blob length = words*4 - 16).
+    /// ObjDefinitionSize in 32-bit words (definition bytes ≈ words*4 - 23).
     pub obj_definition_words: u32,
     /// Packed byte length of one struct instance.
     pub structure_size: u16,
@@ -86,11 +86,15 @@ pub fn parse_template_blob(blob: &[u8], member_count: usize) -> Option<(String, 
     let mut members = Vec::with_capacity(member_count);
     for i in 0..member_count {
         let off = i * 8;
+        // [info:u16][type:u16][offset:u32]: info is the array length for array
+        // members (the BOOL bit position for BOOL members), 0 for scalars.
+        let info = u16::from_le_bytes(blob[off..off + 2].try_into().ok()?);
         let type_word = u16::from_le_bytes(blob[off + 2..off + 4].try_into().ok()?);
+        let data_type = CipDataType::from_code(type_word as u8).unwrap_or(CipDataType::Real);
         members.push(CipTemplateMember {
             name: String::new(), // filled from the name table below
-            data_type: CipDataType::from_code(type_word as u8).unwrap_or(CipDataType::Real),
-            array_elements: 1,
+            data_type,
+            array_elements: if data_type == CipDataType::Bool || info == 0 { 1 } else { info },
         });
     }
 
@@ -122,8 +126,9 @@ pub async fn read_templates(
     Ok(out)
 }
 
-/// Read one Template instance: GetAttributeList for the member count, then
-/// Read for the definition blob.
+/// Read one Template instance: GetAttributeList for the sizes, then Read Tag
+/// (service 0x4C with `offset u32 | length u16`, repeated while the device
+/// answers partial-transfer) for the definition blob.
 async fn read_template(client: &EnipClient, id: u16) -> Result<CipTemplateDef, ProtocolError> {
     // Request payload: [count:u16][attr 4][attr 5][attr 2][attr 1].
     let mut req = 4u16.to_le_bytes().to_vec();
@@ -137,9 +142,10 @@ async fn read_template(client: &EnipClient, id: u16) -> Result<CipTemplateDef, P
         ProtocolError::Other(format!("unparseable Template attributes for instance {id}"))
     })?;
 
-    let blob = client
-        .generic_cip(CIP_READ_TAG, TEMPLATE_CLASS_ID, id as u32, None, Vec::new())
-        .await?;
+    // Definition bytes to request: (ObjectDefinitionSize × 4) − 21, the size
+    // pycomm3 requests from real controllers; the device clips at the end.
+    let blob_len = (attrs.obj_definition_words as usize * 4).saturating_sub(21);
+    let blob = client.read_template_blob(id as u32, blob_len).await?;
     let (name, members) = parse_template_blob(&blob, attrs.member_count as usize)
         .ok_or_else(|| ProtocolError::Other(format!("unparseable Template blob for instance {id}")))?;
 
@@ -160,7 +166,7 @@ mod tests {
     fn blob_for(name: &str, members: &[(&str, CipDataType)]) -> Vec<u8> {
         let mut blob = Vec::new();
         let mut offset = 0u32;
-        for (mn, dt) in members {
+        for (_, dt) in members {
             let size = dt.element_size().max(1) as u32;
             offset = (offset + size - 1) / size * size;
             blob.extend_from_slice(&0u16.to_le_bytes());

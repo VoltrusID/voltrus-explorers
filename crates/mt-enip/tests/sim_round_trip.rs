@@ -31,6 +31,7 @@ fn cfg(port: u16) -> EnipConfig {
         host: "127.0.0.1".into(),
         port,
         poll_interval_ms: 1000,
+        route_path: None,
     }
 }
 

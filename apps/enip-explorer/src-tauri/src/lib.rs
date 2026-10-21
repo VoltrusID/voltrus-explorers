@@ -531,7 +531,10 @@ async fn server_write_tag(
     let server_state = adapter.state.as_ref().ok_or("Server not running")?;
     let mut tags = server_state.tags.lock().await;
     let entry = tags.get_mut(&name).ok_or(format!("Tag not found: {name}"))?;
-    entry.value = value;
+    match value {
+        CipValue::Array(_) | CipValue::Bytes(_) | CipValue::String(_) => entry.value = value,
+        scalar => mt_enip::server::assign_scalar(entry, scalar),
+    }
     Ok(())
 }
 
@@ -545,12 +548,8 @@ async fn server_set_tags(
     let mut tags = server_state.tags.lock().await;
     tags.clear();
     for t in new_tags {
-        tags.insert(t.name.clone(), mt_enip::CipTagEntry {
-            data_type: t.data_type,
-            element_count: t.element_count,
-            value: t.initial_value,
-            template_id: None,
-        });
+        let (name, entry) = mt_enip::server::tag_entry_from_def(t);
+        tags.insert(name, entry);
     }
     Ok(())
 }

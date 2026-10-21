@@ -63,6 +63,8 @@ async fn sim_responds_to_list_identity() {
     assert_eq!(parsed.product_name, "ENIP-Sim");
     // Reply source port == the sim's bind port (44818 in the app) == TCP port.
     assert_eq!(_peer.port(), port);
+    // The identity item advertises the TCP port to connect to.
+    assert_eq!(parsed.port, port);
 
     dev.stop();
 }

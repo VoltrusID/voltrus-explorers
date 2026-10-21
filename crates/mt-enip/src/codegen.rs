@@ -28,8 +28,7 @@ use crate::types::{CipDataType, CipTagDef, CipTemplateDef};
 ///
 /// This is the single CIP→IEC mapping table used by both the wire parser
 /// ([`crate::templates`]) and this codegen. Returns `None` for codes without a
-/// mapping (e.g. LWORD/LREAL, which `CipDataType` cannot express today);
-/// callers fall back to `REAL`.
+/// mapping (time/date types, vendor types); callers fall back to `REAL`.
 pub fn iec_type_from_cip_code(code: u8) -> Option<&'static str> {
     Some(match code {
         crate::types::CIP_TYPE_BOOL => "BOOL",
@@ -37,9 +36,15 @@ pub fn iec_type_from_cip_code(code: u8) -> Option<&'static str> {
         crate::types::CIP_TYPE_INT => "INT",
         crate::types::CIP_TYPE_DINT => "DINT",
         crate::types::CIP_TYPE_LINT => "LINT",
+        crate::types::CIP_TYPE_USINT => "USINT",
+        crate::types::CIP_TYPE_UINT => "UINT",
+        crate::types::CIP_TYPE_UDINT => "UDINT",
+        crate::types::CIP_TYPE_ULINT => "ULINT",
         crate::types::CIP_TYPE_REAL => "REAL",
+        crate::types::CIP_TYPE_LREAL => "LREAL",
         crate::types::CIP_TYPE_STRING => "STRING",
         crate::types::CIP_TYPE_DWORD => "DWORD",
+        crate::types::CIP_TYPE_LWORD => "LWORD",
         _ => return None,
     })
 }

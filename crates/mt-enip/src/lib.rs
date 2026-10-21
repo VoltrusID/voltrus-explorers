@@ -19,6 +19,7 @@
 //!         host: "192.168.1.100".into(),
 //!         port: 44818,
 //!         poll_interval_ms: 1000,
+//!         route_path: Some("1,0".into()), // ControlLogix in slot 0
 //!     };
 //!
 //!     let client = EnipClient::connect(config).await?;
@@ -37,6 +38,7 @@
 
 pub use mt_protocol::ProtocolClient;
 
+pub mod cip;
 pub mod client;
 pub mod codegen;
 pub mod packets;
@@ -45,16 +47,20 @@ pub mod sim;
 pub mod templates;
 pub mod types;
 
+#[cfg(test)]
+mod conformance_tests;
+
 // Re-export the primary public API at the crate root.
+pub use cip::{encapsulation_status_text, extended_status_text, general_status_text, CipError};
 pub use client::{EnipClient, IoConnection, IoSample, browse_tags, discover_devices, read_tags, write_tag};
 pub use codegen::{iec_type_from_cip_code, member_type_name, udt_templates_to_st};
 pub use templates::read_templates;
 pub use server::{start_enip_server, EnipServerState, CipTagEntry};
 pub use sim::{EnipSimDevice, SimPointDef, SimSnapPoint, SimSnapshot};
 pub use types::{
-    Backoff, CipDataType, CipTag, CipTagDef, CipTemplateDef, CipTemplateMember, CipValue, EnipConfig, EnipDevice,
-    EnipServerConfig, EnipServerLogEntry, ForwardOpenParams, ForwardOpenResult, IdentityInfo,
-    PacketDir, PacketRecord,
-    IDENTITY_CLASS_ID, validate_tag_name,
+    Backoff, CipDataType, CipTag, CipTagDef, CipTemplateDef, CipTemplateMember, CipValue, ConnectionType,
+    EnipConfig, EnipDevice, EnipServerConfig, EnipServerLogEntry, ForwardOpenParams, ForwardOpenResult,
+    IdentityInfo, PacketDir, PacketRecord,
+    IDENTITY_CLASS_ID, network_connection_params, validate_tag_name,
     vendor_name,
 };

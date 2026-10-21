@@ -1,8 +1,11 @@
-#![allow(clippy::vec_init_then_push)]
+//! EtherNet/IP encapsulation, Common Packet Format and Connection Manager
+//! packet builders/parsers (ODVA CIP Vol 2 §2, Vol 1 §3-5.5).
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
+use crate::cip::{build_epath, CipReply};
 use crate::types::*;
 
 // ── Monotonically increasing sender context ──
@@ -13,391 +16,179 @@ fn next_sender_context() -> u64 {
     SENDER_CONTEXT_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-// ── Packet construction helpers ──
+// ── Encapsulation header ──
 
+/// Build an encapsulation frame: `command u16 | length u16 | session u32 |
+/// status u32 | sender context u64 | options u32 | data` (Vol 2 §2-3).
 pub(crate) fn build_enip_header(command: u16, session_handle: u32, _options: u32, body: &[u8]) -> Vec<u8> {
-    let sender_context = next_sender_context();
+    build_enip_frame(command, session_handle, next_sender_context(), 0, body)
+}
+
+/// Same as [`build_enip_header`] with an explicit sender context and status
+/// (server replies echo the request's context).
+pub(crate) fn build_enip_frame(command: u16, session_handle: u32, sender_context: u64, status: u32, body: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(ENIP_HEADER_SIZE + body.len());
     buf.extend_from_slice(&command.to_le_bytes());
     buf.extend_from_slice(&(body.len() as u16).to_le_bytes());
     buf.extend_from_slice(&session_handle.to_le_bytes());
-    buf.extend_from_slice(&0u32.to_le_bytes()); // status
-    buf.extend_from_slice(&sender_context.to_le_bytes()); // sender context
+    buf.extend_from_slice(&status.to_le_bytes());
+    buf.extend_from_slice(&sender_context.to_le_bytes());
     buf.extend_from_slice(&0u32.to_le_bytes()); // options
     buf.extend_from_slice(body);
     buf
 }
 
-/// Build a CIP Read Tag request for explicit messaging.
-pub(crate) fn build_read_tag_request(tag_name: &str, element_count: u16) -> Vec<u8> {
-    let mut request = Vec::new();
+// ── Common Packet Format ──
 
-    // CIP service: Read Tag
-    request.push(CIP_READ_TAG);
+pub(crate) const CPF_NULL_ADDRESS: u16 = 0x0000;
+pub(crate) const CPF_LIST_IDENTITY: u16 = 0x000C;
+pub(crate) const CPF_CONNECTED_ADDRESS: u16 = 0x00A1;
+pub(crate) const CPF_CONNECTED_DATA: u16 = 0x00B1;
+pub(crate) const CPF_UNCONNECTED_DATA: u16 = 0x00B2;
+/// Sockaddr Info, originator → target (carried in Forward_Open request/reply).
+pub(crate) const CPF_SOCKADDR_O_TO_T: u16 = 0x8000;
+/// Sockaddr Info, target → originator.
+pub(crate) const CPF_SOCKADDR_T_TO_O: u16 = 0x8001;
+/// Sequenced Address item used by class 0/1 implicit I/O over UDP.
+pub(crate) const CPF_SEQUENCED_ADDRESS: u16 = 0x8002;
 
-    // Request path: encode tag name as symbolic segment
-    let path = build_symbolic_path(tag_name);
-    request.push((path.len() / 2) as u8); // path size in words
-    request.extend_from_slice(&path);
-
-    // Number of elements to read
-    request.extend_from_slice(&element_count.to_le_bytes());
-
-    request
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CpfItem {
+    pub type_id: u16,
+    pub data: Vec<u8>,
 }
 
-/// Build a CIP Write Tag request.
-pub(crate) fn build_write_tag_request(tag_name: &str, value: &CipValue, element_count: u16) -> Vec<u8> {
-    let mut request = Vec::new();
-
-    // CIP service: Write Tag
-    request.push(CIP_WRITE_TAG);
-
-    // Request path
-    let path = build_symbolic_path(tag_name);
-    request.push((path.len() / 2) as u8);
-    request.extend_from_slice(&path);
-
-    // Data type
-    let (type_code, data) = encode_cip_value(value);
-    request.extend_from_slice(&(type_code as u16).to_le_bytes());
-
-    // Number of elements
-    request.extend_from_slice(&element_count.to_le_bytes());
-
-    // Value data
-    request.extend_from_slice(&data);
-
-    request
-}
-
-/// Build a CIP GetAttributeAll request for a class instance.
-pub(crate) fn build_get_attribute_all_request(class_id: u8, instance_id: u32) -> Vec<u8> {
-    let mut request = Vec::new();
-
-    // CIP service: GetAttributeAll
-    request.push(CIP_GET_ATTRIBUTES_ALL);
-
-    // Path: class + instance
-    request.push(0x03); // 3 words
-
-    // Class segment: 0x20 = logical class segment, 8-bit
-    request.push(0x20);
-    request.push(class_id);
-    request.push(0x00); // padding
-
-    // Instance segment: 0x24 = logical instance segment, 8-bit
-    if instance_id <= 255 {
-        request.push(0x24);
-        request.push(instance_id as u8);
-        request.push(0x00);
-        request.push(0x00);
-    } else {
-        // 16-bit instance
-        request[1] = 0x04; // 4 words
-        request.push(0x25); // logical instance segment, 16-bit
-        request.push(0x00); // padding
-        request.extend_from_slice(&(instance_id as u16).to_le_bytes());
-    }
-
-    request
-}
-
-/// Encode a tag name as a CIP symbolic path segment.
-pub(crate) fn build_symbolic_path(tag_name: &str) -> Vec<u8> {
-    let bytes = tag_name.as_bytes();
-    let len = bytes.len();
-
-    let mut path = Vec::with_capacity(len + 2);
-
-    if len <= 255 {
-        // Extended symbolic segment: type 0x91
-        path.push(0x91);
-        path.push(len as u8);
-        path.extend_from_slice(bytes);
-
-        // Pad to even length
-        if !len.is_multiple_of(2) {
-            path.push(0x00);
-        }
-    } else {
-        // Long symbolic segment (unlikely but handle it)
-        path.push(0x91);
-        path.push(0x00); // placeholder
-        path.extend_from_slice(&(len as u16).to_le_bytes());
-        path.extend_from_slice(bytes);
-        while path.len() % 2 != 0 {
-            path.push(0x00);
-        }
-    }
-
-    path
-}
-
-/// Encode a CipValue to (type_code, data bytes).
-pub(crate) fn encode_cip_value(value: &CipValue) -> (u8, Vec<u8>) {
-    match value {
-        CipValue::Bool(b) => (
-            CIP_TYPE_BOOL,
-            vec![if *b { 0xFF } else { 0x00 }, 0x00, 0x00, 0x00],
-        ),
-        CipValue::Sint(v) => (CIP_TYPE_SINT, vec![*v as u8, 0x00, 0x00, 0x00]),
-        CipValue::Int(v) => (CIP_TYPE_INT, v.to_le_bytes().to_vec()),
-        CipValue::Dint(v) => (CIP_TYPE_DINT, v.to_le_bytes().to_vec()),
-        CipValue::Real(v) => (CIP_TYPE_REAL, v.to_le_bytes().to_vec()),
-        CipValue::String(s) => {
-            let bytes = s.as_bytes();
-            let mut data = Vec::with_capacity(88);
-            let len = bytes.len().min(82) as u32;
-            data.extend_from_slice(&len.to_le_bytes());
-            data.extend_from_slice(&bytes[..len as usize]);
-            while data.len() < 88 {
-                data.push(0x00);
-            }
-            (CIP_TYPE_STRING, data)
-        }
-        CipValue::Bytes(b) => (CIP_TYPE_DWORD, {
-            let mut d = b.clone();
-            while d.len() < 4 {
-                d.push(0x00);
-            }
-            d
-        }),
+impl CpfItem {
+    pub fn new(type_id: u16, data: Vec<u8>) -> Self {
+        Self { type_id, data }
     }
 }
 
-/// Parse a CIP Read Tag response into a CipValue.
-pub(crate) fn parse_read_tag_response(data: &[u8]) -> Result<CipValue> {
-    if data.len() < 4 {
-        anyhow::bail!("Read tag response too short ({} bytes)", data.len());
+/// Encode a CPF block: `item count u16 | (type u16 | length u16 | data)…`.
+pub(crate) fn build_cpf(items: &[CpfItem]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(items.len() as u16).to_le_bytes());
+    for it in items {
+        out.extend_from_slice(&it.type_id.to_le_bytes());
+        out.extend_from_slice(&(it.data.len() as u16).to_le_bytes());
+        out.extend_from_slice(&it.data);
     }
-
-    // CIP reply service (should be 0xCC = Read Tag reply)
-    let service = data[0];
-    if service != CIP_READ_TAG | 0x80 {
-        anyhow::bail!("Unexpected CIP service reply: 0x{:02X}", service);
-    }
-
-    // Check for extended status
-    let _reserved = data[1];
-    let status = data[2];
-    if status != CIP_STATUS_SUCCESS && status != CIP_STATUS_PARTIAL {
-        let ext_status = if data.len() > 4 { data[3] } else { 0 };
-        anyhow::bail!(
-            "CIP Read Tag error: status=0x{:02X}, ext=0x{:02X}",
-            status,
-            ext_status
-        );
-    }
-
-    if data.len() < 6 {
-        anyhow::bail!("Read tag response missing type/data");
-    }
-
-    let type_code = u16::from_le_bytes(data[4..6].try_into().unwrap());
-    let type_low = type_code as u8;
-
-    // For partial reads, skip to data after the type field
-    let data_start = 6;
-    let value_data = &data[data_start..];
-
-    decode_cip_value(type_low, value_data)
+    out
 }
 
-/// Parse a CIP Write Tag response.
-pub(crate) fn parse_write_tag_response(data: &[u8]) -> Result<()> {
-    if data.len() < 4 {
-        anyhow::bail!("Write tag response too short");
+/// Parse a CPF block starting at the item count.
+pub(crate) fn parse_cpf(buf: &[u8]) -> Result<Vec<CpfItem>> {
+    if buf.len() < 2 {
+        bail!("CPF block too short");
     }
-
-    let service = data[0];
-    if service != CIP_WRITE_TAG | 0x80 {
-        anyhow::bail!("Unexpected CIP service reply: 0x{:02X}", service);
+    let count = u16::from_le_bytes([buf[0], buf[1]]) as usize;
+    let mut pos = 2;
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos + 4 > buf.len() {
+            bail!("CPF item header truncated");
+        }
+        let type_id = u16::from_le_bytes([buf[pos], buf[pos + 1]]);
+        let len = u16::from_le_bytes([buf[pos + 2], buf[pos + 3]]) as usize;
+        pos += 4;
+        if pos + len > buf.len() {
+            bail!("CPF item 0x{type_id:04X} truncated");
+        }
+        items.push(CpfItem { type_id, data: buf[pos..pos + len].to_vec() });
+        pos += len;
     }
-
-    let status = data[2];
-    if status != CIP_STATUS_SUCCESS {
-        let ext_status = if data.len() > 4 { data[3] } else { 0 };
-        anyhow::bail!(
-            "CIP Write Tag error: status=0x{:02X}, ext=0x{:02X}",
-            status,
-            ext_status
-        );
-    }
-
-    Ok(())
+    Ok(items)
 }
 
-/// Decode a CIP value from type code and raw data.
-pub(crate) fn decode_cip_value(type_code: u8, data: &[u8]) -> Result<CipValue> {
-    match type_code {
-        CIP_TYPE_BOOL => {
-            if data.is_empty() {
-                anyhow::bail!("No data for BOOL");
-            }
-            Ok(CipValue::Bool(data[0] != 0))
-        }
-        CIP_TYPE_SINT => {
-            if data.is_empty() {
-                anyhow::bail!("No data for SINT");
-            }
-            Ok(CipValue::Sint(data[0] as i8))
-        }
-        CIP_TYPE_INT => {
-            if data.len() < 2 {
-                anyhow::bail!("Not enough data for INT");
-            }
-            Ok(CipValue::Int(i16::from_le_bytes(
-                data[0..2].try_into().unwrap(),
-            )))
-        }
-        CIP_TYPE_DINT => {
-            if data.len() < 4 {
-                anyhow::bail!("Not enough data for DINT");
-            }
-            Ok(CipValue::Dint(i32::from_le_bytes(
-                data[0..4].try_into().unwrap(),
-            )))
-        }
-        CIP_TYPE_REAL => {
-            if data.len() < 4 {
-                anyhow::bail!("Not enough data for REAL");
-            }
-            Ok(CipValue::Real(f32::from_le_bytes(
-                data[0..4].try_into().unwrap(),
-            )))
-        }
-        CIP_TYPE_STRING => {
-            if data.len() < 4 {
-                anyhow::bail!("Not enough data for STRING header");
-            }
-            let str_len = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
-            let str_data = if data.len() >= 4 + str_len {
-                &data[4..4 + str_len]
-            } else {
-                &data[4..]
-            };
-            Ok(CipValue::String(
-                String::from_utf8_lossy(str_data).to_string(),
-            ))
-        }
-        CIP_TYPE_DWORD => {
-            if data.len() < 4 {
-                anyhow::bail!("Not enough data for DWORD");
-            }
-            Ok(CipValue::Bytes(data[0..4].to_vec()))
-        }
-        CIP_TYPE_LINT => {
-            if data.len() < 8 {
-                anyhow::bail!("Not enough data for LINT");
-            }
-            Ok(CipValue::Bytes(data[0..8].to_vec()))
-        }
-        _ => {
-            // Unknown type -- return raw bytes
-            Ok(CipValue::Bytes(data.to_vec()))
-        }
-    }
+/// SendRRData / SendUnitData body prefix: interface handle u32 (0 = CIP) +
+/// timeout u16, followed by the CPF block (Vol 2 §2-5.4). Requests to a
+/// target carry [`RR_TIMEOUT_SECS`] (pycomm3 uses 10); replies and SendUnitData
+/// use 0.
+pub(crate) const RR_TIMEOUT_SECS: u16 = 10;
+
+pub(crate) fn wrap_rr_body(timeout: u16, cpf: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(6 + cpf.len());
+    body.extend_from_slice(&0u32.to_le_bytes());
+    body.extend_from_slice(&timeout.to_le_bytes());
+    body.extend_from_slice(cpf);
+    body
 }
 
-/// Parse a Symbol class instance to extract tag info.
-pub(crate) fn parse_symbol_instance(data: &[u8]) -> Option<CipTag> {
-    // The symbol instance data structure from GetAttributeAll:
-    // Attribute 1: name (STRING)
-    // Attribute 2: type (UINT)
-    // The actual layout varies but we try a best-effort parse.
+/// Build a SendRRData frame: null address item + unconnected data item
+/// (0xB2) carrying `cip`, plus any `extra` trailing items (Sockaddr Info).
+pub(crate) fn build_send_rr_data(session_handle: u32, cip: &[u8], extra: &[CpfItem]) -> Vec<u8> {
+    let mut items = vec![
+        CpfItem::new(CPF_NULL_ADDRESS, Vec::new()),
+        CpfItem::new(CPF_UNCONNECTED_DATA, cip.to_vec()),
+    ];
+    items.extend_from_slice(extra);
+    build_enip_header(CMD_SEND_RR_DATA, session_handle, 0, &wrap_rr_body(RR_TIMEOUT_SECS, &build_cpf(&items)))
+}
 
-    if data.len() < 8 {
+/// Parse a SendRRData / SendUnitData body (after the encapsulation header)
+/// into its CPF items.
+pub(crate) fn parse_rr_body(body: &[u8]) -> Result<Vec<CpfItem>> {
+    if body.len() < 6 {
+        bail!("SendRRData body too short ({} bytes)", body.len());
+    }
+    parse_cpf(&body[6..])
+}
+
+/// Sockaddr Info item payload: big-endian `sockaddr_in` (family 2, port, IPv4, 8 zero bytes).
+pub(crate) fn sockaddr_item_data(addr: [u8; 4], port: u16) -> Vec<u8> {
+    let mut d = Vec::with_capacity(16);
+    d.extend_from_slice(&2u16.to_be_bytes());
+    d.extend_from_slice(&port.to_be_bytes());
+    d.extend_from_slice(&addr);
+    d.extend_from_slice(&[0u8; 8]);
+    d
+}
+
+/// Parse a Sockaddr Info item payload into (ipv4, port).
+pub(crate) fn parse_sockaddr_item(d: &[u8]) -> Option<([u8; 4], u16)> {
+    if d.len() < 16 {
         return None;
     }
-
-    // Try to read name length (first 4 bytes for CIP STRING len)
-    let name_len = u32::from_le_bytes(data[0..4].try_into().ok()?) as usize;
-    if name_len == 0 || name_len > 255 || data.len() < 4 + name_len + 2 {
-        return None;
-    }
-
-    let name_bytes = &data[4..4 + name_len];
-    let name = String::from_utf8(name_bytes.to_vec()).ok()?;
-    if name.is_empty() {
-        return None;
-    }
-
-    // After the name, skip padding to even boundary, then read type info
-    let type_offset = 4 + name_len + (name_len % 2);
-    if data.len() < type_offset + 2 {
-        return None;
-    }
-
-    // Type word: upper byte has element count flags, lower byte has type code
-    let type_word = u16::from_le_bytes(data[type_offset..type_offset + 2].try_into().ok()?);
-    let element_count = (type_word >> 8) & 0xFF;
-
-    // Structure (UDT): bit 15 set, low bits = template id. Don't run from_code
-    // on (id & 0xFF) — it returns None and would drop the tag from browse.
-    if type_word & 0x8000 != 0 {
-        return Some(CipTag {
-            name,
-            data_type: CipDataType::Dint,
-            element_count: 1,
-            template_id: Some(type_word & 0x0FFF),
-        });
-    }
-
-    let type_code = (type_word & 0xFF) as u8;
-    let data_type = CipDataType::from_code(type_code)?;
-
-    Some(CipTag {
-        name,
-        data_type,
-        element_count: if element_count == 0 { 1 } else { element_count },
-        template_id: None,
-    })
+    Some(([d[4], d[5], d[6], d[7]], u16::from_be_bytes([d[2], d[3]])))
 }
 
-
-// ── Discovery & generic CIP (explorer parity) ─
+// ── ListIdentity (UDP 44818 broadcast / TCP) ──
 
 /// Build a full EtherNet/IP ListIdentity packet (UDP payload). Body is empty.
 pub fn build_list_identity_request() -> Vec<u8> {
     build_enip_header(CMD_LIST_IDENTITY, 0, 0, &[])
 }
 
-/// Build a full ListIdentity UDP *response* modelling the simulator's own
-/// identity (vendor 1 / serial 0x12345678 / "ENIP-Sim"), so the explorer's
-/// device discovery (UDP broadcast to :44818) can find the running adapter.
-/// Layout mirrors `parse_list_identity_response` exactly.
-pub fn build_list_identity_response() -> Vec<u8> {
-    // CIP Identity object (matches `identity_attribute` in server.rs).
+/// Build a ListIdentity UDP *response* for the simulator's identity (vendor 1 /
+/// serial 0x12345678 / "ENIP-Sim"), advertising `ip:port` as the TCP endpoint.
+///
+/// The Identity item (type 0x0C) layout is ODVA Vol 2 Table 2-4.4:
+/// `encapsulation protocol version u16 | sockaddr_in (16 bytes, big-endian) |
+/// vendor u16 | device type u16 | product code u16 | revision major,minor |
+/// status u16 | serial u32 | product name SHORT_STRING | state u8`.
+pub fn build_list_identity_response(ip: [u8; 4], port: u16) -> Vec<u8> {
     let mut id = Vec::new();
-    id.extend_from_slice(&1u16.to_le_bytes());           // vendor id (Rockwell)
-    id.extend_from_slice(&0x0Eu16.to_le_bytes());        // device type (communications)
-    id.extend_from_slice(&0x0050u16.to_le_bytes());      // product code
+    id.extend_from_slice(&1u16.to_le_bytes()); // encapsulation protocol version
+    id.extend_from_slice(&sockaddr_item_data(ip, port));
+    id.extend_from_slice(&1u16.to_le_bytes()); // vendor id (Rockwell)
+    id.extend_from_slice(&0x0Eu16.to_le_bytes()); // device type (PLC)
+    id.extend_from_slice(&0x0050u16.to_le_bytes()); // product code
     id.push(20);
-    id.push(11);                                         // revision 20.11
-    id.extend_from_slice(&0x0020u16.to_le_bytes());      // status
-    id.extend_from_slice(&0x12345678u32.to_le_bytes());  // serial number
+    id.push(11); // revision 20.11
+    id.extend_from_slice(&0x0020u16.to_le_bytes()); // status
+    id.extend_from_slice(&0x12345678u32.to_le_bytes()); // serial number
     let name = b"ENIP-Sim";
-    id.push(name.len() as u8);                           // SHORT_STRING length
+    id.push(name.len() as u8); // SHORT_STRING length
     id.extend_from_slice(name);
-    if id.len() % 2 != 0 {
-        id.push(0); // parser pads p to even before reading state
-    }
-    id.push(0x04); // state
+    id.push(0x03); // state: operational (no pad before it)
 
-    // Common Packet Format: iface handle + timeout + item count(=1) + identity item.
-    let mut body = Vec::new();
-    body.extend_from_slice(&0u32.to_le_bytes());
-    body.extend_from_slice(&0u16.to_le_bytes());
-    body.extend_from_slice(&1u16.to_le_bytes());
-    body.extend_from_slice(&0x000Cu16.to_le_bytes());
-    body.extend_from_slice(&(id.len() as u16).to_le_bytes());
-    body.extend_from_slice(&id);
-    build_enip_header(CMD_LIST_IDENTITY, 0, 0, &body)
+    let body = build_cpf(&[CpfItem::new(CPF_LIST_IDENTITY, id)]);
+    build_enip_frame(CMD_LIST_IDENTITY, 0, 0, 0, &body)
 }
 
-/// Parse a full ListIdentity UDP reply into a device. host/port left empty
-/// (caller fills from the UDP peer address).
+/// Parse a full ListIdentity UDP/TCP reply into a device. `host` is left empty
+/// (caller fills it from the peer address); `port` is the sockaddr port the
+/// device advertises (default 44818).
 pub fn parse_list_identity_response(packet: &[u8]) -> Option<EnipDevice> {
     if packet.len() < ENIP_HEADER_SIZE {
         return None;
@@ -407,64 +198,51 @@ pub fn parse_list_identity_response(packet: &[u8]) -> Option<EnipDevice> {
         return None;
     }
     let length = u16::from_le_bytes(packet[2..4].try_into().ok()?) as usize;
-    if packet.len() < ENIP_HEADER_SIZE + length {
+    let status = u32::from_le_bytes(packet[8..12].try_into().ok()?);
+    if status != 0 {
         return None;
     }
-    let body = &packet[ENIP_HEADER_SIZE..ENIP_HEADER_SIZE + length];
-    // Common Packet Format: interface handle(u32) + timeout(u16) + item count(u16)
-    if body.len() < 8 {
-        return None;
-    }
-    let item_count = u16::from_le_bytes(body[6..8].try_into().ok()?);
-    let mut pos = 8usize;
-    for _ in 0..item_count {
-        if pos + 4 > body.len() {
-            return None;
-        }
-        let type_id = u16::from_le_bytes(body[pos..pos + 2].try_into().ok()?);
-        let item_len = u16::from_le_bytes(body[pos + 2..pos + 4].try_into().ok()?) as usize;
-        pos += 4;
-        if pos + item_len > body.len() {
-            return None;
-        }
-        if type_id == 0x0C {
-            return parse_identity_object(&body[pos..pos + item_len]);
-        }
-        pos += item_len;
-    }
-    None
+    let body = packet.get(ENIP_HEADER_SIZE..ENIP_HEADER_SIZE + length)?;
+    let items = parse_cpf(body).ok()?;
+    items
+        .into_iter()
+        .find(|i| i.type_id == CPF_LIST_IDENTITY)
+        .and_then(|i| parse_identity_item(&i.data))
 }
 
-/// Parse the raw CIP Identity object bytes (vendor..state) into an EnipDevice.
-fn parse_identity_object(data: &[u8]) -> Option<EnipDevice> {
-    if data.len() < 14 {
+/// Parse the data of a ListIdentity item (type 0x0C): protocol version +
+/// sockaddr + the Identity object attributes. Unlike Get_Attributes_All, the
+/// trailing `state` byte follows the product name directly — no pad byte.
+fn parse_identity_item(data: &[u8]) -> Option<EnipDevice> {
+    // version(2) + sockaddr(16) + vendor/type/code(6) + rev(2) + status(2) + serial(4) + name len(1)
+    const FIXED: usize = 2 + 16 + 6 + 2 + 2 + 4 + 1;
+    if data.len() < FIXED {
         return None;
     }
-    let mut p = 0usize;
-    let vendor_id = u16::from_le_bytes(data[p..p + 2].try_into().ok()?); p += 2;
-    let device_type = u16::from_le_bytes(data[p..p + 2].try_into().ok()?); p += 2;
-    let product_code = u16::from_le_bytes(data[p..p + 2].try_into().ok()?); p += 2;
+    let (_, sock_port) = parse_sockaddr_item(&data[2..18])?;
+    let mut p = 18usize;
+    let vendor_id = u16::from_le_bytes(data[p..p + 2].try_into().ok()?);
+    let device_type = u16::from_le_bytes(data[p + 2..p + 4].try_into().ok()?);
+    let product_code = u16::from_le_bytes(data[p + 4..p + 6].try_into().ok()?);
+    p += 6;
     let revision_major = data[p];
     let revision_minor = data[p + 1];
     p += 2;
-    let status = u16::from_le_bytes(data[p..p + 2].try_into().ok()?); p += 2;
-    let serial_number = u32::from_le_bytes(data[p..p + 4].try_into().ok()?); p += 4;
-    let product_name = if p < data.len() {
-        let slen = data[p] as usize;
-        p += 1;
-        let sbytes = data.get(p..p + slen).unwrap_or(&[]);
-        p += slen;
-        String::from_utf8_lossy(sbytes).trim_end_matches('\u{0000}').to_string()
-    } else {
-        String::new()
-    };
-    if p % 2 != 0 {
-        p += 1;
-    }
+    let status = u16::from_le_bytes(data[p..p + 2].try_into().ok()?);
+    p += 2;
+    let serial_number = u32::from_le_bytes(data[p..p + 4].try_into().ok()?);
+    p += 4;
+    let name_len = data[p] as usize;
+    p += 1;
+    let name_bytes = data.get(p..p + name_len)?;
+    p += name_len;
+    let product_name = String::from_utf8_lossy(name_bytes)
+        .trim_end_matches(['\0', ' '])
+        .to_string();
     let state = data.get(p).copied().unwrap_or(0);
     Some(EnipDevice {
         host: String::new(),
-        port: 44818,
+        port: if sock_port == 0 { 44818 } else { sock_port },
         vendor_name: vendor_name(vendor_id).to_string(),
         vendor_id,
         device_type,
@@ -478,18 +256,11 @@ fn parse_identity_object(data: &[u8]) -> Option<EnipDevice> {
     })
 }
 
+// ── Generic CIP requests ──
+
 /// Build a CIP GetAttributeSingle request for class/instance/attribute.
-pub(crate) fn build_get_attribute_single_request(
-    class_id: u16,
-    instance_id: u32,
-    attribute_id: u16,
-) -> Vec<u8> {
-    let mut request = Vec::new();
-    request.push(CIP_GET_ATTRIBUTE_SINGLE);
-    let (path, words) = build_epath(class_id, instance_id, Some(attribute_id));
-    request.push(words);
-    request.extend_from_slice(&path);
-    request
+pub(crate) fn build_get_attribute_single_request(class_id: u16, instance_id: u32, attribute_id: u16) -> Vec<u8> {
+    build_generic_cip_request(CIP_GET_ATTRIBUTE_SINGLE, class_id, instance_id, Some(attribute_id), &[])
 }
 
 /// Build a CIP SetAttributeSingle request with raw little-endian data.
@@ -499,13 +270,7 @@ pub(crate) fn build_set_attribute_single_request(
     attribute_id: u16,
     data: &[u8],
 ) -> Vec<u8> {
-    let mut request = Vec::new();
-    request.push(CIP_SET_ATTRIBUTE_SINGLE);
-    let (path, words) = build_epath(class_id, instance_id, Some(attribute_id));
-    request.push(words);
-    request.extend_from_slice(&path);
-    request.extend_from_slice(data);
-    request
+    build_generic_cip_request(CIP_SET_ATTRIBUTE_SINGLE, class_id, instance_id, Some(attribute_id), data)
 }
 
 /// Build a generic CIP service request (arbitrary service + path + data).
@@ -516,198 +281,36 @@ pub(crate) fn build_generic_cip_request(
     attribute_id: Option<u16>,
     data: &[u8],
 ) -> Vec<u8> {
-    let mut request = Vec::new();
-    request.push(service);
     let (path, words) = build_epath(class_id, instance_id, attribute_id);
+    let mut request = Vec::with_capacity(2 + path.len() + data.len());
+    request.push(service);
     request.push(words);
     request.extend_from_slice(&path);
     request.extend_from_slice(data);
     request
 }
 
-/// Encode a logical EPath (class + instance + optional attribute).
-/// Returns (bytes, size_in_16bit_words). Padded to even length.
-pub(crate) fn build_epath(
-    class_id: u16,
-    instance_id: u32,
-    attribute_id: Option<u16>,
-) -> (Vec<u8>, u8) {
-    let mut path = Vec::new();
+// ── ForwardOpen / ForwardClose ──
 
-    if class_id <= 0xFF {
-        path.push(0x20);
-        path.push(class_id as u8);
-    } else {
-        path.push(0x21);
-        path.push(0x00);
-        path.extend_from_slice(&class_id.to_le_bytes());
-    }
-
-    if instance_id <= 0xFF {
-        path.push(0x24);
-        path.push(instance_id as u8);
-    } else {
-        path.push(0x25);
-        path.push(0x00);
-        path.extend_from_slice(&(instance_id as u16).to_le_bytes());
-    }
-
-    if let Some(attr) = attribute_id {
-        if attr <= 0xFF {
-            path.push(0x30);
-            path.push(attr as u8);
-        } else {
-            path.push(0x31);
-            path.push(0x00);
-            path.extend_from_slice(&attr.to_le_bytes());
-        }
-    }
-
-    let words = ((path.len() + 1) / 2) as u8;
-    if path.len() % 2 != 0 {
-        path.push(0x00);
-    }
-    (path, words)
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn identity_bytes() -> Vec<u8> {
-        let mut b = Vec::new();
-        b.extend_from_slice(&1u16.to_le_bytes());          // vendor (Rockwell)
-        b.extend_from_slice(&0x0Eu16.to_le_bytes());       // device type (comms)
-        b.extend_from_slice(&0x50u16.to_le_bytes());       // product code
-        b.push(20);
-        b.push(11);                                        // rev 20.11
-        b.extend_from_slice(&0x0020u16.to_le_bytes());     // status
-        b.extend_from_slice(&0x12345678u32.to_le_bytes()); // serial
-        let name = b"1769-L1";
-        b.push(name.len() as u8);                          // SHORT_STRING len
-        b.extend_from_slice(name);
-        b.push(0x04);                                      // state (p is even, no pad)
-        b
-    }
-
-    #[test]
-    fn enip_header_layout() {
-        let pkt = build_enip_header(0x0063, 0x1234, 0, &[]);
-        assert_eq!(pkt.len(), ENIP_HEADER_SIZE);
-        assert_eq!(u16::from_le_bytes(pkt[0..2].try_into().unwrap()), 0x0063);
-        assert_eq!(u16::from_le_bytes(pkt[2..4].try_into().unwrap()), 0); // body len
-        assert_eq!(u32::from_le_bytes(pkt[4..8].try_into().unwrap()), 0x1234);
-    }
-
-    #[test]
-    fn list_identity_request_is_well_formed() {
-        let pkt = build_list_identity_request();
-        assert_eq!(u16::from_le_bytes(pkt[0..2].try_into().unwrap()), CMD_LIST_IDENTITY);
-        assert_eq!(u16::from_le_bytes(pkt[2..4].try_into().unwrap()), 0); // empty body
-        assert_eq!(pkt.len(), ENIP_HEADER_SIZE);
-    }
-
-    #[test]
-    fn epath_8bit_class_instance_attr() {
-        let (path, words) = build_epath(0x6B, 1, Some(1));
-        assert_eq!(path, vec![0x20, 0x6B, 0x24, 0x01, 0x30, 0x01]);
-        assert_eq!(words, 3);
-    }
-
-    #[test]
-    fn epath_16bit_class_no_attribute() {
-        let (path, words) = build_epath(0x1234, 1, None);
-        assert_eq!(path, vec![0x21, 0x00, 0x34, 0x12, 0x24, 0x01]);
-        assert_eq!(words, 3);
-    }
-
-    #[test]
-    fn get_attribute_single_request_shape() {
-        let req = build_get_attribute_single_request(0x01, 1, 4);
-        assert_eq!(req[0], CIP_GET_ATTRIBUTE_SINGLE);
-        assert_eq!(req[1], 3); // 3 path words
-        assert_eq!(&req[2..], &[0x20, 0x01, 0x24, 0x01, 0x30, 0x04]);
-    }
-
-    #[test]
-    fn identity_object_parses() {
-        let dev = parse_identity_object(&identity_bytes()).expect("parse identity");
-        assert_eq!(dev.vendor_id, 1);
-        assert_eq!(dev.device_type, 0x0E);
-        assert_eq!(dev.product_code, 0x50);
-        assert_eq!(dev.revision_major, 20);
-        assert_eq!(dev.revision_minor, 11);
-        assert_eq!(dev.status, 0x0020);
-        assert_eq!(dev.serial_number, 0x12345678);
-        assert_eq!(dev.product_name, "1769-L1");
-        assert_eq!(dev.state, 0x04);
-    }
-
-    #[test]
-    fn list_identity_reply_parses_end_to_end() {
-        let id = identity_bytes();
-        // CPF: interface handle u32 + timeout u16 + item count u16 + (type 0x000C, len, id)
-        let mut body = Vec::new();
-        body.extend_from_slice(&0u32.to_le_bytes());
-        body.extend_from_slice(&0u16.to_le_bytes());
-        body.extend_from_slice(&1u16.to_le_bytes());
-        body.extend_from_slice(&0x000Cu16.to_le_bytes());
-        body.extend_from_slice(&(id.len() as u16).to_le_bytes());
-        body.extend_from_slice(&id);
-        let pkt = build_enip_header(CMD_LIST_IDENTITY, 0, 0, &body);
-        let dev = parse_list_identity_response(&pkt).expect("parse reply");
-        assert_eq!(dev.vendor_id, 1);
-        assert_eq!(dev.serial_number, 0x12345678);
-        assert_eq!(dev.product_name, "1769-L1");
-    }
-
-    #[test]
-    fn list_identity_rejects_wrong_command() {
-        let pkt = build_enip_header(0x0065, 0, 0, &[]); // RegisterSession, not ListIdentity
-        assert!(parse_list_identity_response(&pkt).is_none());
-    }
-
-    #[test]
-    fn cip_value_round_trip() {
-        let cases = vec![
-            CipValue::Bool(true),
-            CipValue::Bool(false),
-            CipValue::Sint(-5),
-            CipValue::Int(1234),
-            CipValue::Dint(123456),
-            CipValue::Real(3.5),
-        ];
-        for v in cases {
-            let (code, data) = encode_cip_value(&v);
-            let back = decode_cip_value(code, &data).unwrap();
-            assert_eq!(v, back, "round trip failed for {:?}", v);
-        }
-    }
-
-    #[test]
-    fn strip_cip_reply_extracts_payload() {
-        let reply = vec![0x8Eu8, 0x00, 0x00, 0x00, 0x01, 0x02];
-        let payload = crate::client::strip_cip_reply(&reply).unwrap();
-        assert_eq!(payload, vec![0x01, 0x02]);
-    }
-
-    #[test]
-    fn strip_cip_reply_errors_on_status() {
-        let reply = vec![0x8Eu8, 0x00, 0x05, 0x00]; // status 0x05
-        assert!(crate::client::strip_cip_reply(&reply).is_err());
-    }
-}
-// ── ForwardOpen / ForwardClose (implicit messaging) ──
-
-/// Build a CIP ForwardOpen request (service 0x54) to the Connection Manager.
-pub(crate) fn build_forward_open_request(p: &ForwardOpenParams) -> Vec<u8> {
+/// Build a Forward_Open (0x54) or Large_Forward_Open (0x5B) request to the
+/// Connection Manager (Vol 1 Table 3-5.16). Field order:
+///
+/// `priority/tick | timeout ticks | O→T conn id u32 | T→O conn id u32 |
+/// conn serial u16 | vendor u16 | originator serial u32 | timeout multiplier |
+/// 3 reserved | O→T RPI u32 | O→T params (u16, u32 if large) | T→O RPI u32 |
+/// T→O params | transport class/trigger | connection path size (USINT words) |
+/// connection path`
+///
+/// Verified against cpppo's RSLinx capture (`54 02 20 06 24 01 07 9b …` with a
+/// 1-byte path size) and pycomm3 `_forward_open`.
+pub(crate) fn build_forward_open_request(p: &ForwardOpenParams) -> Result<Vec<u8>> {
     let mut req = Vec::new();
-    req.push(CIP_FORWARD_OPEN);
+    req.push(if p.large { CIP_LARGE_FORWARD_OPEN } else { CIP_FORWARD_OPEN });
     let (path, words) = build_epath(CONNECTION_MANAGER_CLASS_ID, 1, None);
     req.push(words);
     req.extend_from_slice(&path);
 
+    req.push(p.priority_time_tick);
     req.push(p.timeout_ticks);
     req.extend_from_slice(&p.o_to_t_connection_id.to_le_bytes());
     req.extend_from_slice(&p.t_to_o_connection_id.to_le_bytes());
@@ -717,21 +320,37 @@ pub(crate) fn build_forward_open_request(p: &ForwardOpenParams) -> Vec<u8> {
     req.push(p.timeout_multiplier);
     req.extend_from_slice(&[0u8, 0, 0]); // reserved
     req.extend_from_slice(&p.o_to_t_rpi_us.to_le_bytes());
-    req.extend_from_slice(&p.o_to_t_params.to_le_bytes());
+    push_network_params(&mut req, p.o_to_t_params, p.large)?;
     req.extend_from_slice(&p.t_to_o_rpi_us.to_le_bytes());
-    req.extend_from_slice(&p.t_to_o_params.to_le_bytes());
+    push_network_params(&mut req, p.t_to_o_params, p.large)?;
     req.push(p.transport_class_trigger);
 
-    let cp_words = ((p.connection_path.len() + 1) / 2) as u16;
-    req.extend_from_slice(&cp_words.to_le_bytes());
+    let cp_words = p.connection_path.len().div_ceil(2);
+    if cp_words > 0xFF {
+        bail!("connection path too long");
+    }
+    req.push(cp_words as u8);
     req.extend_from_slice(&p.connection_path);
-    if p.connection_path.len() % 2 != 0 {
+    if !p.connection_path.len().is_multiple_of(2) {
         req.push(0);
     }
-    req
+    Ok(req)
 }
 
-/// Build a CIP ForwardClose request (service 0x4E).
+fn push_network_params(req: &mut Vec<u8>, params: u32, large: bool) -> Result<()> {
+    if large {
+        req.extend_from_slice(&params.to_le_bytes());
+    } else {
+        let short = u16::try_from(params)
+            .map_err(|_| anyhow::anyhow!("network connection parameters 0x{params:08X} need Large_Forward_Open"))?;
+        req.extend_from_slice(&short.to_le_bytes());
+    }
+    Ok(())
+}
+
+/// Build a Forward_Close request (0x4E): `priority/tick | timeout ticks |
+/// conn serial u16 | vendor u16 | originator serial u32 | path size (USINT
+/// words) | reserved | path` (Vol 1 Table 3-5.21).
 pub(crate) fn build_forward_close_request(
     connection_serial: u16,
     vendor_id: u16,
@@ -744,206 +363,203 @@ pub(crate) fn build_forward_close_request(
     req.push(words);
     req.extend_from_slice(&path);
 
+    req.push(0x0A); // priority/time_tick
+    req.push(0x05); // timeout ticks
     req.extend_from_slice(&connection_serial.to_le_bytes());
     req.extend_from_slice(&vendor_id.to_le_bytes());
     req.extend_from_slice(&originator_serial.to_le_bytes());
 
-    let cp_words = ((connection_path.len() + 1) / 2) as u16;
-    req.extend_from_slice(&cp_words.to_le_bytes());
+    req.push(connection_path.len().div_ceil(2) as u8);
+    req.push(0); // reserved
     req.extend_from_slice(connection_path);
-    if connection_path.len() % 2 != 0 {
+    if !connection_path.len().is_multiple_of(2) {
         req.push(0);
     }
     req
 }
 
-/// Parse a ForwardOpen reply (service 0xD4) into the assigned connection IDs.
-pub(crate) fn parse_forward_open_response(data: &[u8]) -> Result<ForwardOpenResult> {
-    let payload = crate::client::strip_cip_reply(data)?;
+/// Parse a Forward_Open reply (0xD4 / 0xDB). Error replies surface as
+/// [`crate::cip::CipError`] with the extended status (e.g. 0x0111 RPI not
+/// supported) intact.
+///
+/// Success body: `O→T conn id | T→O conn id | conn serial | vendor |
+/// originator serial | O→T API u32 | T→O API u32 | app reply size | reserved`.
+pub(crate) fn parse_forward_open_response(data: &[u8], large: bool) -> Result<ForwardOpenResult> {
+    let service = if large { CIP_LARGE_FORWARD_OPEN } else { CIP_FORWARD_OPEN };
+    let reply = CipReply::parse(data)?.expect(service, false)?;
+    let payload = &reply.data;
     if payload.len() < 16 {
-        anyhow::bail!("ForwardOpen reply too short ({} bytes)", payload.len());
+        bail!("ForwardOpen reply too short ({} bytes)", payload.len());
     }
+    let (o_to_t_api_us, t_to_o_api_us) = if payload.len() >= 24 {
+        (
+            u32::from_le_bytes(payload[16..20].try_into().unwrap()),
+            u32::from_le_bytes(payload[20..24].try_into().unwrap()),
+        )
+    } else {
+        (0, 0)
+    };
     Ok(ForwardOpenResult {
         o_to_t_connection_id: u32::from_le_bytes(payload[0..4].try_into().unwrap()),
         t_to_o_connection_id: u32::from_le_bytes(payload[4..8].try_into().unwrap()),
         connection_serial: u16::from_le_bytes(payload[8..10].try_into().unwrap()),
         vendor_id: u16::from_le_bytes(payload[10..12].try_into().unwrap()),
         originator_serial: u32::from_le_bytes(payload[12..16].try_into().unwrap()),
+        o_to_t_api_us,
+        t_to_o_api_us,
     })
 }
 
-// ── SendUnitData (connected/CIP transport, implicit IO) ──
-
-/// Build a SendUnitData (ENIP command 0x0070) frame carrying a connected CIP
-/// message: connected address item (0xA1 = connection_id) + connected data item
-/// (0xB1 = sequence counter + CIP payload).
-pub(crate) fn build_send_unit_data(
-    session_handle: u32,
-    connection_id: u32,
-    sequence: u16,
-    cip: &[u8],
-) -> Vec<u8> {
-    let mut unit = Vec::new();
-    unit.extend_from_slice(&0u32.to_le_bytes()); // interface handle (CIP)
-    unit.extend_from_slice(&0u16.to_le_bytes()); // timeout
-    unit.extend_from_slice(&2u16.to_le_bytes()); // item count
-
-    // Connected Address item: type 0xA1, length 4, connection id
-    unit.extend_from_slice(&0x00A1u16.to_le_bytes());
-    unit.extend_from_slice(&4u16.to_le_bytes());
-    unit.extend_from_slice(&connection_id.to_le_bytes());
-
-    // Connected Data item: type 0xB1, length 2 + cip.len(), sequence + cip
-    unit.extend_from_slice(&0x00B1u16.to_le_bytes());
-    unit.extend_from_slice(&((cip.len() + 2) as u16).to_le_bytes());
-    unit.extend_from_slice(&sequence.to_le_bytes());
-    unit.extend_from_slice(cip);
-
-    build_enip_header(CMD_SEND_UNIT_DATA, session_handle, 0, &unit)
+/// Parse a Forward_Open / Large_Forward_Open *request* (CIP message, starting
+/// at the service byte). Used by the simulator.
+pub(crate) fn parse_forward_open_request(cip: &[u8]) -> Option<ForwardOpenParams> {
+    let large = *cip.first()? == CIP_LARGE_FORWARD_OPEN;
+    let path_words = *cip.get(1)? as usize;
+    let b = cip.get(2 + path_words * 2..)?;
+    let params_len = if large { 4 } else { 2 };
+    // fixed part: 2 + 4 + 4 + 2 + 2 + 4 + 1 + 3 + (4 + p) + (4 + p) + 1 + 1(path size)
+    let fixed = 2 + 4 + 4 + 2 + 2 + 4 + 1 + 3 + 2 * (4 + params_len) + 1 + 1;
+    if b.len() < fixed {
+        return None;
+    }
+    let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+    let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
+    let mut o = 2;
+    let o_to_t_connection_id = u32_at(o);
+    let t_to_o_connection_id = u32_at(o + 4);
+    let connection_serial = u16_at(o + 8);
+    let vendor_id = u16_at(o + 10);
+    let originator_serial = u32_at(o + 12);
+    let timeout_multiplier = b[o + 16];
+    o += 20; // past the 3 reserved bytes
+    let o_to_t_rpi_us = u32_at(o);
+    o += 4;
+    let o_to_t_params = if large { u32_at(o) } else { u16_at(o) as u32 };
+    o += params_len;
+    let t_to_o_rpi_us = u32_at(o);
+    o += 4;
+    let t_to_o_params = if large { u32_at(o) } else { u16_at(o) as u32 };
+    o += params_len;
+    let transport_class_trigger = b[o];
+    let cp_words = b[o + 1] as usize;
+    let connection_path = b.get(o + 2..o + 2 + cp_words * 2)?.to_vec();
+    Some(ForwardOpenParams {
+        o_to_t_run_idle: true,
+        o_to_t_connection_id,
+        t_to_o_connection_id,
+        connection_serial,
+        vendor_id,
+        originator_serial,
+        priority_time_tick: b[0],
+        timeout_ticks: b[1],
+        timeout_multiplier,
+        o_to_t_rpi_us,
+        o_to_t_params,
+        t_to_o_rpi_us,
+        t_to_o_params,
+        transport_class_trigger,
+        large,
+        connection_path,
+    })
 }
 
-/// Parse a SendUnitData frame into (connection_id, sequence, cip_data).
-/// Used to decode cyclic T→O frames produced by the target.
+// ── SendUnitData (connected explicit messaging, class 3) ──
+
+/// Build a SendUnitData (0x0070) frame carrying a connected CIP message:
+/// connected address item (0xA1 = connection id) + connected data item
+/// (0xB1 = 16-bit sequence count + CIP payload).
+pub(crate) fn build_send_unit_data(session_handle: u32, connection_id: u32, sequence: u16, cip: &[u8]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(2 + cip.len());
+    data.extend_from_slice(&sequence.to_le_bytes());
+    data.extend_from_slice(cip);
+    let items = [
+        CpfItem::new(CPF_CONNECTED_ADDRESS, connection_id.to_le_bytes().to_vec()),
+        CpfItem::new(CPF_CONNECTED_DATA, data),
+    ];
+    build_enip_header(CMD_SEND_UNIT_DATA, session_handle, 0, &wrap_rr_body(0, &build_cpf(&items)))
+}
+
+/// Split a SendUnitData body (after the encapsulation header) into
+/// (connection id, sequence count, CIP payload).
+pub(crate) fn parse_unit_data_body(body: &[u8]) -> Result<(u32, u16, Vec<u8>)> {
+    let items = parse_rr_body(body)?;
+    let mut conn = None;
+    let mut seq_data = None;
+    for it in items {
+        match it.type_id {
+            CPF_CONNECTED_ADDRESS if it.data.len() >= 4 => {
+                conn = Some(u32::from_le_bytes(it.data[0..4].try_into().unwrap()));
+            }
+            CPF_CONNECTED_DATA if it.data.len() >= 2 => {
+                seq_data = Some((u16::from_le_bytes([it.data[0], it.data[1]]), it.data[2..].to_vec()));
+            }
+            _ => {}
+        }
+    }
+    match (conn, seq_data) {
+        (Some(c), Some((s, d))) => Ok((c, s, d)),
+        _ => bail!("SendUnitData missing connected address/data item"),
+    }
+}
+
+/// Parse a full SendUnitData frame into (connection_id, sequence, cip_data).
+#[cfg(test)]
 pub(crate) fn parse_send_unit_data(packet: &[u8]) -> Result<(u32, u16, Vec<u8>)> {
-    if packet.len() < ENIP_HEADER_SIZE + 8 {
-        anyhow::bail!("SendUnitData frame too short");
+    if packet.len() < ENIP_HEADER_SIZE {
+        bail!("SendUnitData frame too short");
     }
     let cmd = u16::from_le_bytes(packet[0..2].try_into().unwrap());
     if cmd != CMD_SEND_UNIT_DATA {
-        anyhow::bail!("not a SendUnitData frame (0x{:04X})", cmd);
+        bail!("not a SendUnitData frame (0x{:04X})", cmd);
     }
     let body_len = u16::from_le_bytes(packet[2..4].try_into().unwrap()) as usize;
     let body = packet
         .get(ENIP_HEADER_SIZE..ENIP_HEADER_SIZE + body_len)
         .ok_or_else(|| anyhow::anyhow!("SendUnitData body truncated"))?;
+    parse_unit_data_body(body)
+}
 
-    // interface handle u32 + timeout u16 + item count u16 = 8 bytes
-    if body.len() < 8 {
-        anyhow::bail!("SendUnitData body too short");
-    }
-    let mut pos = 8usize;
-    let mut connection_id = 0u32;
-    let mut sequence = 0u16;
-    let mut data: Vec<u8> = Vec::new();
+// ── Class 0/1 implicit I/O over UDP 2222 ──
 
-    for _ in 0..2 {
-        if pos + 4 > body.len() {
-            break;
-        }
-        let type_id = u16::from_le_bytes(body[pos..pos + 2].try_into().unwrap());
-        let len = u16::from_le_bytes(body[pos + 2..pos + 4].try_into().unwrap()) as usize;
-        pos += 4;
-        if pos + len > body.len() {
-            break;
-        }
-        let item = &body[pos..pos + len];
-        match type_id {
-            0x00A1 if len >= 4 => {
-                connection_id = u32::from_le_bytes(item[0..4].try_into().unwrap());
+/// UDP port for implicit I/O (Vol 2 §3-3).
+pub(crate) const IO_UDP_PORT: u16 = 2222;
+
+/// Build an implicit I/O datagram. It is a bare CPF block (no encapsulation
+/// header): Sequenced Address item (connection id + 32-bit encapsulation
+/// sequence number) and Connected Data item (16-bit CIP sequence count +
+/// payload; Vol 2 §3-3.2.2).
+pub(crate) fn build_io_packet(connection_id: u32, seq32: u32, cip_seq: u16, payload: &[u8]) -> Vec<u8> {
+    let mut addr = Vec::with_capacity(8);
+    addr.extend_from_slice(&connection_id.to_le_bytes());
+    addr.extend_from_slice(&seq32.to_le_bytes());
+    let mut data = Vec::with_capacity(2 + payload.len());
+    data.extend_from_slice(&cip_seq.to_le_bytes());
+    data.extend_from_slice(payload);
+    build_cpf(&[CpfItem::new(CPF_SEQUENCED_ADDRESS, addr), CpfItem::new(CPF_CONNECTED_DATA, data)])
+}
+
+/// Parse an implicit I/O datagram into (connection id, sequence number,
+/// CIP sequence count, payload).
+pub(crate) fn parse_io_packet(buf: &[u8]) -> Result<(u32, u32, u16, Vec<u8>)> {
+    let items = parse_cpf(buf)?;
+    let mut addr = None;
+    let mut data = None;
+    for it in items {
+        match it.type_id {
+            CPF_SEQUENCED_ADDRESS if it.data.len() >= 8 => {
+                addr = Some((
+                    u32::from_le_bytes(it.data[0..4].try_into().unwrap()),
+                    u32::from_le_bytes(it.data[4..8].try_into().unwrap()),
+                ));
             }
-            0x00B1 if len >= 2 => {
-                sequence = u16::from_le_bytes(item[0..2].try_into().unwrap());
-                data = item[2..].to_vec();
+            CPF_CONNECTED_DATA if it.data.len() >= 2 => {
+                data = Some((u16::from_le_bytes([it.data[0], it.data[1]]), it.data[2..].to_vec()));
             }
             _ => {}
         }
-        pos += len;
     }
-
-    Ok((connection_id, sequence, data))
-}
-
-#[cfg(test)]
-mod forward_tests {
-    use super::*;
-
-    fn sample_params() -> ForwardOpenParams {
-        ForwardOpenParams {
-            o_to_t_connection_id: 0,
-            t_to_o_connection_id: 0,
-            connection_serial: 0x1234,
-            vendor_id: 0x0001,
-            originator_serial: 0xAABBCCDD,
-            timeout_ticks: 0x0A,
-            timeout_multiplier: 1,
-            o_to_t_rpi_us: 1_000_000,
-            o_to_t_params: 0x0200,
-            t_to_o_rpi_us: 1_000_000,
-            t_to_o_params: 0x0200,
-            transport_class_trigger: 0xA3,
-            connection_path: vec![0x01, 0x00, 0x20, 0x04, 0x24, 0x01],
-        }
-    }
-
-    #[test]
-    fn forward_open_request_layout() {
-        let req = build_forward_open_request(&sample_params());
-        assert_eq!(req[0], CIP_FORWARD_OPEN);
-        // EPath to ConnMgr (0x06, inst 1): [0x20,0x06,0x24,0x01], 2 words
-        assert_eq!(req[1], 2);
-        assert_eq!(&req[2..6], &[0x20, 0x06, 0x24, 0x01]);
-        // body[0] = timeout_ticks at index 6
-        assert_eq!(req[6], 0x0A);
-        // o_to_t(4)@7, t_to_o(4)@11, connection_serial(2)@15
-        assert_eq!(u16::from_le_bytes(req[15..17].try_into().unwrap()), 0x1234);
-        // vendor(2)@17
-        assert_eq!(u16::from_le_bytes(req[17..19].try_into().unwrap()), 0x0001);
-        // originator_serial(4)@19
-        assert_eq!(u32::from_le_bytes(req[19..23].try_into().unwrap()), 0xAABBCCDD);
-    }
-
-    #[test]
-    fn forward_close_request_layout() {
-        let path = vec![0x01, 0x00, 0x20, 0x04, 0x24, 0x01];
-        let req = build_forward_close_request(0x1234, 0x0001, 0xAABBCCDD, &path);
-        assert_eq!(req[0], CIP_FORWARD_CLOSE);
-        assert_eq!(req[1], 2);
-        // body: conn_serial(2)@6, vendor(2)@8, originator_serial(4)@10
-        assert_eq!(u16::from_le_bytes(req[6..8].try_into().unwrap()), 0x1234);
-        assert_eq!(u16::from_le_bytes(req[8..10].try_into().unwrap()), 0x0001);
-        assert_eq!(u32::from_le_bytes(req[10..14].try_into().unwrap()), 0xAABBCCDD);
-    }
-
-    #[test]
-    fn parse_forward_open_reply_extracts_ids() {
-        // CIP reply: service 0xD4 | reserved | status 0 | ext-words 0 | payload
-        let mut reply = vec![0xD4u8, 0x00, 0x00, 0x00];
-        reply.extend_from_slice(&0x10000000u32.to_le_bytes()); // o_to_t
-        reply.extend_from_slice(&0x20000000u32.to_le_bytes()); // t_to_o
-        reply.extend_from_slice(&0x1234u16.to_le_bytes()); // conn serial
-        reply.extend_from_slice(&0x0001u16.to_le_bytes()); // vendor
-        reply.extend_from_slice(&0xAABBCCDDu32.to_le_bytes()); // orig serial
-        let r = parse_forward_open_response(&reply).unwrap();
-        assert_eq!(r.o_to_t_connection_id, 0x10000000);
-        assert_eq!(r.t_to_o_connection_id, 0x20000000);
-        assert_eq!(r.connection_serial, 0x1234);
-        assert_eq!(r.vendor_id, 0x0001);
-        assert_eq!(r.originator_serial, 0xAABBCCDD);
-    }
-
-    #[test]
-    fn parse_forward_open_reply_rejects_error_status() {
-        let reply = vec![0xD4u8, 0x00, 0x01, 0x00]; // status 0x01
-        assert!(parse_forward_open_response(&reply).is_err());
-    }
-
-    #[test]
-    fn send_unit_data_round_trip() {
-        let cip = vec![0x4Du8, 0x00, 0xAA, 0xBB];
-        let frame = build_send_unit_data(0x0000ABCD, 0x12345678, 0x0001, &cip);
-        // ENIP command 0x0070 little-endian
-        assert_eq!(u16::from_le_bytes(frame[0..2].try_into().unwrap()), 0x0070);
-        // round-trip parse
-        let (conn, seq, data) = parse_send_unit_data(&frame).expect("parse");
-        assert_eq!(conn, 0x12345678);
-        assert_eq!(seq, 0x0001);
-        assert_eq!(data, cip);
-    }
-
-    #[test]
-    fn send_unit_data_rejects_wrong_command() {
-        // SendRRData (0x006F) is not SendUnitData
-        let frame = build_enip_header(CMD_SEND_RR_DATA, 0, 0, &[]);
-        assert!(parse_send_unit_data(&frame).is_err());
+    match (addr, data) {
+        (Some((c, s32)), Some((s16, d))) => Ok((c, s32, s16, d)),
+        _ => bail!("I/O packet missing sequenced address or connected data item"),
     }
 }

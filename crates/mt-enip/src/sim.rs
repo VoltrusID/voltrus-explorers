@@ -10,7 +10,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::server::start_enip_server;
+use crate::server::{assign_scalar, start_enip_server};
 use crate::packets::build_list_identity_response;
 use crate::types::*;
 
@@ -163,6 +163,11 @@ fn data_type_to_cip(s: &str) -> CipDataType {
         "string" => CipDataType::String,
         "dword" => CipDataType::Dword,
         "lint" => CipDataType::Lint,
+        "usint" => CipDataType::Usint,
+        "uint" => CipDataType::Uint,
+        "udint" => CipDataType::Udint,
+        "ulint" => CipDataType::Ulint,
+        "lreal" => CipDataType::Lreal,
         _ => CipDataType::Real,
     }
 }
@@ -277,7 +282,7 @@ impl EnipSimDevice {
                             v = v.min(max);
                         }
                         if let Some(entry) = tags.get_mut(&p.name) {
-                            entry.value = p.to_cip_value(v);
+                            assign_scalar(entry, p.to_cip_value(v));
                         }
                     }
 
@@ -298,7 +303,7 @@ impl EnipSimDevice {
                             v = v.min(max);
                         }
                         if let Some(entry) = tags.get_mut(&p.name) {
-                            entry.value = p.to_cip_value(v);
+                            assign_scalar(entry, p.to_cip_value(v));
                         }
                     }
                 }
@@ -333,12 +338,17 @@ impl EnipSimDevice {
         // the bind port, so the scanner records the connectable TCP port.
         let udp_running = running.clone();
         let udp_bind = format!("{}:{}", bind_addr, port);
+        let udp_port = port;
         tokio::spawn(async move {
+            let ip = bind_addr
+                .parse::<std::net::Ipv4Addr>()
+                .map(|a| a.octets())
+                .unwrap_or([0, 0, 0, 0]);
             let sock = match tokio::net::UdpSocket::bind(udp_bind).await {
                 Ok(s) => s,
                 Err(_) => return, // port busy/unavailable — sim still works over TCP
             };
-            let resp = build_list_identity_response();
+            let resp = build_list_identity_response(ip, udp_port);
             let mut buf = vec![0u8; 512];
             loop {
                 if !udp_running.load(Ordering::Relaxed) {
@@ -385,7 +395,10 @@ impl EnipSimDevice {
     pub async fn set_by_name(&self, name: &str, value: CipValue) {
         let mut tags = self.state.tags.lock().await;
         if let Some(entry) = tags.get_mut(name) {
-            entry.value = value;
+            match value {
+                CipValue::Array(_) | CipValue::Bytes(_) | CipValue::String(_) => entry.value = value,
+                scalar => crate::server::assign_scalar(entry, scalar),
+            }
         }
     }
 

@@ -65,39 +65,62 @@ import {
   type WatchList,
 } from "./watchlists";
 
-function cipTypeOf(v: any): string {
-  if (v && typeof v === "object") {
-    for (const k of ["Bool", "Sint", "Int", "Dint", "Real", "String", "Bytes"]) if (k in v) return k.toLowerCase();
+/** Serialized `CipValue`: externally tagged, e.g. `{ Dint: 5 }` or `{ Array: [...] }`. */
+type CipJson = Record<string, unknown>;
+
+function isCipJson(v: unknown): v is CipJson {
+  return v !== null && typeof v === "object";
+}
+
+function cipTypeOf(v: unknown): string {
+  if (isCipJson(v)) {
+    for (const k of ["Bool", "Sint", "Int", "Dint", "Lint", "Usint", "Uint", "Udint", "Ulint", "Real", "Lreal", "String", "Bytes", "Array"]) {
+      if (k in v) return k.toLowerCase();
+    }
   }
   return "—";
 }
 
-function formatCipValue(v: any, hex = false): string {
+function formatCipValue(v: unknown, hex = false): string {
   if (v == null) return "—";
-  if (typeof v === "object") {
+  if (isCipJson(v)) {
     if ("Bool" in v) return v.Bool ? "On" : "Off";
     if ("String" in v) return String(v.String);
-    if ("Real" in v) {
-      const n = Number(v.Real);
-      if (!Number.isFinite(n)) return "—";
-      return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)));
+    for (const k of ["Real", "Lreal"]) {
+      if (k in v) {
+        const n = Number(v[k]);
+        if (!Number.isFinite(n)) return "—";
+        return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)));
+      }
     }
-    if ("Dint" in v) return hex ? "0x" + (v.Dint >>> 0).toString(16).toUpperCase() : String(v.Dint);
-    if ("Int" in v) return hex ? "0x" + (v.Int & 0xFFFF).toString(16).toUpperCase() : String(v.Int);
-    if ("Sint" in v) return hex ? "0x" + (v.Sint & 0xFF).toString(16).toUpperCase() : String(v.Sint);
-    if ("Bytes" in v) return (v.Bytes as number[]).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    // [variant, bit width]; hex shows the unsigned bit pattern.
+    const ints: [string, number][] = [["Dint", 32], ["Int", 16], ["Sint", 8], ["Lint", 64], ["Udint", 32], ["Uint", 16], ["Usint", 8], ["Ulint", 64]];
+    for (const [k, bits] of ints) {
+      if (k in v) {
+        if (!hex) return String(v[k]);
+        return "0x" + BigInt.asUintN(bits, BigInt(Math.trunc(Number(v[k])))).toString(16).toUpperCase();
+      }
+    }
+    if ("Bytes" in v && Array.isArray(v.Bytes)) {
+      return v.Bytes.map((b: number) => b.toString(16).padStart(2, "0")).join(" ");
+    }
+    if ("Array" in v && Array.isArray(v.Array)) {
+      const items: unknown[] = v.Array;
+      const shown = items.slice(0, 16).map((x) => formatCipValue(x, hex)).join(", ");
+      return items.length > 16 ? `[${shown}, … (${items.length} elements)]` : `[${shown}]`;
+    }
   }
   return String(v);
 }
 
 /** Extract a numeric value from a serialized CipValue ({Real:..},{Dint:..},…). */
-function cipToNum(v: any): number {
-  if (v == null || typeof v !== "object") return NaN;
-  if ("Real" in v) return Number(v.Real);
-  if ("Dint" in v) return v.Dint;
-  if ("Int" in v) return v.Int;
-  if ("Sint" in v) return v.Sint;
+function cipToNum(v: unknown): number {
+  if (!isCipJson(v)) return NaN;
+  for (const k of ["Real", "Lreal", "Dint", "Int", "Sint", "Lint", "Udint", "Uint", "Usint", "Ulint"]) {
+    if (k in v) return Number(v[k]);
+  }
   if ("Bool" in v) return v.Bool ? 1 : 0;
+  if ("Array" in v && Array.isArray(v.Array) && v.Array.length > 0) return cipToNum(v.Array[0]);
   return NaN;
 }
 
@@ -132,7 +155,7 @@ function editorToCip(dataType: string, value: string): { dataType: string; value
   return { dataType: "dint", value: { Dint: Math.round(Number(value)) } };
 }
 
-interface EnipConfig { host: string; port: number; }
+interface EnipConfig { host: string; port: number; /** CIP route path ("1,0" = backplane slot 0); null = direct. */ route_path?: string | null; }
 interface CipTag { name: string; data_type: string; element_count: number; }
 interface ServerLogEvent { timestamp: number; service: string; tag_name: string; message: string; }
 
@@ -364,7 +387,8 @@ function App() {
   }, [mode, adapterRunning, adapterPollMs, addLog]);
 
   const handleConnect = useCallback(async (values: Record<string, string | number>) => {
-    const config: EnipConfig = { host: String(values.host), port: Number(values.port) };
+    const route = String(values.route_path ?? "").trim();
+    const config: EnipConfig = { host: String(values.host), port: Number(values.port), route_path: route || null };
     addLog("info", `Connecting to ${config.host}:${config.port}\u2026`);
     const ok = await protocol.connect(config);
     if (ok) addLog("rx", "Connected");
@@ -633,6 +657,7 @@ function App() {
               fields={[
                 { name: "host", label: "IP Address", type: "text", default: "192.168.1.100" },
                 { name: "port", label: "Port", type: "number", default: 44818 },
+                { name: "route_path", label: "Route path (ControlLogix: 1,<slot>)", type: "text", default: "" },
               ]}
               onSubmit={handleConnect}
               onDisconnect={handleDisconnect}

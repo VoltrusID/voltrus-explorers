@@ -108,7 +108,7 @@ export function DiscoveryPanel({ onClose, onConnect }: Props) {
         </div>
 
         <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          Click a device to connect. Broadcasts a ListIdentity (ENIP 0x0063) to 255.255.255.255:44818.
+          Click a device to connect. Broadcasts a ListIdentity (ENIP 0x0063) to UDP port 44818 on every network interface.
         </div>
       </div>
     </Dialog>
