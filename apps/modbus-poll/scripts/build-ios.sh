@@ -161,6 +161,9 @@ if [[ -n "$IPA_PATH" ]]; then
   if ! unzip -l "$IPA_PATH" 2>/dev/null | grep -q "Payload/[^/]*\.app/"; then
     err "IPA is malformed — no .app bundle inside Payload/ (known Xcode 26 archive quirk)."
     err "Inspect the xcarchive: $PROJECT_DIR/src-tauri/gen/apple/build/"
+    find "$PROJECT_DIR/src-tauri/gen/apple/build" -maxdepth 5 -print >&2
+    grep -n "PRODUCT_NAME\|PRODUCT_BUNDLE_IDENTIFIER" "$PROJECT_DIR/src-tauri/gen/apple/project.yml" >&2 || true
+    unzip -l "$IPA_PATH" >&2 || true
     exit 1
   fi
   ok "IPA structure valid: $IPA_PATH"
