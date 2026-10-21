@@ -93,9 +93,10 @@ jobs:
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
           cargo check -p "$crate" --features store --target aarch64-apple-darwin --target x86_64-apple-darwin
 
-      # Both apps ship for iPhone/iPad too (the release job builds the IPA). Compile the device target here so a
+      # These apps ship for iPhone/iPad too (the release job builds the IPA). Compile the device target here so a
       # break in the mobile entry point or an iOS-only dependency shows up in the pull request.
       - name: Check iOS target
+        if: contains(fromJSON('["bacnet-explorer", "modbus-poll"]'), matrix.app)
         run: |
           rustup target add aarch64-apple-ios
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
