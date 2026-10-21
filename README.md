@@ -27,8 +27,8 @@ Releases have everything.
 
 | DNP3 Explorer | |
 | --- | --- |
-| Free | Connect to an outstation, poll points on an interval, read analog, binary and counter values, write point values, communication log with CSV export |
-| Pro | Outstation simulator with an event buffer, device templates with live simulated values, class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), live trends |
+| Free | Connect to one outstation, integrity poll of an editable point list (up to 10 points), read analog, binary and counter values, 1 saved connection profile, communication log with CSV export |
+| Pro | Unlimited points in the poll list, controls (CROB and analog output), class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), outstation simulator with an event buffer, device templates with live simulated values, live trends, unlimited saved profiles |
 
 ### S7 Explorer
 

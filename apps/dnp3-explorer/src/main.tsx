@@ -5,6 +5,9 @@ import { ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
+  "Unlimited points in the poll list",
+  "Controls: CROB and analog output",
+  "Unlimited saved connection profiles",
   "Outstation simulator with an event buffer",
   "Device templates with live simulated values",
   "Class 1, 2 and 3 event scans",

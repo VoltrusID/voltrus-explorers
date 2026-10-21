@@ -113,16 +113,47 @@ const liveValuesStyle: React.CSSProperties = {
   fontSize: "var(--fs-xs)",
 };
 
+// ── Master point list ──
+const FREE_POINT_LIMIT = 10;
+const FREE_PROFILE_LIMIT = 1;
+const POINTS_KEY = "dnp3-explorer-points";
+const POINT_TYPES: { value: string; label: string }[] = [
+  { value: "30:4", label: "Analog input (float32)" },
+  { value: "30:1", label: "Analog input (int32)" },
+  { value: "1:2", label: "Binary input" },
+  { value: "10:2", label: "Binary output status" },
+  { value: "20:1", label: "Counter (uint32)" },
+  { value: "32:1", label: "Analog output status (int32)" },
+];
+const DEFAULT_POINTS: Dnp3Point[] = [
+  { name: "Voltage", group: 30, variation: 4, index: 0 },
+  { name: "Current", group: 30, variation: 4, index: 1 },
+  { name: "Frequency", group: 30, variation: 4, index: 2 },
+  { name: "BreakerStatus", group: 1, variation: 2, index: 0 },
+  { name: "Power", group: 30, variation: 4, index: 3 },
+];
+
+function loadPoints(): Dnp3Point[] {
+  try {
+    const raw = localStorage.getItem(POINTS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch { /* fall through to defaults */ }
+  return DEFAULT_POINTS;
+}
+
+function savePoints(points: Dnp3Point[]) {
+  localStorage.setItem(POINTS_KEY, JSON.stringify(points));
+}
+
 function App() {
   const protocol = useProtocol<Dnp3Config, Dnp3Point, unknown>("dnp3");
-  const { requirePro, status: proStatus } = useProStatus();
-  const [points] = useState<Dnp3Point[]>([
-    { name: "Voltage", group: 30, variation: 4, index: 0 },
-    { name: "Current", group: 30, variation: 4, index: 1 },
-    { name: "Frequency", group: 30, variation: 4, index: 2 },
-    { name: "BreakerStatus", group: 1, variation: 2, index: 0 },
-    { name: "Power", group: 30, variation: 4, index: 3 },
-  ]);
+  const { requirePro, pro, status: proStatus } = useProStatus();
+  const [points, setPoints] = useState<Dnp3Point[]>(loadPoints);
+  const [newPoint, setNewPoint] = useState({ name: "", type: "30:4", index: "0" });
+  useEffect(() => { savePoints(points); }, [points]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [editingPoint, setEditingPoint] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState<string>("");
@@ -309,6 +340,8 @@ function App() {
   const saveProfileAs = useCallback((name: string) => {
     if (!name.trim()) return;
     const profile = { ...buildCurrentProfile(), name: name.trim() };
+    const isNew = !connProfiles.some((p) => p.name === profile.name);
+    if (isNew && connProfiles.length >= FREE_PROFILE_LIMIT && !requirePro("More than one saved connection profile")) return;
     setConnProfiles((prev) => {
       const next = [...prev.filter((p) => p.name !== profile.name), profile];
       saveConnProfiles(next);
@@ -316,7 +349,7 @@ function App() {
     });
     setActiveConnProfile(profile.name);
     setProfileDirty(false);
-  }, [buildCurrentProfile]);
+  }, [buildCurrentProfile, connProfiles, requirePro]);
 
   const saveProfileChanges = useCallback(() => {
     if (!activeConnProfile) return;
@@ -353,6 +386,20 @@ function App() {
       || saved.masterAddress !== current.masterAddress || saved.outstationAddress !== current.outstationAddress
     );
   }, [activeConnProfile, connProfiles, buildCurrentProfile, tcpFormValues]);
+
+  const addPoint = useCallback(() => {
+    const name = newPoint.name.trim();
+    const index = Number(newPoint.index);
+    if (!name || !Number.isInteger(index) || index < 0) return;
+    if (points.length >= FREE_POINT_LIMIT && !requirePro("More than 10 points in the poll list")) return;
+    const [group, variation] = newPoint.type.split(":").map(Number);
+    setPoints((prev) => [...prev, { name, group, variation, index }]);
+    setNewPoint((n) => ({ ...n, name: "", index: String(index + 1) }));
+  }, [newPoint, points.length, requirePro]);
+
+  const removePoint = useCallback((i: number) => {
+    setPoints((prev) => prev.filter((_, j) => j !== i));
+  }, []);
 
   // ── Handlers ──
   const handleConnect = useCallback(
@@ -591,6 +638,37 @@ function App() {
             />
           </Section>
 
+          <Section
+            title="Points"
+            meta={pro ? <Badge tone="success">{points.length}</Badge> : <Badge tone={points.length >= FREE_POINT_LIMIT ? "warn" : "neutral"}>{points.length} of {FREE_POINT_LIMIT}</Badge>}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {points.map((p, i) => (
+                <div key={`${p.name}-${i}`} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-xs)" }}>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>{p.name}</span>
+                  <span className="mono" style={{ color: "var(--text-muted)" }}>g{p.group}v{p.variation} #{p.index}</span>
+                  <IconButton size="sm" label={`Remove ${p.name}`} disabled={protocol.connected} onClick={() => removePoint(i)}>
+                    <X size={14} strokeWidth={1.75} />
+                  </IconButton>
+                </div>
+              ))}
+              {points.length === 0 && <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>No points. Add one below.</span>}
+            </div>
+            <input className="vt-input" aria-label="Point name" placeholder="Point name" value={newPoint.name} disabled={protocol.connected}
+              onChange={(e) => setNewPoint((n) => ({ ...n, name: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === "Enter") addPoint(); }} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <select className="vt-select" aria-label="Point type" value={newPoint.type} disabled={protocol.connected}
+                onChange={(e) => setNewPoint((n) => ({ ...n, type: e.target.value }))}>
+                {POINT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+              <input className="vt-input vt-input--mono" style={{ width: 64, flexShrink: 0 }} type="number" min={0} aria-label="Point index" value={newPoint.index} disabled={protocol.connected}
+                onChange={(e) => setNewPoint((n) => ({ ...n, index: e.target.value }))} />
+            </div>
+            <Button size="sm" block icon={<Plus size={14} strokeWidth={1.75} />} disabled={protocol.connected || !newPoint.name.trim()} onClick={addPoint}>Add point</Button>
+            {protocol.connected && <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>Disconnect to edit the list.</span>}
+          </Section>
+
           {protocol.connected && (
             <>
               <Section title="Class polling" meta={<ProBadge />}>
@@ -751,6 +829,7 @@ function App() {
       columns={columns}
       data={masterTableData}
       onRowClick={(row) => {
+        if (!requirePro("Controls (CROB and analog output)")) return;
         setEditingPoint(String(row.name));
         setEditingValue(row.value != null && String(row.value) !== "—" && String(row.value) !== "–" ? String(row.value) : "");
       }}
@@ -947,7 +1026,7 @@ function App() {
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
           <p style={{ margin: "0 0 12px" }}>Connect to DNP3 outstations in SCADA networks.</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Master mode</p>
-          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor points. Click rows to write values.</p>
+          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor an editable list of points. Pro: click rows to operate controls (CROB and analog output).</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Outstation mode</p>
           <p style={{ margin: "0 0 12px" }}>Run a DNP3 outstation server to simulate a device. Load device templates, auto-simulate live data.</p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
