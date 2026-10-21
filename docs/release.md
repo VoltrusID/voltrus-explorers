@@ -89,7 +89,7 @@ Set with `gh secret set NAME --env release -R VoltrusID/voltrus-explorers`. The 
 
 | Secret | Source |
 | --- | --- |
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key `BUU2CPKLGM` (same key as joyorogo), base64 of the `.p8` |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key (App Manager role), base64 of the `.p8` |
 | `APPLE_DIST_P12_BASE64`, `APPLE_DIST_P12_PASSWORD` | Apple Distribution identity (also signs iOS); `apple-distribution.p12` |
 | `MAC_INSTALLER_P12_BASE64`, `MAC_INSTALLER_P12_PASSWORD` | Mac Installer Distribution identity, created through the API on 2026-10-21 (expires 2027-10-21); `mac-installer.p12` |
 | `DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD` | Developer ID Application (G2, expires 2031-09-17); `developer-id.p12` |
