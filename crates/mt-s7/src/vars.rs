@@ -412,7 +412,7 @@ pub(crate) fn describe_header_error(code: u16) -> String {
 pub(crate) fn describe_return_code(code: u8) -> String {
     let text = match code {
         0x01 => "hardware fault",
-        0x03 => "access to this object is not allowed (protected or optimized DB)",
+        0x03 => "access not allowed (on S7-1200/1500 enable PUT/GET and turn off optimized block access for the DB)",
         RC_ADDRESS_OUT_OF_RANGE => "address out of range",
         RC_TRANSPORT_SIZE_NOT_SUPPORTED => "data type not supported",
         0x07 => "data type inconsistent with the item size",
