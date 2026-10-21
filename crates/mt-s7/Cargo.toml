@@ -1,0 +1,15 @@
+[package]
+name = "mt-s7"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Siemens S7 protocol client (ISO-on-TCP / TPKT + COTP) for the MacTools suite"
+
+[dependencies]
+mt-protocol = { path = "../mt-protocol" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
