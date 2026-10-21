@@ -1,11 +1,15 @@
 // Renders App Store screenshots (2880x1800) for one app from its scene file.
 //
-//   bun marketing/screenshots/render.mjs <app> [--device=iphone|ipad] [sceneId...]
+//   bun marketing/screenshots/render.mjs <app> [--device=iphone|ipad] [--bare] [sceneId...]
 //
 // Starts the app's Vite dev server, opens it in Chromium with a mocked Tauri runtime
 // (marketing/screenshots/<app>/scenes.mjs exports `mock` and `scenes`), drives each scene to the state
 // it shows, captures the app at 1180x740 CSS px (device scale 2), and composes it into frame.html with
 // the scene's headline. Output: marketing/screenshots/<app>/out/<NN>-<id>.png
+//
+// --bare skips frame.html and writes the raw app capture (1180x740 CSS at 2x on the Mac, the device viewport at 3x
+// for iphone/ipad) as out/bare-<NN>-<id>.png (out/bare-ios-<device>-<NN>-<id>.png), for website use. Bare renders
+// emulate prefers-color-scheme: dark so apps that follow the system theme match the dark site.
 //
 // A scene file may export `uiScale` (> 1 renders the UI larger inside the same window size).
 // SCREENSHOT_PORT picks the dev-server port (default 1420) so two apps can render at once.
@@ -20,8 +24,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
 const args = process.argv.slice(2);
 const deviceArg = args.find((a) => a.startsWith("--device="))?.slice(9);
-const [app, ...only] = args.filter((a) => !a.startsWith("--device="));
-if (!app) throw new Error("usage: bun marketing/screenshots/render.mjs <app> [sceneId...]");
+const bare = args.includes("--bare");
+const [app, ...only] = args.filter((a) => !a.startsWith("--device=") && a !== "--bare");
+if (!app) throw new Error("usage: bun marketing/screenshots/render.mjs <app> [--device=iphone|ipad] [--bare] [sceneId...]");
 
 const sceneModule = await import(pathToFileURL(join(here, app, "scenes.mjs")).href);
 // --device=iphone|ipad renders the scene file's `iosScenes` at App Store size (iPhone 6.9" 1320x2868, iPad 13" 2064x2752).
@@ -70,6 +75,7 @@ try {
       await page.setUserAgent(MAC_UA);
       await page.setViewport({ width: Math.round(1180 / uiScale), height: Math.round(740 / uiScale), deviceScaleFactor: 2 * uiScale });
     }
+    if (bare) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
     await page.evaluateOnNewDocument(mock);
     if (scene.init) await page.evaluateOnNewDocument(scene.init);
     page.on("pageerror", (e) => console.error(`[${scene.id}] page error:`, e.message));
@@ -79,6 +85,14 @@ try {
     await new Promise((r) => setTimeout(r, scene.settleMs ?? 600));
     const shot = await page.screenshot({ type: "png" });
     await page.close();
+
+    const prefix = `${bare ? "bare-" : ""}${device ? `ios-${deviceArg}-` : ""}${String(scenes.indexOf(scene) + 1).padStart(2, "0")}-${scene.id}.png`;
+    if (bare) {
+      const file = join(outDir, prefix);
+      writeFileSync(file, shot);
+      console.log(file);
+      continue;
+    }
 
     const frame = await browser.newPage();
     const [fw, fh] = device ? [device.out[0] / 2, device.out[1] / 2] : [1440, 900];
@@ -100,7 +114,7 @@ try {
       `data:image/png;base64,${Buffer.from(shot).toString("base64")}`,
     );
     await frame.waitForFunction(() => document.getElementById("shot").complete);
-    const file = join(outDir, `${device ? `ios-${deviceArg}-` : ""}${String(scenes.indexOf(scene) + 1).padStart(2, "0")}-${scene.id}.png`);
+    const file = join(outDir, prefix);
     writeFileSync(file, await frame.screenshot({ type: "png" }));
     await frame.close();
     console.log(file);
