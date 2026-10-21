@@ -47,11 +47,15 @@ Profile data is stored by the server as plain JSON: never put passwords or token
 - Outside the App Store the entitlement comes from the console; the dialog only offers a link to the account page.
   In App Store builds the dialog shows the StoreKit product titles and localized prices, Restore, the renewal
   disclosure and Terms/Privacy links. It never links to console pricing.
+- Until StoreKit returns Connect products (they have no price yet) an App Store build shows no subscribe panel and no
+  text about a paid plan (`plansOffered` in `connect.tsx`); sign-in and profile sync work as a free feature.
+- Account > Delete account opens `<console>/app/settings?delete=1` (`ConnectInfo.delete_account_url`). The console confirms
+  with an emailed code, erases the Connect data and anonymizes the account (App Store guideline 5.1.1(v)).
 
 ## App Store Connect checklist (per app)
 
 1. Create an auto-renewable subscription group with the two products from `connect.json` (monthly, yearly). Product
    ids are final once created. Keep them inactive until the price is decided.
 2. Point App Store Server Notifications V2 (production and sandbox) at `https://console.voltrus.id/api/connect/app-store/notifications`.
-3. Attach the subscriptions to the app version that ships Connect, with a review screenshot of the Connect dialog.
+3. Once the products are priced, attach the subscriptions to the app version that ships Connect, with a review screenshot of the Connect dialog.
 4. Privacy Policy: the dialog links `https://voltrus.id/privacy`; the page must exist before review.

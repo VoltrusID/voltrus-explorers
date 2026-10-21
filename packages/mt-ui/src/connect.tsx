@@ -42,6 +42,8 @@ export interface ConnectInfo {
   store: boolean;
   /** Account page for builds outside the App Store; null in store builds. */
   console_url: string | null;
+  /** Console settings page that deletes the account (confirmed by an emailed code). */
+  delete_account_url: string;
 }
 
 export interface Entitlement {
@@ -121,6 +123,13 @@ interface SyncSummary {
 interface ConnectContextValue {
   /** False when the host build has no Connect commands (plain browser, tests). */
   available: boolean;
+  /** App Store builds: the Connect subscriptions StoreKit offers; null until loaded, empty when none exist. */
+  storeProducts: StoreProduct[] | null;
+  /**
+   * Whether a paid plan can be bought from this build. Everything that mentions a subscription is hidden
+   * while this is false, unless the account already has one.
+   */
+  plansOffered: boolean;
   info: ConnectInfo | null;
   signedIn: boolean;
   me: ConnectMe | null;
@@ -196,6 +205,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
   const [pendingDeletes, setPendingDeletes] = useState<{ key: string; id: string; name: string }[]>([]);
   const [meta, setMetaState] = useState<SyncMeta>(emptyMeta);
   const [registered, setRegistered] = useState(0);
+  const [storeProducts, setStoreProducts] = useState<StoreProduct[] | null>(null);
 
   const hooksRef = useRef<MutableRefObject<ConnectAppHooks> | null>(null);
   const metaRef = useRef(meta);
@@ -493,11 +503,27 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
   }, [signedIn, syncNow]);
   const closeDialog = useCallback(() => setDialogOpen(false), []);
 
+  // App Store review safety: until StoreKit actually returns Connect subscriptions (they have no price
+  // yet), the app shows no subscribe button and never mentions a paid plan.
+  useEffect(() => {
+    if (!info?.store) return;
+    let stopped = false;
+    invoke<StoreProduct[]>("connect_store_products")
+      .then((p) => !stopped && setStoreProducts(p))
+      .catch(() => !stopped && setStoreProducts([]));
+    return () => {
+      stopped = true;
+    };
+  }, [info?.store]);
+  const plansOffered = me?.entitlement.active === true || (storeProducts?.length ?? 0) > 0;
+
   const attention = pendingDeletes.length > 0 || Object.keys(conflicts).length > 0;
 
   const value = useMemo<ConnectContextValue>(
     () => ({
       available,
+      storeProducts,
+      plansOffered,
       info,
       signedIn,
       me,
@@ -528,7 +554,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
       hooks,
     }),
     [
-      available, info, signedIn, me, waitingForBrowser, error, syncing, syncSummary, syncError, conflicts, failures,
+      available, storeProducts, plansOffered, info, signedIn, me, waitingForBrowser, error, syncing, syncSummary, syncError, conflicts, failures,
       pendingDeletes, meta, attention, dialogOpen, openDialog, closeDialog, signIn, cancelSignIn, signOut, refreshMe,
       syncNow, setTeam, keepMine, useServerCopy, saveCurrent, register, hooks,
     ],
@@ -644,9 +670,9 @@ function Messages({ error, notice }: { error: string | null; notice: string | nu
 
 // ── Account ──
 
-function entitlementLine(e: Entitlement, store: boolean): string {
+function entitlementLine(e: Entitlement, store: boolean, plansOffered: boolean): string {
   const via = e.source === "app_store" || e.source === "app_store_sandbox" ? "the App Store" : "your Voltrus account";
-  if (!e.active) return "No active Connect subscription.";
+  if (!e.active) return plansOffered ? "No active Connect subscription." : "Your saved profiles sync across your devices.";
   const until = e.expires_at ? ` Renews or ends ${new Date(e.expires_at).toLocaleDateString()}.` : "";
   return `Connect is active through ${via}.${store && e.source === "console" ? " It is managed on your Voltrus account." : ""}${until}`;
 }
@@ -657,8 +683,8 @@ function AccountTab() {
     return (
       <div style={col}>
         <p style={{ ...dim, margin: 0 }}>
-          Sign in with your Voltrus account to keep your saved profiles in sync across your devices. Sharing profiles with a team and
-          listing Voltrus Remote sites need an active Connect subscription.
+          Sign in with your Voltrus account to keep your saved profiles in sync across your devices.
+          {c.plansOffered && " Sharing profiles with a team and listing Voltrus Remote sites need an active Connect subscription."}
         </p>
         {c.waitingForBrowser ? (
           <Callout tone="info">
@@ -693,11 +719,11 @@ function AccountTab() {
         <div style={{ ...row, marginBottom: 6 }}>
           {ent && <Badge tone={ent.active ? "success" : "neutral"}>{ent.active ? "Connect active" : "Free account"}</Badge>}
         </div>
-        {ent && <p style={{ ...dim, margin: 0 }}>{entitlementLine(ent, store)}</p>}
+        {ent && <p style={{ ...dim, margin: 0 }}>{entitlementLine(ent, store, c.plansOffered)}</p>}
         {!c.me && !c.error && <p style={{ ...dim, margin: 0 }}>Loading account…</p>}
       </Section>
       <SyncStatus />
-      {ent && !ent.active && store && <SubscribePanel />}
+      {ent && !ent.active && store && c.plansOffered && <SubscribePanel />}
       {ent && !ent.active && !store && c.info?.console_url && (
         <div style={row}>
           <Button size="sm" onClick={() => openLink(c.info!.console_url!)}>
@@ -705,6 +731,14 @@ function AccountTab() {
           </Button>
         </div>
       )}
+      <Section title="Delete account">
+        <p style={{ ...dim, margin: "0 0 8px" }}>
+          Permanently deletes your Voltrus account and everything Connect stores for it. You confirm with a code we email you.
+        </p>
+        <Button size="sm" variant="danger" onClick={() => openLink(c.info?.delete_account_url ?? "https://console.voltrus.id/app/settings?delete=1")}>
+          Delete account
+        </Button>
+      </Section>
       {c.error && <Callout tone="danger">{c.error}</Callout>}
     </div>
   );
@@ -741,12 +775,7 @@ const PRIVACY = "https://voltrus.id/privacy";
 function SubscribePanel() {
   const c = useConnect();
   const { busy, error, notice, setNotice, run } = useAction();
-  const [products, setProducts] = useState<StoreProduct[] | null>(null);
-  useEffect(() => {
-    invoke<StoreProduct[]>("connect_store_products")
-      .then(setProducts)
-      .catch(() => setProducts([]));
-  }, []);
+  const products = c.storeProducts;
 
   const subscribe = (id: string) =>
     run(`buy:${id}`, async () => {
@@ -770,12 +799,7 @@ function SubscribePanel() {
   return (
     <Section title="Connect subscription">
       <div style={col}>
-        {products === null ? (
-          <p style={{ ...dim, margin: 0 }}>Loading…</p>
-        ) : products.length === 0 ? (
-          <p style={{ ...dim, margin: 0 }}>Connect subscriptions are not available in the App Store right now.</p>
-        ) : (
-          products.map((p) => (
+        {(products ?? []).map((p) => (
             <div key={p.id} style={{ ...row, justifyContent: "space-between" }}>
               <span style={{ ...dim, color: "var(--text)" }}>
                 {p.title}
@@ -792,8 +816,7 @@ function SubscribePanel() {
                 {p.price ? `Subscribe · ${p.price}` : "Subscribe"}
               </Button>
             </div>
-          ))
-        )}
+        ))}
         <div style={row}>
           <Button size="sm" variant="ghost" loading={busy === "restore"} disabled={busy !== null} onClick={() => void restore()}>
             Restore purchases
@@ -938,7 +961,9 @@ function ProfilesTab() {
                       disabled={!canShare || teams.length === 0 || (link ? !link.canEdit : false)}
                       title={
                         !canShare
-                          ? "Sharing needs an active Connect subscription."
+                          ? c.plansOffered
+                            ? "Sharing needs an active Connect subscription."
+                            : "Sharing is not available on your account yet."
                           : teams.length === 0
                             ? "Create or join a team in the Teams tab first."
                             : undefined
@@ -1004,7 +1029,10 @@ function TeamsTab() {
     <div style={col}>
       {!active && (
         <Callout tone="info">
-          Creating teams and sharing profiles need an active Connect subscription. You can still accept an invite and leave teams.
+          {c.plansOffered
+            ? "Creating teams and sharing profiles need an active Connect subscription."
+            : "Creating teams and sharing profiles are not available on your account yet."}{" "}
+          You can still accept an invite and leave teams.
         </Callout>
       )}
       {teams === null ? (
@@ -1127,7 +1155,13 @@ function RemoteTab() {
   }, [active, run]);
 
   if (!active) {
-    return <Callout tone="info">Listing Voltrus Remote sites needs an active Connect subscription.</Callout>;
+    return (
+      <Callout tone="info">
+        {c.plansOffered
+          ? "Listing Voltrus Remote sites needs an active Connect subscription."
+          : "Listing Voltrus Remote sites is not available on your account yet."}
+      </Callout>
+    );
   }
 
   const copy = async (text: string) => {

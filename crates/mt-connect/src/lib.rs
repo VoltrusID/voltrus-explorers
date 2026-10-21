@@ -75,6 +75,8 @@ pub struct ConnectInfo {
     pub store: bool,
     /// Account page for non-store builds; `None` in store builds, which never link out to it.
     pub console_url: Option<String>,
+    /// Console settings page that deletes the account (App Store guideline 5.1.1(v)).
+    pub delete_account_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

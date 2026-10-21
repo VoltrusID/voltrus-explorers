@@ -16,12 +16,18 @@ fn console_url(config: &ConnectConfig) -> String {
     format!("{}/app/connect", config.api_base.trim_end_matches('/'))
 }
 
+/// Settings page where the signed-in user can delete the account (email-code confirmed).
+fn delete_account_url(config: &ConnectConfig) -> String {
+    format!("{}/app/settings?delete=1", config.api_base.trim_end_matches('/'))
+}
+
 #[tauri::command]
 pub fn connect_info(connect: State<'_, Connect>) -> ConnectInfo {
     ConnectInfo {
         app_slug: connect.config.app_slug.clone(),
         store: cfg!(feature = "store"),
         console_url: (!cfg!(feature = "store")).then(|| console_url(&connect.config)),
+        delete_account_url: delete_account_url(&connect.config),
     }
 }
 
