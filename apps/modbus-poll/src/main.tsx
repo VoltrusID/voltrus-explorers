@@ -6,11 +6,14 @@ import { ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
+  "Write registers and coils",
+  "Poll more than 20 values",
   "Slave simulator with device templates",
   "Modbus RTU over serial, bus scan and auto-detect (macOS)",
   "Live trends",
   "Network scan",
-  "Saved connection profiles",
+  "More than one saved connection profile",
+  "Traffic log CSV export and copy",
   "CSV import and export of read blocks",
 ];
 

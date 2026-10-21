@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
-import { EmptyState, saveTextFile } from "@mactools/ui";
+import { EmptyState, saveTextFile, useProStatus } from "@mactools/ui";
 import { useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
 
 const FC_NAMES: Record<number, string> = {
@@ -38,6 +38,7 @@ export default function TrafficPanel() {
   const entries = useTrafficStore((s) => s.entries);
   const tcpEvents = useTrafficStore((s) => s.tcpEvents);
   const clearTraffic = useTrafficStore((s) => s.clear);
+  const { requirePro } = useProStatus();
   const [filterDir, setFilterDir] = useState<string>("all");
   const [filterText, setFilterText] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
@@ -127,6 +128,7 @@ export default function TrafficPanel() {
   };
 
   const copyAll = useCallback(() => {
+    if (!requirePro("Copying all traffic")) return;
     const data = tab === "modbus" ? filtered : tcpEvents;
     let text: string;
     if (tab === "modbus") {
@@ -145,10 +147,11 @@ export default function TrafficPanel() {
     setExportMsg({ text: "Copied to clipboard" });
     setTimeout(() => setExportMsg(null), 1500);
     setShowExport(false);
-  }, [filtered, tcpEvents, tab, formatTime]);
+  }, [filtered, tcpEvents, tab, formatTime, requirePro]);
 
   const exportCsv = useCallback(async () => {
     setShowExport(false);
+    if (!requirePro("Traffic CSV export")) return;
     let csv: string;
     const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
     let filename: string;
@@ -177,7 +180,7 @@ export default function TrafficPanel() {
       setExportMsg({ text: `Export failed: ${String(e)}`, failed: true });
       setTimeout(() => setExportMsg(null), 8000);
     }
-  }, [filtered, tcpEvents, tab, formatTimeFull]);
+  }, [filtered, tcpEvents, tab, formatTimeFull, requirePro]);
 
   const renderDetail = (e: TrafficEntry) => (
     <tr>

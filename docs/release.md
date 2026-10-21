@@ -67,9 +67,9 @@ the user starts server mode).
 
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
-| BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 14.99 (the app's paid price) |
+| BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 19.99 (recommended; set when `free_since` is set, previous buyers are grandfathered) |
 | EtherNet/IP Explorer | `com.joyodigitama.enipexplorer.pro` | USD 14.99 |
-| Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
+| Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 14.99 (recommended; set when `free_since` is set; one purchase covers macOS and iOS) |
 | NATS Explorer | `com.joyodigitama.natsexplorer.pro` | USD 9.99 (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | USD 19.99 (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
 | BLE Inspector | `com.joyodigitama.bleinspector.pro` | USD 4.99 (never paid; `free_since` 1.2.0, free from its first release) |

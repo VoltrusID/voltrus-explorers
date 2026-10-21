@@ -1,6 +1,6 @@
-import { Button, EmptyState, Field, IconButton, Section } from "@mactools/ui";
+import { Button, EmptyState, Field, IconButton, Section, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { AREAS, TYPES } from "../constants";
+import { AREAS, FREE_VALUES, TYPES } from "../constants";
 import { blockStep, isBitArea, validateBlock } from "../helpers";
 import type { ReadBlock } from "../types";
 import { displayAddr } from "../utils/format";
@@ -19,6 +19,9 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     newType, setNewType, newArea, setNewArea,
     useOneBased, addLog,
   } = useStore();
+  const { pro, requirePro } = useProStatus();
+  const totalValues = (list: ReadBlock[]) => list.reduce((n, b) => n + b.quantity, 0);
+  const overFreeCap = (list: ReadBlock[]) => !pro && totalValues(list) > FREE_VALUES && !requirePro(`More than ${FREE_VALUES} polled values`);
 
   /** The block described by the form, or null (with the reason logged) if it can not be polled. */
   const blockFromForm = (): ReadBlock | null => {
@@ -41,6 +44,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
   const addBlock = () => {
     const block = blockFromForm();
     if (!block) return;
+    if (overFreeCap([...blocks, block])) return;
     setBlocks([...blocks, block]);
     setNewName("");
     setNewAddr("");
@@ -61,7 +65,9 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     if (editingBlock === null) return;
     const block = blockFromForm();
     if (!block) return;
-    setBlocks(blocks.map((b, i) => i === editingBlock ? block : b));
+    const next = blocks.map((b, i) => i === editingBlock ? block : b);
+    if (overFreeCap(next)) return;
+    setBlocks(next);
     setEditingBlock(null);
     setNewName("");
     setNewAddr("");

@@ -25,6 +25,19 @@ The App Store builds of DNP3 Explorer and OPC UA Explorer are free to download; 
 People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub
 Releases have everything.
 
+Modbus Poll and BACnet Explorer are still paid on the App Store. Once they go free, the split below applies (it only
+takes effect when `free_since` is set in their `store.json`).
+
+| Modbus Poll | |
+| --- | --- |
+| Free | Modbus TCP master with one connection, read up to 20 values across any number of blocks, all data types, byte orders and addressing, communication log with CSV export, traffic view (last 500 frames), one saved connection profile |
+| Pro | Unlimited values, writes (coils and registers), RTU over serial, bus scan and auto-detect, network scan, slave simulator with templates, live trends, traffic CSV export and copy-all, block CSV import and export, unlimited saved profiles |
+
+| BACnet Explorer | |
+| --- | --- |
+| Free | Who-Is discovery, connect to a device, browse objects, read any property, communication log with CSV export |
+| Pro | Write properties (all priorities, relinquish), live trends and COV, trend log and schedule viewers, alarms and events with acknowledge, device simulator |
+
 | DNP3 Explorer | |
 | --- | --- |
 | Free | Connect to one outstation, integrity poll of an editable point list (up to 10 points), read analog, binary and counter values, 1 saved connection profile, communication log with CSV export |

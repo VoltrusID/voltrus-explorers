@@ -395,9 +395,10 @@ function App() {
         addLog("error", `Cannot write "${name}": ${target.point.object_type} is read-only`);
         return;
       }
+      if (!requirePro("Writing properties")) return;
       setEditingObject(name);
     },
-    [resolveEditTarget, addLog],
+    [resolveEditTarget, addLog, requirePro],
   );
 
   const handleTableWrite = useCallback(

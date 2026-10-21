@@ -33,3 +33,8 @@ export const thStyle: React.CSSProperties = {
   whiteSpace: "nowrap" as const,
 };
 
+
+/** Free tier: polled values across all blocks (one float is 2 registers but 1 value). */
+export const FREE_VALUES = 20;
+/** Free tier: saved connection profiles. */
+export const FREE_PROFILE_LIMIT = 1;

@@ -8,6 +8,7 @@ import "./styles.css";
 // Tiny hash router: a dedicated Tauri window loads `index.html#/sim` to render
 // the device control panel instead of the full app.
 const PRO_FEATURES = [
+  "Write properties with priority and relinquish",
   "Live trends with COV subscriptions",
   "Alarm and event summary with acknowledge",
   "Virtual BACnet device simulator",

@@ -20,7 +20,7 @@ import appIcon from "../src-tauri/icons/128x128.png";
 import TrafficPanel from "./TrafficPanel";
 import TrendPanel from "./TrendPanel";
 import type { ModbusConfig } from "./types";
-import { VIRTUAL_PORT, sidebarStyle } from "./constants";
+import { FREE_PROFILE_LIMIT, VIRTUAL_PORT, sidebarStyle } from "./constants";
 import { buildReadPlan, isBitArea, isWritableArea, readPlanKey, type ReadTag } from "./helpers";
 import { blocksToCsv, parseBlocksCsv } from "./csv";
 import { startTrafficFeed } from "./trafficStore";
@@ -60,6 +60,7 @@ function App() {
   const protocol = useProtocol<ModbusConfig, ReadTag, unknown>("modbus");
   const { startPolling, stopPolling } = protocol;
   const { requirePro } = useProStatus();
+  const connProfiles = useStore((s) => s.connProfiles);
   const {
     mode, setMode, leftWidth, rightWidth, tableHeight,
     dragSide, isMobile, setIsMobile,
@@ -359,6 +360,7 @@ function App() {
   const closeEditor = useCallback(() => { setWriteError(null); setEditingTag(null); }, []);
 
   const openEditor = (row: TableRow) => {
+    if (!requirePro("Writing registers and coils")) return;
     if (!isWritableArea(row.area)) {
       addLog("info", `${row.name} is in the ${row.area} area, which is read-only`);
       return;
@@ -455,8 +457,12 @@ function App() {
       onConnect={handleConnect} onCancelConnect={handleCancelConnect} onDisconnect={handleDisconnect}
       onRtuConnect={handleRtuConnect} onScanBus={handleScanBus} onSelectScanUnit={handleSelectScanUnit}
       onAutoDetect={handleAutoDetect} autoDetecting={autoDetecting}
-      saveProfileAs={(name) => requirePro("Saved connection profiles") && saveProfileAs(name)}
-      saveProfileChanges={() => requirePro("Saved connection profiles") && saveProfileChanges()}
+      saveProfileAs={(name) => {
+        const isNew = !connProfiles.some((p) => p.name === name.trim());
+        if (isNew && connProfiles.length >= FREE_PROFILE_LIMIT && !requirePro("More than one saved connection profile")) return;
+        saveProfileAs(name);
+      }}
+      saveProfileChanges={saveProfileChanges}
       loadProfile={loadProfile} deleteProfile={deleteProfile}
     />
   ) : (
