@@ -47,6 +47,16 @@ import { ObjPanel } from "./panels/ObjPanel";
 import { SchemaPanel } from "./panels/SchemaPanel";
 import { MonitorPanel } from "./panels/MonitorPanel";
 import appIcon from "../src-tauri/icons/128x128.png";
+import {
+  deleteProfile,
+  FREE_PROFILE_LIMIT,
+  getSessionSecrets,
+  loadProfiles,
+  profileNeedsSecret,
+  setSessionSecrets,
+  upsertProfile,
+  type ConnProfile,
+} from "./profiles";
 
 // ---------------------------------------------------------------------------
 // Types (mirror mt-nats serde types)
@@ -179,6 +189,11 @@ export default function App() {
   const [clientNkeySeed, setClientNkeySeed] = useState("");
   const [clientJwt, setClientJwt] = useState("");
   const [clientJwtSeed, setClientJwtSeed] = useState("");
+  const [profiles, setProfiles] = useState<ConnProfile[]>(loadProfiles);
+  const [selectedProfile, setSelectedProfile] = useState("");
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [saveAsName, setSaveAsName] = useState("");
+  const [profileNote, setProfileNote] = useState<string | null>(null);
   const [clientMessages, setClientMessages] = useState<(NatsMessage & { _ts: number })[]>([]);
   const [clientError, setClientError] = useState<string | null>(null);
   const [subTopic, setSubTopic] = useState("demo.>");
@@ -357,6 +372,82 @@ export default function App() {
   // -------------------------------------------------------------------------
   // Client mode handlers
   // -------------------------------------------------------------------------
+  // Saved connection profiles. The free tier keeps one; secrets are never persisted (see profiles.ts).
+  const openSaveProfile = () => {
+    if (profiles.length >= FREE_PROFILE_LIMIT && !requirePro("More than one saved connection profile")) return;
+    setSaveAsName(selectedProfile || clientHost);
+    setSaveAsOpen(true);
+  };
+
+  const handleSaveProfile = () => {
+    const name = saveAsName.trim();
+    if (!name) return;
+    const isNew = !profiles.some((x) => x.name === name);
+    if (isNew && profiles.length >= FREE_PROFILE_LIMIT && !requirePro("More than one saved connection profile")) return;
+    const p: ConnProfile = {
+      name,
+      host: clientHost,
+      port: clientPort,
+      clientName,
+      tls: clientTls,
+      authMode: clientAuthMode,
+      username: clientAuthMode === "userpass" && clientUser ? clientUser : undefined,
+      credsPath: clientAuthMode === "creds_file" && clientCredsPath ? clientCredsPath : undefined,
+    };
+    setSessionSecrets(name, {
+      password: clientPass,
+      token: clientToken,
+      credsBody: clientCredsBody,
+      nkeySeed: clientNkeySeed,
+      jwt: clientJwt,
+      jwtSeed: clientJwtSeed,
+    });
+    setProfiles(upsertProfile(p));
+    setSelectedProfile(name);
+    setProfileNote(null);
+    setSaveAsOpen(false);
+    addLog("info", `Saved profile "${name}"`);
+  };
+
+  const handleLoadProfile = (name: string) => {
+    setSelectedProfile(name);
+    const p = profiles.find((x) => x.name === name);
+    if (!p) {
+      setProfileNote(null);
+      return;
+    }
+    setClientHost(p.host);
+    setClientPort(p.port);
+    setClientName(p.clientName);
+    setClientTls(p.tls);
+    setClientAuthMode(p.authMode);
+    setClientUser(p.username ?? "");
+    setClientCredsPath(p.credsPath ?? "");
+    const s = getSessionSecrets(p.name);
+    setClientPass(s?.password ?? "");
+    setClientToken(s?.token ?? "");
+    setClientCredsBody(s?.credsBody ?? "");
+    setClientNkeySeed(s?.nkeySeed ?? "");
+    setClientJwt(s?.jwt ?? "");
+    setClientJwtSeed(s?.jwtSeed ?? "");
+    setProfileNote(
+      profileNeedsSecret(p) && !s
+        ? "Secrets are not saved to disk. Enter the password, token, seed or credentials again to connect."
+        : null,
+    );
+    setClientError(null);
+    addLog("info", `Loaded profile "${p.name}"`);
+  };
+
+  const handleDeleteProfile = () => {
+    if (!selectedProfile) return;
+    const name = selectedProfile;
+    setProfiles(deleteProfile(name));
+    setSelectedProfile("");
+    setProfileNote(null);
+    addLog("info", `Deleted profile "${name}"`);
+  };
+
   const handleClientConnect = async () => {
     setClientConnecting(true);
     setClientError(null);
@@ -939,6 +1030,42 @@ export default function App() {
   ) : (
     <>
       <Section title="Connect to server">
+        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+          <select
+            className="vt-select vt-select--sm"
+            style={{ flex: 1, minWidth: 0 }}
+            value={selectedProfile}
+            onChange={(e) => handleLoadProfile(e.target.value)}
+            disabled={clientConnected}
+            title="Load a saved connection profile"
+            aria-label="Saved profiles"
+          >
+            <option value="">Saved profiles…</option>
+            {profiles.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}</option>
+            ))}
+          </select>
+          <IconButton
+            label="Save current fields as a profile"
+            size="sm"
+            outline
+            disabled={clientConnected}
+            onClick={openSaveProfile}
+          >
+            <Plus size={16} strokeWidth={1.75} />
+          </IconButton>
+          <IconButton
+            label="Delete selected profile"
+            size="sm"
+            outline
+            danger
+            disabled={clientConnected || !selectedProfile}
+            onClick={handleDeleteProfile}
+          >
+            <Trash2 size={16} strokeWidth={1.75} />
+          </IconButton>
+        </div>
+        {profileNote && <Callout tone="info">{profileNote}</Callout>}
         <Field label="Host">
           {(id) => (
             <input
@@ -1503,6 +1630,36 @@ export default function App() {
     handleSectionChange(t);
   };
 
+  const saveProfileDialog = (
+    <Dialog
+      open={saveAsOpen}
+      onClose={() => setSaveAsOpen(false)}
+      title="Save connection profile"
+      width={360}
+      footer={
+        <>
+          <Button size="sm" variant="ghost" onClick={() => setSaveAsOpen(false)}>Cancel</Button>
+          <Button size="sm" variant="primary" disabled={!saveAsName.trim()} onClick={handleSaveProfile}>Save</Button>
+        </>
+      }
+    >
+      <Field label="Profile name">
+        <input
+          className="vt-input vt-input--sm"
+          value={saveAsName}
+          autoFocus
+          onChange={(e) => setSaveAsName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSaveProfile(); }}
+        />
+      </Field>
+      <p style={{ margin: "8px 0 0", fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.4 }}>
+        Saves host, port, client name, TLS, auth type, username and the .creds file path on this Mac.
+        Passwords, tokens, NKey seeds, JWTs and inline credentials are never written to disk, so you
+        enter them again after restarting the app.
+      </p>
+    </Dialog>
+  );
+
   const aboutDialog = (
     <Dialog
       open={showInfo}
@@ -1597,6 +1754,7 @@ export default function App() {
           device={mode === "client" ? { ip: clientHost, port: clientPort } : { ip: "127.0.0.1", port: serverPort }}
         />
         {aboutDialog}
+        {saveProfileDialog}
       </div>
     );
   }
@@ -1681,6 +1839,7 @@ export default function App() {
       />
 
         {aboutDialog}
+        {saveProfileDialog}
     </div>
   );
 }

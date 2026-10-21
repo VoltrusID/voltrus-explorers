@@ -11,6 +11,7 @@ const PRO_FEATURES = [
   "$SYS server monitor",
   "Protobuf schema decoding",
   "CSV export of captured messages",
+  "More than one saved connection profile",
 ];
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
