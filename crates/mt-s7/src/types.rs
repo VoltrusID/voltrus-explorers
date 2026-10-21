@@ -51,6 +51,12 @@ pub(crate) const TS_BYTE: u8 = 0x02;
 pub(crate) const TS_WORD: u8 = 0x04;
 pub(crate) const TS_DWORD: u8 = 0x06;
 pub(crate) const TS_REAL: u8 = 0x08;
+/// S7 counter (area 0x1C). Elements are 2 bytes each and addressed by number.
+pub(crate) const TS_COUNTER: u8 = 0x1C;
+/// S7 timer (area 0x1D). Elements are 2 bytes each and addressed by number.
+pub(crate) const TS_TIMER: u8 = 0x1D;
+/// Transport size a PLC uses for a timer or counter in a read response (octet string, length in bytes).
+pub(crate) const TS_OCTET_STRING: u8 = 0x09;
 
 // S7 error codes
 pub(crate) const S7_ERR_NONE: u16 = 0x0000;
@@ -157,6 +163,10 @@ pub enum S7DataType {
     DWord,
     Real,
     String,
+    /// S7 timer (S5 time format). Read as milliseconds. Only valid for the timer area.
+    Timer,
+    /// S7 counter (BCD, 0 to 999). Only valid for the counter area.
+    Counter,
 }
 
 impl S7DataType {
@@ -168,6 +178,8 @@ impl S7DataType {
             S7DataType::DWord => TS_DWORD,
             S7DataType::Real => TS_REAL,
             S7DataType::String => TS_BYTE, // Strings transported as byte arrays
+            S7DataType::Timer => TS_TIMER,
+            S7DataType::Counter => TS_COUNTER,
         }
     }
 
@@ -179,6 +191,7 @@ impl S7DataType {
             S7DataType::DWord => 4,
             S7DataType::Real => 4,
             S7DataType::String => 1, // Per character; length determines total
+            S7DataType::Timer | S7DataType::Counter => 2,
         }
     }
 
@@ -190,9 +203,53 @@ impl S7DataType {
             "dword" | "uint32" | "int32" => Some(S7DataType::DWord),
             "real" | "float" | "float32" => Some(S7DataType::Real),
             "string" | "str" => Some(S7DataType::String),
+            "timer" => Some(S7DataType::Timer),
+            "counter" => Some(S7DataType::Counter),
             _ => None,
         }
     }
+}
+
+// ── Timer and counter encoding ──
+
+/// Decode three BCD digits from the low 12 bits of `word`.
+fn bcd3(word: u16) -> u16 {
+    ((word >> 8) & 0xF) * 100 + ((word >> 4) & 0xF) * 10 + (word & 0xF)
+}
+
+/// Encode 0..=999 as three BCD digits (larger values are clamped to 999).
+fn to_bcd3(value: u16) -> u16 {
+    let v = value.min(999);
+    ((v / 100) << 8) | (((v / 10) % 10) << 4) | (v % 10)
+}
+
+/// Time base in milliseconds for the 2-bit base code in bits 12-13 of an S7 timer word.
+const TIMER_BASE_MS: [u32; 4] = [10, 100, 1000, 10_000];
+
+/// Decode an S7 timer word to milliseconds: BCD value (bits 0-11) times the time base (bits 12-13).
+pub(crate) fn decode_timer_ms(word: u16) -> u32 {
+    bcd3(word) as u32 * TIMER_BASE_MS[((word >> 12) & 0x3) as usize]
+}
+
+/// Encode milliseconds as an S7 timer word, using the finest time base that fits 999 steps.
+/// Values above 9,990,000 ms are clamped.
+pub(crate) fn encode_timer_ms(ms: u32) -> u16 {
+    let base_code = TIMER_BASE_MS
+        .iter()
+        .position(|base| ms.div_ceil(*base) <= 999)
+        .unwrap_or(3);
+    let steps = (ms.saturating_add(TIMER_BASE_MS[base_code] / 2) / TIMER_BASE_MS[base_code]).min(999) as u16;
+    ((base_code as u16) << 12) | to_bcd3(steps)
+}
+
+/// Decode an S7 counter word: BCD 0..=999 in the low 12 bits.
+pub(crate) fn decode_counter(word: u16) -> u16 {
+    bcd3(word)
+}
+
+/// Encode a counter value as an S7 counter word (clamped to 999).
+pub(crate) fn encode_counter(value: u16) -> u16 {
+    to_bcd3(value)
 }
 
 // ── Tag ──
@@ -224,6 +281,10 @@ pub enum S7Value {
     DWord(u32),
     Real(f32),
     String(String),
+    /// Timer value in milliseconds.
+    Timer(u32),
+    /// Counter value, 0 to 999.
+    Counter(u16),
 }
 
 impl S7Value {
@@ -241,6 +302,8 @@ impl S7Value {
             S7Value::DWord(v) => *v as f64,
             S7Value::Real(v) => *v as f64,
             S7Value::String(_) => 0.0,
+            S7Value::Timer(v) => *v as f64,
+            S7Value::Counter(v) => *v as f64,
         }
     }
 }
@@ -361,4 +424,50 @@ pub struct BlockInfo {
     pub block_number: u16,
     pub language: String,
     pub size: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counter_bcd_round_trip() {
+        for v in [0u16, 1, 9, 10, 99, 100, 247, 999] {
+            assert_eq!(decode_counter(encode_counter(v)), v);
+        }
+        assert_eq!(encode_counter(247), 0x0247);
+        assert_eq!(encode_counter(5000), 0x0999, "clamped to 999");
+    }
+
+    #[test]
+    fn timer_encoding_picks_the_finest_time_base() {
+        assert_eq!(encode_timer_ms(0), 0x0000);
+        assert_eq!(encode_timer_ms(5_000), 0x0500); // 500 x 10 ms
+        assert_eq!(encode_timer_ms(9_990), 0x0999);
+        assert_eq!(encode_timer_ms(12_300), 0x1123); // 123 x 100 ms
+        assert_eq!(encode_timer_ms(123_000), 0x2123); // 123 x 1 s
+        assert_eq!(encode_timer_ms(1_230_000), 0x3123); // 123 x 10 s
+        assert_eq!(encode_timer_ms(u32::MAX), 0x3999, "clamped");
+    }
+
+    #[test]
+    fn timer_round_trip_is_exact_on_the_time_base() {
+        for ms in [0u32, 10, 990, 9_990, 10_000, 99_900, 123_000, 9_990_000] {
+            assert_eq!(decode_timer_ms(encode_timer_ms(ms)), ms);
+        }
+    }
+
+    #[test]
+    fn timer_decode_uses_only_the_base_and_value_bits() {
+        // Bits 14-15 are not part of the value.
+        assert_eq!(decode_timer_ms(0xC000 | 0x2123), 123_000);
+    }
+
+    #[test]
+    fn data_type_names() {
+        assert_eq!(S7DataType::from_str_name("Timer"), Some(S7DataType::Timer));
+        assert_eq!(S7DataType::from_str_name("COUNTER"), Some(S7DataType::Counter));
+        assert_eq!(S7DataType::Timer.transport_size(), 0x1D);
+        assert_eq!(S7DataType::Counter.transport_size(), 0x1C);
+    }
 }

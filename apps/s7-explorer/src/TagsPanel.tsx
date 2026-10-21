@@ -5,7 +5,7 @@ import { useStore } from "./store";
 import type { Device } from "./types";
 import { DATA_TYPES } from "./types";
 import { uid, FREE_TAG_LIMIT } from "./helpers";
-import { parseTagCsv, tagsToCsv, type TagCsvImport } from "./tagCsv";
+import { effectiveDataType, parseTagCsv, tagsToCsv, type TagCsvImport } from "./tagCsv";
 
 interface Props {
   device: Device;
@@ -31,7 +31,7 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
     if (tags.length >= FREE_TAG_LIMIT && !requirePro("More than 10 live tags")) return;
     setDeviceTags(device.id, (prev) => [
       ...prev,
-      { id: uid(), name: newName.trim(), address: newAddr.trim(), data_type: newType },
+      { id: uid(), name: newName.trim(), address: newAddr.trim(), data_type: effectiveDataType(newAddr, newType) },
     ]);
     setNewName(""); setNewAddr("");
   };
@@ -40,7 +40,7 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
     if (!editingTagId || !newName.trim() || !newAddr.trim()) return;
     setDeviceTags(device.id, (prev) =>
       prev.map((t) =>
-        t.id === editingTagId ? { ...t, name: newName.trim(), address: newAddr.trim(), data_type: newType } : t,
+        t.id === editingTagId ? { ...t, name: newName.trim(), address: newAddr.trim(), data_type: effectiveDataType(newAddr, newType) } : t,
       ),
     );
     reset();
@@ -133,7 +133,7 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
           </Field>
           <Field label="Address">
             {(id) => (
-              <input id={id} className="vt-input" placeholder="DB1.DBD0, IW100, MW50" value={newAddr} onChange={(e) => setNewAddr(e.target.value)} />
+              <input id={id} className="vt-input" placeholder="DB1.DBD0, IW100, MW50, T5, C10" value={newAddr} onChange={(e) => setNewAddr(e.target.value)} />
             )}
           </Field>
           <Field label="Type">

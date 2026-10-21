@@ -50,6 +50,8 @@ fn ts_to_dtype(ts: u8) -> Option<S7DataType> {
         TS_WORD => Some(S7DataType::Word),
         TS_DWORD => Some(S7DataType::DWord),
         TS_REAL => Some(S7DataType::Real),
+        TS_TIMER => Some(S7DataType::Timer),
+        TS_COUNTER => Some(S7DataType::Counter),
         _ => None,
     }
 }
@@ -62,6 +64,27 @@ fn dtype_size(dt: &S7DataType) -> usize {
         S7DataType::DWord => 4,
         S7DataType::Real => 4,
         S7DataType::String => 1,
+        S7DataType::Timer | S7DataType::Counter => 2,
+    }
+}
+
+/// Split the 24-bit address of an item into (byte offset, bit). Timers and counters are
+/// addressed by number, everything else by bit offset.
+fn split_item_address(area: u8, address: u32) -> (u16, u8) {
+    if area == AREA_TIMER || area == AREA_COUNTER {
+        (address as u16, 0)
+    } else {
+        ((address / 8) as u16, (address % 8) as u8)
+    }
+}
+
+/// Transport size a real PLC reports for the data it returns for `ts`: timers and counters come
+/// back as octet strings, everything else echoes the request.
+fn response_transport_size(ts: u8) -> u8 {
+    if ts == TS_TIMER || ts == TS_COUNTER {
+        TS_OCTET_STRING
+    } else {
+        ts
     }
 }
 
@@ -72,6 +95,8 @@ fn encode_value_bytes(v: &S7Value, bit: u8) -> Vec<u8> {
         S7Value::Word(x) => x.to_be_bytes().to_vec(),
         S7Value::DWord(x) => x.to_be_bytes().to_vec(),
         S7Value::Real(x) => x.to_be_bytes().to_vec(),
+        S7Value::Timer(ms) => encode_timer_ms(*ms).to_be_bytes().to_vec(),
+        S7Value::Counter(n) => encode_counter(*n).to_be_bytes().to_vec(),
         S7Value::String(s) => {
             let mut b = Vec::new();
             b.push(s.len() as u8 + 2);
@@ -100,6 +125,16 @@ fn decode_value_bytes(data: &[u8], dt: &S7DataType, bit: u8) -> S7Value {
             data.get(..4)
                 .map(|d| f32::from_bits(u32::from_be_bytes([d[0], d[1], d[2], d[3]])))
                 .unwrap_or(0.0),
+        ),
+        S7DataType::Timer => S7Value::Timer(
+            data.get(..2)
+                .map(|d| decode_timer_ms(u16::from_be_bytes([d[0], d[1]])))
+                .unwrap_or(0),
+        ),
+        S7DataType::Counter => S7Value::Counter(
+            data.get(..2)
+                .map(|d| decode_counter(u16::from_be_bytes([d[0], d[1]])))
+                .unwrap_or(0),
         ),
         S7DataType::String => S7Value::String(
             data.get(2..)
@@ -368,8 +403,7 @@ async fn build_read_resp(
         let area = item[8];
         let off_bits =
             ((item[9] as u32) << 16) | ((item[10] as u32) << 8) | (item[11] as u32);
-        let offset = (off_bits / 8) as u16;
-        let bit = (off_bits % 8) as u8;
+        let (offset, bit) = split_item_address(area, off_bits);
 
         let bytes = match ts_to_dtype(ts) {
             Some(dt) => {
@@ -389,7 +423,7 @@ async fn build_read_resp(
         };
 
         resp_data.push(0xFF); // item return code: success
-        resp_data.push(ts);
+        resp_data.push(response_transport_size(ts));
         resp_data.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
         resp_data.extend_from_slice(&bytes);
     }
@@ -422,8 +456,7 @@ async fn build_write_resp(
         let area = item[8];
         let off_bits =
             ((item[9] as u32) << 16) | ((item[10] as u32) << 8) | (item[11] as u32);
-        let offset = (off_bits / 8) as u16;
-        let bit = (off_bits % 8) as u8;
+        let (offset, bit) = split_item_address(area, off_bits);
 
         // Write request data: [return_code, transport_size, len(2), value_bytes...]
         if data.len() >= 4 {
@@ -714,6 +747,46 @@ mod tests {
         assert!(nums.contains(&1), "DB1 missing: {:?}", blocks);
         assert!(nums.contains(&2), "DB2 missing: {:?}", blocks);
         assert!(blocks.iter().all(|b| b.block_type == "DB"));
+
+        client.disconnect().await.unwrap();
+        server.stop().await;
+    }
+    /// Timers and counters read back through the real client and server as BCD words.
+    #[tokio::test]
+    async fn server_timers_and_counters() {
+        let seed = vec![
+            (S7Tag::parse_address("T5").unwrap(), S7Value::Timer(12_300)),
+            (S7Tag::parse_address("%C10").unwrap(), S7Value::Counter(247)),
+        ];
+        let server = S7Server::start(0, seed).await.unwrap();
+        let port = server.port();
+        let client = S7Client::connect(cfg(port)).await.unwrap();
+
+        let tags = vec![
+            S7Tag::parse_address("T5").unwrap(),
+            S7Tag::parse_address("C10").unwrap(),
+            S7Tag::parse_address("DB1.DBD0").unwrap(),
+            S7Tag::parse_address("C11").unwrap(), // not seeded: zeros, and the item after it still lines up
+            S7Tag::parse_address("MW4").unwrap(),
+        ];
+        let values = client.read(&tags).await.expect("read");
+        assert_eq!(values[0], S7Value::Timer(12_300));
+        assert_eq!(values[1], S7Value::Counter(247));
+        assert_eq!(values[2], S7Value::DWord(0));
+        assert_eq!(values[3], S7Value::Counter(0));
+        assert_eq!(values[4], S7Value::Word(0));
+
+        // The client refuses to write them.
+        let err = client
+            .write(&tags[0], S7Value::Timer(1000))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("read-only"), "{err}");
+
+        // The simulator can be updated and the new value shows up.
+        server.set_value(&tags[1], S7Value::Counter(999)).await;
+        assert_eq!(client.read(&tags[1..2]).await.unwrap()[0], S7Value::Counter(999));
 
         client.disconnect().await.unwrap();
         server.stop().await;

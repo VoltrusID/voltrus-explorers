@@ -49,9 +49,7 @@ impl TagSpec {
         let mut tag = S7Tag::parse_address(&self.address)
             .map_err(|e| format!("Invalid address '{}': {e}", self.address))?;
         if let Some(dt) = self.data_type.as_deref() {
-            if let Some(parsed) = S7DataType::from_str_name(dt) {
-                tag.data_type = parsed;
-            }
+            tag.set_data_type_by_name(dt);
         }
         if let Some(name) = self.name.as_ref() {
             tag.name = Some(name.clone());
@@ -104,6 +102,8 @@ fn coerce_value(data_type: &str, value: &serde_json::Value) -> Result<S7Value, S
                 .map(str::to_string)
                 .unwrap_or_else(|| value.to_string()),
         ),
+        S7DataType::Timer => S7Value::Timer(value.as_f64().unwrap_or(0.0).round() as u32),
+        S7DataType::Counter => S7Value::Counter(value.as_f64().unwrap_or(0.0).round() as u16),
     })
 }
 
@@ -113,6 +113,8 @@ fn f64_for(dtype: &str, v: f64) -> S7Value {
         Some(S7DataType::Byte) => S7Value::Byte(v.round() as u8),
         Some(S7DataType::Word) => S7Value::Word(v.round() as u16),
         Some(S7DataType::DWord) => S7Value::DWord(v.round() as u32),
+        Some(S7DataType::Timer) => S7Value::Timer(v.round() as u32),
+        Some(S7DataType::Counter) => S7Value::Counter(v.round() as u16),
         _ => S7Value::Real(v as f32),
     }
 }
@@ -177,10 +179,9 @@ async fn write_tag(
     let client = state.client(&device_id).await?;
     let mut tag = S7Tag::parse_address(&address)
         .map_err(|e| format!("Invalid address '{address}': {e}"))?;
-    if let Some(dt) = S7DataType::from_str_name(&data_type) {
-        tag.data_type = dt;
-    }
-    let v = coerce_value(&data_type, &value)?;
+    tag.set_data_type_by_name(&data_type);
+    // Coerce to the type the tag will actually be written as.
+    let v = coerce_value(&format!("{:?}", tag.data_type), &value)?;
     client.write(&tag, v).await.map_err(|e| e.to_string())
 }
 
@@ -263,15 +264,11 @@ async fn sim_start(
     for p in &points {
         let mut tag = S7Tag::parse_address(&p.address)
             .map_err(|e| format!("Invalid sim address '{}': {e}", p.address))?;
-        let dtype_name = if let Some(dt) = p.data_type.as_deref() {
-            if let Some(parsed) = S7DataType::from_str_name(dt) {
-                tag.data_type = parsed;
-            }
-            dt.to_string()
-        } else {
-            format!("{:?}", tag.data_type)
-        };
-        initial.push((tag, f64_for(&dtype_name, p.value)));
+        if let Some(dt) = p.data_type.as_deref() {
+            tag.set_data_type_by_name(dt);
+        }
+        let value = f64_for(&format!("{:?}", tag.data_type), p.value);
+        initial.push((tag, value));
     }
 
     let server = S7Server::start(port, initial)
@@ -321,10 +318,10 @@ async fn sim_set_value(
     let server = guard.as_ref().ok_or("Simulator is not running")?;
     let mut tag = S7Tag::parse_address(&address)
         .map_err(|e| format!("Invalid address '{address}': {e}"))?;
-    if let Some(dt) = S7DataType::from_str_name(&data_type) {
-        tag.data_type = dt;
-    }
-    server.set_value(&tag, f64_for(&data_type, value)).await;
+    tag.set_data_type_by_name(&data_type);
+    server
+        .set_value(&tag, f64_for(&format!("{:?}", tag.data_type), value))
+        .await;
     Ok(())
 }
 

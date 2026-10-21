@@ -26,4 +26,7 @@ export interface Device {
 export type MainTab = "tags" | "diagnostics" | "blocks";
 export type MobileTab = "connect" | "data" | "diagnostics" | "blocks" | "log" | "trend";
 
-export const DATA_TYPES = ["Bool", "Byte", "Word", "DWord", "Real", "String"];
+export const DATA_TYPES = ["Bool", "Byte", "Word", "DWord", "Real", "String", "Timer", "Counter"];
+
+/** Timers and counters are read-only and their type is fixed by the address (T5, C10). */
+export const READ_ONLY_TYPES = ["Timer", "Counter"];

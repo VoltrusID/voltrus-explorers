@@ -30,7 +30,7 @@ interface AddressInfo {
   /** The address in the form the S7 client parses, e.g. `DB1.DBD0`, `MW10`, `I0.0`. */
   address: string;
   /** The type the address itself implies. */
-  type: "Bool" | "Byte" | "Word" | "DWord";
+  type: "Bool" | "Byte" | "Word" | "DWord" | "Timer" | "Counter";
 }
 
 const SIZE_TYPE = { X: "Bool", B: "Byte", W: "Word", D: "DWord" } as const;
@@ -38,10 +38,16 @@ const SIZE_TYPE = { X: "Bool", B: "Byte", W: "Word", D: "DWord" } as const;
 /**
  * Turn an address as written by TIA Portal (`%MW10`, `%I0.0`), classic STEP 7 (`MW    10`,
  * `DB1.DBD    0`) or by hand (`DB1.DBD0`) into the form the S7 client accepts.
- * Returns `null` when the address is not a DB, I, Q or M address the client can read.
+ * Returns `null` when the address is not a DB, I, Q, M, T or C address the client can read.
  */
 export function normalizeAddress(raw: string): AddressInfo | null {
   const a = raw.replace(/\s+/g, "").replace(/^%/, "").toUpperCase();
+
+  const timerOrCounter = /^([TC])(\d{1,5})$/.exec(a);
+  if (timerOrCounter) {
+    if (Number(timerOrCounter[2]) > 65535) return null;
+    return { address: `${timerOrCounter[1]}${Number(timerOrCounter[2])}`, type: timerOrCounter[1] === "T" ? "Timer" : "Counter" };
+  }
 
   const db = /^DB(\d{1,5})\.DB([XBWD])(\d{1,5})(?:\.([0-7]))?$/.exec(a);
   if (db) {
@@ -77,6 +83,7 @@ const TYPE_MAP: Record<string, string> = {
   dword: "DWord", dint: "DWord", udint: "DWord", time: "DWord", uint32: "DWord", int32: "DWord",
   real: "Real", float: "Real", float32: "Real",
   string: "String", str: "String",
+  timer: "Timer", counter: "Counter",
 };
 
 const SIGNED_TYPES: Record<string, true> = { sint: true, int: true, dint: true, int8: true, int16: true, int32: true };
@@ -176,7 +183,7 @@ export function parseTagCsv(text: string): TagCsvImport {
 
     const info = normalizeAddress(rawAddress);
     if (!info) {
-      result.errors.push(`Line ${line}: "${name}" has an address S7 Explorer cannot read (${rawAddress}). Use DB, I, Q or M addresses.`);
+      result.errors.push(`Line ${line}: "${name}" has an address S7 Explorer cannot read (${rawAddress}). Use DB, I, Q, M, T or C addresses.`);
       continue;
     }
 
@@ -192,6 +199,11 @@ export function parseTagCsv(text: string): TagCsvImport {
         result.errors.push(`Line ${line}: "${name}" is ${rawType} but ${rawAddress} is ${info.type === "Bool" ? "a bit" : "not a bit"} address`);
         continue;
       }
+      const isTimerOrCounter = info.type === "Timer" || info.type === "Counter";
+      if (isTimerOrCounter ? mapped !== info.type : mapped === "Timer" || mapped === "Counter") {
+        result.errors.push(`Line ${line}: "${name}" is ${rawType}, which does not match the address ${rawAddress}`);
+        continue;
+      }
       if (Object.prototype.hasOwnProperty.call(SIGNED_TYPES, key)) signed++;
       dataType = mapped;
     }
@@ -202,4 +214,15 @@ export function parseTagCsv(text: string): TagCsvImport {
     result.notes.push(`${signed} signed tag(s) (SInt, Int, DInt) were imported as unsigned Byte, Word or DWord, so negative values show as large positive numbers.`);
   }
   return result;
+}
+
+/**
+ * The data type to store for a tag. Timer and counter addresses (T5, C10) always have the Timer
+ * or Counter type, and those two types only make sense on those addresses.
+ */
+export function effectiveDataType(address: string, chosen: string): string {
+  const implied = normalizeAddress(address)?.type;
+  if (implied === "Timer" || implied === "Counter") return implied;
+  if (chosen === "Timer" || chosen === "Counter") return implied ?? "Word";
+  return chosen;
 }

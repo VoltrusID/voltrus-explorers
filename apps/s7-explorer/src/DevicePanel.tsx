@@ -19,7 +19,7 @@ import { FileDown, Minus, Plus, Square, Tags as TagsIcon } from "lucide-react";
 import { useStore } from "./store";
 import { useS7Device, toSpecs, type S7Value } from "./useS7Device";
 import type { Device } from "./types";
-import { DATA_TYPES } from "./types";
+import { DATA_TYPES, READ_ONLY_TYPES } from "./types";
 import DiagnosticsPanel from "./DiagnosticsPanel";
 import BlocksPanel from "./BlocksPanel";
 import TrendPanel from "./TrendPanel";
@@ -167,7 +167,7 @@ export default function DevicePanel({ device, active, onLog }: Props) {
         name: t.name,
         address: t.address,
         type: t.data_type,
-        value: formatS7Value(s7.values[i]),
+        value: formatS7Value(s7.values[i]) + (t.data_type === "Timer" && typeof s7.values[i] === "number" ? " ms" : ""),
       }));
     }
     return tags.map((t) => ({ name: t.name, address: t.address, type: t.data_type, value: "—" }));
@@ -178,6 +178,10 @@ export default function DevicePanel({ device, active, onLog }: Props) {
   const { trendSeries, setTrendSeries, trendWindow, setTrendWindow, toggleTrend } = useTrend(tableData);
 
   const onRowClick = (row: Record<string, unknown>) => {
+    if (READ_ONLY_TYPES.includes(String(row.type))) {
+      onLog("info", `[${device.label}] ${String(row.address)} is a ${String(row.type).toLowerCase()}. Timers and counters are read-only.`);
+      return;
+    }
     if (!requirePro("Writing values to the PLC")) return;
     setWriting({
       address: String(row.address ?? ""),
@@ -379,7 +383,7 @@ export default function DevicePanel({ device, active, onLog }: Props) {
             address={writing.address}
             currentValue={writing.value || undefined}
             currentDataType={writing.dataType}
-            types={DATA_TYPES.filter((d) => d !== "Bool").map((d) => ({ value: d, label: d }))}
+            types={DATA_TYPES.filter((d) => d !== "Bool" && !READ_ONLY_TYPES.includes(d)).map((d) => ({ value: d, label: d }))}
             onSubmit={(value, dataType) => doWrite(value, dataType)}
             onCancel={() => setWriting(null)}
           />

@@ -102,6 +102,11 @@ impl Inner {
     }
 
     async fn write_tag(&mut self, tag: &S7Tag, value: &S7Value) -> Result<(), ProtocolError> {
+        if matches!(tag.area, S7Area::Timer | S7Area::Counter) {
+            return Err(ProtocolError::WriteFailed(
+                "Timers and counters are read-only".into(),
+            ));
+        }
         let request = self.build_write_var_request(tag, value);
         send_s7(&mut self.stream, &request)
             .await
@@ -287,7 +292,6 @@ impl Inner {
         let mut items = Vec::new();
 
         for tag in tags {
-            let transport_size = tag.data_type.transport_size();
             let byte_count = if tag.data_type == S7DataType::Bool {
                 1
             } else {
@@ -295,25 +299,7 @@ impl Inner {
             };
             total_data_size += byte_count;
 
-            let mut item = Vec::with_capacity(12);
-            item.push(0x12); // variable specification: address
-            item.push(0x0A); // length of following address specification
-            item.push(0x10); // syntax ID: S7 any
-            item.push(transport_size);
-            let num_elements = if tag.data_type == S7DataType::Bool {
-                1u16
-            } else {
-                tag.length
-            };
-            item.extend_from_slice(&num_elements.to_be_bytes());
-            item.extend_from_slice(&tag.db_number.to_be_bytes());
-            item.push(tag.area.code());
-            let offset_bits = (tag.offset as u32) * 8 + (tag.bit_offset as u32);
-            item.push(((offset_bits >> 16) & 0xFF) as u8);
-            item.push(((offset_bits >> 8) & 0xFF) as u8);
-            item.push((offset_bits & 0xFF) as u8);
-
-            items.extend_from_slice(&item);
+            push_item_spec(&mut items, tag);
         }
 
         params.extend_from_slice(&items);
@@ -346,27 +332,7 @@ impl Inner {
         params.push(S7_WRITE_VAR);
         params.push(0x01); // 1 item
 
-        let transport_size = tag.data_type.transport_size();
-
-        let mut item = Vec::with_capacity(12);
-        item.push(0x12);
-        item.push(0x0A);
-        item.push(0x10);
-        item.push(transport_size);
-        let num_elements = if tag.data_type == S7DataType::Bool {
-            1u16
-        } else {
-            tag.length
-        };
-        item.extend_from_slice(&num_elements.to_be_bytes());
-        item.extend_from_slice(&tag.db_number.to_be_bytes());
-        item.push(tag.area.code());
-        let offset_bits = (tag.offset as u32) * 8 + (tag.bit_offset as u32);
-        item.push(((offset_bits >> 16) & 0xFF) as u8);
-        item.push(((offset_bits >> 8) & 0xFF) as u8);
-        item.push((offset_bits & 0xFF) as u8);
-
-        params.extend_from_slice(&item);
+        push_item_spec(&mut params, tag);
 
         let value_bytes = encode_value(value, tag);
         let mut data = Vec::new();
@@ -387,6 +353,33 @@ impl Inner {
 
         s7
     }
+}
+
+/// Append the 12-byte S7-any item specification for `tag` to a Read/Write Var parameter block.
+///
+/// Timers and counters are addressed by number (not by bit offset), carry no DB number and
+/// use their own transport size.
+fn push_item_spec(params: &mut Vec<u8>, tag: &S7Tag) {
+    params.push(0x12); // variable specification: address
+    params.push(0x0A); // length of following address specification
+    params.push(0x10); // syntax ID: S7 any
+    params.push(tag.data_type.transport_size());
+    let num_elements = if tag.data_type == S7DataType::Bool {
+        1u16
+    } else {
+        tag.length
+    };
+    params.extend_from_slice(&num_elements.to_be_bytes());
+    params.extend_from_slice(&tag.db_number.to_be_bytes());
+    params.push(tag.area.code());
+    let address = if matches!(tag.area, S7Area::Timer | S7Area::Counter) {
+        tag.offset as u32
+    } else {
+        (tag.offset as u32) * 8 + (tag.bit_offset as u32)
+    };
+    params.push(((address >> 16) & 0xFF) as u8);
+    params.push(((address >> 8) & 0xFF) as u8);
+    params.push((address & 0xFF) as u8);
 }
 
 // ── Public wrapper implementing ProtocolClient ──
@@ -531,8 +524,12 @@ impl S7Tag {
     /// - `"IW100"`        -> Input, Word at offset 100
     /// - `"Q0.0"`         -> Output, Bool at offset 0, bit 0
     /// - `"MW100"`        -> Marker, Word at offset 100
+    /// - `"T5"`           -> Timer 5 (read as milliseconds)
+    /// - `"C10"`          -> Counter 10 (BCD, 0 to 999)
+    ///
+    /// A leading `%` (TIA Portal notation, e.g. `%MW100`, `%T5`) is accepted and ignored.
     pub fn parse_address(addr: &str) -> Result<Self> {
-        let addr = addr.trim().to_uppercase();
+        let addr = addr.trim().trim_start_matches('%').to_uppercase();
 
         // DB addresses: DB<n>.DB<type><offset>[.bit]
         if let Some(rest) = addr.strip_prefix("DB") {
@@ -583,6 +580,27 @@ impl S7Tag {
             }
         }
 
+        // Timer and counter addresses: T<n>, C<n>
+        for (prefix, area, data_type) in [
+            ('T', S7Area::Timer, S7DataType::Timer),
+            ('C', S7Area::Counter, S7DataType::Counter),
+        ] {
+            if let Some(number) = addr.strip_prefix(prefix) {
+                let offset: u16 = number
+                    .parse()
+                    .with_context(|| format!("Invalid {area} number in '{addr}'"))?;
+                return Ok(S7Tag {
+                    area,
+                    db_number: 0,
+                    offset,
+                    bit_offset: 0,
+                    data_type,
+                    length: 1,
+                    name: None,
+                });
+            }
+        }
+
         // I, Q, M addresses
         let (area, rest): (S7Area, &str) = if let Some(r) = addr.strip_prefix('I') {
             (S7Area::Input, r)
@@ -593,7 +611,7 @@ impl S7Tag {
         } else {
             anyhow::bail!(
                 "Unsupported tag address format: '{addr}'. \
-                 Use DB<n>.DBx<m>, Ix, Qx, or Mx format."
+                 Use DB<n>.DBx<m>, Ix, Qx, Mx, T<n> or C<n> format."
             );
         };
 
@@ -644,6 +662,23 @@ impl S7Tag {
             length: 1,
             name: None,
         })
+    }
+}
+
+impl S7Tag {
+    /// Apply a data type chosen by the user, given by name.
+    ///
+    /// Unknown names are ignored. Timers and counters keep the type their address implies,
+    /// and the Timer and Counter types cannot be applied to any other area.
+    pub fn set_data_type_by_name(&mut self, name: &str) {
+        if matches!(self.area, S7Area::Timer | S7Area::Counter) {
+            return;
+        }
+        if let Some(dt) = S7DataType::from_str_name(name) {
+            if !matches!(dt, S7DataType::Timer | S7DataType::Counter) {
+                self.data_type = dt;
+            }
+        }
     }
 }
 
@@ -976,6 +1011,16 @@ fn decode_value(data: &[u8], tag: &S7Tag) -> S7Value {
                 S7Value::Real(0.0)
             }
         }
+        S7DataType::Timer => S7Value::Timer(
+            data.get(..2)
+                .map(|d| decode_timer_ms(u16::from_be_bytes([d[0], d[1]])))
+                .unwrap_or(0),
+        ),
+        S7DataType::Counter => S7Value::Counter(
+            data.get(..2)
+                .map(|d| decode_counter(u16::from_be_bytes([d[0], d[1]])))
+                .unwrap_or(0),
+        ),
         S7DataType::String => {
             if data.len() >= 2 {
                 let actual_len = data[1] as usize;
@@ -1002,6 +1047,8 @@ fn encode_value(value: &S7Value, tag: &S7Tag) -> Vec<u8> {
         S7Value::Word(v) => v.to_be_bytes().to_vec(),
         S7Value::DWord(v) => v.to_be_bytes().to_vec(),
         S7Value::Real(v) => v.to_be_bytes().to_vec(),
+        S7Value::Timer(ms) => encode_timer_ms(*ms).to_be_bytes().to_vec(),
+        S7Value::Counter(v) => encode_counter(*v).to_be_bytes().to_vec(),
         S7Value::String(s) => {
             let mut bytes = Vec::new();
             bytes.push(tag.length as u8); // max length
@@ -1293,4 +1340,100 @@ fn parse_delete_response(data: &[u8]) -> Result<(), ProtocolError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_timer_and_counter_addresses() {
+        for (addr, area, number, dt) in [
+            ("T5", S7Area::Timer, 5, S7DataType::Timer),
+            ("t12", S7Area::Timer, 12, S7DataType::Timer),
+            ("%T0", S7Area::Timer, 0, S7DataType::Timer),
+            ("C10", S7Area::Counter, 10, S7DataType::Counter),
+            ("%c255", S7Area::Counter, 255, S7DataType::Counter),
+        ] {
+            let tag = S7Tag::parse_address(addr).unwrap_or_else(|e| panic!("{addr}: {e}"));
+            assert_eq!(tag.area, area, "{addr}");
+            assert_eq!(tag.offset, number, "{addr}");
+            assert_eq!(tag.bit_offset, 0, "{addr}");
+            assert_eq!(tag.db_number, 0, "{addr}");
+            assert_eq!(tag.data_type, dt, "{addr}");
+        }
+        for bad in ["T", "C", "T5.0", "Tx", "T70000", "C-1"] {
+            assert!(S7Tag::parse_address(bad).is_err(), "{bad} should be rejected");
+        }
+    }
+
+    #[test]
+    fn percent_prefix_is_accepted_for_other_areas() {
+        let tag = S7Tag::parse_address("%MW20").unwrap();
+        assert_eq!((tag.area, tag.offset, tag.data_type), (S7Area::Marker, 20, S7DataType::Word));
+        let bit = S7Tag::parse_address("%I0.3").unwrap();
+        assert_eq!((bit.area, bit.offset, bit.bit_offset), (S7Area::Input, 0, 3));
+    }
+
+    #[test]
+    fn type_override_cannot_change_timers_counters_or_apply_to_other_areas() {
+        let mut timer = S7Tag::parse_address("T1").unwrap();
+        timer.set_data_type_by_name("Word");
+        assert_eq!(timer.data_type, S7DataType::Timer);
+
+        let mut marker = S7Tag::parse_address("MD4").unwrap();
+        marker.set_data_type_by_name("Timer");
+        assert_eq!(marker.data_type, S7DataType::DWord);
+        marker.set_data_type_by_name("Real");
+        assert_eq!(marker.data_type, S7DataType::Real);
+        marker.set_data_type_by_name("nonsense");
+        assert_eq!(marker.data_type, S7DataType::Real);
+    }
+
+    /// Item layout from the S7 any-pointer: timers and counters are addressed by number with
+    /// their own transport size, other areas by bit offset.
+    #[test]
+    fn item_spec_encoding() {
+        let mut buf = Vec::new();
+        push_item_spec(&mut buf, &S7Tag::parse_address("T5").unwrap());
+        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x1D, 0x00, 0x01, 0x00, 0x00, 0x1D, 0x00, 0x00, 0x05]);
+
+        buf.clear();
+        push_item_spec(&mut buf, &S7Tag::parse_address("C300").unwrap());
+        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x1C, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x01, 0x2C]);
+
+        buf.clear();
+        push_item_spec(&mut buf, &S7Tag::parse_address("DB1.DBW10").unwrap());
+        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x04, 0x00, 0x01, 0x00, 0x01, 0x84, 0x00, 0x00, 0x50]);
+    }
+
+    #[test]
+    fn decodes_timer_and_counter_words() {
+        let timer = S7Tag::parse_address("T1").unwrap();
+        // time base 1 s (0b10), BCD 0x123 = 123
+        assert_eq!(decode_value(&[0x21, 0x23], &timer), S7Value::Timer(123_000));
+        // time base 10 ms (0b00), BCD 0x999
+        assert_eq!(decode_value(&[0x09, 0x99], &timer), S7Value::Timer(9_990));
+        // time base 10 s (0b11), BCD 0x001
+        assert_eq!(decode_value(&[0x30, 0x01], &timer), S7Value::Timer(10_000));
+        assert_eq!(decode_value(&[], &timer), S7Value::Timer(0));
+
+        let counter = S7Tag::parse_address("C1").unwrap();
+        assert_eq!(decode_value(&[0x02, 0x47], &counter), S7Value::Counter(247));
+        assert_eq!(decode_value(&[0x09, 0x99], &counter), S7Value::Counter(999));
+    }
+
+    #[test]
+    fn read_response_for_timers_and_counters() {
+        let tags = vec![
+            S7Tag::parse_address("T1").unwrap(),
+            S7Tag::parse_address("C1").unwrap(),
+        ];
+        // ACK_DATA header (12 bytes) + param (read var, 2 items), then two octet-string items.
+        let mut pdu = vec![S7_PROTOCOL_ID, 0x03, 0, 0, 0, 1, 0, 2, 0, 12, 0, 0, S7_READ_VAR, 2];
+        pdu.extend_from_slice(&[0xFF, 0x09, 0x00, 0x02, 0x10, 0x50]); // time base 100 ms, BCD 050
+        pdu.extend_from_slice(&[0xFF, 0x09, 0x00, 0x02, 0x00, 0x42]);
+        let values = parse_read_var_response(&pdu, &tags).unwrap();
+        assert_eq!(values, vec![S7Value::Timer(5_000), S7Value::Counter(42)]);
+    }
 }

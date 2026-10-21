@@ -271,7 +271,7 @@ function App() {
           <p style={{ margin: 0 }}>Connect to S7-compatible PLCs (S7-300, S7-400, S7-1200, S7-1500) over Ethernet (ISO-on-TCP, port 102).</p>
           <p style={{ margin: 0 }}><strong style={{ color: "var(--text)", fontWeight: 600 }}>Multi-PLC:</strong> open several PLCs in tabs, each polls independently.</p>
           <p style={{ margin: 0 }}><strong style={{ color: "var(--text)", fontWeight: 600 }}>Simulator:</strong> run a real S7 server on this Mac for testing clients.</p>
-          <p style={{ margin: 0 }}>Read/write DB, I, Q, M, T, C. Diagnostics, block manager, live trend.</p>
+          <p style={{ margin: 0 }}>Read DB, I, Q, M, T and C addresses (timers and counters are read-only). Diagnostics, block manager, live trend.</p>
           <p style={{ margin: 0, color: "var(--text-muted)" }}>
             Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama. Siemens, SIMATIC, S7-300, S7-400, S7-1200,
             S7-1500 and TIA Portal are trademarks of Siemens AG. S7 Explorer is an independent tool and is not affiliated with or endorsed by Siemens.

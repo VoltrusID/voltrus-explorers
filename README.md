@@ -47,7 +47,7 @@ takes effect when `free_since` is set in their `store.json`).
 
 | | |
 | --- | --- |
-| Free | Connect to one PLC (S7-300/400/1200/1500, ISO-on-TCP port 102), read DB, I, Q, M, T and C addresses into a polled tag table (up to 10 live tags), add, edit and remove tags, CPU info, PLC mode and diagnostic buffer, communication log with CSV export |
+| Free | Connect to one PLC (S7-300/400/1200/1500, ISO-on-TCP port 102), read DB, I, Q, M, T and C addresses into a polled tag table (up to 10 live tags; timers show milliseconds and counters 0 to 999, both read-only), add, edit and remove tags, CPU info, PLC mode and diagnostic buffer, communication log with CSV export |
 | Pro | Unlimited live tags, several PLC connections open at once, write values to the PLC, live trends, tag list CSV import (TIA Portal PLC tag table export saved as CSV, or a simple Name,Address,Type file) and export, value logging to a CSV file, block manager (list, save to file, delete), built-in S7 simulator server |
 
 Version 1.4.0 is the first free release.

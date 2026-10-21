@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeAddress, parseTagCsv, tagsToCsv } from "../tagCsv";
+import { effectiveDataType, normalizeAddress, parseTagCsv, tagsToCsv } from "../tagCsv";
 
 describe("normalizeAddress", () => {
   it("accepts the forms the S7 client parses", () => {
@@ -23,12 +23,18 @@ describe("normalizeAddress", () => {
     expect(normalizeAddress("DB1.DBD    0")).toEqual({ address: "DB1.DBD0", type: "DWord" });
   });
 
+  it("accepts timers and counters", () => {
+    expect(normalizeAddress("T5")).toEqual({ address: "T5", type: "Timer" });
+    expect(normalizeAddress("%c10")).toEqual({ address: "C10", type: "Counter" });
+    expect(normalizeAddress("T  7")).toEqual({ address: "T7", type: "Timer" });
+  });
+
   it("gives a DB bit address a bit number", () => {
     expect(normalizeAddress("DB1.DBX8")).toEqual({ address: "DB1.DBX8.0", type: "Bool" });
   });
 
   it("rejects what the client cannot read", () => {
-    for (const a of ["T5", "C3", "PIW256", "M5", "MW", "I0.8", "DB1.DBW2.1", "MW70000", "Motor_1", ""]) {
+    for (const a of ["T", "C70000", "PIW256", "M5", "MW", "I0.8", "DB1.DBW2.1", "MW70000", "Motor_1", ""]) {
       expect(normalizeAddress(a)).toBeNull();
     }
   });
@@ -94,6 +100,25 @@ describe("parseTagCsv", () => {
     ]);
   });
 
+  it("imports timers and counters, including classic TIMER and COUNTER types", () => {
+    const text = "Symbol,Address,Data type\nCycle_T,T 3,TIMER\nParts,C 1,COUNTER\nNoType,T4,\n";
+    expect(parseTagCsv(text)).toEqual({
+      tags: [
+        { name: "Cycle_T", address: "T3", data_type: "Timer" },
+        { name: "Parts", address: "C1", data_type: "Counter" },
+        { name: "NoType", address: "T4", data_type: "Timer" },
+      ],
+      errors: [],
+      notes: [],
+    });
+  });
+
+  it("rejects a timer type on a non-timer address and the reverse", () => {
+    const result = parseTagCsv("Name,Address,Type\nA,MW0,Timer\nB,T1,Word\nC,C1,Timer\n");
+    expect(result.tags).toEqual([]);
+    expect(result.errors).toHaveLength(3);
+  });
+
   it("accepts columns in any order and tab delimiters", () => {
     const { tags } = parseTagCsv("Type\tAddress\tName\nWord\tMW2\tA\n");
     expect(tags).toEqual([{ name: "A", address: "MW2", data_type: "Word" }]);
@@ -122,5 +147,15 @@ describe("parseTagCsv", () => {
   it("needs a header with name and address columns", () => {
     expect(parseTagCsv("Foo,Bar\n1,2\n").errors[0]).toMatch(/^Line 1:/);
     expect(parseTagCsv("").errors).toEqual(["The file is empty"]);
+  });
+});
+
+describe("effectiveDataType", () => {
+  it("fixes the type of timer and counter addresses and keeps the choice elsewhere", () => {
+    expect(effectiveDataType("T5", "Word")).toBe("Timer");
+    expect(effectiveDataType("c1", "Real")).toBe("Counter");
+    expect(effectiveDataType("DB1.DBD0", "Real")).toBe("Real");
+    expect(effectiveDataType("MW10", "Timer")).toBe("Word");
+    expect(effectiveDataType("garbage", "Timer")).toBe("Word");
   });
 });
