@@ -6,7 +6,8 @@
     "dev:bacnet": "bun --filter bacnet-explorer tauri dev",
     "dev:modbus": "bun --filter modbus-poll tauri dev",
     "dev:dnp3": "bun --filter dnp3-explorer tauri dev",
-    "dev:s7": "bun --filter s7-explorer tauri dev"
+    "dev:s7": "bun --filter s7-explorer tauri dev",
+    "dev:ble": "bun --filter ble-inspector tauri dev"
   },
   "devDependencies": {
     "puppeteer-core": "^25.15.0"

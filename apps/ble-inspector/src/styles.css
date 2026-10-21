@@ -1,0 +1,83 @@
+@import "tailwindcss";
+@import "@mactools/ui/styles.css";
+
+/* BLE Inspector app-local classes (built only on mt-ui tokens). */
+
+/* Device list row in the sidebar. */
+.ble-device {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ble-device:hover {
+  background: var(--hover-overlay);
+}
+
+.ble-device:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ble-device[aria-pressed="true"] {
+  background: var(--selection);
+}
+
+/* GATT service header (chevron toggle). */
+.ble-svc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ble-svc:hover {
+  background: var(--hover-overlay);
+}
+
+.ble-svc:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+
+.ble-svc svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Characteristic row under a service. */
+.ble-char {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 32px;
+}
+
+.ble-char + .ble-char {
+  border-top: 1px solid var(--border);
+}
+
+/* Full-width tabs strip in the mobile bottom nav. */
+.ble-mtabs {
+  width: 100%;
+}
+
+.ble-mtabs .vt-tab {
+  flex: 1;
+  justify-content: center;
+}

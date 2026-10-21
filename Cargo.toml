@@ -5,10 +5,12 @@ members = [
     "crates/mt-modbus",
     "crates/mt-bacnet",
     "crates/mt-dnp3",
+    "crates/mt-ble",
     "crates/mt-store",
     "crates/mt-s7",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
+    "apps/ble-inspector/src-tauri",
     "apps/dnp3-explorer/src-tauri",
     "apps/s7-explorer/src-tauri",
 ]
