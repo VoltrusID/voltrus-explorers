@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into gen/apple/<app>_iOS/Info.plist by Tauri (Info.ios.plist next to
+	     tauri.conf.json is picked up automatically). Master TCP connects, the slave
+	     simulator listener, and network scanning all require local-network access. -->
+	<!-- productName must stay space-free for the Xcode 26 archive step, so the
+	     home-screen name comes from CFBundleDisplayName instead. -->
+	<key>CFBundleDisplayName</key>
+	<string>Modbus Poll</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Modbus Poll connects to Modbus TCP devices on your local network, and can run a Modbus slave simulator that accepts connections from Modbus masters.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

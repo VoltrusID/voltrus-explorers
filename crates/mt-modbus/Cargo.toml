@@ -1,0 +1,24 @@
+[package]
+name = "mt-modbus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["serial"]
+serial = ["dep:tokio-serial", "dep:serialport", "dep:libc", "tokio-modbus/rtu", "tokio-modbus/rtu-server"]
+
+[dependencies]
+mt-protocol = { path = "../mt-protocol" }
+tokio = { workspace = true }
+tokio-modbus = { version = "0.16", default-features = false, features = ["tcp", "tcp-server"] }
+tokio-serial = { version = "5", optional = true }
+serialport = { version = "4", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+libc = { version = "0.2", optional = true }
+
+[dev-dependencies]

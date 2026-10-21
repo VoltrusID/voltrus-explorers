@@ -1,0 +1,87 @@
+# Checks for every push and pull request. No secrets: safe for forks.
+# Linux: crate tests, frontend typecheck/build/tests. macOS: unsigned universal build of each app.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # serialport (mt-modbus "serial" feature) links libudev on Linux.
+      - name: Install libudev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-test-${{ runner.os }}-
+
+      - name: Crate tests
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck and build frontends
+        run: |
+          for app in bacnet-explorer modbus-poll; do
+            (cd "apps/$app" && bunx tsc --noEmit -p . && bun run build)
+          done
+
+      - name: Frontend tests
+        run: bun run --cwd apps/modbus-poll test
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [bacnet-explorer, modbus-poll]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-macos-${{ matrix.app }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-macos-${{ matrix.app }}-
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Build universal app (unsigned)
+        run: scripts/build-macos.sh ${{ matrix.app }} unsigned

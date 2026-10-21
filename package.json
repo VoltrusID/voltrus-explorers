@@ -1,0 +1,9 @@
+{
+  "name": "voltrus-explorers",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev:bacnet": "bun --filter bacnet-explorer tauri dev",
+    "dev:modbus": "bun --filter modbus-poll tauri dev"
+  }
+}

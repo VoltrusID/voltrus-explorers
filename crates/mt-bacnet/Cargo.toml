@@ -1,0 +1,16 @@
+[package]
+name = "mt-bacnet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mt-protocol = { path = "../mt-protocol" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+bacnet-rs = "0.3"
+if-addrs = "0.13"

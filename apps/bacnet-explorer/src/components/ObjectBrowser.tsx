@@ -1,0 +1,377 @@
+import { useState, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  Activity,
+  Bell,
+  Box,
+  Calendar,
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  Gauge,
+  LineChart,
+  ListTree,
+  Server,
+  ToggleLeft,
+  type LucideIcon,
+} from "lucide-react";
+import { Button, EmptyState, IconButton } from "@mactools/ui";
+import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry } from "../types";
+import { formatObjectType } from "../types";
+import { trendKey } from "../hooks/useBacnetTrend";
+import { PropertyInspector } from "./PropertyInspector";
+import { DeviceInspector } from "./DeviceInspector";
+
+/** Map a BACnet object type to a representative icon. */
+function objectIconFor(ot: string): LucideIcon {
+  if (ot.startsWith("analogInput") || ot.startsWith("analogOutput")) return Gauge;
+  if (ot.startsWith("analog")) return Activity;
+  if (ot.startsWith("binary")) return ToggleLeft;
+  if (ot.startsWith("multiState")) return ListTree;
+  if (ot === "device") return Server;
+  if (ot.startsWith("trendLog")) return LineChart;
+  if (ot === "schedule") return CalendarClock;
+  if (ot === "calendar") return Calendar;
+  if (ot === "notificationClass") return Bell;
+  return Box;
+}
+
+function ObjectTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
+  const Icon = objectIconFor(type);
+  return <Icon size={size} style={{ flexShrink: 0 }} />;
+}
+
+interface ObjectBrowserProps {
+  onObjectSelect?: (obj: BacnetObjectInfo) => void;
+  trendKeys?: Set<string>;
+  onToggleTrend?: (obj: { type: string; instance: number }, name: string) => void;
+}
+
+// ── Styles ──
+
+const container: React.CSSProperties = {
+  display: "flex",
+  height: "100%",
+  background: "var(--card)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  overflow: "hidden",
+};
+
+const treePanel: React.CSSProperties = {
+  width: 200,
+  flexShrink: 0,
+  borderRight: "1px solid var(--border)",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+
+const treeHeader: React.CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid var(--border)",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+};
+
+const treeScroll: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "4px 0",
+};
+
+const groupHeader: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  padding: "5px 12px",
+  cursor: "pointer",
+  fontSize: "var(--fs-xs)",
+  fontWeight: 600,
+  color: "var(--text-muted)",
+  userSelect: "none",
+  gap: 6,
+};
+
+const groupCount: React.CSSProperties = {
+  marginLeft: "auto",
+  fontSize: "var(--fs-xs)",
+  color: "var(--text-dim)",
+  fontFamily: "var(--font-mono)",
+  fontVariantNumeric: "tabular-nums",
+};
+
+const objectRow: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  padding: "2px 6px 2px 28px",
+  cursor: "pointer",
+  fontSize: "var(--fs-sm)",
+  color: "var(--text)",
+  gap: 6,
+};
+
+const objectRowSelected: React.CSSProperties = {
+  ...objectRow,
+  background: "var(--selection)",
+};
+
+const instanceLabel: React.CSSProperties = {
+  marginLeft: "auto",
+  fontSize: "var(--fs-xs)",
+  color: "var(--text-dim)",
+  fontFamily: "var(--font-mono)",
+  fontVariantNumeric: "tabular-nums",
+};
+
+const inspectorPanel: React.CSSProperties = {
+  flex: 1,
+  overflow: "auto",
+  padding: 12,
+};
+
+// ── Helpers ──
+
+function groupObjectsByType(objects: BacnetObjectInfo[]): Map<string, BacnetObjectInfo[]> {
+  const groups = new Map<string, BacnetObjectInfo[]>();
+  for (const obj of objects) {
+    const list = groups.get(obj.object_type) ?? [];
+    list.push(obj);
+    groups.set(obj.object_type, list);
+  }
+  return groups;
+}
+
+function objectKey(obj: BacnetObjectInfo): string {
+  return `${obj.object_type}:${obj.object_instance}`;
+}
+
+// ── Component ──
+
+export function ObjectBrowser(props: ObjectBrowserProps) {
+  const { onObjectSelect, trendKeys, onToggleTrend } = props;
+
+  const [objects, setObjects] = useState<BacnetObjectInfo[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedObject, setSelectedObject] = useState<{ type: string; instance: number } | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [properties, setProperties] = useState<BacnetPropertyEntry[]>([]);
+  const [detail, setDetail] = useState<BacnetObjectDetail | null>(null);
+  const [propertiesLoading, setPropertiesLoading] = useState(false);
+
+  // Browse objects
+  const handleBrowse = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setObjects([]);
+    setSelectedObject(null);
+    setProperties([]);
+    setDetail(null);
+    try {
+      const result = await invoke<BacnetObjectInfo[]>("browse_objects");
+      setObjects(result);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Toggle group expand/collapse
+  const toggleGroup = useCallback((objectType: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(objectType)) {
+        next.delete(objectType);
+      } else {
+        next.add(objectType);
+      }
+      return next;
+    });
+  }, []);
+
+  // Select an object and load its properties
+  const handleSelectObject = useCallback(
+    async (obj: BacnetObjectInfo) => {
+      setSelectedObject({ type: obj.object_type, instance: obj.object_instance });
+      setPropertiesLoading(true);
+      setProperties([]);
+      setDetail(null);
+      try {
+        const result = await invoke<BacnetObjectDetail | null>("read_object_properties", {
+          objectType: obj.object_type,
+          objectInstance: obj.object_instance,
+        });
+        setDetail(result);
+        setProperties(result?.properties ?? []);
+      } catch (e) {
+        setProperties([]);
+        setDetail(null);
+      } finally {
+        setPropertiesLoading(false);
+      }
+      onObjectSelect?.(obj);
+    },
+    [onObjectSelect],
+  );
+
+  // Write a property value
+  const handleWrite = useCallback(
+    async (propertyName: string, value: string, dataType: string) => {
+      if (!selectedObject) return;
+      const numValue = dataType === "Boolean" ? (value === "Active" || value === "true" ? 1 : 0) : Number(value);
+      if (isNaN(numValue)) return;
+      try {
+        await invoke("write_tag", {
+          tag: {
+            name: propertyName,
+            object_type: selectedObject.type,
+            object_instance: selectedObject.instance,
+            property: propertyName,
+          },
+          value: { Float64: numValue },
+        });
+        // Re-read properties after write
+        const result = await invoke<BacnetObjectDetail | null>("read_object_properties", {
+          objectType: selectedObject.type,
+          objectInstance: selectedObject.instance,
+        });
+        setDetail(result);
+        setProperties(result?.properties ?? []);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [selectedObject],
+  );
+
+  // Render
+  const groups = groupObjectsByType(objects);
+  const isDeviceSelected = selectedObject?.type === "device";
+
+  return (
+    <div style={container}>
+      {/* Left panel — object tree */}
+      <div style={treePanel}>
+        <div style={treeHeader}>
+          <span className="vt-panel__title">Objects</span>
+        </div>
+
+        <div style={{ padding: "8px 10px 4px" }}>
+          <Button variant="primary" block icon={<ListTree size={14} strokeWidth={1.75} />} loading={loading} onClick={handleBrowse}>
+            {loading ? "Browsing…" : "Browse objects"}
+          </Button>
+        </div>
+
+        {error && (
+          <div style={{ margin: "4px 10px 8px", padding: "6px 8px", fontSize: "var(--fs-xs)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }}>
+            {error}
+          </div>
+        )}
+
+        <div style={treeScroll}>
+          {objects.length === 0 && !loading && !error && (
+            <EmptyState
+              compact
+              title="No objects listed"
+              description="Browse the connected device to list its objects."
+            />
+          )}
+
+          {Array.from(groups.entries()).map(([objectType, items]) => {
+            const expanded = expandedGroups.has(objectType);
+
+            return (
+              <div key={objectType}>
+                {/* Group header */}
+                <div className="ob-group" style={groupHeader} onClick={() => toggleGroup(objectType)}>
+                  <span style={{ display: "inline-flex", width: 14, color: "var(--text-dim)" }}>
+                    {expanded ? <ChevronDown size={14} strokeWidth={1.75} /> : <ChevronRight size={14} strokeWidth={1.75} />}
+                  </span>
+                  <ObjectTypeIcon type={objectType} />
+                  <span>{formatObjectType(objectType)}</span>
+                  <span style={groupCount}>{items.length}</span>
+                </div>
+
+                {/* Group children */}
+                {expanded && (
+                  <div>
+                    {items
+                      .sort((a, b) => a.object_instance - b.object_instance)
+                      .map((obj) => {
+                        const selected =
+                          selectedObject?.type === obj.object_type &&
+                          selectedObject?.instance === obj.object_instance;
+                        return (
+                          <div
+                            key={objectKey(obj)}
+                            className="ob-row"
+                            style={selected ? objectRowSelected : objectRow}
+                            onClick={() => handleSelectObject(obj)}
+                          >
+                            <ObjectTypeIcon type={obj.object_type} size={12} />
+                            <span style={{ fontSize: "var(--fs-sm)" }}>
+                              {obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`}
+                            </span>
+                            <span style={instanceLabel}>{obj.object_instance}</span>
+                            {onToggleTrend && (() => {
+                              const k = trendKey(obj.object_type, obj.object_instance);
+                              const active = trendKeys?.has(k);
+                              return (
+                                <IconButton
+                                  size="sm"
+                                  label={active ? "Remove from trend" : "Add to trend"}
+                                  pressed={active}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleTrend(
+                                      { type: obj.object_type, instance: obj.object_instance },
+                                      obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`,
+                                    );
+                                  }}
+                                >
+                                  <LineChart size={12} strokeWidth={1.75} />
+                                </IconButton>
+                              );
+                            })()}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right panel — inspector */}
+      <div style={inspectorPanel}>
+        {selectedObject && isDeviceSelected && (
+          <DeviceInspector loading={propertiesLoading} />
+        )}
+
+        {selectedObject && !isDeviceSelected && (
+          <PropertyInspector
+            objectType={selectedObject.type}
+            objectInstance={selectedObject.instance}
+            properties={properties}
+            loading={propertiesLoading}
+            onWrite={handleWrite}
+            unitName={detail?.units ?? null}
+            unitSymbol={detail?.units_symbol ?? null}
+          />
+        )}
+
+        {!selectedObject && (
+          <EmptyState
+            icon={<Box size={20} strokeWidth={1.75} />}
+            title="Select an object"
+            description="Choose an object in the tree to read its properties."
+          />
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,15 @@
+target/
+node_modules/
+dist/
+.DS_Store
+gen/
+build-appstore/
+build-ios/
+*.pkg
+*.ipa
+*.dmg
+*.p12
+*.p8
+*.provisionprofile
+*.mobileprovision
+.env

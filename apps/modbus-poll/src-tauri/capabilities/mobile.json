@@ -1,0 +1,9 @@
+{
+  "identifier": "mobile",
+  "description": "Mobile capabilities for Modbus Poll (iOS/Android). Plugin permissions are desktop-only; custom app commands need no capability entries.",
+  "windows": ["main"],
+  "platforms": ["iOS", "android"],
+  "permissions": [
+    "core:default"
+  ]
+}

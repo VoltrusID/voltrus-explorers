@@ -1,0 +1,318 @@
+@import "tailwindcss";
+@import "./components.css";
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * Voltrus desktop tokens.
+ * Palette follows the voltrus.id brand (warm neutrals, Voltrus green) so the
+ * tools read as one product family with the site and the SCADA/MES apps.
+ * Token names are a stable API: every app's inline styles read them.
+ */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b0b0a;
+  --surface: #0f0f0e;
+  --card: #151514;
+  --card-hover: #1b1b1a;
+  --input-bg: #0b0b0a;
+  --border: #252422;
+  --border-light: #363431;
+
+  --text: #ece9e3;
+  --text-dim: #aaa69f;
+  --text-muted: #8a867f;
+
+  --accent: #00e676;
+  --accent-hover: #3dec93;
+  --accent-fg: #03140a;
+  --accent-text: #2fe58a;
+  --accent-soft: rgba(0, 230, 118, 0.12);
+
+  --success: #00e676;
+  --success-soft: rgba(0, 230, 118, 0.12);
+  --warn: #ffb800;
+  --warn-soft: rgba(255, 184, 0, 0.12);
+  --danger: #ff5f57;
+  --danger-hover: #ff7a73;
+  --danger-soft: rgba(255, 95, 87, 0.12);
+  --info: #6cb4ff;
+  --info-soft: rgba(108, 180, 255, 0.12);
+
+  --hover-overlay: rgba(255, 255, 255, 0.045);
+  --active-overlay: rgba(255, 255, 255, 0.08);
+  --selection: rgba(0, 230, 118, 0.12);
+  --sunken: rgba(0, 0, 0, 0.35);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-light);
+  --focus-ring: 0 0 0 3px rgba(0, 230, 118, 0.25);
+  --scrim: rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #fbfaf8;
+    --surface: #f4f2ee;
+    --card: #ffffff;
+    --card-hover: #f7f5f1;
+    --input-bg: #ffffff;
+    --border: #e4e1db;
+    --border-light: #d0ccc5;
+
+    --text: #1a1918;
+    --text-dim: #54514c;
+    --text-muted: #6b6761;
+
+    --accent: #007f43;
+    --accent-hover: #006e3a;
+    --accent-fg: #ffffff;
+    --accent-text: #007a40;
+    --accent-soft: rgba(0, 140, 74, 0.1);
+
+    --success: #007f43;
+    --success-soft: rgba(0, 140, 74, 0.1);
+    --warn: #8f5d00;
+    --warn-soft: rgba(204, 146, 0, 0.14);
+    --danger: #c42b23;
+    --danger-hover: #a8221b;
+    --danger-soft: rgba(196, 43, 35, 0.09);
+    --info: #1b64bf;
+    --info-soft: rgba(31, 111, 209, 0.1);
+
+    --hover-overlay: rgba(0, 0, 0, 0.04);
+    --active-overlay: rgba(0, 0, 0, 0.07);
+    --selection: rgba(0, 140, 74, 0.1);
+    --sunken: rgba(0, 0, 0, 0.045);
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.14), 0 0 0 1px var(--border-light);
+    --focus-ring: 0 0 0 3px rgba(0, 140, 74, 0.22);
+    --scrim: rgba(20, 18, 15, 0.35);
+  }
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #fbfaf8;
+  --surface: #f4f2ee;
+  --card: #ffffff;
+  --card-hover: #f7f5f1;
+  --input-bg: #ffffff;
+  --border: #e4e1db;
+  --border-light: #d0ccc5;
+
+  --text: #1a1918;
+  --text-dim: #54514c;
+  --text-muted: #6b6761;
+
+  --accent: #007f43;
+  --accent-hover: #006e3a;
+  --accent-fg: #ffffff;
+  --accent-text: #007a40;
+  --accent-soft: rgba(0, 140, 74, 0.1);
+
+  --success: #007f43;
+  --success-soft: rgba(0, 140, 74, 0.1);
+  --warn: #8f5d00;
+  --warn-soft: rgba(204, 146, 0, 0.14);
+  --danger: #c42b23;
+  --danger-hover: #a8221b;
+  --danger-soft: rgba(196, 43, 35, 0.09);
+  --info: #1b64bf;
+  --info-soft: rgba(31, 111, 209, 0.1);
+
+  --hover-overlay: rgba(0, 0, 0, 0.04);
+  --active-overlay: rgba(0, 0, 0, 0.07);
+  --selection: rgba(0, 140, 74, 0.1);
+  --sunken: rgba(0, 0, 0, 0.045);
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.14), 0 0 0 1px var(--border-light);
+  --focus-ring: 0 0 0 3px rgba(0, 140, 74, 0.22);
+  --scrim: rgba(20, 18, 15, 0.35);
+}
+
+/* Theme-independent scale. */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+
+  --control-h: 28px;
+  --control-h-sm: 24px;
+  --control-h-lg: 32px;
+
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input, select, textarea {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+  transition-property: border-color, box-shadow;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-out);
+}
+
+input:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus),
+textarea:hover:not(:disabled):not(:focus) {
+  border-color: var(--border-light);
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  box-shadow: none;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3.5 4.75L6 7.25L8.5 4.75' fill='none' stroke='%238a867f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  background-size: 12px;
+  cursor: default;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+}
+
+/* Focus indicators */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
+/* Mobile adjustments (iOS build of Modbus Poll) */
+@media (max-width: 767px) {
+  html, body, #root {
+    font-size: 14px;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
+  input, select, button {
+    min-height: 36px;
+    font-size: 14px;
+  }
+
+  input, select {
+    padding: 8px 12px;
+  }
+}

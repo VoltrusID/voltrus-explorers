@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "@mactools/ui/styles.css";
+
+/* ── App-local interaction states (inline styles cannot express :hover) ── */
+
+/* Object browser tree rows/groups */
+.ob-group:hover {
+  background: var(--hover-overlay);
+}
+
+.ob-row:hover {
+  background: var(--hover-overlay);
+}
+
+/* Property inspector write button: revealed on row hover or keyboard focus */
+.property-inspector-edit {
+  opacity: 0;
+}
+
+.property-inspector-row:hover .property-inspector-edit,
+.property-inspector-edit:focus-visible {
+  opacity: 1;
+}
