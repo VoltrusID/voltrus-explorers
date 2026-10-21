@@ -153,6 +153,7 @@ function App() {
   const [showInfo, setShowInfo] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileTab, setMobileTab] = useState<"scan" | "device" | "log">("scan");
+  const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
   const { requirePro, status: proStatus } = useProStatus();
 
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
@@ -216,6 +217,9 @@ function App() {
   }, [addLog]);
 
   const handleConnect = useCallback(async (device: BleDevice) => {
+    if (devices.some((d) => d.connected && d.id !== device.id)) {
+      if (!requirePro("Several connected devices")) return;
+    }
     try {
       await invoke("connect_device", { id: device.id });
       setSelectedDevice({ ...device, connected: true });
@@ -226,7 +230,7 @@ function App() {
     } catch (e) {
       addLog("error", `Connect failed: ${String(e)}`);
     }
-  }, [addLog]);
+  }, [addLog, devices, requirePro]);
 
   const handleDisconnect = useCallback(async () => {
     if (!selectedDevice) return;
@@ -236,6 +240,7 @@ function App() {
       setServices([]);
       setExpandedServices(new Set());
       setSelectedChar(null);
+      setSubscribed((prev) => new Set([...prev].filter((k) => !k.startsWith(`${selectedDevice.id}|`))));
       addLog("info", `Disconnected from ${selectedDevice.name}`);
     } catch (e) {
       addLog("error", `Disconnect failed: ${String(e)}`);
@@ -258,7 +263,6 @@ function App() {
 
   const handleWriteChar = useCallback(async () => {
     if (!selectedDevice || !selectedChar || !writeValue) return;
-    if (!requirePro("Write characteristics")) return;
     try {
       await invoke("write_characteristic", {
         deviceId: selectedDevice.id,
@@ -270,21 +274,40 @@ function App() {
     } catch (e) {
       addLog("error", `Write failed: ${String(e)}`);
     }
-  }, [selectedDevice, selectedChar, writeValue, addLog, requirePro]);
+  }, [selectedDevice, selectedChar, writeValue, addLog]);
 
   const handleSubscribe = useCallback(async (char: BleCharacteristic) => {
     if (!selectedDevice) return;
-    if (!requirePro("Notifications")) return;
+    const key = `${selectedDevice.id}|${char.uuid}`;
+    if (subscribed.has(key)) {
+      try {
+        await invoke("unsubscribe_characteristic", {
+          deviceId: selectedDevice.id,
+          charUuid: char.uuid,
+        });
+        setSubscribed((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+        addLog("info", `Stopped notifications on ${char.uuid}`);
+      } catch (e) {
+        addLog("error", `Unsubscribe failed: ${String(e)}`);
+      }
+      return;
+    }
+    if (subscribed.size >= 1 && !requirePro("Several notifications at once")) return;
     try {
       await invoke("subscribe_characteristic", {
         deviceId: selectedDevice.id,
         charUuid: char.uuid,
       });
+      setSubscribed((prev) => new Set(prev).add(key));
       addLog("info", `Subscribed to notifications on ${char.uuid}`);
     } catch (e) {
       addLog("error", `Subscribe failed: ${String(e)}`);
     }
-  }, [selectedDevice, addLog, requirePro]);
+  }, [selectedDevice, subscribed, addLog, requirePro]);
 
   // UUID shortener
   const shortUuid = (uuid: string) => {
@@ -421,11 +444,15 @@ function App() {
                           Read
                         </Button>
                       )}
-                      {ch.properties.notify && (
-                        <Button size="sm" onClick={() => handleSubscribe(ch)}>
-                          Notify <ProBadge />
-                        </Button>
-                      )}
+                      {ch.properties.notify && (() => {
+                        const active = selectedDevice ? subscribed.has(`${selectedDevice.id}|${ch.uuid}`) : false;
+                        return (
+                          <Button size="sm" onClick={() => handleSubscribe(ch)}>
+                            {active ? "Stop notify" : "Notify"}
+                            {!active && subscribed.size >= 1 && !proStatus?.pro && <ProBadge />}
+                          </Button>
+                        );
+                      })()}
                       {!compact && ch.properties.write && (
                         <>
                           <input
@@ -449,7 +476,7 @@ function App() {
                               setTimeout(() => handleWriteChar(), 0);
                             }}
                           >
-                            Write <ProBadge />
+                            Write
                           </Button>
                         </>
                       )}
@@ -541,7 +568,7 @@ function App() {
                 />
               ))}
             {mobileTab === "log" && (
-              <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
+              <LogPanel entries={log} beforeExport={() => requirePro("Log export")} beforeCopyAll={() => requirePro("Copy the whole log")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
             )}
           </div>
           <nav
@@ -608,7 +635,7 @@ function App() {
                 </div>
               )}
             </div>
-            <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
+            <LogPanel entries={log} beforeExport={() => requirePro("Log export")} beforeCopyAll={() => requirePro("Copy the whole log")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
           </main>
         </div>
       )}
@@ -637,7 +664,7 @@ function App() {
           {[
             ["Scan", "Discover nearby BLE devices with signal strength (RSSI)."],
             ["Connect", "Connect to devices and browse their GATT services and characteristics."],
-            ["Inspect", "Read characteristic values for free. Pro adds writing values, notification subscriptions and log export."],
+            ["Inspect", "Read and write characteristic values and subscribe to one notification at a time. Pro adds several notifications at once, several connected devices, and log export and copy all."],
           ].map(([heading, text]) => (
             <div key={heading} style={{ marginBottom: 10 }}>
               <div style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)" }}>{heading}</div>

@@ -53,6 +53,8 @@ interface LogPanelProps {
   onClear?: () => void;
   /** Return false to block the CSV export (e.g. a Pro gate that opens its own upsell). */
   beforeExport?: () => boolean;
+  /** Return false to block "Copy all" (e.g. a Pro gate that opens its own upsell). */
+  beforeCopyAll?: () => boolean;
   filterDirection?: string | null;
   /** Default file name prefix of exported CSVs. */
   exportPrefix?: string;
@@ -60,7 +62,7 @@ interface LogPanelProps {
 
 const VISIBLE_LIMIT = 500;
 
-export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
+export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, beforeCopyAll, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showExport, setShowExport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
@@ -104,6 +106,8 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
   }, []);
 
   const copyAll = useCallback(() => {
+    setShowExport(false);
+    if (beforeCopyAll && !beforeCopyAll()) return;
     const text = filtered.map((e) => {
       const d = dirConfig[e.direction];
       return `${fmtTs(e.timestamp)} ${d.label} ${e.message}`;
@@ -111,8 +115,7 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
     navigator.clipboard.writeText(text);
     setExportMsg({ text: "Copied to clipboard" });
     setTimeout(() => setExportMsg(null), 1500);
-    setShowExport(false);
-  }, [filtered]);
+  }, [filtered, beforeCopyAll]);
 
   const exportCsv = useCallback(async () => {
     setShowExport(false);

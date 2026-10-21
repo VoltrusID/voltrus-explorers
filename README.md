@@ -8,7 +8,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read values. Pro adds writing values, notification subscriptions and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds several notifications and devices at once and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
@@ -64,6 +64,15 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 | --- | --- |
 | Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), read-only JetStream stream list with message and consumer counts, communication log export |
 | Pro | JetStream stream and consumer create, delete and purge and stored message fetch, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
+
+### BLE Inspector
+
+Free to download on the App Store; Pro is a one-time in-app purchase. Version 1.2.0 is the first release, and it is free.
+
+| | |
+| --- | --- |
+| Free | Scan for nearby devices, connect to one device, browse services and characteristics, read values, write values, one notification subscription at a time, communication log with single-line copy |
+| Pro | Several notification subscriptions at once, several connected devices at once, communication log CSV export and copy all |
 
 ### MQTT Explorer
 

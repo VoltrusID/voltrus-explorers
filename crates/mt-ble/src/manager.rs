@@ -337,6 +337,27 @@ impl BleManager {
         Ok(())
     }
 
+    pub async fn unsubscribe_characteristic(
+        &self,
+        device_id: &str,
+        char_uuid: &str,
+    ) -> Result<(), String> {
+        let peripheral = {
+            let peripherals = self.peripherals.lock().await;
+            peripherals
+                .get(device_id)
+                .cloned()
+                .ok_or_else(|| format!("Device not found: {}", device_id))?
+        };
+
+        let ch = self.find_characteristic(device_id, char_uuid).await?;
+
+        peripheral
+            .unsubscribe(&ch)
+            .await
+            .map_err(|e| format!("Failed to unsubscribe: {}", e))
+    }
+
     async fn find_characteristic(
         &self,
         device_id: &str,

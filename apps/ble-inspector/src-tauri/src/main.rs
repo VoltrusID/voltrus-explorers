@@ -88,6 +88,18 @@ async fn subscribe_characteristic(
         .await
 }
 
+#[tauri::command]
+async fn unsubscribe_characteristic(
+    state: State<'_, AppState>,
+    device_id: String,
+    char_uuid: String,
+) -> Result<(), String> {
+    state
+        .manager
+        .unsubscribe_characteristic(&device_id, &char_uuid)
+        .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(256);
@@ -130,6 +142,7 @@ pub fn run() {
             read_characteristic,
             write_characteristic,
             subscribe_characteristic,
+            unsubscribe_characteristic,
             system::open_url,
             mt_store::store_status,
             mt_store::store_purchase,

@@ -5,9 +5,9 @@ import { ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
-  "Write characteristic values",
-  "Subscribe to notifications and log them",
-  "Export the communication log to CSV",
+  "Several notification subscriptions at once",
+  "Several connected devices at once",
+  "Export the communication log to CSV and copy the whole log",
 ];
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
