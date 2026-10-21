@@ -58,6 +58,7 @@ jobs:
           bun run --cwd apps/s7-explorer test
           bun run --cwd apps/opcua-explorer test
           bun run --cwd apps/ble-inspector test
+          bun run --cwd apps/mqtt-explorer test
 
   macos:
     runs-on: macos-15
