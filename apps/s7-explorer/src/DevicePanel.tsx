@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   ConnectionForm,
@@ -9,11 +9,13 @@ import {
   LogPanel,
   ProBadge,
   StatusBar,
+  StatusDot,
   Tabs,
   ValueEditor,
+  saveTextFile,
   useProStatus,
 } from "@mactools/ui";
-import { Minus, Plus, Tags as TagsIcon } from "lucide-react";
+import { FileDown, Minus, Plus, Square, Tags as TagsIcon } from "lucide-react";
 import { useStore } from "./store";
 import { useS7Device, toSpecs, type S7Value } from "./useS7Device";
 import type { Device } from "./types";
@@ -23,6 +25,7 @@ import BlocksPanel from "./BlocksPanel";
 import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
 import { FREE_TAG_LIMIT } from "./helpers";
+import { ValueLogWriter, valueLogHeader, valueLogRow } from "./valueLog";
 
 type LogDir = "info" | "rx" | "tx" | "error";
 
@@ -61,13 +64,65 @@ export default function DevicePanel({ device, active, onLog }: Props) {
     if (s7.error) onLog("error", `[${device.label}] ${s7.error}`);
   }, [s7.error, device.label, onLog]);
 
+  // Identifies the polled tags, so edits and imports restart polling even when the count is unchanged.
+  const tagSig = JSON.stringify(toSpecs(tags));
+
   // Start/stop polling on connection + tag changes.
   useEffect(() => {
     if (s7.connected && tags.length > 0) {
       s7.startPolling(toSpecs(tags), pollMs);
       return () => s7.stopPolling();
     }
-  }, [s7.connected, tags.length, pollMs, device.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [s7.connected, tagSig, pollMs, device.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Value logging to CSV (Pro) ──
+  const logWriterRef = useRef<ValueLogWriter | null>(null);
+  const [logging, setLogging] = useState<{ path: string; rows: number } | null>(null);
+
+  const stopLogging = useCallback(
+    async (reason?: string) => {
+      const writer = logWriterRef.current;
+      if (!writer) return;
+      logWriterRef.current = null;
+      setLogging(null);
+      await writer.close();
+      onLog("info", `[${device.label}] Value logging stopped${reason ? ` (${reason})` : ""}: ${writer.rows} rows in ${writer.path}`);
+    },
+    [device.label, onLog],
+  );
+
+  const startLogging = async () => {
+    if (!requirePro("Logging values to CSV")) return;
+    if (logWriterRef.current || tags.length === 0) return;
+    try {
+      const path = await saveTextFile(`${device.label}-values.csv`, valueLogHeader(tags) + "\n");
+      if (!path) return;
+      logWriterRef.current = new ValueLogWriter(path, tagSig, (e) => {
+        logWriterRef.current = null;
+        setLogging(null);
+        onLog("error", `[${device.label}] Value logging stopped, could not write ${path}: ${String(e)}`);
+      });
+      setLogging({ path, rows: 0 });
+      onLog("info", `[${device.label}] Logging ${tags.length} tags to ${path}, one row per poll`);
+    } catch (e) {
+      onLog("error", `[${device.label}] Could not start value logging: ${String(e)}`);
+    }
+  };
+
+  // The columns of a log never change, so editing the tag list ends the log.
+  useEffect(() => {
+    if (logWriterRef.current && logWriterRef.current.signature !== tagSig) void stopLogging("tag list changed");
+  }, [tagSig, stopLogging]);
+
+  // One row per completed poll.
+  useEffect(() => {
+    const writer = logWriterRef.current;
+    if (!writer || s7.values.length !== tags.length) return;
+    writer.push(valueLogRow(new Date(), s7.values));
+    setLogging((cur) => (cur ? { ...cur, rows: writer.rows } : cur));
+  }, [s7.values]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => { void logWriterRef.current?.close(); }, []);
 
   // Restart polling when the rate changes.
   useEffect(() => {
@@ -145,6 +200,30 @@ export default function DevicePanel({ device, active, onLog }: Props) {
     );
   };
 
+  const logBar = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", fontSize: "var(--fs-xs)", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+      {logging ? (
+        <>
+          <StatusDot tone="success" label="Logging values" />
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={logging.path}>
+            Logging {logging.rows} rows to <span className="mono">{logging.path.split(/[\\/]/).pop()}</span>
+          </span>
+          <Button size="sm" icon={<Square size={14} strokeWidth={1.75} />} onClick={() => void stopLogging()}>Stop logging</Button>
+        </>
+      ) : (
+        <Button
+          size="sm"
+          icon={<FileDown size={14} strokeWidth={1.75} />}
+          disabled={!s7.connected || tags.length === 0}
+          title={s7.connected ? "Write each poll's values to a CSV file" : "Connect to the PLC to log values"}
+          onClick={() => void startLogging()}
+        >
+          Log values to CSV <ProBadge />
+        </Button>
+      )}
+    </div>
+  );
+
   const dataTableEl = (
     <DataTable
       columns={columns}
@@ -211,6 +290,7 @@ export default function DevicePanel({ device, active, onLog }: Props) {
             <button type="button" style={{ background: "none", border: 0, padding: 0, color: "var(--accent)", cursor: "pointer", font: "inherit" }} onClick={() => requirePro("More than 10 live tags")}>Pro for more</button>
           </div>
         )}
+        {mainTab === "tags" && logBar}
         {mainTab === "tags" && (tags.length === 0
           ? (
             <EmptyState
@@ -233,7 +313,7 @@ export default function DevicePanel({ device, active, onLog }: Props) {
         <>
           <div style={{ flex: 1, overflow: "auto", padding: 16, minHeight: 0 }}>
             {mobileTab === "connect" && sidebar}
-            {mobileTab === "data" && dataTableEl}
+            {mobileTab === "data" && <>{logBar}{dataTableEl}</>}
             {mobileTab === "diagnostics" && <DiagnosticsPanel deviceId={device.id} connected={s7.connected} onLog={onLog} deviceLabel={device.label} />}
             {mobileTab === "blocks" && <BlocksPanel deviceId={device.id} connected={s7.connected} />}
             {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => onLog("info", `Log exported to ${f}`)} />}

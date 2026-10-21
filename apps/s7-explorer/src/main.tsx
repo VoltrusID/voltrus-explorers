@@ -9,6 +9,8 @@ const PRO_FEATURES = [
   "Write values to the PLC",
   "Several PLC connections at once",
   "Live trends",
+  "Import and export tag lists as CSV (including TIA Portal tag table exports)",
+  "Log polled values to a CSV file",
   "Block manager: list, save and delete blocks",
   "Built-in S7 simulator",
 ];
