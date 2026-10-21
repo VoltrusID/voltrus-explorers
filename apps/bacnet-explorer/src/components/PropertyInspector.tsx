@@ -135,7 +135,7 @@ export function PropertyInspector({
                 }
 
                 const isPresentValue = entry.property_identifier === 85;
-                const isUnitsRow = entry.property_identifier === 90;
+                const isUnitsRow = entry.property_identifier === 117; // BACnet property "units"
                 if (isUnitsRow && unitName) displayValue = unitName;
                 if (isPresentValue && unitSymbol) displayValue = `${displayValue} ${unitSymbol}`;
 

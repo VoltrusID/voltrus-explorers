@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- App Store screenshot frame: 1440x900 CSS px rendered at device scale 2 (2880x1800).
+     render.mjs fills #headline, #sub and #shot (the app window capture, 1180x740 CSS px). -->
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #f4f2ee;
+    --ink: #1b1a17;
+    --muted: #5d5a54;
+    --accent: #00b85c;
+    --accent-soft: rgba(0, 200, 100, 0.16);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1440px; height: 900px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(1200px 520px at 50% 108%, rgba(0, 200, 100, 0.20), transparent 70%),
+      var(--bg);
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--ink);
+    position: relative;
+  }
+  header {
+    position: absolute; top: 46px; left: 0; right: 0;
+    text-align: center; padding: 0 120px;
+  }
+  h1 {
+    font-size: 58px; line-height: 1.08; font-weight: 750; letter-spacing: -0.025em;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  p.sub {
+    margin-top: 14px; font-size: 22px; line-height: 1.35; color: var(--muted); font-weight: 450;
+  }
+  .window {
+    position: absolute; left: 130px; top: 214px; width: 1180px; height: 740px;
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 40px 90px rgba(30, 25, 15, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.35);
+    background: #0b0b0a;
+  }
+  .window img { display: block; width: 1180px; height: 740px; }
+  .lights { position: absolute; top: 13px; left: 14px; display: flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.25); }
+  .lights i:nth-child(1) { background: #ff5f57; }
+  .lights i:nth-child(2) { background: #febc2e; }
+  .lights i:nth-child(3) { background: #28c840; }
+</style>
+</head>
+<body>
+  <header>
+    <h1 id="headline"></h1>
+    <p class="sub" id="sub"></p>
+  </header>
+  <div class="window">
+    <img id="shot" alt="" />
+    <div class="lights"><i></i><i></i><i></i></div>
+  </div>
+</body>
+</html>

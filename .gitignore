@@ -13,3 +13,4 @@ build-ios/
 *.provisionprofile
 *.mobileprovision
 .env
+marketing/screenshots/*/out/
