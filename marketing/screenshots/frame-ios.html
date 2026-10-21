@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- iPhone / iPad App Store screenshot frame. render.mjs sets --w/--h (CSS px, rendered at device scale 2),
+     fills #headline, #sub and #shot (the app capture) and sets the device class on <body> (phone | tablet). -->
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { --bg: #f4f2ee; --ink: #1b1a17; --muted: #5d5a54; --accent: #00b85c; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: var(--w); height: var(--h); overflow: hidden; }
+  body {
+    background: radial-gradient(900px 420px at 50% 108%, rgba(0, 200, 100, 0.20), transparent 70%), var(--bg);
+    font-family: Inter, system-ui, sans-serif; color: var(--ink); position: relative;
+  }
+  header { position: absolute; top: 56px; left: 0; right: 0; text-align: center; padding: 0 56px; }
+  h1 { font-size: 50px; line-height: 1.08; font-weight: 750; letter-spacing: -0.025em; }
+  h1, p.sub { text-wrap: balance; }
+  h1 em { font-style: normal; color: var(--accent); }
+  p.sub { margin-top: 14px; font-size: 22px; line-height: 1.35; color: var(--muted); font-weight: 450; }
+  .device {
+    position: absolute; left: 50%; transform: translateX(-50%); overflow: hidden; background: #0b0b0a;
+    box-shadow: 0 40px 90px rgba(30, 25, 15, 0.30), 0 0 0 2px #2a2a28, 0 0 0 12px #0b0b0a;
+  }
+  .device img { display: block; width: 100%; height: 100%; }
+  body.phone .device { top: 290px; width: 470px; height: 1018px; border-radius: 46px; }
+  body.tablet header { top: 70px; }
+  body.tablet h1 { font-size: 64px; }
+  body.tablet p.sub { font-size: 26px; }
+  body.tablet .device { top: 300px; width: 900px; height: 1200px; border-radius: 34px; }
+</style>
+</head>
+<body>
+  <header><h1 id="headline"></h1><p class="sub" id="sub"></p></header>
+  <div class="device"><img id="shot" alt="" /></div>
+</body>
+</html>
