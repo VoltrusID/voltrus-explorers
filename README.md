@@ -75,8 +75,8 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 Version 1.2.0 is the first release, and it is free.
 | OPC UA Explorer | |
 | --- | --- |
-| Free | Connect (anonymous or username/password, security policies and modes), endpoint and server discovery, browse the address space, node attributes and references, namespaces, read values (and refresh them on demand), start and stop the built-in server |
-| Pro | Live subscriptions and monitored items, live trend charts, writing values (client and server), certificate management (trust, reject, regenerate), device templates for the built-in server, CSV export of the communication log |
+| Free | Connect (anonymous or username/password, security policies and modes), endpoint and server discovery, browse the address space, node attributes and references, namespaces, read values on demand, live updates for up to 10 monitored items, communication log with CSV export, start and stop the built-in server |
+| Pro | Unlimited live monitored items and the subscriptions panel (sampling, deadband, queue), live trend charts, writing values (client and server), certificate management (trust, reject, regenerate), device templates for the built-in server |
 
 ## Build from source
 

@@ -114,6 +114,9 @@ const DEFAULT_NODES: OpcUaNode[] = [
   ...BOILER_PROFILE.registers.map(r => ({ node_id: r.nodeId, name: r.name, data_type: r.dataType })),
 ];
 
+// Free tier: live subscription (or fallback polling) covers this many nodes; the rest refresh via "Read values".
+const FREE_MONITORED_ITEMS = 10;
+
 function App() {
   const [mode, setMode] = useState<"server" | "client">("server");
   const [leftWidth, setLeftWidth] = useState(264);
@@ -213,7 +216,8 @@ function App() {
   // Fallback: poll client values when no live subscription is possible.
   const startClientPoll = useCallback((nodes: OpcUaNode[]) => {
     if (clientPoll.current) clearInterval(clientPoll.current);
-    const nodesToRead = nodes.length > 0 ? nodes : DEFAULT_NODES;
+    const all = nodes.length > 0 ? nodes : DEFAULT_NODES;
+    const nodesToRead = pro ? all : all.slice(0, FREE_MONITORED_ITEMS);
     const doPoll = async () => {
       try {
         const vals = await invoke<any[]>("read_tags", { tags: nodesToRead });
@@ -222,7 +226,7 @@ function App() {
     };
     doPoll();
     clientPoll.current = setInterval(doPoll, 1000);
-  }, [addLog]);
+  }, [addLog, pro]);
 
   // Live updates: subscription notifications drive the main table.
   // Registered once for the app's lifetime (not gated on connection) so there
@@ -321,7 +325,8 @@ function App() {
           // live subscription below keeps the table current. Data-change notifications only fire on change,
           // so static nodes would stay blank without this snapshot either way.
           await readValues(nodes);
-          if (pro) {
+          const liveNodes = pro ? nodes : nodes.slice(0, FREE_MONITORED_ITEMS);
+          {
             try {
               const cfg = {
                 publishing_interval_ms: 1000,
@@ -333,7 +338,7 @@ function App() {
               };
               const subId = await invoke<number>("create_subscription", { cfg });
               mainSubIdRef.current = subId;
-              const items = nodes.map((n) => ({
+              const items = liveNodes.map((n) => ({
                 node_id: n.node_id,
                 attribute_id: 13,
                 sampling_interval_ms: 1000,
@@ -348,7 +353,7 @@ function App() {
               addLog("info", `Live subscription ${subId} created for ${created} nodes`);
             } catch (e) {
               addLog("error", `Live subscription failed, falling back to polling: ${e}`);
-              startClientPoll(nodes);
+              startClientPoll(liveNodes);
             }
           }
         }
@@ -643,7 +648,7 @@ function App() {
             <Section title="Session">
               <span className="vt-hint">
                 Connected to {browsedNodes.length > 0 ? `${browsedNodes.length} browsed nodes` : `${DEFAULT_NODES.length} default nodes`}.{" "}
-                {pro ? "Values update live. Click any row to write a value." : "Read values to refresh them. Click any row to write a value (Pro)."}
+                {pro ? "Values update live. Click any row to write a value." : `Live updates for the first ${Math.min(FREE_MONITORED_ITEMS, browsedNodes.length || DEFAULT_NODES.length)} nodes (Pro for more). Use Read values to refresh the rest. Click any row to write a value (Pro).`}
               </span>
               <Button size="sm" disabled={browsedNodes.length === 0} onClick={() => readValues(browsedNodes)}>Read values</Button>
             </Section>
@@ -675,7 +680,7 @@ function App() {
           <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
             {mobileTab === "connect" && <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{sidebarContent}</div>}
             {mobileTab === "data" && <DataTable columns={columns} data={tableData} onRowClick={openEditor} />}
-            {mobileTab === "log" && <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} />}
+            {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />}
           </div>
           {mobileTabBar}
           <StatusBar connected={clientConnected || serverOn} latency={0} pollCount={0} error={null} />
@@ -738,7 +743,7 @@ function App() {
                   onWindowChange={setTrendWindow}
                 />
               ) : (
-                <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+                <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
               )}
             </div>
           </main>
