@@ -489,6 +489,7 @@ function App() {
   const exportWatch = (all: boolean) => {
     const lists = all ? watchLists : watch ? [{ name: watchName.trim() || watch.name || "Watch list", tags: watch.tags }] : [];
     if (lists.length === 0) return;
+    if (!requirePro("Watch list CSV export")) return;
     const label = all ? "all" : lists[0].name.replace(/[^\w.-]+/g, "-");
     saveTextFile(`enip-watchlist-${label}.csv`, watchListsToCsv(lists))
       .then((p) => { if (p) addLog("info", `Exported ${lists.length} watch list${lists.length === 1 ? "" : "s"} to ${p}`); })
@@ -713,9 +714,9 @@ function App() {
               </div>
             )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <Button size="sm" variant="ghost" icon={<Download size={14} />} disabled={!watch} onClick={() => exportWatch(false)}>Export</Button>
+              <Button size="sm" variant="ghost" icon={<Download size={14} />} disabled={!watch} onClick={() => exportWatch(false)}>Export <ProBadge /></Button>
               {watchLists.length > 1 && (
-                <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={() => exportWatch(true)}>Export all</Button>
+                <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={() => exportWatch(true)}>Export all <ProBadge /></Button>
               )}
               <Button size="sm" variant="ghost" icon={<Upload size={14} />} onClick={importWatch}>Import</Button>
               {watchSaved && (
