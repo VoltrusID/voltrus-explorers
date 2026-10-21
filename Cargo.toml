@@ -11,6 +11,7 @@ members = [
     "crates/mt-store",
     "crates/mt-s7",
     "crates/mt-serial",
+    "crates/mt-mqtt",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/ble-inspector/src-tauri",
@@ -19,6 +20,7 @@ members = [
     "apps/s7-explorer/src-tauri",
     "apps/enip-explorer/src-tauri",
     "apps/serial-monitor/src-tauri",
+    "apps/mqtt-explorer/src-tauri",
 ]
 
 [workspace.package]

@@ -12,6 +12,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -62,13 +63,22 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 | Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export |
 | Pro | JetStream stream and consumer management, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
 
+### MQTT Explorer
+
+| | |
+| --- | --- |
+| Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw and JSON payload views, one saved connection profile, communication log with CSV export |
+| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, Hex and Base64 payload decoders, message history export to CSV |
+
+Version 1.2.0 is the first release, and it is free.
+
 ## Build from source
 
 Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh).
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt
 ```
 
 Universal release build (unsigned):
@@ -82,6 +92,7 @@ Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-mqtt -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
@@ -93,6 +104,7 @@ apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/s7-explorer       Tauri app (macOS)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
+apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator
@@ -108,6 +120,7 @@ crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
+crates/mt-mqtt         MQTT client (rumqttc) and embedded broker (rumqttd)
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers

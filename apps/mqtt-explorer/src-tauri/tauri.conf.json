@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "MQTT Explorer",
+  "version": "1.2.0",
+  "identifier": "com.joyodigitama.mqtt-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MQTT Explorer",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 860,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "MQTT client and embedded broker",
+    "longDescription": "Connect to MQTT brokers to subscribe to topics, publish messages, and inspect real-time message streams. Supports topic wildcards, QoS levels, and retained messages, and can run a local broker for testing.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}
