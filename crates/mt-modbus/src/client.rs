@@ -189,6 +189,7 @@ enum Wire {
     /// Modbus/TCP. The counter holds the replies dropped because their transaction id was not the current one.
     Tcp(Arc<AtomicUsize>),
     /// Modbus RTU on a serial line (or a PTY standing in for one).
+    #[cfg_attr(not(feature = "serial"), allow(dead_code))]
     Rtu,
 }
 
