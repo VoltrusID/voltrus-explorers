@@ -13,6 +13,8 @@ import {
 } from "lightweight-charts";
 
 export interface TrendSeries {
+  /** Unique per series; names can repeat across sessions. */
+  id: string;
   name: string;
   color: string;
   points: { t: number; v: number }[];
@@ -22,7 +24,7 @@ const COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899"
 
 interface Props {
   series: TrendSeries[];
-  onRemove: (name: string) => void;
+  onRemove: (id: string) => void;
   windowSec: number;
   onWindowChange: (sec: number) => void;
 }
@@ -175,11 +177,11 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {series.map((s, i) => (
-            <span key={s.name} style={{ fontSize: "var(--fs-xs)", display: "flex", alignItems: "center", gap: 4, background: "var(--bg)", padding: "2px 6px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
+            <span key={s.id} style={{ fontSize: "var(--fs-xs)", display: "flex", alignItems: "center", gap: 4, background: "var(--bg)", padding: "2px 6px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)" }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color || COLORS[i % COLORS.length], display: "inline-block" }} aria-hidden="true" />
               {s.name}
               <button
-                onClick={() => onRemove(s.name)}
+                onClick={() => onRemove(s.id)}
                 aria-label={`Remove ${s.name} from trend`}
                 style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0, display: "inline-flex", lineHeight: 1 }}
               >

@@ -31,9 +31,12 @@ const classColor = (nc: string): string =>
   nc === "Variable" ? "var(--accent)" : nc === "Object" ? "var(--success)" : "var(--text-dim)";
 
 export function BrowserPanel({
+  session,
   onClose,
   onLog,
 }: {
+  /** Id of the client session to browse. */
+  session: string;
   onClose: () => void;
   onLog?: (d: Dir, m: string) => void;
 }) {
@@ -48,12 +51,12 @@ export function BrowserPanel({
   const loadChildren = useCallback(async (parentId: string) => {
     setBusy(parentId);
     try {
-      const kids = await invoke<BrowseChild[]>("browse_children", { nodeId: parentId });
+      const kids = await invoke<BrowseChild[]>("browse_children", { session, nodeId: parentId });
       setChildren((prev) => ({ ...prev, [parentId]: kids }));
       onLog?.("rx", `Browsed ${kids.length} children under ${parentId || "ObjectsFolder"}`);
     } catch (e) { onLog?.("error", `Browse failed: ${String(e)}`); }
     setBusy(null);
-  }, [onLog]);
+  }, [session, onLog]);
 
   useEffect(() => { loadChildren(""); /* eslint-disable-next-line */ }, [loadChildren]);
 
@@ -70,8 +73,8 @@ export function BrowserPanel({
     setSelected(id);
     try {
       const [a, r] = await Promise.all([
-        invoke<AttributeRead[]>("read_attributes", { nodeId: id }).catch((e) => { onLog?.("error", `read_attributes: ${e}`); return []; }),
-        invoke<ReferenceInfo[]>("browse_references", { nodeId: id }).catch((e) => { onLog?.("error", `browse_references: ${e}`); return []; }),
+        invoke<AttributeRead[]>("read_attributes", { session, nodeId: id }).catch((e) => { onLog?.("error", `read_attributes: ${e}`); return []; }),
+        invoke<ReferenceInfo[]>("browse_references", { session, nodeId: id }).catch((e) => { onLog?.("error", `browse_references: ${e}`); return []; }),
       ]);
       setAttrs(a); setRefs(r);
     } catch (e) { onLog?.("error", String(e)); }

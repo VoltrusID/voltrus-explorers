@@ -14,6 +14,6 @@ pub use simulator::{SimDeviceProfile, SimRegisterDef, start_simulation};
 pub use types::{
     AttributeRead, BrowseChild, CertInfo, EndpointInfo, MonitoredItemDef, NamespaceInfo,
     NotificationValue, OpcUaConfig, OpcUaNode, OpcUaValue, ReferenceInfo, ServerInfo,
-    SubscriptionConfig,
+    SessionNotification, SubscriptionConfig,
 };
 pub use opcua_client::{NotificationSink, OpcUaProtocolClient};

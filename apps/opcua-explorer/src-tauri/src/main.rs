@@ -3,24 +3,39 @@
 
 mod system;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 use mt_opcua::{
     BrowseChild, EndpointInfo, MonitoredItemDef, NamespaceInfo, NotificationSink, NotificationValue,
     OpcUaClient, OpcUaConfig, OpcUaNode, OpcUaProtocolClient, OpcUaServer, OpcUaValue, OpcUaStore,
-    ReferenceInfo, ServerInfo, ServerNodeDef, SimDeviceProfile, SubscriptionConfig, AttributeRead,
+    ReferenceInfo, ServerInfo, SessionNotification, ServerNodeDef, SimDeviceProfile, SubscriptionConfig, AttributeRead,
     CertInfo, start_simulation,
 };
 use mt_protocol::ProtocolClient;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Open client sessions by id. A std mutex is enough: it is only held to look up or insert an entry, never across an
+/// await, so slow calls on one session never block another.
+type Sessions = std::sync::Mutex<HashMap<String, Arc<OpcUaClient>>>;
+
 struct AppState {
-    client: Arc<Mutex<Option<OpcUaClient>>>,
+    sessions: Sessions,
     server: Arc<Mutex<OpcUaServer>>,
     store: OpcUaStore,
     sim_running: Arc<AtomicBool>,
     sim_values: Arc<Mutex<Vec<f64>>>,
+}
+
+fn get_session(state: &AppState, session: &str) -> Result<Arc<OpcUaClient>, String> {
+    state
+        .sessions
+        .lock()
+        .map_err(|_| "Session table poisoned".to_string())?
+        .get(session)
+        .cloned()
+        .ok_or_else(|| "Not connected".to_string())
 }
 
 // ── Client commands ──
@@ -29,64 +44,79 @@ struct AppState {
 async fn connect(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
+    session: String,
     config: OpcUaConfig,
 ) -> Result<(), String> {
+    if get_session(&state, &session).is_ok() {
+        return Err("Session already connected".to_string());
+    }
     let client = OpcUaClient::connect(config).await.map_err(|e| e.to_string())?;
     {
         // Wire subscription notifications → webview event before any use.
         let inner = client.inner();
         let mut g = inner.lock().await;
-        g.set_notification_sink(Arc::new(NotificationForwarder { app }));
+        g.set_notification_sink(Arc::new(NotificationForwarder { app, session: session.clone() }));
     }
-    *state.client.lock().await = Some(client);
+    state
+        .sessions
+        .lock()
+        .map_err(|_| "Session table poisoned".to_string())?
+        .insert(session, Arc::new(client));
     Ok(())
 }
 
-/// Forwards OPC UA subscription data-change notifications to the webview.
+/// Forwards OPC UA subscription data-change notifications to the webview, tagged with the session they came from.
 struct NotificationForwarder {
     app: AppHandle,
+    session: String,
 }
 
 impl NotificationSink for NotificationForwarder {
     fn notify(&self, value: NotificationValue) {
-        let _ = self.app.emit("opcua://notification", value);
+        let _ = self.app.emit(
+            "opcua://notification",
+            SessionNotification { session: self.session.clone(), value },
+        );
     }
 }
 
 #[tauri::command]
 async fn read_tags(
     state: tauri::State<'_, AppState>,
+    session: String,
     tags: Vec<OpcUaNode>,
 ) -> Result<Vec<OpcUaValue>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     client.read(&tags).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn write_tag(
     state: tauri::State<'_, AppState>,
+    session: String,
     tag: OpcUaNode,
     value: OpcUaValue,
 ) -> Result<(), String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     client.write(&tag, value).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut guard = state.client.lock().await;
-    if let Some(client) = guard.take() {
+async fn disconnect(state: tauri::State<'_, AppState>, session: String) -> Result<(), String> {
+    let client = state
+        .sessions
+        .lock()
+        .map_err(|_| "Session table poisoned".to_string())?
+        .remove(&session);
+    if let Some(client) = client {
         client.disconnect().await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn browse_nodes(state: tauri::State<'_, AppState>) -> Result<Vec<OpcUaNode>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+async fn browse_nodes(state: tauri::State<'_, AppState>, session: String) -> Result<Vec<OpcUaNode>, String> {
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let inner_guard = inner.lock().await;
     inner_guard.browse_nodes().await.map_err(|e| e.to_string())
@@ -105,10 +135,10 @@ async fn find_servers(url: String) -> Result<Vec<ServerInfo>, String> {
 #[tauri::command]
 async fn browse_children(
     state: tauri::State<'_, AppState>,
+    session: String,
     node_id: String,
 ) -> Result<Vec<BrowseChild>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let g = inner.lock().await;
     g.browse_children(&node_id).await
@@ -117,19 +147,18 @@ async fn browse_children(
 #[tauri::command]
 async fn browse_references(
     state: tauri::State<'_, AppState>,
+    session: String,
     node_id: String,
 ) -> Result<Vec<ReferenceInfo>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let g = inner.lock().await;
     g.browse_references(&node_id).await
 }
 
 #[tauri::command]
-async fn read_namespaces(state: tauri::State<'_, AppState>) -> Result<Vec<NamespaceInfo>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+async fn read_namespaces(state: tauri::State<'_, AppState>, session: String) -> Result<Vec<NamespaceInfo>, String> {
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let g = inner.lock().await;
     g.read_namespaces().await
@@ -138,10 +167,10 @@ async fn read_namespaces(state: tauri::State<'_, AppState>) -> Result<Vec<Namesp
 #[tauri::command]
 async fn read_attributes(
     state: tauri::State<'_, AppState>,
+    session: String,
     node_id: String,
 ) -> Result<Vec<AttributeRead>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let g = inner.lock().await;
     g.read_attributes(&node_id).await
@@ -150,10 +179,10 @@ async fn read_attributes(
 #[tauri::command]
 async fn create_subscription(
     state: tauri::State<'_, AppState>,
+    session: String,
     cfg: SubscriptionConfig,
 ) -> Result<u32, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let mut g = inner.lock().await;
     g.create_subscription(cfg).await
@@ -162,11 +191,11 @@ async fn create_subscription(
 #[tauri::command]
 async fn create_monitored_items(
     state: tauri::State<'_, AppState>,
+    session: String,
     subscription_id: u32,
     items: Vec<MonitoredItemDef>,
 ) -> Result<usize, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let g = inner.lock().await;
     g.create_monitored_items(subscription_id, items).await
@@ -175,10 +204,10 @@ async fn create_monitored_items(
 #[tauri::command]
 async fn delete_subscription(
     state: tauri::State<'_, AppState>,
+    session: String,
     subscription_id: u32,
 ) -> Result<(), String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = get_session(&state, &session)?;
     let inner = client.inner();
     let mut g = inner.lock().await;
     g.delete_subscription(subscription_id).await
@@ -321,7 +350,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
-            client: Arc::new(Mutex::new(None)),
+            sessions: std::sync::Mutex::new(HashMap::new()),
             server: Arc::new(Mutex::new(OpcUaServer::new())),
             store: OpcUaStore::new(),
             sim_running: Arc::new(AtomicBool::new(false)),

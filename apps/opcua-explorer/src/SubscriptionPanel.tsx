@@ -6,6 +6,7 @@ import { Button, DataTable, Dialog, Field, StatusDot, type Column } from "@macto
 import { Sparkline } from "./Sparkline";
 
 interface NotificationValue {
+  session: string;
   node_id: string;
   value: any;
   source_ts: number;
@@ -22,9 +23,12 @@ const COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899"
 const CAP = 500;
 
 export function SubscriptionPanel({
+  session,
   onClose,
   onLog,
 }: {
+  /** Id of the client session to subscribe on. */
+  session: string;
   onClose: () => void;
   onLog?: (d: Dir, m: string) => void;
 }) {
@@ -54,6 +58,7 @@ export function SubscriptionPanel({
     listen<NotificationValue>("opcua://notification", (e) => {
       if (!active) return;
       const n = e.payload;
+      if (n.session !== session) return;
       setLive((prev) => ({ ...prev, [n.node_id]: n }));
       setCount((c) => c + 1);
       const num = typeof n.value === "number" ? n.value : Number(n.value);
@@ -66,7 +71,13 @@ export function SubscriptionPanel({
       }
     }).then((fn) => { if (active) unlistenRef.current = fn; });
     return () => { active = false; unlistenRef.current?.(); unlistenRef.current = null; };
-  }, [running]);
+  }, [running, session]);
+
+  // Closing the panel (or switching session) must not leave its subscription running on the server.
+  useEffect(() => () => {
+    const id = subIdRef.current;
+    if (id !== null) invoke("delete_subscription", { session, subscriptionId: id }).catch(() => {});
+  }, [session]);
 
   const addNode = () => {
     const v = newNode.trim();
@@ -87,7 +98,7 @@ export function SubscriptionPanel({
         priority: 0,
         publishing_enabled: true,
       };
-      const id = await invoke<number>("create_subscription", { cfg });
+      const id = await invoke<number>("create_subscription", { session, cfg });
       subIdRef.current = id;
       const items = nodes.map((n) => ({
         node_id: n,
@@ -100,7 +111,7 @@ export function SubscriptionPanel({
         deadband_type: deadbandType,
         deadband_value: deadbandValue,
       }));
-      const created = await invoke<number>("create_monitored_items", { subscriptionId: id, items });
+      const created = await invoke<number>("create_monitored_items", { session, subscriptionId: id, items });
       setRunning(true);
       onLog?.("tx", `Subscription ${id} created, ${created} monitored items`);
     } catch (e) { setErr(String(e)); onLog?.("error", String(e)); }
@@ -110,7 +121,7 @@ export function SubscriptionPanel({
   const stop = async () => {
     const id = subIdRef.current;
     if (id !== null) {
-      try { await invoke("delete_subscription", { subscriptionId: id }); onLog?.("info", `Subscription ${id} deleted`); }
+      try { await invoke("delete_subscription", { session, subscriptionId: id }); onLog?.("info", `Subscription ${id} deleted`); }
       catch (e) { onLog?.("error", String(e)); }
     }
     subIdRef.current = null;

@@ -6,6 +6,8 @@ import "./styles.css";
 
 const PRO_FEATURES = [
   "Unlimited live monitored items and the subscriptions panel",
+  "Several server sessions at once",
+  "CSV export of monitored values",
   "Live trend charts",
   "Write values to nodes",
   "Certificate management",

@@ -17,10 +17,11 @@ import {
   ProAboutRow,
   ProBadge,
   ValueEditor,
+  saveTextFile,
   useProStatus,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
-import { ChartLine, Play, Server, Plug, Square } from "lucide-react";
+import { ChartLine, Download, FileDown, Play, Plug, Plus, Server, Square, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { DiscoveryPanel } from "./DiscoveryPanel";
 import { BrowserPanel } from "./BrowserPanel";
@@ -28,6 +29,7 @@ import { SubscriptionPanel } from "./SubscriptionPanel";
 import { CertManager } from "./CertManager";
 import { NamespacePanel } from "./NamespacePanel";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
+import { ValueLog, samplesToCsv, valuesToCsv } from "./valueLog";
 
 interface OpcUaConfig {
   endpoint_url: string;
@@ -45,11 +47,45 @@ interface OpcUaNode {
 }
 
 interface NotificationValue {
+  session: string;
   node_id: string;
-  value: any;
+  value: unknown;
   source_ts: number;
   server_ts: number;
   status: string;
+}
+
+/** One row of a session's value table. `read_tags` rows carry no data type. */
+interface ClientValue {
+  node_id: string;
+  name: string;
+  data_type?: string;
+  value: unknown;
+  timestamp: number;
+}
+
+/** A connected OPC UA server. */
+interface ClientSession {
+  id: string;
+  /** Endpoint without the scheme, made unique when several sessions share it. */
+  label: string;
+  endpoint: string;
+  browsed: OpcUaNode[];
+  values: ClientValue[];
+}
+
+interface SessionRuntime {
+  subId: number | null;
+  poll?: number;
+}
+
+/** A node of the built-in server, as returned by `server_read_nodes`. */
+interface ServerNode {
+  node_id: string;
+  name: string;
+  data_type: string;
+  value: unknown;
+  timestamp?: number;
 }
 
 interface SimRegisterDef {
@@ -129,17 +165,27 @@ function App() {
   // Server state
   const [serverOn, setServerOn] = useState(false);
   const [serverPort, setServerPort] = useState(4840);
-  const [serverNodes, setServerNodes] = useState<any[]>([]);
+  const [serverNodes, setServerNodes] = useState<ServerNode[]>([]);
   const serverPoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Client state
-  const [clientValues, setClientValues] = useState<any[]>([]);
-  const [clientConnected, setClientConnected] = useState(false);
+  // Client state: any number of sessions (Pro; free is one). The table shows the active one.
+  const [sessions, setSessions] = useState<ClientSession[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [clientLoading, setClientLoading] = useState(false);
-  const [browsedNodes, setBrowsedNodes] = useState<OpcUaNode[]>([]);
-  const clientPoll = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mainSubIdRef = useRef<number | null>(null);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  // Per-session subscription id and fallback poll timer. They never render, so they stay out of state.
+  const runtimeRef = useRef(new Map<string, SessionRuntime>());
+  const nextSessionRef = useRef(1);
+  const [valueLog] = useState(() => new ValueLog());
   const unlistenMainRef = useRef<(() => void) | null>(null);
+  const [showExport, setShowExport] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+  const activeSession = sessions.find((s) => s.id === activeId) ?? null;
+  const clientConnected = activeSession !== null;
+  const clientValues = activeSession?.values ?? [];
+  const browsedNodes = activeSession?.browsed ?? [];
 
   // Template / Sim state
   const [simTemplate, setSimTemplate] = useState<string>("");
@@ -205,64 +251,68 @@ function App() {
     if (!serverOn) { setServerNodes([]); return; }
     const poll = setInterval(async () => {
       try {
-        const nodes = await invoke<any[]>("server_read_nodes");
-        setServerNodes(nodes ?? []);
+        const nodes = await invoke<ServerNode[]>("server_read_nodes");
+        const rows = nodes ?? [];
+        setServerNodes(rows);
+        const now = Date.now();
+        for (const n of rows) valueLog.record("server", "Server", n.node_id, n.name, n.value, n.timestamp || now);
       } catch { /* ignore */ }
     }, 500);
     serverPoll.current = poll;
     return () => clearInterval(poll);
-  }, [serverOn]);
+  }, [serverOn, valueLog]);
 
-  // Fallback: poll client values when no live subscription is possible.
-  const startClientPoll = useCallback((nodes: OpcUaNode[]) => {
-    if (clientPoll.current) clearInterval(clientPoll.current);
+  const updateSession = useCallback((id: string, fn: (s: ClientSession) => ClientSession) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? fn(s) : s)));
+  }, []);
+
+  const recordValues = useCallback((session: { id: string; label: string }, rows: ClientValue[]) => {
+    const now = Date.now();
+    for (const r of rows) valueLog.record(session.id, session.label, r.node_id, r.name, r.value, r.timestamp || now);
+  }, [valueLog]);
+
+  // Fallback: poll a session's values when no live subscription is possible.
+  const startClientPoll = useCallback((session: { id: string; label: string }, nodes: OpcUaNode[]) => {
+    const runtime = runtimeRef.current.get(session.id);
+    if (!runtime) return;
+    clearInterval(runtime.poll);
     const all = nodes.length > 0 ? nodes : DEFAULT_NODES;
     const nodesToRead = pro ? all : all.slice(0, FREE_MONITORED_ITEMS);
     const doPoll = async () => {
       try {
-        const vals = await invoke<any[]>("read_tags", { tags: nodesToRead });
-        setClientValues(vals);
+        const vals = await invoke<ClientValue[]>("read_tags", { session: session.id, tags: nodesToRead });
+        updateSession(session.id, (s) => ({ ...s, values: vals }));
+        recordValues(session, vals);
       } catch (e) { addLog("error", String(e)); }
     };
     doPoll();
-    clientPoll.current = setInterval(doPoll, 1000);
-  }, [addLog, pro]);
+    runtime.poll = window.setInterval(doPoll, 1000);
+  }, [addLog, pro, updateSession, recordValues]);
 
-  // Live updates: subscription notifications drive the main table.
+  // Live updates: subscription notifications drive the main table, each routed to the session it came from.
   // Registered once for the app's lifetime (not gated on connection) so there
   // is no race between the async listen() resolution and the first
   // notification burst after a subscription is created.
-  const connectedRef = useRef(clientConnected);
-  connectedRef.current = clientConnected;
   useEffect(() => {
     let active = true;
     listen<NotificationValue>("opcua://notification", (e) => {
       if (!active) return;
-      if (!connectedRef.current) return; // ignore notifications while disconnected
       const n = e.payload;
-      setClientValues((prev) => {
-        if (!prev.some((row) => row.node_id === n.node_id)) {
-          // Unknown node — add it so the row still appears.
-          return [...prev, { node_id: n.node_id, name: n.node_id, data_type: "", value: n.value, timestamp: n.server_ts || n.source_ts || 0 }];
-        }
-        return prev.map((row) => row.node_id === n.node_id ? { ...row, value: n.value, timestamp: n.server_ts || n.source_ts || row.timestamp } : row);
-      });
+      const session = sessionsRef.current.find((s) => s.id === n.session);
+      if (!session) return; // notification for a session that is gone
+      const ts = n.server_ts || n.source_ts || 0;
+      const known = session.values.find((row) => row.node_id === n.node_id);
+      valueLog.record(session.id, session.label, n.node_id, known?.name ?? n.node_id, n.value, ts || Date.now());
+      updateSession(session.id, (s) => ({
+        ...s,
+        values: s.values.some((row) => row.node_id === n.node_id)
+          ? s.values.map((row) => row.node_id === n.node_id ? { ...row, value: n.value, timestamp: ts || row.timestamp } : row)
+          // Unknown node: add it so the row still appears.
+          : [...s.values, { node_id: n.node_id, name: n.node_id, data_type: "", value: n.value, timestamp: ts }],
+      }));
     }).then((fn) => { if (active) unlistenMainRef.current = fn; });
     return () => { active = false; unlistenMainRef.current?.(); unlistenMainRef.current = null; };
-  }, []);
-
-  // Cleanup on disconnect: drop live subscription + poll.
-  useEffect(() => {
-    if (clientConnected) return;
-    if (clientPoll.current) { clearInterval(clientPoll.current); clientPoll.current = null; }
-    if (mainSubIdRef.current !== null) {
-      const id = mainSubIdRef.current;
-      mainSubIdRef.current = null;
-      invoke("delete_subscription", { subscriptionId: id }).catch(() => {});
-    }
-    setClientValues([]);
-    setBrowsedNodes([]);
-  }, [clientConnected]);
+  }, [valueLog, updateSession]);
 
   // ── Handlers ──
 
@@ -284,22 +334,24 @@ function App() {
   }, [serverOn, serverPort, simRunning, addLog]);
 
   // Read the current value of every node once (Read service).
-  const readValues = useCallback(async (nodes: OpcUaNode[]) => {
+  const readValues = useCallback(async (session: { id: string; label: string }, nodes: OpcUaNode[]) => {
     try {
-      const vals = await invoke<any[]>("read_tags", { tags: nodes });
+      const vals = await invoke<(Partial<ClientValue> | null)[]>("read_tags", { session: session.id, tags: nodes });
       if (vals.length > 0) {
-        setClientValues(vals.map((b: any, i: number) => ({
+        const rows = vals.map((b, i) => ({
           node_id: b?.node_id ?? nodes[i]?.node_id ?? "",
           name: b?.name ?? nodes[i]?.name ?? "",
           data_type: nodes[i]?.data_type ?? "",
           value: b?.value ?? null,
           timestamp: b?.timestamp ?? 0,
-        })));
+        }));
+        updateSession(session.id, (s) => ({ ...s, values: rows }));
+        recordValues(session, rows);
       }
     } catch (e) {
       addLog("error", `Read failed: ${e}`);
     }
-  }, [addLog]);
+  }, [addLog, updateSession, recordValues]);
 
   const handleConnect = useCallback(async (values: Record<string, string | number>) => {
     const config: OpcUaConfig = {
@@ -310,81 +362,93 @@ function App() {
       password: String(values.password || ""),
       poll_interval_ms: Number(values.pollInterval || 1000),
     };
+    const id = `s${nextSessionRef.current++}`;
+    const base = config.endpoint_url.replace(/^opc\.tcp:\/\//, "");
+    const taken = new Set(sessionsRef.current.map((s) => s.label));
+    let label = base;
+    for (let n = 2; taken.has(label); n++) label = `${base} (${n})`;
+    const session = { id, label };
+
     setClientLoading(true);
     try {
-      await invoke("connect", { config });
-      setClientConnected(true);
+      await invoke("connect", { session: id, config });
+      const runtime: SessionRuntime = { subId: null };
+      runtimeRef.current.set(id, runtime);
+      setSessions((prev) => [...prev, { id, label, endpoint: config.endpoint_url, browsed: [], values: [] }]);
+      setActiveId(id);
+      setAdding(false);
 
       try {
-        const nodes = (await invoke<OpcUaNode[]>("browse_nodes")) ?? [];
-        setBrowsedNodes(nodes);
-        setClientValues(nodes.map((n) => ({ node_id: n.node_id, name: n.name, data_type: n.data_type, value: null, timestamp: 0 })));
+        const nodes = (await invoke<OpcUaNode[]>("browse_nodes", { session: id })) ?? [];
+        updateSession(id, (s) => ({
+          ...s,
+          browsed: nodes,
+          values: nodes.map((n) => ({ node_id: n.node_id, name: n.name, data_type: n.data_type, value: null, timestamp: 0 })),
+        }));
         addLog("info", `Discovered ${nodes.length} nodes via Browse`);
         if (nodes.length > 0) {
           // One Read of every browsed node. Free tier ends here (use "Read values" to refresh); with Pro the
           // live subscription below keeps the table current. Data-change notifications only fire on change,
           // so static nodes would stay blank without this snapshot either way.
-          await readValues(nodes);
+          await readValues(session, nodes);
           const liveNodes = pro ? nodes : nodes.slice(0, FREE_MONITORED_ITEMS);
-          {
-            try {
-              const cfg = {
-                publishing_interval_ms: 1000,
-                lifetime_count: 60,
-                max_keep_alive_count: 10,
-                max_notifications_per_publish: 0,
-                priority: 0,
-                publishing_enabled: true,
-              };
-              const subId = await invoke<number>("create_subscription", { cfg });
-              mainSubIdRef.current = subId;
-              const items = liveNodes.map((n) => ({
-                node_id: n.node_id,
-                attribute_id: 13,
-                sampling_interval_ms: 1000,
-                queue_size: 10,
-                discard_oldest: true,
-                monitoring_mode: "Reporting",
-                trigger: "StatusValue",
-                deadband_type: 0,
-                deadband_value: 0,
-              }));
-              const created = await invoke<number>("create_monitored_items", { subscriptionId: subId, items });
-              addLog("info", `Live subscription ${subId} created for ${created} nodes`);
-            } catch (e) {
-              addLog("error", `Live subscription failed, falling back to polling: ${e}`);
-              startClientPoll(liveNodes);
-            }
+          try {
+            const cfg = {
+              publishing_interval_ms: 1000,
+              lifetime_count: 60,
+              max_keep_alive_count: 10,
+              max_notifications_per_publish: 0,
+              priority: 0,
+              publishing_enabled: true,
+            };
+            const subId = await invoke<number>("create_subscription", { session: id, cfg });
+            runtime.subId = subId;
+            const items = liveNodes.map((n) => ({
+              node_id: n.node_id,
+              attribute_id: 13,
+              sampling_interval_ms: 1000,
+              queue_size: 10,
+              discard_oldest: true,
+              monitoring_mode: "Reporting",
+              trigger: "StatusValue",
+              deadband_type: 0,
+              deadband_value: 0,
+            }));
+            const created = await invoke<number>("create_monitored_items", { session: id, subscriptionId: subId, items });
+            addLog("info", `Live subscription ${subId} created for ${created} nodes`);
+          } catch (e) {
+            addLog("error", `Live subscription failed, falling back to polling: ${e}`);
+            startClientPoll(session, liveNodes);
           }
         }
       } catch (e) {
         addLog("error", `Browse failed: ${e}`);
-        setBrowsedNodes([]);
-        startClientPoll([]);
+        startClientPoll(session, []);
       }
 
       addLog("info", `Connected to ${config.endpoint_url}`);
     } catch (e) {
       addLog("error", `Connection failed: ${e}`);
-      setClientConnected(false);
     } finally {
       setClientLoading(false);
     }
-  }, [addLog, startClientPoll, readValues, pro]);
+  }, [addLog, startClientPoll, readValues, updateSession, pro]);
 
-  const handleDisconnect = useCallback(async () => {
-    setClientLoading(false);
-    if (clientPoll.current) { clearInterval(clientPoll.current); clientPoll.current = null; }
-    if (mainSubIdRef.current !== null) {
-      const id = mainSubIdRef.current;
-      mainSubIdRef.current = null;
-      try { await invoke("delete_subscription", { subscriptionId: id }); } catch { /* ignore */ }
+  const closeSession = useCallback(async (id: string) => {
+    const runtime = runtimeRef.current.get(id);
+    runtimeRef.current.delete(id);
+    clearInterval(runtime?.poll);
+    if (runtime?.subId != null) {
+      await invoke("delete_subscription", { session: id, subscriptionId: runtime.subId }).catch(() => {});
     }
-    try { await invoke("disconnect"); } catch { /* ignore */ }
-    setClientConnected(false);
-    setClientValues([]);
-    addLog("info", "Disconnected");
-  }, [addLog]);
+    await invoke("disconnect", { session: id }).catch(() => {});
+    valueLog.forget(id);
+    const label = sessionsRef.current.find((s) => s.id === id)?.label ?? id;
+    setTrendSeries((prev) => new Map([...prev].filter(([key]) => !key.startsWith(`${id}|`))));
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    setActiveId((cur) => (cur === id ? sessionsRef.current.find((s) => s.id !== id)?.id ?? null : cur));
+    addLog("info", `Disconnected ${label}`);
+  }, [addLog, valueLog]);
 
   const handleSimToggle = useCallback(async () => {
     if (simRunning) {
@@ -445,7 +509,7 @@ function App() {
 
   const tableData =
     mode === "server" && serverNodes.length > 0
-      ? serverNodes.map((n: any) => ({
+      ? serverNodes.map((n) => ({
           nodeId: n.node_id ?? "",
           browseName: n.name ?? "",
           dataType: n.data_type ?? "",
@@ -453,12 +517,12 @@ function App() {
           _nodeId: n.node_id ?? "",
         }))
     : mode === "client" && clientValues.length > 0
-      ? clientValues.map((v: any, i: number) => ({
-          nodeId: v?.node_id ?? activeNodes[i]?.node_id ?? "",
-          browseName: v?.name ?? activeNodes[i]?.name ?? "",
-          dataType: v?.data_type ?? activeNodes[i]?.data_type ?? "",
-          value: v?.value !== null && v?.value !== undefined ? String(v?.value) : "-",
-          _nodeId: v?.node_id ?? activeNodes[i]?.node_id ?? "",
+      ? clientValues.map((v, i) => ({
+          nodeId: v.node_id || activeNodes[i]?.node_id || "",
+          browseName: v.name || activeNodes[i]?.name || "",
+          dataType: v.data_type || activeNodes[i]?.data_type || "",
+          value: v.value !== null && v.value !== undefined ? String(v.value) : "-",
+          _nodeId: v.node_id || activeNodes[i]?.node_id || "",
         }))
       : activeNodes.map((n) => ({
           nodeId: n.node_id,
@@ -468,45 +532,147 @@ function App() {
           _nodeId: n.node_id,
         }));
 
-  // Append a sample to every tracked series on each value change.
-  const trendRows = tableData.map((r) => ({ nodeId: r._nodeId, name: r.browseName, v: Number(r.value) }));
+  // What the table shows: the built-in server or the active session. Keys trend series and labels exports.
+  const scope = mode === "server" ? "server" : activeId ?? "";
+  const scopeLabel = mode === "server" ? "Server" : activeSession?.label ?? "";
+
+  // Trend samples come from the server table and from every session, so a series keeps filling while another
+  // session is in view.
+  const trendRows = [
+    ...serverNodes.map((n) => ({ key: `server|${n.node_id}`, raw: n.value })),
+    ...sessions.flatMap((s) => s.values.map((v) => ({ key: `${s.id}|${v.node_id}`, raw: v.value }))),
+  ].map((r) => ({ key: r.key, v: r.raw === null || r.raw === undefined || r.raw === "" ? NaN : Number(r.raw) }));
   const trendRowsRef = useRef(trendRows);
   trendRowsRef.current = trendRows;
-  const valueSig = trendRows.map((r) => r.nodeId + ":" + r.v).join("|");
+  const valueSig = trendRows.map((r) => r.key + ":" + r.v).join("|");
 
+  // Append a sample to every tracked series on each value change.
   useEffect(() => {
     const active = trendSeriesRef.current;
     if (active.size === 0) return;
     const ts = Date.now();
-    const byName = new Map(trendRowsRef.current.map((r) => [r.nodeId, r.v]));
+    const byKey = new Map(trendRowsRef.current.map((r) => [r.key, r.v]));
     const cutoff = ts - trendWindow * 1000 - 5000;
     const next = new Map(active);
     let changed = false;
-    for (const [nodeId, s] of next) {
-      const v = byName.get(nodeId);
+    for (const [key, s] of next) {
+      const v = byKey.get(key);
       if (v === undefined || Number.isNaN(v)) continue;
       const points = [...s.points, { t: ts, v }].filter((p) => p.t > cutoff).slice(-500);
-      next.set(nodeId, { ...s, points });
+      next.set(key, { ...s, points });
       changed = true;
     }
     if (changed) setTrendSeries(next);
   }, [valueSig, trendWindow]);
 
-  const toggleTrend = useCallback((nodeId: string, name: string) => {
+  const toggleTrend = useCallback((key: string, name: string) => {
     // Adding a series is Pro; removing one never is.
-    if (!trendSeriesRef.current.has(nodeId) && !requirePro("Live trends")) return;
+    if (!trendSeriesRef.current.has(key) && !requirePro("Live trends")) return;
     setTrendSeries((prev) => {
       const next = new Map(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        const v = trendRowsRef.current.find((r) => r.nodeId === nodeId)?.v ?? 0;
+        const v = trendRowsRef.current.find((r) => r.key === key)?.v ?? 0;
         const colors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
-        next.set(nodeId, { name, color: colors[next.size % colors.length], points: [{ t: Date.now(), v: Number.isNaN(v) ? 0 : v }] });
+        next.set(key, { id: key, name, color: colors[next.size % colors.length], points: [{ t: Date.now(), v: Number.isNaN(v) ? 0 : v }] });
       }
       return next;
     });
   }, [requirePro]);
+
+  // ── Sessions and CSV export ──
+
+  const addSession = () => {
+    if (sessions.length > 0 && !requirePro("Several sessions")) return;
+    setAdding(true);
+    setMobileTab("connect");
+  };
+
+  const exportCsv = async (kind: "values" | "changes") => {
+    setShowExport(false);
+    if (!requirePro("CSV export of monitored values")) return;
+    const csv = kind === "changes"
+      ? samplesToCsv(valueLog.all())
+      : valuesToCsv(
+          mode === "server"
+            ? serverNodes.map((n) => ({ session: "Server", nodeId: n.node_id, name: n.name, dataType: n.data_type, value: n.value, timestamp: n.timestamp ?? 0 }))
+            : sessions.flatMap((s) => s.values.map((v) => ({
+                session: s.label,
+                nodeId: v.node_id,
+                name: v.name,
+                dataType: v.data_type ?? "",
+                value: v.value,
+                timestamp: v.timestamp,
+              }))),
+        );
+    const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+    try {
+      const path = await saveTextFile(`opcua-${kind}-${stamp}.csv`, csv);
+      if (path) addLog("info", `Exported ${kind === "changes" ? "recorded changes" : "current values"} to ${path}`);
+    } catch (e) {
+      addLog("error", `Export failed: ${e}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!showExport) return;
+    const onDown = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [showExport]);
+
+  const tableToolbar = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)", paddingRight: 8 }}>
+      <div className="vt-tabs" role="tablist" aria-label="Sessions" style={{ flex: 1, minWidth: 0, borderBottom: "none" }}>
+        {mode === "server" && <span className="vt-hint" style={{ alignSelf: "center", padding: "0 10px" }}>Built-in server</span>}
+        {mode === "client" && sessions.length === 0 && (
+          <span className="vt-hint" style={{ alignSelf: "center", padding: "0 10px" }}>No session. Connect to a server.</span>
+        )}
+        {mode === "client" && sessions.map((s) => (
+          <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <button
+              role="tab"
+              aria-selected={s.id === activeId}
+              className="vt-tab"
+              onClick={() => { setActiveId(s.id); setAdding(false); }}
+              title={s.endpoint}
+            >
+              <span className="vt-dot vt-dot--success" aria-hidden="true" />
+              {s.label}
+            </button>
+            <IconButton size="sm" label={`Disconnect ${s.label}`} onClick={() => closeSession(s.id)}>
+              <X size={14} strokeWidth={1.75} />
+            </IconButton>
+          </div>
+        ))}
+        {mode === "client" && sessions.length > 0 && (
+          <IconButton label="Add session (Pro for more than one)" onClick={addSession}>
+            <Plus size={16} strokeWidth={1.75} />
+          </IconButton>
+        )}
+      </div>
+      <div style={{ position: "relative" }} ref={exportRef}>
+        <Button size="sm" icon={<Download size={14} strokeWidth={1.75} />} aria-haspopup="menu" aria-expanded={showExport} onClick={() => setShowExport((v) => !v)}>
+          Export <ProBadge />
+        </Button>
+        {showExport && (
+          <div className="vt-popover" style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20 }}>
+            <button type="button" className="vt-menu-item" onClick={() => exportCsv("values")}>
+              <FileDown size={14} strokeWidth={1.75} />
+              Current values (CSV)
+            </button>
+            <button type="button" className="vt-menu-item" disabled={valueLog.size === 0} onClick={() => exportCsv("changes")}>
+              <FileDown size={14} strokeWidth={1.75} />
+              {`Recorded changes, ${valueLog.size} (CSV)`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   // ── Sidebar ──
 
@@ -597,40 +763,45 @@ function App() {
         </>
       ) : (
         <>
-          <Section
-            title="Connection"
-            actions={
-              <Button size="sm" variant="ghost" disabled={clientConnected} onClick={() => setShowDiscovery(true)}>
-                Discover
-              </Button>
-            }
-          >
-            <ConnectionForm
-              key={connKey}
-              initialValues={discovered}
-              fields={[
-                { name: "endpointUrl", label: "Endpoint URL", type: "text", default: "opc.tcp://localhost:4840" },
-                { name: "securityPolicy", label: "Security policy", type: "select", default: "None", options: [
-                  { value: "None", label: "None" },
-                  { value: "Basic256Sha256", label: "Basic256Sha256" },
-                  { value: "Basic128Rsa15", label: "Basic128Rsa15" },
-                  { value: "Aes128Sha256RsaOaep", label: "Aes128_Sha256_RsaOaep" },
-                ] },
-                { name: "securityMode", label: "Security mode", type: "select", default: "None", options: [
-                  { value: "None", label: "None" },
-                  { value: "Sign", label: "Sign" },
-                  { value: "SignAndEncrypt", label: "SignAndEncrypt" },
-                ] },
-                { name: "username", label: "Username", type: "text" },
-                { name: "password", label: "Password", type: "password" },
-              ]}
-              onSubmit={handleConnect}
-              onDisconnect={handleDisconnect}
-              onCancel={() => setClientLoading(false)}
-              connected={clientConnected}
-              loading={clientLoading}
-            />
-          </Section>
+          {(!clientConnected || adding) && (
+            <Section
+              title={adding ? "New session" : "Connection"}
+              actions={
+                <Button size="sm" variant="ghost" onClick={() => setShowDiscovery(true)}>
+                  Discover
+                </Button>
+              }
+            >
+              <ConnectionForm
+                key={connKey}
+                initialValues={discovered}
+                fields={[
+                  { name: "endpointUrl", label: "Endpoint URL", type: "text", default: "opc.tcp://localhost:4840" },
+                  { name: "securityPolicy", label: "Security policy", type: "select", default: "None", options: [
+                    { value: "None", label: "None" },
+                    { value: "Basic256Sha256", label: "Basic256Sha256" },
+                    { value: "Basic128Rsa15", label: "Basic128Rsa15" },
+                    { value: "Aes128Sha256RsaOaep", label: "Aes128_Sha256_RsaOaep" },
+                  ] },
+                  { name: "securityMode", label: "Security mode", type: "select", default: "None", options: [
+                    { value: "None", label: "None" },
+                    { value: "Sign", label: "Sign" },
+                    { value: "SignAndEncrypt", label: "SignAndEncrypt" },
+                  ] },
+                  { name: "username", label: "Username", type: "text" },
+                  { name: "password", label: "Password", type: "password" },
+                ]}
+                onSubmit={handleConnect}
+                onCancel={() => setClientLoading(false)}
+                loading={clientLoading}
+              />
+              {adding && (
+                <Button block variant="ghost" onClick={() => { setAdding(false); setClientLoading(false); }}>
+                  Cancel
+                </Button>
+              )}
+            </Section>
+          )}
 
           <Section title="Tools">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -644,13 +815,15 @@ function App() {
             </div>
           </Section>
 
-          {clientConnected && (
+          {activeSession && !adding && (
             <Section title="Session">
+              <span className="vt-hint mono" style={{ wordBreak: "break-all" }}>{activeSession.endpoint}</span>
               <span className="vt-hint">
                 Connected to {browsedNodes.length > 0 ? `${browsedNodes.length} browsed nodes` : `${DEFAULT_NODES.length} default nodes`}.{" "}
-                {pro ? "Values update live. Click any row to write a value." : `Live updates for the first ${Math.min(FREE_MONITORED_ITEMS, browsedNodes.length || DEFAULT_NODES.length)} nodes (Pro for more). Use Read values to refresh the rest. Click any row to write a value (Pro).`}
+                {pro ? "Values update live. Click any row to write a value." : `Live updates for the first ${Math.min(FREE_MONITORED_ITEMS, browsedNodes.length || DEFAULT_NODES.length)} nodes (Pro for more). Use Read values to refresh the rest. Click any row to write a value (Pro). Several sessions at once need Pro.`}
               </span>
-              <Button size="sm" disabled={browsedNodes.length === 0} onClick={() => readValues(browsedNodes)}>Read values</Button>
+              <Button size="sm" disabled={browsedNodes.length === 0} onClick={() => readValues(activeSession, browsedNodes)}>Read values</Button>
+              <Button size="sm" variant="danger" onClick={() => closeSession(activeSession.id)}>Disconnect</Button>
             </Section>
           )}
         </>
@@ -673,17 +846,17 @@ function App() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
-      <Toolbar title="OPC UA Explorer" icon={appIcon} connected={clientConnected || serverOn} onDisconnect={() => { if (clientConnected) handleDisconnect(); if (serverOn) handleServerToggle(); }} onInfo={() => setShowInfo(true)} />
+      <Toolbar title="OPC UA Explorer" icon={appIcon} connected={sessions.length > 0 || serverOn} onDisconnect={() => { sessions.forEach((s) => closeSession(s.id)); if (serverOn) handleServerToggle(); }} onInfo={() => setShowInfo(true)} />
 
       {isMobile ? (
         <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
             {mobileTab === "connect" && <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{sidebarContent}</div>}
-            {mobileTab === "data" && <DataTable columns={columns} data={tableData} onRowClick={openEditor} />}
+            {mobileTab === "data" && <>{tableToolbar}<DataTable columns={columns} data={tableData} onRowClick={openEditor} /></>}
             {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />}
           </div>
           {mobileTabBar}
-          <StatusBar connected={clientConnected || serverOn} latency={0} pollCount={0} error={null} />
+          <StatusBar connected={sessions.length > 0 || serverOn} latency={0} pollCount={0} error={null} />
         </div>
       ) : (
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -694,6 +867,7 @@ function App() {
             onMouseLeave={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "transparent"; }}
           />
           <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", padding: 8 }}>
+            {tableToolbar}
             <div style={{ height: tableHeight, minHeight: 80, overflow: "auto", flexShrink: 0 }}>
               <DataTable columns={columns} data={tableData} onRowClick={openEditor} renderCell={(key, row) => {
                 if (key === "nodeId") {
@@ -701,15 +875,17 @@ function App() {
                 }
                 if (key === "trend") {
                   const r = row as Record<string, string>;
-                  const active = trendSeries.has(String(r._nodeId));
-                  const name = String(r.browseName || r.nodeId);
+                  const seriesKey = `${scope}|${r._nodeId}`;
+                  const active = trendSeries.has(seriesKey);
+                  const browseName = String(r.browseName || r.nodeId);
+                  const name = mode === "client" && sessions.length > 1 ? `${scopeLabel}: ${browseName}` : browseName;
                   return (
                     <IconButton
                       size="sm"
                       outline
                       pressed={active}
                       label={`${active ? "Remove" : "Add"} ${name} ${active ? "from" : "to"} trend`}
-                      onClick={(e) => { e.stopPropagation(); toggleTrend(String(r._nodeId), name); }}
+                      onClick={(e) => { e.stopPropagation(); toggleTrend(seriesKey, name); }}
                     >
                       <ChartLine size={14} strokeWidth={1.75} />
                     </IconButton>
@@ -750,7 +926,7 @@ function App() {
         </div>
       )}
 
-      {!isMobile && <StatusBar connected={clientConnected || serverOn} latency={0} pollCount={0} error={null} />}
+      {!isMobile && <StatusBar connected={sessions.length > 0 || serverOn} latency={0} pollCount={0} error={null} />}
       {editingNode && (
         <ValueEditor
           address={editingNode.id}
@@ -764,9 +940,9 @@ function App() {
               addLog("tx", `Write ${val} to ${editingNode.id} (server)`);
             } else {
               try {
-                await invoke("write_tag", { tag: { node_id: editingNode.id, name: "", data_type: editingNode.dataType }, value: { node_id: editingNode.id, name: "", value: val, timestamp: Date.now() } });
+                await invoke("write_tag", { session: activeId, tag: { node_id: editingNode.id, name: "", data_type: editingNode.dataType }, value: { node_id: editingNode.id, name: "", value: val, timestamp: Date.now() } });
               } catch (e) { addLog("error", String(e)); }
-              addLog("tx", `Write ${val} to ${editingNode.id}`);
+              addLog("tx", `Write ${val} to ${editingNode.id} (${scopeLabel})`);
             }
             setEditingNode(null);
           }}
@@ -797,7 +973,7 @@ function App() {
               <strong style={{ color: "var(--text)" }}>Server mode</strong>: Run a local OPC UA server. Pro adds device templates that inject simulated values.
             </p>
             <p style={{ margin: "0 0 10px" }}>
-              <strong style={{ color: "var(--text)" }}>Client mode</strong>: Connect to an OPC UA server, browse its address space and read node values. Pro adds live subscriptions, trends, writing values and certificate management.
+              <strong style={{ color: "var(--text)" }}>Client mode</strong>: Connect to an OPC UA server, browse its address space and read node values. Pro adds more than 10 live monitored items, several sessions at once, CSV export of monitored values, trends, writing values and certificate management.
             </p>
             <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
               Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama
@@ -817,10 +993,10 @@ function App() {
           onLog={addLog}
         />
       )}
-      {showBrowser && <BrowserPanel onClose={() => setShowBrowser(false)} onLog={addLog} />}
-      {showSubscriptions && <SubscriptionPanel onClose={() => setShowSubscriptions(false)} onLog={addLog} />}
+      {activeSession && showBrowser && <BrowserPanel key={activeSession.id} session={activeSession.id} onClose={() => setShowBrowser(false)} onLog={addLog} />}
+      {activeSession && showSubscriptions && <SubscriptionPanel key={activeSession.id} session={activeSession.id} onClose={() => setShowSubscriptions(false)} onLog={addLog} />}
       {showCerts && <CertManager onClose={() => setShowCerts(false)} onLog={addLog} />}
-      {showNamespaces && <NamespacePanel onClose={() => setShowNamespaces(false)} onLog={addLog} />}
+      {activeSession && showNamespaces && <NamespacePanel key={activeSession.id} session={activeSession.id} onClose={() => setShowNamespaces(false)} onLog={addLog} />}
     </div>
   );
 }

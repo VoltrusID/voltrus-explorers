@@ -130,19 +130,18 @@ function mockMain() {
   const subs = new Map();
   let nextSub = 1;
   const lastSent = new Map();
-  const notify = (nodeId, force) => {
+  const notify = (session, nodeId, force) => {
     const s = byId.get(nodeId);
     if (!s) return;
     const v = valueOf(s);
-    if (!force && lastSent.get(nodeId) === v) return;
-    lastSent.set(nodeId, v);
+    const key = session + "|" + nodeId;
+    if (!force && lastSent.get(key) === v) return;
+    lastSent.set(key, v);
     const ts = Date.now();
-    emit("opcua://notification", { node_id: nodeId, value: v, source_ts: ts - 3, server_ts: ts, status: "Good" });
+    emit("opcua://notification", { session, node_id: nodeId, value: v, source_ts: ts - 3, server_ts: ts, status: "Good" });
   };
   const tick = () => {
-    const ids = new Set();
-    for (const nodes of subs.values()) nodes.forEach((n) => ids.add(n));
-    ids.forEach((id) => notify(id, false));
+    for (const { session, nodes } of subs.values()) nodes.forEach((n) => notify(session, n, false));
   };
   setInterval(tick, 1000);
   window.__advance = async (n) => {
@@ -219,9 +218,9 @@ function mockMain() {
     find_servers: () => [],
     cert_list: () => [],
     create_subscription: () => nextSub++,
-    create_monitored_items: ({ subscriptionId, items }) => {
-      subs.set(subscriptionId, items.map((i) => i.node_id));
-      setTimeout(() => items.forEach((i) => notify(i.node_id, true)), 60);
+    create_monitored_items: ({ session, subscriptionId, items }) => {
+      subs.set(subscriptionId, { session, nodes: items.map((i) => i.node_id) });
+      setTimeout(() => items.forEach((i) => notify(session, i.node_id, true)), 60);
       return items.length;
     },
     delete_subscription: ({ subscriptionId }) => {

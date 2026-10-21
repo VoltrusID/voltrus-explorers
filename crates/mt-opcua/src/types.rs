@@ -182,3 +182,42 @@ pub struct CertInfo {
     pub is_ca: bool,
     pub path: String,
 }
+
+/// A data-change notification tagged with the client session it came from. This is the payload of the
+/// `opcua://notification` event; the value fields sit next to `session` on the same object.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionNotification {
+    pub session: String,
+    #[serde(flatten)]
+    pub value: NotificationValue,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_notification_carries_session_next_to_the_value_fields() {
+        let event = SessionNotification {
+            session: "s2".to_string(),
+            value: NotificationValue {
+                node_id: "ns=2;s=Reactor.Temperature".to_string(),
+                value: serde_json::json!(21.5),
+                source_ts: 10,
+                server_ts: 11,
+                status: "Good".to_string(),
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "session": "s2",
+                "node_id": "ns=2;s=Reactor.Temperature",
+                "value": 21.5,
+                "source_ts": 10,
+                "server_ts": 11,
+                "status": "Good",
+            })
+        );
+    }
+}

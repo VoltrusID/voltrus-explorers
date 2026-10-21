@@ -56,6 +56,7 @@ jobs:
           bun run --cwd apps/modbus-poll test
           bun run --cwd apps/serial-monitor test
           bun run --cwd apps/s7-explorer test
+          bun run --cwd apps/opcua-explorer test
 
   macos:
     runs-on: macos-15

@@ -10,9 +10,12 @@ export interface OpcNamespace {
 type Dir = "tx" | "rx" | "info" | "error";
 
 export function NamespacePanel({
+  session,
   onClose,
   onLog,
 }: {
+  /** Id of the client session to read. */
+  session: string;
   onClose: () => void;
   onLog?: (d: Dir, m: string) => void;
 }) {
@@ -23,7 +26,7 @@ export function NamespacePanel({
   const load = async () => {
     setLoading(true); setErr("");
     try {
-      const ns = (await invoke<OpcNamespace[]>("read_namespaces")) ?? [];
+      const ns = (await invoke<OpcNamespace[]>("read_namespaces", { session })) ?? [];
       setItems(ns);
       onLog?.("rx", `Loaded ${ns.length} namespaces`);
     } catch (e) { setErr(String(e)); onLog?.("error", String(e)); }
