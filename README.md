@@ -13,6 +13,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
+| **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -20,8 +21,9 @@ GitHub Releases (notarized DMGs, no auto-update) have every feature unlocked.
 
 ## Free and Pro (App Store builds)
 
-The App Store builds of DNP3 Explorer are free to download; Pro is a one-time in-app purchase. People who bought the
-app while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub Releases have everything.
+The App Store builds of DNP3 Explorer and OPC UA Explorer are free to download; Pro is a one-time in-app purchase.
+People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub
+Releases have everything.
 
 | DNP3 Explorer | |
 | --- | --- |
@@ -71,6 +73,10 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 | Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, Hex and Base64 payload decoders, message history export to CSV |
 
 Version 1.2.0 is the first release, and it is free.
+| OPC UA Explorer | |
+| --- | --- |
+| Free | Connect (anonymous or username/password, security policies and modes), endpoint and server discovery, browse the address space, node attributes and references, namespaces, read values (and refresh them on demand), start and stop the built-in server |
+| Pro | Live subscriptions and monitored items, live trend charts, writing values (client and server), certificate management (trust, reject, regenerate), device templates for the built-in server, CSV export of the communication log |
 
 ## Build from source
 
@@ -78,7 +84,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua
 ```
 
 Universal release build (unsigned):
@@ -93,6 +99,7 @@ Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-sto
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-mqtt -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-opcua -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
@@ -105,6 +112,7 @@ apps/dnp3-explorer     Tauri app (macOS)
 apps/s7-explorer       Tauri app (macOS)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
+apps/opcua-explorer    Tauri app (macOS)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator
@@ -121,6 +129,7 @@ crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btlep
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc) and embedded broker (rumqttd)
+crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers

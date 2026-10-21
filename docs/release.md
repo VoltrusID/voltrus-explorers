@@ -54,6 +54,15 @@ Rust builder, and allow `dialog:allow-open|save` and `fs:allow-read|write-text-f
 (the fs permissions have no static scope: only dialog-picked paths are reachable). UI only reports "Saved" after the
 write succeeded.
 
+## OPC UA Explorer: sandbox notes
+
+The OPC UA client and the built-in server keep their certificates and keys under `<app data dir>/pki/` (`client/`,
+`server-<port>/`), set once at startup with `mt_opcua::pki::set_root`. In the App Store build the app data directory is
+inside the container, so the folder is writable and survives restarts (the old build used the temp directory, which
+the system clears). The built-in server needs `com.apple.security.network.server`; keep it and, if App Review's
+scanner asks, answer with the justification already in the review notes (the server binds a TCP listener only when
+the user starts server mode).
+
 ## Pro (in-app purchase)
 
 | App | Product id (non-consumable) | Price |
@@ -64,6 +73,7 @@ write succeeded.
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | not set yet (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
 | NATS Explorer | `com.joyodigitama.natsexplorer.pro` | set in App Store Connect before release (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
 | MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | not created in App Store Connect yet; the app was never paid, so it is free from its first release (`free_since` 1.2.0) |
+| OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | not set yet (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
 
 - Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.
   The logic is `crates/mt-store` (Rust) and `packages/mt-ui/src/pro.tsx` (`ProProvider`, `requirePro`).
