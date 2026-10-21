@@ -8,12 +8,12 @@
 //! - S7 Setup Communication (negotiation of the PDU size)
 //! - Read Var (0x04) and Write Var (0x05), with the item layout, transport sizes, bit/byte
 //!   lengths, pad bytes and return codes of a real CPU (see `vars.rs`)
+//! - SZL reads (CPU identity, mode, diagnostic buffer), block listing, upload and delete, with the
+//!   telegrams of a real CPU (see `szl.rs`, `blocks.rs` and `sim.rs`). The CPU is fictional; it
+//!   lists the DBs of the image plus a few fixed blocks.
 //!
 //! The image is plain byte memory per area, so a bit, a word and a double word at the same
 //! address see the same data.
-//!
-//! Diagnostics / block management are not simulated — a simulator exists to
-//! exercise data access, not to impersonate a CPU's diagnostic buffer.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +24,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
+use crate::blocks::{self, SimBlock};
+use crate::framing::{ERR_BLOCK_NOT_FOUND, ERR_BLOCK_PROTECTED};
+use crate::sim::SimSession;
 use crate::types::*;
 use crate::vars::*;
 
@@ -365,7 +368,9 @@ async fn handle_client(
     let setup_resp = build_setup_comm_resp(pdu_ref, pdu_size);
     write_tpkt(&mut stream, &cotp_dt_wrap(&setup_resp)).await?;
 
-    // 3. Request loop.
+    // 3. Request loop. What SZL reads, block lists and uploads leave open between requests is
+    // kept per connection.
+    let mut sim = SimSession::default();
     loop {
         let pkt = match read_tpkt_payload(&mut stream).await {
             Ok(p) => p,
@@ -394,11 +399,23 @@ async fn handle_client(
             match (msg_type, func) {
                 (S7_MSG_TYPE_JOB, S7_READ_VAR) => build_read_resp(pdu_ref, params, &store).await,
                 (S7_MSG_TYPE_JOB, S7_WRITE_VAR) => build_write_resp(pdu_ref, params, data, &store).await,
-                (S7_MSG_TYPE_JOB, S7_LIST_BLOCKS) => build_block_list_resp(pdu_ref, &store).await,
-                (S7_MSG_TYPE_JOB, S7_UPLOAD) => build_upload_resp(pdu_ref),
-                (S7_MSG_TYPE_JOB, S7_DELETE_BLOCK) => build_delete_resp(pdu_ref),
-                // SZL / CPU diagnostics request (user-data, function 0x00).
-                (S7_MSG_TYPE_USER_DATA, S7_CPU_FUNC) => build_szl_resp(pdu_ref, params),
+                (S7_MSG_TYPE_USER_DATA, _) => {
+                    let list = sim_block_list(&store).await;
+                    sim.user_data(pdu_ref, params, data, &list, pdu_size)
+                        .unwrap_or_else(|| build_unsupported_resp(pdu_ref))
+                }
+                (S7_MSG_TYPE_JOB, S7_START_UPLOAD) => match blocks::parse_start_upload_request(params) {
+                    Some((block_type, number)) => sim.start_upload(pdu_ref, sim_block(&store, block_type, number).await),
+                    None => build_unsupported_resp(pdu_ref),
+                },
+                (S7_MSG_TYPE_JOB, S7_UPLOAD) => sim.build_upload_resp(pdu_ref, params, pdu_size),
+                (S7_MSG_TYPE_JOB, S7_END_UPLOAD) => sim.end_upload(pdu_ref, params),
+                (S7_MSG_TYPE_JOB, S7_PLC_CONTROL) => match blocks::parse_delete_request(params) {
+                    Some((block_type, number)) => {
+                        blocks::build_delete_response(pdu_ref, sim_delete_block(&store, block_type, number).await)
+                    }
+                    None => build_unsupported_resp(pdu_ref),
+                },
                 _ => build_unsupported_resp(pdu_ref),
             }
         };
@@ -548,93 +565,52 @@ async fn build_write_resp(pdu_ref: u16, params: &[u8], data: &[u8], store: &Shar
     s7
 }
 
-/// Synthesize a block list from the simulated image: every distinct DB
-/// referenced by the seeded tags is reported as a DB block. Other block types
-/// (OB/FB/FC) aren't modelled — this is a data-access simulator, not a CPU.
-async fn build_block_list_resp(pdu_ref: u16, store: &SharedImage) -> Vec<u8> {
-    let dbs = store.read().await.db_numbers();
+// ── Blocks of the simulated CPU ──
+//
+// The CPU lists a DB for every DB in the image and the few fixed blocks of
+// `blocks::sim_fixed_blocks`. SZL reads, listing, upload and delete are answered in `sim.rs`
+// and `blocks.rs` from plain inputs; these functions are the only place that knows the image.
 
-    // Data field: [return_code 0xFF][transport_size 0x00][inner_len(2)][type, count, nums...]
-    let inner_len = 2 + dbs.len() * 2;
-    let mut body = vec![0xFFu8, 0x00];
-    body.extend_from_slice(&(inner_len as u16).to_be_bytes());
-    body.push(0x41); // type code: DB (matches client's block-list parser)
-    body.push(dbs.len() as u8);
-    for db in &dbs {
-        body.extend_from_slice(&db.to_be_bytes());
+impl Image {
+    /// The bytes of DB `number`, `None` if there is no such DB.
+    fn db_data(&self, number: u16) -> Option<Vec<u8>> {
+        self.memory.get(&(AREA_DB, number)).cloned()
     }
 
-    let params = vec![S7_LIST_BLOCKS];
-    let mut s7 = ack_header(pdu_ref, params.len() as u16, body.len() as u16);
-    s7.extend_from_slice(&params);
-    s7.extend_from_slice(&body);
-    s7
+    /// Remove DB `number` and the tags that were put in it. `false` if there is no such DB.
+    fn remove_db(&mut self, number: u16) -> bool {
+        let removed = self.memory.remove(&(AREA_DB, number)).is_some();
+        self.tags.retain(|c| !(c.area == AREA_DB && c.db == number));
+        removed
+    }
 }
 
-/// Synthetic block upload — returns a placeholder body so the "Save" action in
-/// the UI produces a file instead of erroring. Not a valid .mc7.
-fn build_upload_resp(pdu_ref: u16) -> Vec<u8> {
-    let body = b"SIM7-SIMULATED-BLOCK".to_vec();
-    let mut data = vec![0xFFu8, 0x00];
-    data.extend_from_slice(&(body.len() as u16).to_be_bytes());
-    data.extend_from_slice(&body);
-
-    let params = vec![S7_UPLOAD];
-    let mut s7 = ack_header(pdu_ref, params.len() as u16, data.len() as u16);
-    s7.extend_from_slice(&params);
-    s7.extend_from_slice(&data);
-    s7
+/// The blocks the CPU lists. The DBs carry no data; [`sim_block`] fetches that for an upload.
+async fn sim_block_list(store: &SharedImage) -> Vec<SimBlock> {
+    let mut list = blocks::sim_fixed_blocks();
+    list.extend(store.read().await.db_numbers().into_iter().map(|number| blocks::sim_db(number, Vec::new())));
+    list
 }
 
-/// Simulated block delete — always succeeds (no persistent block store).
-fn build_delete_resp(pdu_ref: u16) -> Vec<u8> {
-    let params = vec![S7_DELETE_BLOCK];
-    let mut s7 = ack_header(pdu_ref, params.len() as u16, 0);
-    s7.extend_from_slice(&params);
-    s7
+/// One block with its data, `None` if the CPU does not have it.
+async fn sim_block(store: &SharedImage, block_type: BlockType, number: u16) -> Option<SimBlock> {
+    if block_type == BlockType::DB {
+        return store.read().await.db_data(number).map(|data| blocks::sim_db(number, data));
+    }
+    blocks::sim_fixed_blocks().into_iter().find(|b| b.block_type == block_type && b.number == number)
 }
 
-/// Synthesize SZL responses so diagnostics clients get a clean (error-free)
-/// picture of a fictional CPU instead of a protocol error.
-fn build_szl_resp(pdu_ref: u16, params: &[u8]) -> Vec<u8> {
-    // SZL request param: [CPU_FUNC, SZL_READ, 0x12, 0x04, 0x01, szl_id(2), index(2), 0x0000]
-    let szl_id = if params.len() >= 7 {
-        u16::from_be_bytes([params[5], params[6]])
+/// Delete a block. A DB goes with its data; the fixed blocks are write-protected.
+async fn sim_delete_block(store: &SharedImage, block_type: BlockType, number: u16) -> Result<(), u16> {
+    if block_type != BlockType::DB {
+        let fixed = blocks::sim_fixed_blocks().iter().any(|b| b.block_type == block_type && b.number == number);
+        return Err(if fixed { ERR_BLOCK_PROTECTED } else { ERR_BLOCK_NOT_FOUND });
+    }
+    if store.write().await.remove_db(number) {
+        Ok(())
     } else {
-        0
-    };
-
-    let data: Vec<u8> = match szl_id {
-        SZL_MODULE_IDENTITY => {
-            let mut tlv = Vec::new();
-            tlv.extend(tlv_item(0x01, b"S7 Simulator")); // module type
-            tlv.extend(tlv_item(0x05, b"SIM-000001")); // serial number
-            tlv.extend(tlv_item(0x06, b"SIMULATOR")); // AS name
-            tlv.extend(tlv_item(0x07, b"S7-1500 SIM")); // module name
-            tlv.extend(tlv_item(0x08, b"1.0.0")); // firmware
-            let mut d = vec![0xFFu8, 0x00]; // return code + transport size
-            d.extend_from_slice(&(tlv.len() as u16).to_be_bytes());
-            d.extend_from_slice(&tlv);
-            d
-        }
-        // parse_plc_mode scans for the first 0x08/0x04/0x00 byte → lead with 0x08 = RUN.
-        SZL_OPERATING_MODE => vec![0x08],
-        // parse_diag_buffer reads entry_count at data[4..6]; report zero entries.
-        SZL_DIAG_BUFFER => vec![0xFF, 0x00, 0x00, 0x04, 0x00, 0x00],
-        _ => vec![0xFF, 0x00, 0x00, 0x00],
-    };
-
-    let out_params = vec![S7_CPU_FUNC, S7_SZL_READ, 0x12, 0x0A, 0x00, 0x01];
-    let mut s7 = ack_header(pdu_ref, out_params.len() as u16, data.len() as u16);
-    s7.extend_from_slice(&out_params);
-    s7.extend_from_slice(&data);
-    s7
-}
-
-fn tlv_item(id: u8, val: &[u8]) -> Vec<u8> {
-    let mut v = vec![id, val.len() as u8];
-    v.extend_from_slice(val);
-    v
+        Err(ERR_BLOCK_NOT_FOUND)
+    }
 }
 
 fn build_unsupported_resp(pdu_ref: u16) -> Vec<u8> {
@@ -752,55 +728,6 @@ mod tests {
         server.stop().await;
     }
 
-    /// Diagnostics + block list against the simulator succeed (no 0x8100).
-    #[tokio::test]
-    async fn server_diagnostics_and_blocks() {
-        let server = S7Server::start(0, Vec::new()).await.unwrap();
-        let port = server.port();
-        let client = S7Client::connect(cfg(port)).await.unwrap();
-
-        let cpu = client.read_cpu_info().await.expect("cpu info");
-        assert!(
-            cpu.module_type.contains("Simulator") || cpu.firmware_version == "1.0.0",
-            "got module={:?} fw={:?}",
-            cpu.module_type,
-            cpu.firmware_version
-        );
-
-        let mode = client.read_plc_mode().await.expect("plc mode");
-        assert_eq!(mode.mode, "RUN");
-
-        let diag = client.read_diag_buffer().await.expect("diag buffer");
-        assert_eq!(diag.entry_count, 0);
-
-        let blocks = client.list_blocks().await.expect("block list");
-        assert!(blocks.is_empty());
-
-        client.disconnect().await.unwrap();
-        server.stop().await;
-    }
-
-    /// Seeded DBs surface in the simulated block list.
-    #[tokio::test]
-    async fn server_block_list_reflects_image() {
-        let seed = vec![
-            (S7Tag::parse_address("DB1.DBD0").unwrap(), S7Value::Real(1.0)),
-            (S7Tag::parse_address("DB2.DBD0").unwrap(), S7Value::Real(2.0)),
-            (S7Tag::parse_address("MW100").unwrap(), S7Value::Word(5)), // marker, not a block
-        ];
-        let server = S7Server::start(0, seed).await.unwrap();
-        let port = server.port();
-        let client = S7Client::connect(cfg(port)).await.unwrap();
-
-        let blocks = client.list_blocks().await.unwrap();
-        let nums: Vec<u16> = blocks.iter().map(|b| b.block_number).collect();
-        assert!(nums.contains(&1), "DB1 missing: {:?}", blocks);
-        assert!(nums.contains(&2), "DB2 missing: {:?}", blocks);
-        assert!(blocks.iter().all(|b| b.block_type == "DB"));
-
-        client.disconnect().await.unwrap();
-        server.stop().await;
-    }
     /// Timers and counters read back through the real client and server as BCD words.
     #[tokio::test]
     async fn server_timers_and_counters() {

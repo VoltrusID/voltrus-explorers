@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 
 use crate::types::*;
 use crate::vars::*;
+use crate::{blocks, framing, szl};
 
 // ── Inner client (owns the TCP stream, requires &mut self) ──
 
@@ -274,113 +275,123 @@ impl Inner {
 
     // ── SZL / Diagnostics ──
 
-    async fn read_szl(&mut self, szl_id: u16, szl_index: u16) -> Result<Vec<u8>, ProtocolError> {
-        let pdu_ref = self.next_pdu_ref();
-
-        // Parameter: CPU function + Read SZL subfunction + SZL item
-        let mut params = Vec::new();
-        params.push(S7_CPU_FUNC); // function: CPU functions
-        params.push(S7_SZL_READ); // subfunction: Read SZL
-        params.push(0x12); // SZL item header
-        params.push(0x04); // SZL item: unknown->S7
-        params.push(0x01); // SZL item: sequence
-        params.extend_from_slice(&szl_id.to_be_bytes());
-        params.extend_from_slice(&szl_index.to_be_bytes());
-        params.extend_from_slice(&0x0000u16.to_be_bytes()); // padding
-
-        // S7 header: user data message type
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_USER_DATA);
-        s7.extend_from_slice(&0x0012u16.to_be_bytes()); // reserved
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&0x0000u16.to_be_bytes()); // data length
-        s7.extend_from_slice(&params);
-
-        let resp = self
-            .exchange(&s7)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("SZL: {e}")))?;
-
-        parse_szl_response(&resp)
+    /// Read one SZL: the first request, then follow-up requests while the PLC says more parts
+    /// of the answer follow.
+    async fn read_szl(&mut self, id: u16, index: u16) -> Result<szl::Szl, ProtocolError> {
+        let fail = |e: String| ProtocolError::ReadFailed(format!("SZL 0x{id:04X} index {index}: {e}"));
+        let mut assembler = szl::Assembler::default();
+        let mut request = szl::build_first_request(self.next_pdu_ref(), id, index);
+        loop {
+            let response = self.exchange(&request).await.map_err(fail)?;
+            match assembler.push(&response).map_err(fail)? {
+                szl::Progress::Done(szl) => return Ok(szl),
+                szl::Progress::More { seq } => request = szl::build_next_request(self.next_pdu_ref(), seq),
+            }
+        }
     }
 
     pub async fn read_cpu_info(&mut self) -> Result<CpuInfo, ProtocolError> {
-        let data = self.read_szl(SZL_MODULE_IDENTITY, 0x0000).await?;
-        parse_cpu_info(&data)
+        let module = self.read_szl(szl::MODULE_IDENTIFICATION, 0).await?;
+        let components = self.read_szl(szl::COMPONENT_IDENTIFICATION, 0).await?;
+        szl::parse_cpu_info(&module, &components).map_err(|e| ProtocolError::ReadFailed(format!("CPU info: {e}")))
     }
 
     pub async fn read_plc_mode(&mut self) -> Result<PlcMode, ProtocolError> {
-        let data = self.read_szl(SZL_OPERATING_MODE, 0x0000).await?;
-        parse_plc_mode(&data)
+        let szl = self.read_szl(szl::CPU_MODE, 0).await?;
+        szl::parse_cpu_mode(&szl).map_err(|e| ProtocolError::ReadFailed(format!("PLC mode: {e}")))
     }
 
     pub async fn read_diag_buffer(&mut self) -> Result<DiagBuffer, ProtocolError> {
-        let data = self.read_szl(SZL_DIAG_BUFFER, 0x0000).await?;
-        parse_diag_buffer(&data)
+        let szl = self.read_szl(szl::DIAG_BUFFER, 0).await?;
+        szl::parse_diag_buffer(&szl).map_err(|e| ProtocolError::ReadFailed(format!("Diagnostic buffer: {e}")))
     }
 
     // ── Block management ──
 
+    /// Every block in the PLC: how many there are of each type, then the numbers of each type
+    /// that has any.
     pub async fn list_blocks(&mut self) -> Result<Vec<BlockListEntry>, ProtocolError> {
-        let pdu_ref = self.next_pdu_ref();
+        let fail = |e: String| ProtocolError::ReadFailed(format!("List blocks: {e}"));
+        let request = blocks::build_list_all_request(self.next_pdu_ref());
+        let response = self.exchange(&request).await.map_err(fail)?;
+        let counts = blocks::parse_list_all(&response).map_err(fail)?;
 
-        // Request: list all block types
-        let mut params = Vec::new();
-        params.push(S7_LIST_BLOCKS);
-        params.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-        params.push(0x01); // list all
-        params.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_JOB);
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&params);
-
-        let resp = self
-            .exchange(&s7)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("List blocks: {e}")))?;
-
-        parse_block_list_response(&resp)
+        let mut entries = Vec::new();
+        for (block_type, count) in counts {
+            if count > 0 {
+                entries.extend(self.list_blocks_of_type(block_type).await?);
+            }
+        }
+        Ok(entries)
     }
 
+    async fn list_blocks_of_type(&mut self, block_type: BlockType) -> Result<Vec<BlockListEntry>, ProtocolError> {
+        let fail = |e: String| ProtocolError::ReadFailed(format!("List {block_type} blocks: {e}"));
+        let mut entries = Vec::new();
+        let mut request = blocks::build_list_of_type_request(self.next_pdu_ref(), block_type);
+        for _ in 0..framing::MAX_PARTS {
+            let response = self.exchange(&request).await.map_err(fail)?;
+            let page = blocks::parse_list_of_type(&response).map_err(fail)?;
+            entries.extend(page.blocks.iter().map(|b| BlockListEntry {
+                block_type: block_type.to_string(),
+                block_number: b.number,
+                flags: b.flags,
+                language: blocks::language_name(b.language),
+            }));
+            if !page.more {
+                return Ok(entries);
+            }
+            if entries.len() > blocks::MAX_BLOCKS_PER_TYPE {
+                break;
+            }
+            request = blocks::build_list_of_type_next_request(self.next_pdu_ref(), page.seq);
+        }
+        Err(fail("the PLC does not stop sending parts of the list".into()))
+    }
+
+    /// Upload a block. The result is the block as the PLC stores it: a 36-byte header, the
+    /// MC7 code or the data of a DB, and a 56-byte footer (snap7 `Cli_FullUpload`).
     pub async fn upload_block(
         &mut self,
         block_type: &BlockType,
         block_number: u16,
     ) -> Result<Vec<u8>, ProtocolError> {
-        let pdu_ref = self.next_pdu_ref();
+        let fail = |e: String| ProtocolError::ReadFailed(format!("Upload {block_type}{block_number}: {e}"));
+        let request = blocks::build_start_upload_request(self.next_pdu_ref(), *block_type, block_number);
+        let response = self.exchange(&request).await.map_err(fail)?;
+        let upload_id = blocks::parse_start_upload_response(&response).map_err(fail)?;
 
-        // Block filename: _<prefix><number padded to 5 digits>
-        let filename = format!("_{}{}", block_type.file_prefix(), format!("{:05}", block_number));
+        let block = self.upload_parts(upload_id).await;
+        // End the session even if the transfer failed: a PLC has only a few upload slots.
+        let ended = self.end_upload(upload_id).await;
+        let block = block.map_err(fail)?;
+        ended.map_err(fail)?;
+        blocks::check_block(&block).map_err(fail)?;
+        Ok(block)
+    }
 
-        let mut params = Vec::new();
-        params.push(S7_UPLOAD);
-        params.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
-        params.extend_from_slice(&(filename.len() as u8).to_be_bytes());
-        params.extend_from_slice(filename.as_bytes());
+    /// Fetch the parts of an upload until the PLC says there are no more.
+    async fn upload_parts(&mut self, upload_id: u32) -> Result<Vec<u8>, String> {
+        let mut block = Vec::new();
+        for _ in 0..framing::MAX_PARTS {
+            let request = blocks::build_upload_request(self.next_pdu_ref(), upload_id);
+            let response = self.exchange(&request).await?;
+            let part = blocks::parse_upload_response(&response)?;
+            block.extend_from_slice(part.payload);
+            if !part.more {
+                return Ok(block);
+            }
+            if block.len() > blocks::MAX_BLOCK_BYTES {
+                break;
+            }
+        }
+        Err("the PLC does not stop sending parts of the block".into())
+    }
 
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_JOB);
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&params);
-
-        let resp = self
-            .exchange(&s7)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Upload block: {e}")))?;
-
-        parse_upload_response(&resp)
+    async fn end_upload(&mut self, upload_id: u32) -> Result<(), String> {
+        let request = blocks::build_end_upload_request(self.next_pdu_ref(), upload_id);
+        let response = self.exchange(&request).await?;
+        blocks::parse_end_upload_response(&response)
     }
 
     pub async fn delete_block(
@@ -388,31 +399,10 @@ impl Inner {
         block_type: &BlockType,
         block_number: u16,
     ) -> Result<(), ProtocolError> {
-        let pdu_ref = self.next_pdu_ref();
-
-        let filename = format!("_{}{}", block_type.file_prefix(), format!("{:05}", block_number));
-
-        let mut params = Vec::new();
-        params.push(S7_DELETE_BLOCK);
-        params.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
-        params.extend_from_slice(&(filename.len() as u8).to_be_bytes());
-        params.extend_from_slice(filename.as_bytes());
-
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_JOB);
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&params);
-
-        let resp = self
-            .exchange(&s7)
-            .await
-            .map_err(|e| ProtocolError::WriteFailed(format!("Delete block: {e}")))?;
-
-        parse_delete_response(&resp)
+        let fail = |e: String| ProtocolError::WriteFailed(format!("Delete {block_type}{block_number}: {e}"));
+        let request = blocks::build_delete_request(self.next_pdu_ref(), *block_type, block_number);
+        let response = self.exchange(&request).await.map_err(fail)?;
+        blocks::parse_delete_response(&response).map_err(fail)
     }
 }
 
@@ -965,276 +955,6 @@ pub fn parse_area_string(s: &str) -> Option<S7Area> {
         "counter" | "c" => Some(S7Area::Counter),
         _ => None,
     }
-}
-
-// ── SZL response parsing ──
-
-fn parse_szl_response(data: &[u8]) -> Result<Vec<u8>, ProtocolError> {
-    if data.len() < 12 {
-        return Err(ProtocolError::ReadFailed(
-            "SZL response too short".into(),
-        ));
-    }
-    if data[0] != S7_PROTOCOL_ID {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid S7 protocol ID: 0x{:02X}",
-            data[0]
-        )));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::ReadFailed(format!(
-            "SZL error: 0x{error_code:04X}"
-        )));
-    }
-
-    let param_len = u16::from_be_bytes([data[6], data[7]]) as usize;
-    let data_len = u16::from_be_bytes([data[8], data[9]]) as usize;
-    let data_start = 12 + param_len;
-
-    if data.len() < data_start + data_len {
-        return Err(ProtocolError::ReadFailed(
-            "SZL response data area too short".into(),
-        ));
-    }
-
-    Ok(data[data_start..data_start + data_len].to_vec())
-}
-
-fn parse_cpu_info(data: &[u8]) -> Result<CpuInfo, ProtocolError> {
-    // SZL 0x0011 response: data area has header then items as TLV
-    // Layout: [return_code(1)] [transport_size(1)] [len(2)] [item_count(1)] [items...]
-    // Each item: [id(1)] [len(1)] [value(len)]
-    if data.len() < 4 {
-        return Err(ProtocolError::ReadFailed(
-            "CPU info data too short".into(),
-        ));
-    }
-
-    let mut module_type = String::new();
-    let mut serial_number = String::new();
-    let mut as_name = String::new();
-    let mut module_name = String::new();
-    let mut firmware_version = String::new();
-
-    // Skip header bytes and parse TLV items
-    let mut offset = if data[0] == 0xFF { 4 } else { 0 };
-    while offset + 2 <= data.len() {
-        let _id = data[offset];
-        let len = data[offset + 1] as usize;
-        if offset + 2 + len > data.len() {
-            break;
-        }
-        let val = &data[offset + 2..offset + 2 + len];
-        let s = String::from_utf8_lossy(val)
-            .trim_end_matches('\0')
-            .trim()
-            .to_string();
-
-        // SZL 0x0011 items by index position
-        match _id {
-            0x01 => module_type = s,
-            0x05 => serial_number = s,
-            0x06 => as_name = s,
-            0x07 => module_name = s,
-            0x08 => firmware_version = s,
-            _ => {}
-        }
-        offset += 2 + len;
-    }
-
-    Ok(CpuInfo {
-        module_type,
-        serial_number,
-        as_name,
-        module_name,
-        firmware_version,
-    })
-}
-
-fn parse_plc_mode(data: &[u8]) -> Result<PlcMode, ProtocolError> {
-    // SZL 0x0074 response data: [return_code] [transport_size] [len] [mode_byte]
-    // mode_byte: 0x08=RUN, 0x04=STOP, 0x00=STARTUP
-    let mode_byte = data.iter().find(|&&b| b == 0x08 || b == 0x04 || b == 0x00).copied();
-    let mode = match mode_byte {
-        Some(0x08) => "RUN",
-        Some(0x04) => "STOP",
-        Some(0x00) => "STARTUP",
-        _ => "UNKNOWN",
-    };
-    Ok(PlcMode { mode: mode.to_string() })
-}
-
-fn parse_diag_buffer(data: &[u8]) -> Result<DiagBuffer, ProtocolError> {
-    // SZL 0x0000 response: header with entry count, then entries
-    // Layout: [return_code(1)] [transport_size(1)] [data_len(2)] [entry_count(2)] [entries...]
-    if data.len() < 6 {
-        return Ok(DiagBuffer {
-            entry_count: 0,
-            entries: Vec::new(),
-        });
-    }
-
-    let entry_count = u16::from_be_bytes([data[4], data[5]]);
-
-    // Each diag entry: event_number(2) + timestamp(8 BCD) + event_data(variable)
-    let mut entries = Vec::new();
-    let mut offset = 6;
-
-    for _ in 0..entry_count.min(50) {
-        if offset + 10 > data.len() {
-            break;
-        }
-        let event_num = u16::from_be_bytes([data[offset], data[offset + 1]]);
-        let ts_bytes = &data[offset + 2..offset + 10];
-        let timestamp = format!(
-            "20{:02X}-{:02X}-{:02X} {:02X}:{:02X}:{:02X}.{:02X}{:02X}",
-            ts_bytes[0], ts_bytes[1], ts_bytes[2],
-            ts_bytes[3], ts_bytes[4], ts_bytes[5],
-            ts_bytes[6], ts_bytes[7],
-        );
-
-        let event_text = format!("Event 0x{event_num:04X}");
-
-        entries.push(DiagEntry {
-            event_number: event_num,
-            timestamp,
-            event_text,
-        });
-
-        // Entries are typically 12-16 bytes; advance by a safe minimum
-        offset += 12;
-    }
-
-    Ok(DiagBuffer {
-        entry_count,
-        entries,
-    })
-}
-
-// ── Block response parsing ──
-
-fn parse_block_list_response(data: &[u8]) -> Result<Vec<BlockListEntry>, ProtocolError> {
-    if data.len() < 12 {
-        return Err(ProtocolError::ReadFailed(
-            "Block list response too short".into(),
-        ));
-    }
-    if data[0] != S7_PROTOCOL_ID {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid S7 protocol ID: 0x{:02X}",
-            data[0]
-        )));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Block list error: 0x{error_code:04X}"
-        )));
-    }
-
-    let param_len = u16::from_be_bytes([data[6], data[7]]) as usize;
-    let data_len = u16::from_be_bytes([data[8], data[9]]) as usize;
-    let data_start = 12 + param_len;
-
-    if data.len() < data_start + data_len || data_len < 4 {
-        return Ok(Vec::new());
-    }
-
-    let block_data = &data[data_start..data_start + data_len];
-    if block_data.len() < 4 {
-        return Ok(Vec::new());
-    }
-
-    // Parse the block list from SZL-like data
-    // Format: [return_code(1)] [transport_size(1)] [len(2)] [items...]
-    // Each item has a block type byte followed by count + block numbers
-    let mut entries = Vec::new();
-    let mut offset = if block_data[0] == 0xFF { 4 } else { 0 };
-
-    while offset + 2 <= block_data.len() {
-        let block_type_code = block_data[offset];
-        let count = block_data[offset + 1] as usize;
-        offset += 2;
-
-        let type_name = match block_type_code {
-            0x38 => "OB/FB/FC",
-            0x41 => "DB",
-            0x42 => "SDB",
-            0x44 => "SFC",
-            0x45 => "SFB",
-            _ => "Unknown",
-        };
-
-        for _ in 0..count {
-            if offset + 2 > block_data.len() {
-                break;
-            }
-            let block_num = u16::from_be_bytes([block_data[offset], block_data[offset + 1]]);
-            entries.push(BlockListEntry {
-                block_type: type_name.to_string(),
-                block_number: block_num,
-            });
-            offset += 2;
-        }
-    }
-
-    Ok(entries)
-}
-
-fn parse_upload_response(data: &[u8]) -> Result<Vec<u8>, ProtocolError> {
-    if data.len() < 12 {
-        return Err(ProtocolError::ReadFailed(
-            "Upload response too short".into(),
-        ));
-    }
-    if data[0] != S7_PROTOCOL_ID {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid S7 protocol ID: 0x{:02X}",
-            data[0]
-        )));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Upload error: 0x{error_code:04X}"
-        )));
-    }
-
-    let param_len = u16::from_be_bytes([data[6], data[7]]) as usize;
-    let data_len = u16::from_be_bytes([data[8], data[9]]) as usize;
-    let data_start = 12 + param_len;
-
-    if data.len() < data_start + data_len {
-        return Err(ProtocolError::ReadFailed(
-            "Upload response data area too short".into(),
-        ));
-    }
-
-    // The block data is in the data area, after the header bytes
-    let block_data = &data[data_start..data_start + data_len];
-    if block_data.len() < 4 {
-        return Ok(Vec::new());
-    }
-
-    // Skip return code + transport size + length header
-    let skip = if block_data[0] == 0xFF { 4 } else { 0 };
-    Ok(block_data[skip..].to_vec())
-}
-
-fn parse_delete_response(data: &[u8]) -> Result<(), ProtocolError> {
-    if data.len() < 12 {
-        return Err(ProtocolError::WriteFailed(
-            "Delete response too short".into(),
-        ));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::WriteFailed(format!(
-            "Delete block error: 0x{error_code:04X}"
-        )));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -42,8 +42,16 @@
 //! }
 //! ```
 
+mod blocks;
+#[cfg(test)]
+mod capture;
 pub mod client;
+mod framing;
 pub mod server;
+mod sim;
+mod szl;
+#[cfg(test)]
+mod sys_tests;
 pub mod types;
 mod vars;
 

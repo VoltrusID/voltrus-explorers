@@ -18,24 +18,16 @@ pub(crate) const S7_SETUP_COMM: u8 = 0xF0;
 pub(crate) const S7_READ_VAR: u8 = 0x04;
 pub(crate) const S7_WRITE_VAR: u8 = 0x05;
 
-// CPU / diagnostics function codes
+/// Message type of "user data" PDUs: SZL reads and block listing travel in these.
 pub(crate) const S7_MSG_TYPE_USER_DATA: u8 = 0x07;
-pub(crate) const S7_CPU_FUNC: u8 = 0x00;
-pub(crate) const S7_SZL_READ: u8 = 0x01;
 
-// SZL IDs
-pub(crate) const SZL_MODULE_IDENTITY: u16 = 0x0011;
-pub(crate) const SZL_OPERATING_MODE: u16 = 0x0074;
-pub(crate) const SZL_DIAG_BUFFER: u16 = 0x0000;
-
-// Block management function codes
-pub(crate) const S7_LIST_BLOCKS: u8 = 0x1A;
-#[allow(dead_code)]
-pub(crate) const S7_GET_BLOCK_INFO: u8 = 0x1B;
-pub(crate) const S7_UPLOAD: u8 = 0x1C;
-#[allow(dead_code)]
-pub(crate) const S7_DOWNLOAD: u8 = 0x1D;
-pub(crate) const S7_DELETE_BLOCK: u8 = 0x1E;
+// Job functions of block upload and PLC control (snap7 s7_types.h: pduStartUpload, pduUpload,
+// pduEndUpload, pduControl).
+pub(crate) const S7_START_UPLOAD: u8 = 0x1D;
+pub(crate) const S7_UPLOAD: u8 = 0x1E;
+pub(crate) const S7_END_UPLOAD: u8 = 0x1F;
+/// PI service ("plc control"): deletes and inserts blocks, starts and stops the CPU.
+pub(crate) const S7_PLC_CONTROL: u8 = 0x28;
 
 // Area codes
 pub(crate) const AREA_DB: u8 = 0x84;
@@ -308,41 +300,74 @@ impl S7Value {
 
 // ── Diagnostics types ──
 
-/// CPU module information read via SZL 0x0011.
+/// CPU identity, read from the module identification (SZL 0x0011) and component
+/// identification (SZL 0x001C) lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuInfo {
+    /// Module type name, e.g. `CPU 315-2 PN/DP` (SZL 0x001C, index 7).
     pub module_type: String,
+    /// Serial number of the module (SZL 0x001C, index 5).
     pub serial_number: String,
+    /// Name of the automation system, i.e. the station (SZL 0x001C, index 1).
     pub as_name: String,
+    /// Name of the module as configured (SZL 0x001C, index 2).
     pub module_name: String,
+    /// Firmware version as `V3.2.6` (SZL 0x0011, index 7).
     pub firmware_version: String,
+    /// Order number (MLFB) of the module, e.g. `6ES7 151-8AB01-0AB0` (SZL 0x0011, index 1).
+    #[serde(default)]
+    pub order_code: String,
+    /// Copyright entry of the module (SZL 0x001C, index 4).
+    #[serde(default)]
+    pub copyright: String,
 }
 
 /// PLC operating mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlcMode {
+    /// `RUN`, `STOP`, `STARTUP`, `HOLD`, `DEFECT` or `UNKNOWN`.
     pub mode: String,
 }
 
-/// A single diagnostic buffer entry.
+/// A single diagnostic buffer entry (SZL 0x00A0, one 20-byte record).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagEntry {
+    /// Event ID.
     pub event_number: u16,
+    /// Time the CPU logged the event, `YYYY-MM-DD HH:MM:SS.mmm`.
     pub timestamp: String,
+    /// Event class and, for the events this crate knows, what happened.
     pub event_text: String,
+    /// Priority class of the OB that was running.
+    #[serde(default)]
+    pub priority_class: u8,
+    /// Number of that OB.
+    #[serde(default)]
+    pub ob_number: u8,
+    /// Data ID.
+    #[serde(default)]
+    pub data_id: u16,
+    /// First additional information word.
+    #[serde(default)]
+    pub info1: u16,
+    /// Second additional information double word.
+    #[serde(default)]
+    pub info2: u32,
 }
 
 /// Diagnostic buffer contents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagBuffer {
+    /// Number of entries the PLC returned.
     pub entry_count: u16,
+    /// Newest first, as the PLC keeps them.
     pub entries: Vec<DiagEntry>,
 }
 
 // ── Block management types ──
 
 /// S7 block type.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockType {
     OB,
@@ -355,27 +380,47 @@ pub enum BlockType {
 }
 
 impl BlockType {
+    /// Every block type, in the order a PLC lists them.
+    pub const ALL: [BlockType; 7] = [
+        BlockType::OB,
+        BlockType::FB,
+        BlockType::FC,
+        BlockType::DB,
+        BlockType::SDB,
+        BlockType::SFC,
+        BlockType::SFB,
+    ];
+
+    /// The block type code of S7 block telegrams: the ASCII character after the leading `0` of
+    /// the two-character sub block type (snap7 `Block_OB` ... `Block_SFB`).
     pub fn code(&self) -> u8 {
         match self {
-            BlockType::OB => 0x38,
-            BlockType::FB => 0x38,
-            BlockType::FC => 0x38,
-            BlockType::DB => 0x41,
-            BlockType::SDB => 0x42,
-            BlockType::SFC => 0x44,
-            BlockType::SFB => 0x45,
+            BlockType::OB => 0x38,  // '8'
+            BlockType::DB => 0x41,  // 'A'
+            BlockType::SDB => 0x42, // 'B'
+            BlockType::FC => 0x43,  // 'C'
+            BlockType::SFC => 0x44, // 'D'
+            BlockType::FB => 0x45,  // 'E'
+            BlockType::SFB => 0x46, // 'F'
         }
     }
 
-    /// File prefix used in S7 block filenames (e.g. "_DB" for DB blocks).
-    pub fn file_prefix(&self) -> &str {
+    /// The block type for a [`code`](Self::code), if it is one.
+    pub fn from_code(code: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.code() == code)
+    }
+
+    /// Sub block type as two ASCII characters, the part of a block file name (`_0A00001A`) that
+    /// says which kind of block it is: `08` OB, `0A` DB, `0B` SDB, `0C` FC, `0D` SFC, `0E` FB,
+    /// `0F` SFB (snap7 `SubBlk_*`).
+    pub fn file_prefix(&self) -> &'static str {
         match self {
-            BlockType::OB => "0A",
-            BlockType::FB => "0E",
+            BlockType::OB => "08",
+            BlockType::DB => "0A",
+            BlockType::SDB => "0B",
             BlockType::FC => "0C",
-            BlockType::DB => "05",
-            BlockType::SDB => "03",
             BlockType::SFC => "0D",
+            BlockType::FB => "0E",
             BlockType::SFB => "0F",
         }
     }
@@ -411,8 +456,15 @@ impl std::fmt::Display for BlockType {
 /// A single block entry from the PLC block list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockListEntry {
+    /// `OB`, `FB`, `FC`, `DB`, `SDB`, `SFC` or `SFB`.
     pub block_type: String,
     pub block_number: u16,
+    /// The PLC's flag byte for the block, as it sent it. Its meaning is not documented.
+    #[serde(default)]
+    pub flags: u8,
+    /// Language the block is written in: `AWL`, `KOP`, `FUP`, `SCL`, `DB`, `GRAPH`, `SDB`, ...
+    #[serde(default)]
+    pub language: String,
 }
 
 /// Detailed information about a single block.
@@ -467,5 +519,20 @@ mod tests {
         assert_eq!(S7DataType::from_str_name("COUNTER"), Some(S7DataType::Counter));
         assert_eq!(S7DataType::Timer.transport_size(), 0x1D);
         assert_eq!(S7DataType::Counter.transport_size(), 0x1C);
+    }
+
+    /// The app and saved data have the old records; the fields added since default.
+    #[test]
+    fn records_without_the_added_fields_still_deserialize() {
+        let cpu: CpuInfo = serde_json::from_str(
+            r#"{"module_type":"a","serial_number":"b","as_name":"c","module_name":"d","firmware_version":"e"}"#,
+        )
+        .unwrap();
+        assert_eq!((cpu.order_code.as_str(), cpu.copyright.as_str()), ("", ""));
+        let entry: DiagEntry =
+            serde_json::from_str(r#"{"event_number":1,"timestamp":"t","event_text":"x"}"#).unwrap();
+        assert_eq!((entry.priority_class, entry.info2), (0, 0));
+        let block: BlockListEntry = serde_json::from_str(r#"{"block_type":"DB","block_number":1}"#).unwrap();
+        assert_eq!((block.flags, block.language.as_str()), (0, ""));
     }
 }
