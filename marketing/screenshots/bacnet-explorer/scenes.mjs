@@ -518,3 +518,218 @@ for (const s of scenes) {
     await run(page);
   };
 }
+
+// ───────────────────────────── iPhone / iPad scenes ─────────────────────────────
+// Rendered with `bun marketing/screenshots/render.mjs bacnet-explorer --device=iphone|ipad`. They drive the phone tab
+// layout (iPhone) and the two-pane layout (iPad). Everything shown works without Apple's multicast entitlement:
+// connecting by IP address, browsing, reading, writing, trending, alarms and the built-in simulator. Device scanning is
+// never shown.
+
+const iosInit = `window.__platform = "ios";`;
+
+// Chromium reports 0 for env(safe-area-inset-*); draw what a device has: a status bar, a taller title bar, a home-indicator gap.
+function iosChromeCss(device) {
+  const top = device === "iphone" ? 54 : 24;
+  const bottom = device === "iphone" ? 28 : 20;
+  return `
+    *::-webkit-scrollbar { display: none; } * { scrollbar-width: none; }
+    .bx-root .vt-titlebar { height: ${top + 48}px !important; padding-top: ${top}px !important; }
+    .bx-tabbar { padding-bottom: ${bottom}px !important; }
+    .bx-root .vt-statusbar { height: ${28 + (device === "ipad" ? bottom : 0)}px !important; padding-bottom: ${device === "ipad" ? bottom : 0}px !important; }
+    .bx-sheet header { padding-top: ${top + 12}px !important; }
+    .bx-sheet footer { padding-bottom: ${bottom + 8}px !important; }
+    .vt-dialog__footer { padding-bottom: ${12 + (device === "iphone" ? bottom : 0)}px !important; }
+    #ios-status { position: fixed; top: 0; left: 0; right: 0; height: ${top}px; z-index: 1000; pointer-events: none;
+      display: flex; align-items: ${device === "iphone" ? "center" : "flex-end"}; justify-content: space-between;
+      padding: ${device === "iphone" ? "6px 34px 0 42px" : "0 22px 4px"}; color: #fff; font: 600 ${device === "iphone" ? 17 : 14}px Inter, sans-serif; }
+    #ios-status .icons { display: flex; align-items: center; gap: 6px; }
+  `;
+}
+
+const STATUS_HTML = `
+  <span>9:41</span>
+  <span class="icons">
+    <svg width="18" height="12" viewBox="0 0 18 12" fill="#fff"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+    <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0"/><path d="M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#fff" stroke="none"/></svg>
+    <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="22" height="12" rx="3.5" fill="none" stroke="#fff" opacity=".45"/><rect x="2" y="2" width="19" height="9" rx="2.2" fill="#fff"/><rect x="24" y="4.5" width="2" height="4" rx="1" fill="#fff" opacity=".45"/></svg>
+  </span>`;
+
+async function iosPrepare(page, device) {
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.addStyleTag({ content: iosChromeCss(device) });
+  await page.evaluate((html) => {
+    const el = document.createElement("div");
+    el.id = "ios-status";
+    el.innerHTML = html;
+    document.body.appendChild(el);
+  }, STATUS_HTML);
+  await sleep(150);
+}
+
+// Visible-only tap (pages behind the tab bar stay mounted but hidden).
+async function tap(page, selector, text, exact = false) {
+  const ok = await page.evaluate(
+    (selector, text, exact) => {
+      const el = [...document.querySelectorAll(selector)].find((e) => {
+        if (e.offsetParent === null && getComputedStyle(e).position !== "fixed") return false;
+        const t = e.textContent.trim();
+        return exact ? t === text : t.startsWith(text);
+      });
+      if (!el) return false;
+      el.click();
+      return true;
+    },
+    selector,
+    text,
+    exact,
+  );
+  if (!ok) throw new Error(`no visible ${selector} with text ${text}`);
+  await sleep(200);
+}
+
+async function typeField(page, selector, index, value) {
+  const inputs = await page.$$(selector);
+  await inputs[index].click();
+  await page.keyboard.down("Control");
+  await page.keyboard.press("a");
+  await page.keyboard.up("Control");
+  await page.keyboard.type(String(value));
+}
+
+const fields = (device) => (device === "iphone" ? ".vt-sidebar input" : "aside input");
+
+async function iosFillConnection(page, device, ip = "10.20.4.21", deviceId = 2001) {
+  await typeField(page, fields(device), 0, ip);
+  await typeField(page, fields(device), 2, deviceId);
+  await page.evaluate(() => document.activeElement?.blur());
+  await sleep(150);
+}
+
+async function iosConnect(page, device) {
+  await iosFillConnection(page, device);
+  await tap(page, device === "iphone" ? ".vt-sidebar button" : "aside button", "Connect", true);
+  await page.waitForFunction(
+    () => document.querySelector('.bx-tab[aria-selected="true"]')?.textContent.includes("Objects") || [...document.querySelectorAll("aside button")].some((b) => b.textContent.trim().startsWith("Alarms")),
+    { timeout: 5000 },
+  );
+  await sleep(200);
+}
+
+async function iosBrowse(page, group = "Analog Input") {
+  await tap(page, "button", "Browse objects", true);
+  await page.waitForSelector(".ob-group", { timeout: 5000 });
+  await sleep(150);
+  await tap(page, ".ob-group", group);
+}
+
+async function iosSelect(page, name) {
+  const ok = await page.evaluate((name) => {
+    const row = [...document.querySelectorAll(".ob-row")].find((r) => r.querySelector("span")?.textContent === name);
+    if (!row) return false;
+    row.click();
+    return true;
+  }, name);
+  if (!ok) throw new Error("no object row " + name);
+  await sleep(300);
+}
+
+export const iosScenes = [
+  {
+    id: "connect",
+    devices: ["iphone"],
+    headline: "Connect by <em>IP address</em>",
+    sub: "Enter a controller's IP address, port and device ID and connect over BACnet/IP.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosFillConnection(page, device);
+    },
+  },
+  {
+    id: "browse",
+    devices: ["iphone"],
+    headline: "Browse every <em>object</em>",
+    sub: "Objects are grouped by type. Tap one to read its properties.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosConnect(page, device);
+      await iosBrowse(page);
+    },
+  },
+  {
+    id: "properties",
+    headline: "See every <em>property</em>",
+    sub: "Present value, units, limits and event state for the selected point.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosConnect(page, device);
+      await iosBrowse(page);
+      await iosSelect(page, "SA-TEMP");
+    },
+  },
+  {
+    id: "trend",
+    headline: "Trend points as they <em>change</em>",
+    sub: "Subscribe to COV notifications and watch several points on one live chart.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosConnect(page, device);
+      await iosBrowse(page);
+      if (device === "ipad") await iosSelect(page, "RA-CO2");
+      await addTrend(page, ["SA-TEMP", "RA-TEMP", "MA-TEMP", "OA-TEMP"]);
+      if (device === "iphone") await tap(page, ".bx-tab", "Trend");
+      await feedCov(page, 4, 96);
+    },
+  },
+  {
+    id: "alarms",
+    devices: ["ipad"],
+    headline: "Check alarms, then <em>acknowledge</em>",
+    sub: "Read the device's alarm summary, open each object's event timestamps and acknowledge with your name.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosConnect(page, device);
+      await tap(page, "aside button", "Alarms");
+      await tap(page, "main button", "Refresh");
+      await page.waitForSelector("main .mono", { timeout: 5000 });
+      await tap(page, "main button", "Events");
+      await page.waitForFunction(() => document.body.textContent.includes("Event information"), { timeout: 5000 });
+      await sleep(300);
+    },
+  },
+  {
+    id: "write",
+    devices: ["ipad"],
+    headline: "Write <em>setpoints</em> and commands",
+    sub: "Edit a writable value, pick the data type and send it to the controller.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await iosConnect(page, device);
+      await iosBrowse(page, "Analog Value");
+      await iosSelect(page, "SA-TEMP-SP");
+      await page.evaluate(() => document.querySelector('button[aria-label="Write presentValue"]').click());
+      await page.waitForSelector(".vt-dialog", { timeout: 3000 });
+      await sleep(300);
+    },
+  },
+  {
+    id: "simulator",
+    headline: "Test without <em>any hardware</em>",
+    sub: "Run a virtual air handling unit on your device, then connect to it, browse it and write its setpoints.",
+    init: iosInit,
+    setup: async (page, device) => {
+      await iosPrepare(page, device);
+      await page.select(device === "iphone" ? ".vt-sidebar select" : "aside select", "ahu");
+      await sleep(150);
+      await tap(page, device === "iphone" ? ".vt-sidebar button" : "aside button", "Start simulation");
+      await sleep(300);
+      await page.evaluate(() => window.__simTick(40));
+      await sleep(300);
+    },
+  },
+];

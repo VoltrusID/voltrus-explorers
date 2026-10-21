@@ -169,7 +169,8 @@ function App() {
   // Resizable panels
   const [leftWidth, setLeftWidth] = useState(264);
   const [tableHeight, setTableHeight] = useState(300);
-  const [trendHeight, setTrendHeight] = useState(220);
+  // Touch controls are taller (and the drag handle is mouse-only), so the touch default leaves the chart room.
+  const [trendHeight, setTrendHeight] = useState(window.matchMedia("(pointer: coarse)").matches ? 340 : 220);
   const [dragSide, setDragSide] = useState<"left" | "table" | "trend" | null>(null);
 
   // Phone layout (< 768px): bottom tabs. Wider touch screens (iPad) keep the two-pane layout with touch-size controls.
@@ -581,7 +582,7 @@ function App() {
 
   // ── Main content area ──
   const mainContent = viewMode === "alarms" && protocol.connected ? (
-    <AlarmPanel connected={protocol.connected} />
+    <AlarmPanel connected={protocol.connected} compact={isTouch && viewportWidth < 900} />
   ) : viewMode === "browse" && protocol.connected ? (
     <>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
