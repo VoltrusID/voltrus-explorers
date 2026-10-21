@@ -659,8 +659,8 @@ export const iosScenes = [
   },
   {
     id: "properties",
-    headline: "Read <em>present value</em>, units and limits",
-    sub: "Name, description, status, limits and event state for the selected point.",
+    headline: "See every <em>property</em>",
+    sub: "Present value, units, limits and event state for the selected point.",
     init: iosInit,
     setup: async (page, device) => {
       await iosPrepare(page, device);
