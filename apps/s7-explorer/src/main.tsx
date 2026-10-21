@@ -5,6 +5,7 @@ import { ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
+  "Unlimited live tags (free is limited to 10)",
   "Write values to the PLC",
   "Several PLC connections at once",
   "Live trends",

@@ -34,8 +34,8 @@ Releases have everything.
 
 | | |
 | --- | --- |
-| Free | Connect to one PLC (S7-300/400/1200/1500, ISO-on-TCP port 102), read DB, I, Q, M, T and C addresses into a polled tag table, add, edit and remove tags, CPU info, PLC mode and diagnostic buffer, communication log with CSV export |
-| Pro | Several PLC connections open at once, write values to the PLC, live trends, block manager (list, save to file, delete), built-in S7 simulator server |
+| Free | Connect to one PLC (S7-300/400/1200/1500, ISO-on-TCP port 102), read DB, I, Q, M, T and C addresses into a polled tag table (up to 10 live tags), add, edit and remove tags, CPU info, PLC mode and diagnostic buffer, communication log with CSV export |
+| Pro | Unlimited live tags, several PLC connections open at once, write values to the PLC, live trends, block manager (list, save to file, delete), built-in S7 simulator server |
 
 Version 1.4.0 is the first free release.
 

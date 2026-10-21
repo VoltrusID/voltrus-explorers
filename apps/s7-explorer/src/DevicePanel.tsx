@@ -22,6 +22,7 @@ import DiagnosticsPanel from "./DiagnosticsPanel";
 import BlocksPanel from "./BlocksPanel";
 import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
+import { FREE_TAG_LIMIT } from "./helpers";
 
 type LogDir = "info" | "rx" | "tx" | "error";
 
@@ -40,7 +41,7 @@ interface Props {
 
 export default function DevicePanel({ device, active, onLog }: Props) {
   const s7 = useS7Device(device.id);
-  const { requirePro } = useProStatus();
+  const { pro, requirePro } = useProStatus();
   const updateDevice = useStore((st) => st.updateDevice);
   const isMobile = useStore((st) => st.isMobile);
   const mobileTab = useStore((st) => st.mobileTab);
@@ -50,7 +51,9 @@ export default function DevicePanel({ device, active, onLog }: Props) {
   const [bottomTab, setBottomTab] = useState<"log" | "trend">("log");
   const [writing, setWriting] = useState<{ address: string; dataType: string; value: string } | null>(null);
 
-  const tags = device.tags ?? [];
+  const allTags = device.tags ?? [];
+  // Free tier polls the first FREE_TAG_LIMIT tags; the rest stay listed but idle.
+  const tags = pro ? allTags : allTags.slice(0, FREE_TAG_LIMIT);
   const log = useStore((st) => st.log);
 
   // Surface backend errors in the log.
@@ -114,6 +117,8 @@ export default function DevicePanel({ device, active, onLog }: Props) {
     }
     return tags.map((t) => ({ name: t.name, address: t.address, type: t.data_type, value: "—" }));
   }, [tags, s7.values]);
+
+  const lockedCount = allTags.length - tags.length;
 
   const { trendSeries, setTrendSeries, trendWindow, setTrendWindow, toggleTrend } = useTrend(tableData);
 
@@ -200,6 +205,12 @@ export default function DevicePanel({ device, active, onLog }: Props) {
         ]}
       />
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
+        {mainTab === "tags" && !pro && allTags.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", fontSize: "var(--fs-xs)", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+            <span>{Math.min(allTags.length, FREE_TAG_LIMIT)} of {FREE_TAG_LIMIT} live tags{lockedCount > 0 ? `, ${lockedCount} not polled` : ""}</span>
+            <button type="button" style={{ background: "none", border: 0, padding: 0, color: "var(--accent)", cursor: "pointer", font: "inherit" }} onClick={() => requirePro("More than 10 live tags")}>Pro for more</button>
+          </div>
+        )}
         {mainTab === "tags" && (tags.length === 0
           ? (
             <EmptyState

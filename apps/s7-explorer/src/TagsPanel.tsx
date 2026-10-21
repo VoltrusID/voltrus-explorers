@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Download, Pencil, Trash2 } from "lucide-react";
-import { Button, Field, IconButton, Section } from "@mactools/ui";
+import { Button, Field, IconButton, Section, useProStatus } from "@mactools/ui";
 import { useStore } from "./store";
 import type { Device } from "./types";
 import { DATA_TYPES } from "./types";
-import { uid } from "./helpers";
+import { uid, FREE_TAG_LIMIT } from "./helpers";
 
 interface Props {
   device: Device;
@@ -18,12 +18,14 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
   const [newName, setNewName] = useState("");
   const [newAddr, setNewAddr] = useState("");
   const [newType, setNewType] = useState("DWord");
+  const { pro, requirePro } = useProStatus();
   const tags = device.tags ?? [];
 
   const reset = () => { setEditingTagId(null); setNewName(""); setNewAddr(""); };
 
   const addTag = () => {
     if (!newName.trim() || !newAddr.trim()) return;
+    if (tags.length >= FREE_TAG_LIMIT && !requirePro("More than 10 live tags")) return;
     setDeviceTags(device.id, (prev) => [
       ...prev,
       { id: uid(), name: newName.trim(), address: newAddr.trim(), data_type: newType },
@@ -51,7 +53,7 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
   };
 
   return (
-    <Section title="Tags" meta={String(tags.length)}>
+    <Section title="Tags" meta={pro ? String(tags.length) : `${tags.length} of ${FREE_TAG_LIMIT}`}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 14 }}>
         {onLoadSim && (
           <Button size="sm" icon={<Download size={14} strokeWidth={1.75} />} onClick={onLoadSim} title="Replace this device's tags with the simulator's points">

@@ -1,5 +1,8 @@
 import type { Device, TagConfig } from "./types";
 
+/** Polled tags allowed without Pro. */
+export const FREE_TAG_LIMIT = 10;
+
 const DEVICES_KEY = "s7-explorer-devices";
 
 export function uid(): string {
