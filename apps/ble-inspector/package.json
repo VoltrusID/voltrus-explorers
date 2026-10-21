@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@vitejs/plugin-react": "^4",
     "tailwindcss": "4.2.4",
     "typescript": "5.9.3",
-    "vite": "6.4.2"
+    "vite": "6.4.2",
+    "vitest": "4.1.8"
   }
 }

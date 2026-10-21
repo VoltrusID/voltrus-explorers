@@ -104,9 +104,16 @@ function mockMain(D) {
 
   const state = { scanning: false, connected: new Set(), shown: 0 };
   window.__scanTo = (n) => { state.shown = n; };
+  // Opt-in RSSI wobble (set by the RSSI scene) so the chart shows realistic noise.
+  const wobble = (id, rssi) => {
+    if (!window.__jitter) return rssi;
+    const n = Number(id.slice(1));
+    const t = Date.now() / 1000;
+    return Math.round(rssi + 4 * Math.sin(t / (3 + n)) + 2 * Math.sin(t * 1.7 + n * 2));
+  };
   const list = () =>
     D.devices.slice(0, state.shown).map(([id, name, rssi, address]) => ({
-      id, name, rssi, address, connected: state.connected.has(id),
+      id, name, rssi: wobble(id, rssi), address, connected: state.connected.has(id),
     }));
 
   const handlers = {
@@ -199,7 +206,13 @@ async function connect(page, name) {
 }
 
 async function expand(page, shortUuid) {
-  await clickText(page, ".ble-svc", `Service${shortUuid}`);
+  const ok = await page.evaluate((u) => {
+    const el = [...document.querySelectorAll(".ble-svc")].find((e) => e.textContent.includes(u));
+    el?.click();
+    return !!el;
+  }, shortUuid);
+  if (!ok) throw new Error(`no service ${shortUuid}`);
+  await sleep(200);
 }
 
 async function readAll(page) {
@@ -233,6 +246,30 @@ async function feedHeartRate(page, bpms) {
   }
   await sleep(300);
 }
+
+async function openTab(page, label) {
+  await page.evaluate((label) => {
+    [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent.trim().startsWith(label))?.click();
+  }, label);
+  await sleep(300);
+}
+
+async function feedStream(page, device, charUuid, values) {
+  for (const v of values) {
+    await page.evaluate((device, charUuid, v) => {
+      window.__skew += 700;
+      window.__emit("ble-event", { type: "characteristic_notify", device_id: device, char_uuid: charUuid, value: v });
+    }, device, charUuid, v);
+    await sleep(30);
+  }
+  await sleep(400);
+}
+
+const f32le = (x) => {
+  const b = new DataView(new ArrayBuffer(4));
+  b.setFloat32(0, x, true);
+  return [0, 1, 2, 3].map((i) => b.getUint8(i).toString(16).padStart(2, "0")).join("");
+};
 
 // ───────────────────────────── scenes ─────────────────────────────
 
@@ -325,6 +362,73 @@ export const scenes = [
         bs[bs.length - 1].click();
       });
       await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+      await sleep(400);
+    },
+  },
+  // Pro scenes (after the five store screenshots and the review scene, so their numbering stays put).
+  {
+    id: "plots",
+    headline: "Plot <em>notify streams</em> as they arrive",
+    sub: "Pick a number format per characteristic, such as uint8, int16 or float32, and watch the values draw as a live chart.",
+    settleMs: 800,
+    setup: async (page) => {
+      await scan(page, 10);
+      await connect(page, "Polar H10");
+      await clickText(page, ".ble-char button", "Notify");
+      await sleep(300);
+      const bpm = Array.from({ length: 70 }, (_, i) => Math.round(78 + 16 * Math.sin(i / 7) + 5 * Math.sin(i / 2.3)));
+      await feedStream(page, "D1", "00002a37-0000-1000-8000-00805f9b34fb", bpm.map((b) => "00" + b.toString(16).padStart(2, "0")));
+      await openTab(page, "Plots");
+      await sleep(400);
+    },
+  },
+  {
+    id: "rssi",
+    headline: "Chart <em>signal strength</em> over time",
+    sub: "Tick the devices you care about and compare their RSSI while you move around or reposition an antenna.",
+    settleMs: 800,
+    setup: async (page) => {
+      await page.evaluate(() => { window.__jitter = true; });
+      await scan(page, 10);
+      await connect(page, "Polar H10");
+      for (let i = 0; i < 30; i++) {
+        await page.evaluate(() => { window.__skew += 2000; });
+        await sleep(520);
+      }
+      await openTab(page, "RSSI");
+      await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Strongest 4")?.click());
+      await sleep(500);
+    },
+  },
+  {
+    id: "presets",
+    headline: "Save <em>write presets</em> and macros",
+    sub: "Keep the commands you send often, then run several in order with a pause between each.",
+    init: () => {
+      const vendor = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+      localStorage.setItem(
+        "ble-inspector:v1",
+        JSON.stringify({
+          prefs: { gattNames: true, decode: true, formats: {} },
+          presets: [
+            { id: "p1", name: "Lamp on", charUuid: vendor, mode: "hex", value: "01 ff" },
+            { id: "p2", name: "Lamp off", charUuid: vendor, mode: "hex", value: "01 00" },
+            { id: "p3", name: "Set blue", charUuid: vendor, mode: "hex", value: "0a 1b 02 ff" },
+            { id: "p4", name: "Status request", charUuid: vendor, mode: "text", value: "STATUS?\n" },
+          ],
+          macros: [
+            { id: "m1", name: "Blink three times", repeat: 3, steps: [{ presetId: "p1", delayMs: 400 }, { presetId: "p2", delayMs: 400 }] },
+            { id: "m2", name: "Wake and report", repeat: 1, steps: [{ presetId: "p1", delayMs: 250 }, { presetId: "p4", delayMs: 0 }] },
+          ],
+        }),
+      );
+    },
+    settleMs: 800,
+    setup: async (page) => {
+      await scan(page, 10);
+      await connect(page, "Polar H10");
+      await openTab(page, "Presets");
+      await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Send")?.click());
       await sleep(400);
     },
   },

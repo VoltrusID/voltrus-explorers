@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -9,6 +9,7 @@ import {
   useProStatus,
   Dialog,
   EmptyState,
+  IconButton,
   LogPanel,
   Section,
   StatusBar,
@@ -16,34 +17,28 @@ import {
   Toolbar,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
-import { BluetoothSearching, ChevronDown, ChevronRight, Radar } from "lucide-react";
+import { BluetoothSearching, BookmarkPlus, ChevronDown, ChevronRight, Radar } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
+import PlotsPanel from "./PlotsPanel";
+import PresetsPanel, { PresetDialog } from "./PresetsPanel";
+import RssiPanel from "./RssiPanel";
+import { FORMATS, describeValue, hexToBytes, isFormatId, type FormatId } from "./decode";
+import { defaultDecode, gattName, shortUuid } from "./gatt";
+import {
+  loadStored,
+  newId,
+  notifyStore,
+  pruneMacros,
+  rssiStore,
+  saveStored,
+  type DecodePref,
+  type Macro,
+  type Prefs,
+  type WritePreset,
+} from "./store";
+import { RSSI_UNKNOWN, type BleCharacteristic, type BleDevice, type BleService } from "./types";
 
-interface BleDevice {
-  id: string;
-  name: string;
-  rssi: number;
-  address: string;
-  connected: boolean;
-}
-
-interface BleService {
-  uuid: string;
-  is_primary: boolean;
-  characteristics: BleCharacteristic[];
-}
-
-interface BleCharacteristic {
-  uuid: string;
-  properties: {
-    read: boolean;
-    write: boolean;
-    write_without_response: boolean;
-    notify: boolean;
-    indicate: boolean;
-  };
-  value: string | null;
-}
+type MainTab = "gatt" | "plots" | "presets" | "rssi";
 
 const SIDEBAR_WIDTH = 300;
 
@@ -154,7 +149,12 @@ function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileTab, setMobileTab] = useState<"scan" | "device" | "log">("scan");
   const [subscribed, setSubscribed] = useState<Set<string>>(new Set());
-  const { requirePro, status: proStatus } = useProStatus();
+  const [mainTab, setMainTab] = useState<MainTab>("gatt");
+  const [charValues, setCharValues] = useState<Record<string, string>>({});
+  const [stored, setStored] = useState(loadStored);
+  const [presetDraft, setPresetDraft] = useState<WritePreset | null>(null);
+  const { requirePro, pro, status: proStatus } = useProStatus();
+  const { prefs, presets, macros } = stored;
 
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
     setLog((prev) => [...prev.slice(-499), { timestamp: Date.now(), direction, message }]);
@@ -173,6 +173,8 @@ function App() {
         const isActive = await invoke<boolean>("is_scanning");
         setScanning(isActive);
         const devs = await invoke<BleDevice[]>("get_devices");
+        const t = Date.now();
+        for (const d of devs) if (d.rssi !== RSSI_UNKNOWN) rssiStore.push(d.id, t, d.rssi);
         setDevices(devs);
       } catch {}
     }, 500);
@@ -188,6 +190,9 @@ function App() {
         (event) => {
           const payload = event.payload;
           if (payload.type === "characteristic_notify") {
+            const key = `${payload.device_id}|${payload.char_uuid}`;
+            notifyStore.push(key, Date.now(), payload.value);
+            setCharValues((prev) => ({ ...prev, [key]: payload.value }));
             addLog("rx", `Notify ${payload.char_uuid}: ${payload.value}`);
           }
         },
@@ -255,6 +260,7 @@ function App() {
         charUuid: char.uuid,
       });
       setSelectedChar({ ...char, value });
+      setCharValues((prev) => ({ ...prev, [`${selectedDevice.id}|${char.uuid}`]: value }));
       addLog("rx", `Read ${char.uuid}: ${value}`);
     } catch (e) {
       addLog("error", `Read failed: ${String(e)}`);
@@ -309,13 +315,77 @@ function App() {
     }
   }, [selectedDevice, subscribed, addLog, requirePro]);
 
-  // UUID shortener
-  const shortUuid = (uuid: string) => {
-    if (uuid.length === 36) {
-      return `0x${uuid.substring(4, 8).toUpperCase()}`;
+  /** Write hex to a characteristic of the connected device (used by presets and macros). Rethrows after logging. */
+  const writeHex = useCallback(async (charUuid: string, hex: string) => {
+    if (!selectedDevice) throw new Error("Not connected");
+    try {
+      await invoke("write_characteristic", { deviceId: selectedDevice.id, charUuid, value: hex });
+      addLog("tx", `Write to ${charUuid}: ${hex}`);
+    } catch (e) {
+      addLog("error", `Write failed: ${String(e)}`);
+      throw e;
     }
-    return uuid;
+  }, [selectedDevice, addLog]);
+
+  const writableChars = useMemo(
+    () =>
+      services.flatMap((s) =>
+        s.characteristics.filter((c) => c.properties.write || c.properties.write_without_response).map((c) => c.uuid),
+      ),
+    [services],
+  );
+
+  useEffect(() => saveStored(stored), [stored]);
+
+  const setFormat = useCallback((charUuid: string, pref: DecodePref) => {
+    setStored((s) => ({ ...s, prefs: { ...s.prefs, formats: { ...s.prefs.formats, [charUuid]: pref } } }));
+  }, []);
+
+  const setPrefFlag = (key: "gattNames" | "decode", on: boolean, feature: string) => {
+    if (!requirePro(feature)) return;
+    setStored((s) => ({ ...s, prefs: { ...s.prefs, [key]: on } as Prefs }));
   };
+
+  const savePreset = (p: WritePreset) => {
+    setStored((s) => ({
+      ...s,
+      presets: s.presets.some((x) => x.id === p.id) ? s.presets.map((x) => (x.id === p.id ? p : x)) : [...s.presets, p],
+    }));
+    setPresetDraft(null);
+  };
+
+  const deletePreset = (id: string) => {
+    setStored((s) => {
+      const next = s.presets.filter((p) => p.id !== id);
+      return { ...s, presets: next, macros: pruneMacros(s.macros, next) };
+    });
+  };
+
+  const openPresetDialog = (preset: WritePreset | null, prefill?: Partial<WritePreset>) => {
+    if (!requirePro("Saved write presets and macros")) return;
+    setPresetDraft(preset ?? { id: newId(), name: "", charUuid: "", mode: "hex", value: "", ...prefill });
+  };
+
+  const TAB_FEATURES: Record<Exclude<MainTab, "gatt">, string> = {
+    plots: "Plots of notify streams",
+    presets: "Saved write presets and macros",
+    rssi: "RSSI chart",
+  };
+
+  const changeTab = (tab: MainTab) => {
+    if (tab !== "gatt" && !requirePro(TAB_FEATURES[tab])) return;
+    setMainTab(tab);
+  };
+
+  const showNames = pro && prefs.gattNames;
+  const showDecoded = pro && prefs.decode;
+  const deviceName = useCallback(
+    (id: string) => {
+      const d = devices.find((x) => x.id === id);
+      return d?.name || d?.address || id.substring(0, 17);
+    },
+    [devices],
+  );
 
   const toggleService = (uuid: string) => {
     setExpandedServices((prev) => {
@@ -381,6 +451,127 @@ function App() {
       </div>
     );
 
+  /** One characteristic row: names, last value (decoded when enabled), read/notify/write controls. */
+  const renderChar = (ch: BleCharacteristic, compact: boolean) => {
+    const valueKey = selectedDevice ? `${selectedDevice.id}|${ch.uuid}` : "";
+    const val = charValues[valueKey] ?? ch.value;
+    const bytes = val ? hexToBytes(val) : null;
+    const known = defaultDecode(ch.uuid);
+    const pref: DecodePref = prefs.formats[ch.uuid] ?? { format: "auto", offset: known?.offset ?? 0, scale: known?.scale ?? 1 };
+    const writable = ch.properties.write || ch.properties.write_without_response;
+    const name = showNames ? gattName(ch.uuid) : null;
+    const notifiable = ch.properties.notify || ch.properties.indicate;
+    const active = selectedDevice ? subscribed.has(valueKey) : false;
+    return (
+      <div key={ch.uuid} className="ble-char">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {name && <div style={{ fontSize: "var(--fs-sm)", fontWeight: 500, color: "var(--text)" }}>{name}</div>}
+          <div
+            className="mono"
+            title={ch.uuid}
+            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
+            {ch.uuid}
+          </div>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", marginTop: 2 }}>
+            {[
+              ch.properties.read && "Read",
+              ch.properties.write && "Write",
+              ch.properties.write_without_response && "Write without response",
+              ch.properties.notify && "Notify",
+              ch.properties.indicate && "Indicate",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+          {val && (
+            <div
+              className="mono"
+              style={{ color: "var(--text-dim)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {val}
+            </div>
+          )}
+          {showDecoded && bytes && (
+            <div className="ble-decoded">
+              <select
+                className="vt-select vt-select--sm"
+                style={{ width: 112 }}
+                aria-label={`Decode format for ${ch.uuid}`}
+                value={pref.format}
+                onChange={(e) => {
+                  if (isFormatId(e.target.value)) setFormat(ch.uuid, { ...pref, format: e.target.value as FormatId });
+                }}
+              >
+                {FORMATS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+              <span className="mono" style={{ color: "var(--text)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {describeValue(bytes, { ...pref, fallback: known?.format })}
+              </span>
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          {ch.properties.read && (
+            <Button size="sm" onClick={() => handleReadChar(ch)}>
+              Read
+            </Button>
+          )}
+          {notifiable && (
+            <Button size="sm" onClick={() => handleSubscribe(ch)}>
+              {active ? "Stop notify" : "Notify"}
+              {!active && subscribed.size >= 1 && !proStatus?.pro && <ProBadge />}
+            </Button>
+          )}
+          {!compact && writable && (
+            <>
+              <input
+                className="vt-input vt-input--sm vt-input--mono"
+                style={{ width: 110 }}
+                placeholder="Hex value"
+                aria-label={`Value to write to ${ch.uuid}`}
+                value={selectedChar?.uuid === ch.uuid ? writeValue : ""}
+                onChange={(e) => {
+                  setSelectedChar(ch);
+                  setWriteValue(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleWriteChar();
+                }}
+              />
+              <Button
+                size="sm"
+                onClick={() => {
+                  setSelectedChar(ch);
+                  setTimeout(() => handleWriteChar(), 0);
+                }}
+              >
+                Write
+              </Button>
+              <IconButton
+                size="sm"
+                label="Save as write preset (Pro)"
+                onClick={() =>
+                  openPresetDialog(null, {
+                    charUuid: ch.uuid,
+                    value: selectedChar?.uuid === ch.uuid ? writeValue : "",
+                    name: name ? `${name} write` : "",
+                  })
+                }
+              >
+                <BookmarkPlus size={14} strokeWidth={1.75} />
+              </IconButton>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   /** Shared GATT services/characteristics tree (desktop and mobile device view). */
   const renderServices = (compact: boolean) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -400,7 +591,9 @@ function App() {
               ) : (
                 <ChevronRight size={14} strokeWidth={1.75} aria-hidden="true" />
               )}
-              <span style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)" }}>Service</span>
+              <span style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)" }}>
+                {(showNames && gattName(svc.uuid)) || "Service"}
+              </span>
               <span className="mono" style={{ color: "var(--text-dim)" }}>{shortUuid(svc.uuid)}</span>
               <span style={{ marginLeft: "auto", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
                 {svc.is_primary ? "Primary" : "Secondary"}
@@ -408,81 +601,7 @@ function App() {
             </button>
             {open && (
               <div>
-                {svc.characteristics.map((ch) => (
-                  <div key={ch.uuid} className="ble-char">
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        className="mono"
-                        title={ch.uuid}
-                        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                      >
-                        {ch.uuid}
-                      </div>
-                      <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", marginTop: 2 }}>
-                        {[
-                          ch.properties.read && "Read",
-                          ch.properties.write && "Write",
-                          ch.properties.write_without_response && "Write without response",
-                          ch.properties.notify && "Notify",
-                          ch.properties.indicate && "Indicate",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </div>
-                      {ch.value && (
-                        <div
-                          className="mono"
-                          style={{ color: "var(--text-dim)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                        >
-                          {ch.value}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                      {ch.properties.read && (
-                        <Button size="sm" onClick={() => handleReadChar(ch)}>
-                          Read
-                        </Button>
-                      )}
-                      {ch.properties.notify && (() => {
-                        const active = selectedDevice ? subscribed.has(`${selectedDevice.id}|${ch.uuid}`) : false;
-                        return (
-                          <Button size="sm" onClick={() => handleSubscribe(ch)}>
-                            {active ? "Stop notify" : "Notify"}
-                            {!active && subscribed.size >= 1 && !proStatus?.pro && <ProBadge />}
-                          </Button>
-                        );
-                      })()}
-                      {!compact && ch.properties.write && (
-                        <>
-                          <input
-                            className="vt-input vt-input--sm vt-input--mono"
-                            style={{ width: 110 }}
-                            placeholder="Hex value"
-                            aria-label={`Value to write to ${ch.uuid}`}
-                            value={selectedChar?.uuid === ch.uuid ? writeValue : ""}
-                            onChange={(e) => {
-                              setSelectedChar(ch);
-                              setWriteValue(e.target.value);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleWriteChar();
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              setSelectedChar(ch);
-                              setTimeout(() => handleWriteChar(), 0);
-                            }}
-                          >
-                            Write
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                {svc.characteristics.map((ch) => renderChar(ch, compact))}
                 {svc.characteristics.length === 0 && (
                   <div style={{ padding: "0 10px 10px 32px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
                     No characteristics
@@ -526,6 +645,98 @@ function App() {
 
   const isConnected = selectedDevice?.connected ?? false;
 
+  const mainTabs = (
+    <Tabs
+      value={mainTab}
+      onChange={changeTab}
+      label="Inspector views"
+      items={[
+        { value: "gatt", label: "GATT" },
+        { value: "plots", label: <>Plots <ProBadge /></> },
+        { value: "presets", label: <>Presets <ProBadge /></> },
+        { value: "rssi", label: <>RSSI <ProBadge /></> },
+      ]}
+    />
+  );
+
+  const gattBody = (compact: boolean) =>
+    selectedDevice ? (
+      <div style={{ display: "flex", flexDirection: "column", gap: compact ? 12 : 16 }}>
+        {deviceHeader}
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <label className="vt-check">
+            <input
+              type="checkbox"
+              checked={showNames}
+              onChange={(e) => setPrefFlag("gattNames", e.target.checked, "GATT names")}
+            />
+            GATT names <ProBadge />
+          </label>
+          <label className="vt-check">
+            <input
+              type="checkbox"
+              checked={showDecoded}
+              onChange={(e) => setPrefFlag("decode", e.target.checked, "Value decoding")}
+            />
+            Decode values <ProBadge />
+          </label>
+        </div>
+        {services.length === 0 ? (
+          <EmptyState
+            compact
+            title="No services discovered"
+            description="Discovery may still be running, or the device exposes no GATT services."
+          />
+        ) : (
+          renderServices(compact)
+        )}
+      </div>
+    ) : compact ? (
+      <EmptyState compact title="No device selected" description="Connect to a device to inspect its GATT services." />
+    ) : (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320 }}>
+        <EmptyState
+          icon={<BluetoothSearching size={20} strokeWidth={1.75} aria-hidden="true" />}
+          title="No device selected"
+          description="Start a scan and click a device to connect and inspect its GATT services."
+        />
+      </div>
+    );
+
+  const renderMain = (compact: boolean) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {mainTabs}
+      {mainTab === "gatt" && gattBody(compact)}
+      {mainTab === "plots" && (
+        <PlotsPanel
+          subscribed={subscribed}
+          deviceName={deviceName}
+          formats={prefs.formats}
+          onFormat={setFormat}
+          onInfo={(m) => addLog("info", m)}
+          onError={(m) => addLog("error", m)}
+        />
+      )}
+      {mainTab === "presets" && (
+        <PresetsPanel
+          presets={presets}
+          macros={macros}
+          onMacrosChange={(next: Macro[]) => setStored((s) => ({ ...s, macros: next }))}
+          onEditPreset={(p) => openPresetDialog(p)}
+          onDeletePreset={deletePreset}
+          writableChars={writableChars}
+          connected={isConnected}
+          onWrite={writeHex}
+          onInfo={(m) => addLog("info", m)}
+          onError={(m) => addLog("error", m)}
+        />
+      )}
+      {mainTab === "rssi" && (
+        <RssiPanel devices={devices} onInfo={(m) => addLog("info", m)} onError={(m) => addLog("error", m)} />
+      )}
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       <Toolbar
@@ -546,27 +757,7 @@ function App() {
                 </Section>
               </div>
             )}
-            {mobileTab === "device" &&
-              (selectedDevice ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {deviceHeader}
-                  {services.length === 0 ? (
-                    <EmptyState
-                      compact
-                      title="No services discovered"
-                      description="Discovery may still be running, or the device exposes no GATT services."
-                    />
-                  ) : (
-                    renderServices(true)
-                  )}
-                </div>
-              ) : (
-                <EmptyState
-                  compact
-                  title="No device selected"
-                  description="Connect to a device to inspect its GATT services."
-                />
-              ))}
+            {mobileTab === "device" && renderMain(true)}
             {mobileTab === "log" && (
               <LogPanel entries={log} beforeExport={() => requirePro("Log export")} beforeCopyAll={() => requirePro("Copy the whole log")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
             )}
@@ -611,31 +802,8 @@ function App() {
           </aside>
 
           <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-            <div style={{ flex: 1, overflowY: "auto", padding: 16, minHeight: 0 }}>
-              {selectedDevice ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  {deviceHeader}
-                  {services.length === 0 ? (
-                    <EmptyState
-                      compact
-                      title="No services discovered"
-                      description="Discovery may still be running, or the device exposes no GATT services."
-                    />
-                  ) : (
-                    renderServices(false)
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100%" }}>
-                  <EmptyState
-                    icon={<BluetoothSearching size={20} strokeWidth={1.75} aria-hidden="true" />}
-                    title="No device selected"
-                    description="Start a scan and click a device to connect and inspect its GATT services."
-                  />
-                </div>
-              )}
-            </div>
-            <LogPanel entries={log} beforeExport={() => requirePro("Log export")} beforeCopyAll={() => requirePro("Copy the whole log")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
+            <div style={{ flex: 1, overflowY: "auto", padding: 16, minHeight: 0 }}>{renderMain(false)}</div>
+            <LogPanel entries={log} maxHeight={mainTab === "gatt" ? undefined : "170px"} beforeExport={() => requirePro("Log export")} beforeCopyAll={() => requirePro("Copy the whole log")} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
           </main>
         </div>
       )}
@@ -645,6 +813,7 @@ function App() {
           <span className="vt-statusbar__item">{scanning ? "Scanning" : deviceCountLabel}</span>
         </StatusBar>
       )}
+      <PresetDialog draft={presetDraft} chars={writableChars} onSave={savePreset} onClose={() => setPresetDraft(null)} />
       <Dialog open={showInfo} onClose={() => setShowInfo(false)} title="BLE Inspector" footer={
         <>
           {/* No outbound source link in App Store builds: review treats links to builds that unlock paid
@@ -665,6 +834,7 @@ function App() {
             ["Scan", "Discover nearby BLE devices with signal strength (RSSI)."],
             ["Connect", "Connect to devices and browse their GATT services and characteristics."],
             ["Inspect", "Read and write characteristic values and subscribe to one notification at a time. Pro adds several notifications at once, several connected devices, and log export and copy all."],
+            ["Analyze (Pro)", "Plot numeric notification streams, decode values as integers, floats or text, show standard GATT names, chart signal strength (RSSI) over time, and save write presets and macros."],
           ].map(([heading, text]) => (
             <div key={heading} style={{ marginBottom: 10 }}>
               <div style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)" }}>{heading}</div>

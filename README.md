@@ -8,7 +8,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds several notifications and devices at once and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds notify plots, value decoding, RSSI chart, write presets and macros, several notifications and devices at once, and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, line view with live traffic table, frame simulation. Pro adds log export, send macros, repeat-send and saved profiles | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
@@ -87,7 +87,7 @@ Free to download on the App Store; Pro is a one-time in-app purchase. Version 1.
 | | |
 | --- | --- |
 | Free | Scan for nearby devices, connect to one device, browse services and characteristics, read values, write values, one notification subscription at a time, communication log with single-line copy |
-| Pro | Several notification subscriptions at once, several connected devices at once, communication log CSV export and copy all |
+| Pro | Plots of notify streams (uint8, int8, int16, uint32, float32 and more, little or big endian, with byte offset and scale) with CSV export, value decoding in the GATT tree (numbers, UTF-8 and ASCII text, hex), standard GATT service and characteristic names, RSSI chart with CSV export, saved write presets and macros (several writes in order with delays and repeat), several notification subscriptions at once, several connected devices at once, communication log CSV export and copy all |
 
 ### MQTT Explorer
 

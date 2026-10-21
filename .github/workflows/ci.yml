@@ -57,6 +57,7 @@ jobs:
           bun run --cwd apps/serial-monitor test
           bun run --cwd apps/s7-explorer test
           bun run --cwd apps/opcua-explorer test
+          bun run --cwd apps/ble-inspector test
 
   macos:
     runs-on: macos-15

@@ -81,3 +81,55 @@
   flex: 1;
   justify-content: center;
 }
+
+/* Notify stream row under the plot. */
+.ble-stream {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+/* Preset / macro list rows. */
+.ble-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.ble-row + .ble-row {
+  border-top: 1px solid var(--border);
+}
+
+.ble-rssi-row {
+  display: flex;
+  width: 100%;
+  padding: 6px 10px;
+}
+
+.ble-rssi-row:hover {
+  background: var(--hover-overlay);
+}
+
+.ble-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ble-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Decoded value under a characteristic. */
+.ble-decoded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+}
