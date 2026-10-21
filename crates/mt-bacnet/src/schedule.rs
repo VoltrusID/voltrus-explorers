@@ -2,14 +2,18 @@
 //!
 //! Reads, with plain ReadProperty requests:
 //! - WeeklySchedule (property 123) — 7 × BACnetDailySchedule, Monday..Sunday
+//! - ExceptionSchedule (property 38) — BACnetSpecialEvent list
 //! - ScheduleDefault (property 174) — fallback value
 //! - EffectivePeriod (property 32) — BACnetDateRange
 //! - ListOfObjectPropertyReferences (property 54)
 //!
-//! WeeklySchedule is mandatory: any failure reading it fails the whole call.
-//! The other properties are optional: only an Error PDU with error code
+//! The standard requires at least one of WeeklySchedule / ExceptionSchedule;
+//! the call fails when the object has neither. Every property is treated as
+//! optional in the sense that only an Error PDU with error code
 //! `unknown-property` means "the object does not have it"; every other failure
-//! (timeout, abort, reject, other errors, malformed data) is propagated.
+//! (timeout, abort, reject, other errors, malformed data) is propagated. The
+//! two array properties fall back to element-by-element reads when the device
+//! Aborts because the whole array does not fit one APDU.
 
 use std::net::SocketAddr;
 
@@ -23,6 +27,7 @@ use crate::transport;
 const SCHEDULE_OBJECT_TYPE: u32 = 17;
 
 const PROP_EFFECTIVE_PERIOD: u32 = 32;
+const PROP_EXCEPTION_SCHEDULE: u32 = 38;
 const PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES: u32 = 54;
 const PROP_WEEKLY_SCHEDULE: u32 = 123;
 const PROP_SCHEDULE_DEFAULT: u32 = 174;
@@ -49,13 +54,29 @@ pub struct DaySchedule {
     pub entries: Vec<ScheduleEntry>,
 }
 
+/// One BACnetSpecialEvent of the ExceptionSchedule (clause 12.24.8).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpecialEvent {
+    /// When the event applies: a date, "a to b" date range, week-n-day pattern
+    /// or a reference to a Calendar object ("calendar object_6:2").
+    pub period: String,
+    /// Event priority (1 = highest, 16 = lowest); events override the weekly
+    /// schedule and each other by priority.
+    pub priority: u32,
+    /// Ordered list of time-value entries of the event.
+    pub entries: Vec<ScheduleEntry>,
+}
+
 /// Complete schedule data for a BACnet Schedule object.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScheduleData {
     /// Object instance number of the Schedule object.
     pub object_instance: u32,
-    /// Weekly schedule (7 days, Monday..Sunday).
+    /// Weekly schedule (7 days, Monday..Sunday); empty when the object has
+    /// only an ExceptionSchedule.
     pub weekly_schedule: Vec<DaySchedule>,
+    /// Exception schedule events; empty when the object does not have one.
+    pub exception_schedule: Vec<SpecialEvent>,
     /// Default value when no schedule entry is active.
     pub schedule_default: Option<String>,
     /// Start date of the effective period (YYYY-MM-DD); `None` when the device
@@ -82,19 +103,30 @@ const DAY_NAMES: [&str; 7] = [
 // Request encoding
 // ---------------------------------------------------------------------------
 
+/// Context-tagged Unsigned, minimal length (clause 20.2.4).
+fn push_context_unsigned(buf: &mut Vec<u8>, tag_number: u8, value: u32) {
+    let bytes = value.to_be_bytes();
+    let skip = bytes.iter().take(3).take_while(|b| **b == 0).count();
+    let value = &bytes[skip..];
+    buf.push((tag_number << 4) | 0x08 | value.len() as u8);
+    buf.extend_from_slice(value);
+}
+
 /// ReadProperty-Request service data (clause 15.5.1.1):
-/// `[0] objectIdentifier, [1] propertyIdentifier`.
-fn encode_read_property(object_instance: u32, property_id: u32) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(11);
+/// `[0] objectIdentifier, [1] propertyIdentifier, [2] propertyArrayIndex OPTIONAL`.
+fn encode_read_property(
+    object_instance: u32,
+    property_id: u32,
+    array_index: Option<u32>,
+) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(13);
     // Context tag 0, length 4: object id = type << 22 | instance.
     buf.push(0x0C);
     buf.extend_from_slice(&((SCHEDULE_OBJECT_TYPE << 22) | (object_instance & 0x3F_FFFF)).to_be_bytes());
-    // Context tag 1, minimal-length unsigned property id.
-    let bytes = property_id.to_be_bytes();
-    let skip = bytes.iter().take(3).take_while(|b| **b == 0).count();
-    let value = &bytes[skip..];
-    buf.push(0x18 | value.len() as u8);
-    buf.extend_from_slice(value);
+    push_context_unsigned(&mut buf, 1, property_id);
+    if let Some(index) = array_index {
+        push_context_unsigned(&mut buf, 2, index);
+    }
     buf
 }
 
@@ -387,9 +419,35 @@ fn strip_read_property_ack(data: &[u8], expected_property: u32) -> Result<&[u8],
     }
 }
 
+/// BACnetTimeValue list up to the closing tag `[closing]`, starting at `pos`
+/// (just after the matching opening tag). Returns the entries and the
+/// position after the closing tag.
+///
+/// BACnetTimeValue ::= SEQUENCE { time Time, value ABSTRACT-SYNTAX.&Type }
+/// Wire form: `{B4 hh mm ss hs <app-value>}*`.
+fn parse_time_values(
+    data: &[u8],
+    mut pos: usize,
+    closing: u32,
+) -> Result<(Vec<ScheduleEntry>, usize), ProtocolError> {
+    let mut entries = Vec::new();
+    loop {
+        let tag = read_tag(data, pos)?;
+        if tag.context && tag.kind == TagKind::Closing && tag.number == closing {
+            return Ok((entries, tag.end(pos)));
+        }
+        if tag.context || tag.kind != TagKind::Primitive || tag.number != 11 {
+            return Err(malformed(&format!("expected Time in time-value list at offset {pos}")));
+        }
+        let time = format_time(tag.content(data, pos))?;
+        let (value, next) = parse_application_value(data, tag.end(pos))?;
+        entries.push(ScheduleEntry { time, value });
+        pos = next;
+    }
+}
+
 /// WeeklySchedule ::= SEQUENCE SIZE(7) OF BACnetDailySchedule
 /// BACnetDailySchedule ::= SEQUENCE { [0] day-schedule SEQUENCE OF BACnetTimeValue }
-/// BACnetTimeValue ::= SEQUENCE { time Time, value ABSTRACT-SYNTAX.&Type }
 ///
 /// Wire form of each day: `0E {B4 hh mm ss hs <app-value>}* 0F`.
 fn parse_weekly_schedule(data: &[u8]) -> Result<Vec<DaySchedule>, ProtocolError> {
@@ -397,21 +455,8 @@ fn parse_weekly_schedule(data: &[u8]) -> Result<Vec<DaySchedule>, ProtocolError>
     let mut pos = 0;
     while pos < data.len() {
         pos = expect_bracket(data, pos, 0, TagKind::Opening)?;
-        let mut entries = Vec::new();
-        loop {
-            let tag = read_tag(data, pos)?;
-            if tag.context && tag.kind == TagKind::Closing && tag.number == 0 {
-                pos = tag.end(pos);
-                break;
-            }
-            if tag.context || tag.kind != TagKind::Primitive || tag.number != 11 {
-                return Err(malformed(&format!("expected Time in day schedule at offset {pos}")));
-            }
-            let time = format_time(tag.content(data, pos))?;
-            let (value, next) = parse_application_value(data, tag.end(pos))?;
-            entries.push(ScheduleEntry { time, value });
-            pos = next;
-        }
+        let (entries, next) = parse_time_values(data, pos, 0)?;
+        pos = next;
         let day_name = DAY_NAMES
             .get(days.len())
             .ok_or_else(|| malformed("WeeklySchedule has more than 7 days"))?;
@@ -421,6 +466,102 @@ fn parse_weekly_schedule(data: &[u8]) -> Result<Vec<DaySchedule>, ProtocolError>
         return Err(malformed(&format!("WeeklySchedule has {} days, expected 7", days.len())));
     }
     Ok(days)
+}
+
+/// BACnetDateRange / Date elements of a calendar entry rendered as text; a
+/// fully unspecified date is "any".
+fn date_or_any(content: &[u8]) -> Result<String, ProtocolError> {
+    Ok(format_date(content)?.unwrap_or_else(|| "any".to_string()))
+}
+
+/// BACnetWeekNDay ::= OCTET STRING (SIZE(3)): month (1-12, 13 odd, 14 even,
+/// 0xFF any), weekOfMonth (1-5 = days 1-7 .. 29-31, 6 = last 7 days, 0xFF any),
+/// dayOfWeek (1 = Monday .. 7 = Sunday, 0xFF any).
+fn format_week_n_day(content: &[u8]) -> Result<String, ProtocolError> {
+    let [month, week, day] = content else {
+        return Err(malformed("WeekNDay must be 3 octets"));
+    };
+    let month = match *month {
+        0xFF => "any month".to_string(),
+        13 => "odd months".to_string(),
+        14 => "even months".to_string(),
+        n => format!("month {n:02}"),
+    };
+    let week = match *week {
+        0xFF => "any week".to_string(),
+        6 => "last 7 days".to_string(),
+        n => format!("week {n}"),
+    };
+    let day = match *day {
+        0xFF => "any day".to_string(),
+        n @ 1..=7 => DAY_NAMES[n as usize - 1].to_string(),
+        n => format!("day {n}"),
+    };
+    Ok(format!("{month}, {week}, {day}"))
+}
+
+/// BACnetCalendarEntry ::= CHOICE {
+///     date      [0] Date,
+///     dateRange [1] BACnetDateRange,
+///     weekNDay  [2] BACnetWeekNDay }
+///
+/// Returns the entry as text and the position after it.
+fn parse_calendar_entry(data: &[u8], pos: usize) -> Result<(String, usize), ProtocolError> {
+    let tag = read_tag(data, pos)?;
+    if !tag.context {
+        return Err(malformed(&format!("expected BACnetCalendarEntry at offset {pos}")));
+    }
+    match (tag.kind, tag.number) {
+        (TagKind::Primitive, 0) => Ok((date_or_any(tag.content(data, pos))?, tag.end(pos))),
+        (TagKind::Opening, 1) => {
+            let mut p = tag.end(pos);
+            let mut dates = Vec::with_capacity(2);
+            for _ in 0..2 {
+                let date = read_tag(data, p)?;
+                if date.context || date.kind != TagKind::Primitive || date.number != 10 {
+                    return Err(malformed(&format!("expected application Date at offset {p}")));
+                }
+                dates.push(date_or_any(date.content(data, p))?);
+                p = date.end(p);
+            }
+            let p = expect_bracket(data, p, 1, TagKind::Closing)?;
+            Ok((format!("{} to {}", dates[0], dates[1]), p))
+        }
+        (TagKind::Primitive, 2) => Ok((format_week_n_day(tag.content(data, pos))?, tag.end(pos))),
+        _ => Err(malformed(&format!("unknown BACnetCalendarEntry choice at offset {pos}"))),
+    }
+}
+
+/// ExceptionSchedule ::= SEQUENCE OF BACnetSpecialEvent
+/// BACnetSpecialEvent ::= SEQUENCE {
+///     period CHOICE {
+///         calendarEntry     [0] BACnetCalendarEntry,
+///         calendarReference [1] BACnetObjectIdentifier },
+///     listOfTimeValues [2] SEQUENCE OF BACnetTimeValue,
+///     eventPriority    [3] Unsigned (1..16) }
+fn parse_exception_schedule(data: &[u8]) -> Result<Vec<SpecialEvent>, ProtocolError> {
+    let mut events = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        let tag = read_tag(data, pos)?;
+        let (period, next) = if tag.context && tag.kind == TagKind::Opening && tag.number == 0 {
+            let (entry, next) = parse_calendar_entry(data, tag.end(pos))?;
+            (entry, expect_bracket(data, next, 0, TagKind::Closing)?)
+        } else if tag.context && tag.kind == TagKind::Primitive && tag.number == 1 {
+            let (obj_type, instance) = split_object_id(tag.content(data, pos))?;
+            (format!("calendar object_{obj_type}:{instance}"), tag.end(pos))
+        } else {
+            return Err(malformed(&format!("expected BACnetSpecialEvent period at offset {pos}")));
+        };
+        let list_start = expect_bracket(data, next, 2, TagKind::Opening)?;
+        let (entries, next) = parse_time_values(data, list_start, 2)?;
+        let (priority, next) = read_context_primitive(data, next, 3)?;
+        let priority = u32::try_from(be_unsigned(priority)?)
+            .map_err(|_| malformed("eventPriority out of range"))?;
+        pos = next;
+        events.push(SpecialEvent { period, priority, entries });
+    }
+    Ok(events)
 }
 
 /// ScheduleDefault is a single application-tagged primitive value.
@@ -496,6 +637,12 @@ fn is_unknown_property(err: &ProtocolError) -> bool {
     err.to_string().contains("unknown-property")
 }
 
+/// A device without segmentation answers a ReadProperty whose value exceeds
+/// one APDU with an Abort PDU (clause 18.9).
+fn is_abort(err: &ProtocolError) -> bool {
+    err.to_string().contains("BACnet Abort from device")
+}
+
 /// Read and parse an optional property: `Ok(None)` only for `unknown-property`.
 fn read_optional<R, T>(
     read_property: &mut R,
@@ -503,27 +650,104 @@ fn read_optional<R, T>(
     parse: impl FnOnce(&[u8]) -> Result<T, ProtocolError>,
 ) -> Result<Option<T>, ProtocolError>
 where
-    R: FnMut(u32) -> Result<Vec<u8>, ProtocolError>,
+    R: FnMut(u32, Option<u32>) -> Result<Vec<u8>, ProtocolError>,
 {
-    match read_property(property_id) {
+    match read_property(property_id, None) {
         Ok(ack) => parse(strip_read_property_ack(&ack, property_id)?).map(Some),
         Err(e) if is_unknown_property(&e) => Ok(None),
         Err(e) => Err(e),
     }
 }
 
-/// Assemble [`ScheduleData`] using `read_property(property_id)` to obtain the
-/// ReadProperty-ACK service data of each property.
+/// How many elements an array property has when it has to be read element by element.
+enum ArraySize {
+    /// Fixed by the standard (WeeklySchedule has exactly 7).
+    Fixed(u32),
+    /// Read from array index 0 (clause 15.5.1.1: element 0 is the array size).
+    FromIndexZero,
+}
+
+/// Upper bound on elements fetched one by one, so a bogus array size cannot
+/// trigger an unbounded request storm.
+const MAX_ARRAY_ELEMENTS: u32 = 1024;
+
+/// Read an optional array property and return the concatenated BACnetARRAY
+/// elements (the bytes inside the `[3]` brackets). `Ok(None)` only for
+/// `unknown-property`.
+///
+/// The whole array is requested first. If the device Aborts because the
+/// array does not fit one APDU and it cannot segment, the elements are read
+/// one by one with propertyArrayIndex (clause 15.5.1.1).
+fn read_array_property<R>(
+    read_property: &mut R,
+    property_id: u32,
+    size: ArraySize,
+) -> Result<Option<Vec<u8>>, ProtocolError>
+where
+    R: FnMut(u32, Option<u32>) -> Result<Vec<u8>, ProtocolError>,
+{
+    match read_property(property_id, None) {
+        Ok(ack) => Ok(Some(strip_read_property_ack(&ack, property_id)?.to_vec())),
+        Err(e) if is_unknown_property(&e) => Ok(None),
+        Err(e) if is_abort(&e) => {
+            let count = match size {
+                ArraySize::Fixed(n) => n,
+                ArraySize::FromIndexZero => {
+                    let ack = read_property(property_id, Some(0))?;
+                    let value = strip_read_property_ack(&ack, property_id)?;
+                    let tag = read_tag(value, 0)?;
+                    if tag.context || tag.kind != TagKind::Primitive || tag.number != 2 {
+                        return Err(malformed("array size (index 0) must be an application Unsigned"));
+                    }
+                    u32::try_from(be_unsigned(tag.content(value, 0))?)
+                        .map_err(|_| malformed("array size out of range"))?
+                }
+            };
+            if count > MAX_ARRAY_ELEMENTS {
+                return Err(malformed(&format!("array of {count} elements is too large")));
+            }
+            let mut elements = Vec::new();
+            for index in 1..=count {
+                let ack = read_property(property_id, Some(index))?;
+                elements.extend_from_slice(strip_read_property_ack(&ack, property_id)?);
+            }
+            Ok(Some(elements))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Assemble [`ScheduleData`] using `read_property(property_id, array_index)` to
+/// obtain the ReadProperty-ACK service data of each property.
+///
+/// WeeklySchedule and ExceptionSchedule are both optional, but the standard
+/// requires at least one of them (clause 12.24).
 fn read_schedule_with<R>(
     object_instance: u32,
     mut read_property: R,
 ) -> Result<ScheduleData, ProtocolError>
 where
-    R: FnMut(u32) -> Result<Vec<u8>, ProtocolError>,
+    R: FnMut(u32, Option<u32>) -> Result<Vec<u8>, ProtocolError>,
 {
-    let weekly_ack = read_property(PROP_WEEKLY_SCHEDULE)?;
-    let weekly_schedule =
-        parse_weekly_schedule(strip_read_property_ack(&weekly_ack, PROP_WEEKLY_SCHEDULE)?)?;
+    let weekly_schedule = read_array_property(
+        &mut read_property,
+        PROP_WEEKLY_SCHEDULE,
+        ArraySize::Fixed(7),
+    )?
+    .map(|elements| parse_weekly_schedule(&elements))
+    .transpose()?;
+    let exception_schedule = read_array_property(
+        &mut read_property,
+        PROP_EXCEPTION_SCHEDULE,
+        ArraySize::FromIndexZero,
+    )?
+    .map(|elements| parse_exception_schedule(&elements))
+    .transpose()?;
+    if weekly_schedule.is_none() && exception_schedule.is_none() {
+        return Err(ProtocolError::Other(format!(
+            "Schedule object {object_instance} has neither WeeklySchedule nor ExceptionSchedule"
+        )));
+    }
 
     let schedule_default =
         read_optional(&mut read_property, PROP_SCHEDULE_DEFAULT, parse_schedule_default)?;
@@ -539,7 +763,8 @@ where
 
     Ok(ScheduleData {
         object_instance,
-        weekly_schedule,
+        weekly_schedule: weekly_schedule.unwrap_or_default(),
+        exception_schedule: exception_schedule.unwrap_or_default(),
         schedule_default,
         effective_period_start,
         effective_period_end,
@@ -549,19 +774,19 @@ where
 
 /// Read all schedule properties from a BACnet Schedule object.
 ///
-/// Failure to read WeeklySchedule, or any failure other than
-/// `unknown-property` on an optional property, is returned as an error.
+/// Fails when the object has neither WeeklySchedule nor ExceptionSchedule, or
+/// on any failure other than `unknown-property` on an optional property.
 pub fn read_schedule_blocking(
     socket: &std::net::UdpSocket,
     target_addr: SocketAddr,
     object_instance: u32,
 ) -> Result<ScheduleData, ProtocolError> {
-    read_schedule_with(object_instance, |property_id| {
+    read_schedule_with(object_instance, |property_id, array_index| {
         transport::confirmed_request(
             socket,
             target_addr,
             ConfirmedServiceChoice::ReadProperty,
-            encode_read_property(object_instance, property_id),
+            encode_read_property(object_instance, property_id, array_index),
             transport::REQUEST_TIMEOUT,
         )
     })
@@ -587,30 +812,82 @@ mod tests {
         v
     }
 
+    /// The 7 BACnetDailySchedule elements of the test WeeklySchedule, Monday first.
+    fn weekly_days() -> Vec<Vec<u8>> {
+        vec![
+            // Monday: 08:00 -> true, 18:00 -> false
+            vec![
+                0x0E, // [0] opening (day-schedule)
+                0xB4, 0x08, 0x00, 0x00, 0x00, // Time 08:00:00.00
+                0x11, // application Boolean, value true (in length bits)
+                0xB4, 0x12, 0x00, 0x00, 0x00, // Time 18:00:00.00
+                0x10, // application Boolean, value false
+                0x0F, // [0] closing
+            ],
+            // Tuesday: 06:30 -> Real 21.5
+            vec![
+                0x0E, 0xB4, 0x06, 0x1E, 0x00, 0x00, // Time 06:30:00.00
+                0x44, 0x41, 0xAC, 0x00, 0x00, // Real 0x41AC0000 = 21.5
+                0x0F,
+            ],
+            // Wednesday .. Saturday: empty
+            vec![0x0E, 0x0F],
+            vec![0x0E, 0x0F],
+            vec![0x0E, 0x0F],
+            vec![0x0E, 0x0F],
+            // Sunday: 00:00 -> Unsigned 3
+            vec![0x0E, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x21, 0x03, 0x0F],
+        ]
+    }
+
     fn weekly_value() -> Vec<u8> {
-        let mut v = Vec::new();
-        // Monday: 08:00 -> true, 18:00 -> false
-        v.extend_from_slice(&[
-            0x0E, // [0] opening (day-schedule)
-            0xB4, 0x08, 0x00, 0x00, 0x00, // Time 08:00:00.00
-            0x11, // application Boolean, value true (in length bits)
-            0xB4, 0x12, 0x00, 0x00, 0x00, // Time 18:00:00.00
-            0x10, // application Boolean, value false
-            0x0F, // [0] closing
-        ]);
-        // Tuesday: 06:30 -> Real 21.5
-        v.extend_from_slice(&[
-            0x0E, 0xB4, 0x06, 0x1E, 0x00, 0x00, // Time 06:30:00.00
-            0x44, 0x41, 0xAC, 0x00, 0x00, // Real 0x41AC0000 = 21.5
-            0x0F,
-        ]);
-        // Wednesday .. Saturday: empty
-        for _ in 0..4 {
-            v.extend_from_slice(&[0x0E, 0x0F]);
-        }
-        // Sunday: 00:00 -> Unsigned 3
-        v.extend_from_slice(&[0x0E, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x21, 0x03, 0x0F]);
+        weekly_days().concat()
+    }
+
+    /// ReadProperty-ACK for one array element: `[2] arrayIndex` between property and value.
+    fn indexed_ack(property: u8, index: u8, value: &[u8]) -> Vec<u8> {
+        let mut v = vec![
+            0x0C, 0x04, 0x40, 0x00, 0x01, // [0] object id: Schedule #1
+            0x19, property, //               [1] property identifier
+            0x29, index, //                  [2] propertyArrayIndex
+            0x3E, //                         [3] opening
+        ];
+        v.extend_from_slice(value);
+        v.push(0x3F); //                     [3] closing
         v
+    }
+
+    /// ExceptionSchedule elements (BACnetSpecialEvent), assembled by hand from the
+    /// ASHRAE 135-2016 clause 21 productions BACnetSpecialEvent / BACnetCalendarEntry /
+    /// BACnetWeekNDay (period [0] calendarEntry | [1] calendarReference,
+    /// listOfTimeValues [2], eventPriority [3]).
+    fn exception_events() -> Vec<Vec<u8>> {
+        vec![
+            // calendarEntry [0] { date [0] 2024-12-25 (Wednesday) }, 08:00 -> Real 20.0, priority 1
+            vec![
+                0x0E, 0x0C, 0x7C, 0x0C, 0x19, 0x03, 0x0F, //
+                0x2E, 0xB4, 0x08, 0x00, 0x00, 0x00, 0x44, 0x41, 0xA0, 0x00, 0x00, 0x2F, //
+                0x39, 0x01,
+            ],
+            // calendarReference [1] Calendar (type 6) #2 = 0x01800002, 00:00 -> Null, priority 16
+            vec![
+                0x1C, 0x01, 0x80, 0x00, 0x02, //
+                0x2E, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2F, //
+                0x39, 0x10,
+            ],
+            // calendarEntry [0] { dateRange [1] { 2024-06-01, 2024-08-31 } }, no values, priority 5
+            vec![
+                0x0E, 0x1E, 0xA4, 0x7C, 0x06, 0x01, 0x06, 0xA4, 0x7C, 0x08, 0x1F, 0x06, 0x1F, 0x0F, //
+                0x2E, 0x2F, //
+                0x39, 0x05,
+            ],
+            // calendarEntry [0] { weekNDay [2] month 3, week 2, Monday }, no values, priority 3
+            vec![0x0E, 0x2B, 0x03, 0x02, 0x01, 0x0F, 0x2E, 0x2F, 0x39, 0x03],
+        ]
+    }
+
+    fn exception_value() -> Vec<u8> {
+        exception_events().concat()
     }
 
     fn default_ack() -> Vec<u8> {
@@ -634,17 +911,38 @@ mod tests {
     #[test]
     fn read_property_request_uses_property_54_for_references() {
         assert_eq!(
-            encode_read_property(1, PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES),
+            encode_read_property(1, PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES, None),
             vec![
                 0x0C, 0x04, 0x40, 0x00, 0x01, // [0] Schedule #1
                 0x19, 0x36, // [1] property 54 (list-of-object-property-references)
             ]
         );
         assert_eq!(
-            encode_read_property(4_194_303, PROP_WEEKLY_SCHEDULE),
+            encode_read_property(4_194_303, PROP_WEEKLY_SCHEDULE, None),
             vec![
                 0x0C, 0x04, 0x7F, 0xFF, 0xFF, // [0] Schedule #4194303 (0x04400000 | 0x3FFFFF)
                 0x19, 0x7B, // [1] property 123
+            ]
+        );
+    }
+
+    #[test]
+    fn read_property_request_with_array_index() {
+        // ReadProperty-Request clause 15.5.1.1: [2] propertyArrayIndex follows the property.
+        assert_eq!(
+            encode_read_property(1, PROP_EXCEPTION_SCHEDULE, Some(0)),
+            vec![
+                0x0C, 0x04, 0x40, 0x00, 0x01, // [0] Schedule #1
+                0x19, 0x26, //                   [1] property 38 (exception-schedule)
+                0x29, 0x00, //                   [2] array index 0 (array size)
+            ]
+        );
+        assert_eq!(
+            encode_read_property(1, PROP_SCHEDULE_DEFAULT, Some(300)),
+            vec![
+                0x0C, 0x04, 0x40, 0x00, 0x01, // [0] Schedule #1
+                0x19, 0xAE, //                   [1] property 174 (schedule-default)
+                0x2A, 0x01, 0x2C, //             [2] array index 300, two octets
             ]
         );
     }
@@ -732,15 +1030,20 @@ mod tests {
     #[test]
     fn read_schedule_assembles_all_properties() {
         let refs = ack(54, &[0x0C, 0x00, 0x00, 0x00, 0x05, 0x19, 0x55]);
-        let data = read_schedule_with(1, |p| match p {
-            123 => Ok(ack(123, &weekly_value())),
-            174 => Ok(default_ack()),
-            32 => Ok(period_ack()),
-            54 => Ok(refs.clone()),
-            other => panic!("unexpected property {other}"),
+        let data = read_schedule_with(1, |p, idx| {
+            assert_eq!(idx, None, "whole-property reads only when the device does not Abort");
+            match p {
+                123 => Ok(ack(123, &weekly_value())),
+                38 => Ok(ack(38, &exception_value())),
+                174 => Ok(default_ack()),
+                32 => Ok(period_ack()),
+                54 => Ok(refs.clone()),
+                other => panic!("unexpected property {other}"),
+            }
         })
         .unwrap();
         assert_eq!(data.weekly_schedule.len(), 7);
+        assert_eq!(data.exception_schedule.len(), 4);
         assert_eq!(data.schedule_default.as_deref(), Some("20"));
         assert_eq!(data.effective_period_start.as_deref(), Some("2024-01-01"));
         assert_eq!(data.effective_period_end.as_deref(), Some("2024-12-31"));
@@ -749,17 +1052,40 @@ mod tests {
 
     #[test]
     fn weekly_schedule_failure_propagates() {
-        let err = read_schedule_with(1, |_| {
+        let err = read_schedule_with(1, |_, _| {
             Err(ProtocolError::Timeout("no reply".into()))
         })
         .unwrap_err();
         assert!(matches!(err, ProtocolError::Timeout(_)));
 
-        // Even unknown-property on the mandatory WeeklySchedule is an error.
-        assert!(read_schedule_with(1, |_| Err(unknown_property())).is_err());
-
         // Malformed WeeklySchedule data is an error, not an empty schedule.
-        assert!(read_schedule_with(1, |_| Ok(ack(123, &[0x0E]))).is_err());
+        assert!(read_schedule_with(1, |_, _| Ok(ack(123, &[0x0E]))).is_err());
+    }
+
+    #[test]
+    fn schedule_needs_weekly_or_exception_schedule() {
+        // ASHRAE 135-2016 clause 12.24: Weekly_Schedule and Exception_Schedule are both
+        // optional, but at least one of them shall be present.
+        let err = read_schedule_with(1, |_, _| Err(unknown_property())).unwrap_err();
+        assert!(err.to_string().contains("neither WeeklySchedule nor ExceptionSchedule"), "{err}");
+
+        // Exception-only schedule: reading succeeds, the weekly list is empty.
+        let data = read_schedule_with(1, |p, _| match p {
+            38 => Ok(ack(38, &exception_value())),
+            _ => Err(unknown_property()),
+        })
+        .unwrap();
+        assert!(data.weekly_schedule.is_empty());
+        assert_eq!(data.exception_schedule.len(), 4);
+
+        // Weekly-only schedule: the exception list is empty.
+        let data = read_schedule_with(1, |p, _| match p {
+            123 => Ok(ack(123, &weekly_value())),
+            _ => Err(unknown_property()),
+        })
+        .unwrap();
+        assert_eq!(data.weekly_schedule.len(), 7);
+        assert!(data.exception_schedule.is_empty());
     }
 
     #[test]
@@ -767,7 +1093,7 @@ mod tests {
         let weekly = ack(123, &weekly_value());
 
         // unknown-property on every optional property: omitted.
-        let data = read_schedule_with(1, |p| match p {
+        let data = read_schedule_with(1, |p, _| match p {
             123 => Ok(weekly.clone()),
             _ => Err(unknown_property()),
         })
@@ -778,7 +1104,7 @@ mod tests {
         assert!(data.object_property_references.is_empty());
 
         // Timeout on EffectivePeriod: propagates.
-        let err = read_schedule_with(1, |p| match p {
+        let err = read_schedule_with(1, |p, _| match p {
             123 => Ok(weekly.clone()),
             174 => Ok(default_ack()),
             32 => Err(ProtocolError::Timeout("no reply".into())),
@@ -788,7 +1114,7 @@ mod tests {
         assert!(matches!(err, ProtocolError::Timeout(_)));
 
         // A different Error PDU on the references list: propagates.
-        let err = read_schedule_with(1, |p| match p {
+        let err = read_schedule_with(1, |p, _| match p {
             123 => Ok(weekly.clone()),
             54 => Err(ProtocolError::Other(
                 "BACnet Error from device: object / unknown-object".into(),
@@ -797,6 +1123,115 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("unknown-object"));
+    }
+
+    fn abort() -> ProtocolError {
+        ProtocolError::Other("BACnet Abort from device: segmentation-not-supported".into())
+    }
+
+    #[test]
+    fn weekly_schedule_falls_back_to_element_reads_after_abort() {
+        // A device that cannot segment Aborts the whole-array ReadProperty; the 7 daily
+        // schedules are then read with propertyArrayIndex 1..=7 (clause 15.5.1.1).
+        let days = weekly_days();
+        let mut requested = Vec::new();
+        let data = read_schedule_with(1, |p, idx| {
+            requested.push((p, idx));
+            match (p, idx) {
+                (123, None) => Err(abort()),
+                (123, Some(i)) => Ok(indexed_ack(123, i as u8, &days[i as usize - 1])),
+                _ => Err(unknown_property()),
+            }
+        })
+        .unwrap();
+        assert_eq!(data.weekly_schedule.len(), 7);
+        assert_eq!(data.weekly_schedule[1].entries[0].value, "21.5");
+        assert_eq!(data.weekly_schedule[6].entries[0].value, "3");
+        assert!(requested.contains(&(123, Some(1))) && requested.contains(&(123, Some(7))));
+        assert!(!requested.contains(&(123, Some(0))), "WeeklySchedule size is fixed at 7");
+    }
+
+    #[test]
+    fn exception_schedule_falls_back_to_element_reads_after_abort() {
+        // Element count comes from array index 0 (an application Unsigned).
+        let events = exception_events();
+        let data = read_schedule_with(1, |p, idx| match (p, idx) {
+            (38, None) => Err(abort()),
+            (38, Some(0)) => Ok(indexed_ack(38, 0, &[0x21, events.len() as u8])),
+            (38, Some(i)) => Ok(indexed_ack(38, i as u8, &events[i as usize - 1])),
+            _ => Err(unknown_property()),
+        })
+        .unwrap();
+        assert!(data.weekly_schedule.is_empty());
+        assert_eq!(data.exception_schedule.len(), 4);
+        assert_eq!(data.exception_schedule[3].period, "month 03, week 2, Monday");
+    }
+
+    #[test]
+    fn element_read_failure_after_abort_propagates() {
+        let err = read_schedule_with(1, |p, idx| match (p, idx) {
+            (123, None) => Err(abort()),
+            (123, Some(_)) => Err(ProtocolError::Timeout("no reply".into())),
+            _ => Err(unknown_property()),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ProtocolError::Timeout(_)));
+
+        // Only an Abort triggers the fallback; a Reject is returned as is.
+        let err = read_schedule_with(1, |_, idx| {
+            assert_eq!(idx, None);
+            Err(ProtocolError::Other("BACnet Reject from device: buffer-overflow".into()))
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("Reject"));
+    }
+
+    #[test]
+    fn exception_schedule_decodes_all_period_choices() {
+        let events = parse_exception_schedule(&exception_value()).unwrap();
+        assert_eq!(events.len(), 4);
+
+        // calendarEntry date [0]: 2024-12-25 -> Real 20.0 at 08:00, priority 1
+        assert_eq!(events[0].period, "2024-12-25");
+        assert_eq!(events[0].priority, 1);
+        assert_eq!(events[0].entries.len(), 1);
+        assert_eq!(events[0].entries[0].time, "08:00:00");
+        assert_eq!(events[0].entries[0].value, "20");
+
+        // calendarReference [1]: Calendar object (type 6) #2, Null at 00:00, priority 16
+        assert_eq!(events[1].period, "calendar object_6:2");
+        assert_eq!(events[1].priority, 16);
+        assert_eq!(events[1].entries[0].value, "Null");
+
+        // calendarEntry dateRange [1]
+        assert_eq!(events[2].period, "2024-06-01 to 2024-08-31");
+        assert_eq!(events[2].priority, 5);
+        assert!(events[2].entries.is_empty());
+
+        // calendarEntry weekNDay [2]: March, 2nd week, Monday
+        assert_eq!(events[3].period, "month 03, week 2, Monday");
+        assert_eq!(events[3].priority, 3);
+    }
+
+    #[test]
+    fn week_n_day_wildcards() {
+        assert_eq!(
+            format_week_n_day(&[0xFF, 0xFF, 0xFF]).unwrap(),
+            "any month, any week, any day"
+        );
+        assert_eq!(
+            format_week_n_day(&[13, 6, 7]).unwrap(),
+            "odd months, last 7 days, Sunday"
+        );
+        assert_eq!(format_week_n_day(&[14, 1, 5]).unwrap(), "even months, week 1, Friday");
+        assert!(format_week_n_day(&[1, 2]).is_err());
+    }
+
+    #[test]
+    fn exception_schedule_rejects_truncated_event() {
+        let mut value = exception_value();
+        value.truncate(12); // cuts inside the first event's time-value list
+        assert!(parse_exception_schedule(&value).is_err());
     }
 
     #[test]

@@ -54,6 +54,10 @@ export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLog
   const [records, setRecords] = useState<LogRecord[]>([]);
   // 1-based position of the oldest loaded record; everything below it is unloaded.
   const [oldestIndex, setOldestIndex] = useState(1);
+  // Sequence number of the oldest loaded record, when the device reports it.
+  const [oldestSeq, setOldestSeq] = useState<number | null>(null);
+  // The oldest loaded record is the first record of the log (ReadRange FIRST_ITEM flag).
+  const [reachedStart, setReachedStart] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +68,22 @@ export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLog
   // Bumped on every (re)load and on unmount so late responses are ignored.
   const generation = useRef(0);
 
-  const hasMore = oldestIndex > 1;
+  const hasMore = !reachedStart && (oldestSeq !== null ? oldestSeq > 1 : oldestIndex > 1);
+
+  // Records per ReadRange. A device that cannot segment Aborts a reply larger than one
+  // APDU (ASHRAE 135 clause 18.9), so the page size is halved until a reply fits.
+  const batchSize = useRef(BATCH_SIZE);
+  const readPage = useCallback(async (fetch: (batch: number) => Promise<TrendLogData>) => {
+    for (;;) {
+      try {
+        return await fetch(batchSize.current);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (!message.includes("BACnet Abort from device") || batchSize.current <= 1) throw e;
+        batchSize.current = Math.ceil(batchSize.current / 2);
+      }
+    }
+  }, []);
 
   // Newest page: ReadRange byPosition, referenceIndex = total, negative count reads
   // the BATCH_SIZE records that END at the reference index.
@@ -80,14 +99,18 @@ export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLog
         setTotalCount(0);
         setRecords([]);
         setOldestIndex(1);
+        setOldestSeq(null);
+        setReachedStart(true);
         return;
       }
-      const data: TrendLogData = await invoke("read_trend_log", {
-        objectType,
-        objectInstance,
-        referenceIndex: total,
-        count: -Math.min(BATCH_SIZE, total),
-      });
+      const data = await readPage((batch) =>
+        invoke<TrendLogData>("read_trend_log", {
+          objectType,
+          objectInstance,
+          referenceIndex: total,
+          count: -Math.min(batch, total),
+        }),
+      );
       if (gen !== generation.current) return;
       if (data.records.length === 0) {
         throw new Error(`Device reported ${total} records but returned none`);
@@ -95,6 +118,8 @@ export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLog
       setTotalCount(total);
       setRecords(data.records);
       setOldestIndex(total - data.records.length + 1);
+      setOldestSeq(data.first_sequence_number);
+      setReachedStart(data.first_item);
     } catch (e) {
       if (gen !== generation.current) return;
       setRecords([]);
@@ -103,35 +128,60 @@ export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLog
     } finally {
       if (gen === generation.current) setLoading(false);
     }
-  }, [objectType, objectInstance]);
+  }, [objectType, objectInstance, readPage]);
 
-  // Older page: the records ending just before the oldest one already loaded.
+  // Older page: the records ending just before the oldest one already loaded. A live
+  // circular log shifts record positions, so when the device reports sequence numbers the
+  // page is requested bySequenceNumber (stable); otherwise byPosition.
   const loadMore = useCallback(async () => {
-    if (oldestIndex <= 1) return;
+    if (!hasMore) return;
     const gen = generation.current;
     setLoadingMore(true);
     setError(null);
     try {
-      const reference = oldestIndex - 1;
-      const data: TrendLogData = await invoke("read_trend_log", {
-        objectType,
-        objectInstance,
-        referenceIndex: reference,
-        count: -Math.min(BATCH_SIZE, reference),
-      });
+      let data: TrendLogData;
+      if (oldestSeq !== null) {
+        data = await readPage((batch) =>
+          invoke<TrendLogData>("read_trend_log_by_sequence", {
+            objectType,
+            objectInstance,
+            referenceSequenceNumber: oldestSeq - 1,
+            count: -batch,
+          }),
+        );
+      } else {
+        const reference = oldestIndex - 1;
+        data = await readPage((batch) =>
+          invoke<TrendLogData>("read_trend_log", {
+            objectType,
+            objectInstance,
+            referenceIndex: reference,
+            count: -Math.min(batch, reference),
+          }),
+        );
+      }
       if (gen !== generation.current) return;
       if (data.records.length === 0) {
+        if (data.first_item) {
+          setReachedStart(true);
+          return;
+        }
         throw new Error("Device returned no older records");
+      }
+      if (oldestSeq !== null && data.first_sequence_number === null) {
+        throw new Error("Device did not report a sequence number for the returned records");
       }
       setRecords((prev) => [...data.records, ...prev]);
       setOldestIndex(oldestIndex - data.records.length);
+      setOldestSeq(data.first_sequence_number);
+      setReachedStart(data.first_item);
     } catch (e) {
       if (gen !== generation.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (gen === generation.current) setLoadingMore(false);
     }
-  }, [objectType, objectInstance, oldestIndex]);
+  }, [objectType, objectInstance, hasMore, oldestIndex, oldestSeq, readPage]);
 
   useEffect(() => {
     loadInitial();

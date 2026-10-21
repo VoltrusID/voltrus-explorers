@@ -118,8 +118,18 @@ fn encode_context_object_id(buf: &mut Vec<u8>, tag_num: u8, obj_type: ObjectType
     buf.extend_from_slice(&value.to_be_bytes());
 }
 
-/// Build the ReadRange-Request service data for a TrendLog's LogBuffer using
-/// the `byPosition` range (clause 15.8.1.1.1):
+/// ReadRange `range` choice (clause 15.8.1.1.4). Context tags 4 and 5 were used by
+/// protocol revisions 0 and 1 and are reserved; `byTime` ([7]) is not used here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeChoice {
+    /// `[3] SEQUENCE { referenceIndex Unsigned, count INTEGER }`
+    ByPosition { reference_index: u32, count: i32 },
+    /// `[6] SEQUENCE { referenceSequenceNumber Unsigned32, count INTEGER }`
+    BySequenceNumber { reference_sequence_number: u32, count: i32 },
+}
+
+/// Build the ReadRange-Request service data for a log's LogBuffer
+/// (clause 15.8.1.1):
 ///
 /// ```text
 /// ReadRange-Request ::= SEQUENCE {
@@ -127,27 +137,33 @@ fn encode_context_object_id(buf: &mut Vec<u8>, tag_num: u8, obj_type: ObjectType
 ///     propertyIdentifier [1] BACnetPropertyIdentifier,
 ///     propertyArrayIndex [2] Unsigned OPTIONAL,
 ///     range CHOICE {
-///         byPosition [3] SEQUENCE { referenceIndex Unsigned, count INTEGER },
-///         ...
-///     }
+///         byPosition       [3] SEQUENCE { referenceIndex Unsigned, count INTEGER },
+///         bySequenceNumber [6] SEQUENCE { referenceSequenceNumber Unsigned32, count INTEGER },
+///         byTime           [7] SEQUENCE { referenceTime BACnetDateTime, count INTEGER }
+///     } OPTIONAL
 /// }
 /// ```
 ///
-/// `referenceIndex` and `count` are application-tagged. A negative `count`
-/// returns the `|count|` items that END at `referenceIndex`.
+/// The reference value and `count` are application-tagged. A negative `count`
+/// returns the `|count|` items that END at the reference.
 fn build_read_range_request(
     kind: TrendLogKind,
     object_instance: u32,
-    reference_index: u32,
-    count: i32,
+    range: RangeChoice,
 ) -> Vec<u8> {
+    let (tag, reference, count) = match range {
+        RangeChoice::ByPosition { reference_index, count } => (3u8, reference_index, count),
+        RangeChoice::BySequenceNumber { reference_sequence_number, count } => {
+            (6u8, reference_sequence_number, count)
+        }
+    };
     let mut buf = Vec::with_capacity(20);
     encode_context_object_id(&mut buf, 0, kind.object_type(), object_instance);
     encode_context_unsigned(&mut buf, 1, u32::from(PropertyIdentifier::LogBuffer));
-    buf.push(0x3E); // opening [3] byPosition
-    encode_app_unsigned(&mut buf, reference_index);
+    buf.push((tag << 4) | 0x0E); // opening [tag]
+    encode_app_unsigned(&mut buf, reference);
     encode_app_signed(&mut buf, count);
-    buf.push(0x3F); // closing [3]
+    buf.push((tag << 4) | 0x0F); // closing [tag]
     buf
 }
 
@@ -665,6 +681,25 @@ fn parse_record_count_ack(data: &[u8]) -> Result<u32, ProtocolError> {
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Send a ReadRange on the LogBuffer and decode the ACK.
+fn read_range_blocking(
+    socket: &std::net::UdpSocket,
+    target_addr: SocketAddr,
+    kind: TrendLogKind,
+    object_instance: u32,
+    range: RangeChoice,
+) -> Result<TrendLogData, ProtocolError> {
+    let service_data = build_read_range_request(kind, object_instance, range);
+    let response = confirmed_request(
+        socket,
+        target_addr,
+        ConfirmedServiceChoice::ReadRange,
+        service_data,
+        REQUEST_TIMEOUT,
+    )?;
+    parse_read_range_ack(&response, kind, object_instance)
+}
+
 /// Read TrendLog records with ReadRange `byPosition` on the LogBuffer property.
 ///
 /// - `reference_index`: 1-based position of the reference record.
@@ -672,7 +707,9 @@ fn parse_record_count_ack(data: &[u8]) -> Result<u32, ProtocolError> {
 ///   negative returns `|count|` records ending at `reference_index`
 ///   (so `reference_index = total, count = -N` is the newest N records).
 ///
-/// Records are returned oldest first.
+/// Records are returned oldest first. Positions shift while a full circular
+/// log keeps recording, so continuation pages should use
+/// [`read_trend_log_by_sequence_blocking`] with `first_sequence_number`.
 pub fn read_trend_log_blocking(
     socket: &std::net::UdpSocket,
     target_addr: SocketAddr,
@@ -687,15 +724,45 @@ pub fn read_trend_log_blocking(
     if count == 0 {
         return Err(bad("ReadRange count must not be 0"));
     }
-    let service_data = build_read_range_request(kind, object_instance, reference_index, count);
-    let response = confirmed_request(
+    read_range_blocking(
         socket,
         target_addr,
-        ConfirmedServiceChoice::ReadRange,
-        service_data,
-        REQUEST_TIMEOUT,
-    )?;
-    parse_read_range_ack(&response, kind, object_instance)
+        kind,
+        object_instance,
+        RangeChoice::ByPosition { reference_index, count },
+    )
+}
+
+/// Read TrendLog records with ReadRange `bySequenceNumber` on the LogBuffer
+/// property (clause 15.8.1.1.4).
+///
+/// Sequence numbers stay attached to a record while the circular buffer wraps,
+/// so paging with them neither skips nor repeats records on a live log.
+///
+/// - `reference_sequence_number`: sequence number of the reference record
+///   (a previous page's `first_sequence_number` minus 1 continues backwards).
+/// - `count`: positive returns `count` records starting at the reference;
+///   negative returns `|count|` records ending at the reference.
+///
+/// Records are returned oldest first.
+pub fn read_trend_log_by_sequence_blocking(
+    socket: &std::net::UdpSocket,
+    target_addr: SocketAddr,
+    kind: TrendLogKind,
+    object_instance: u32,
+    reference_sequence_number: u32,
+    count: i32,
+) -> Result<TrendLogData, ProtocolError> {
+    if count == 0 {
+        return Err(bad("ReadRange count must not be 0"));
+    }
+    read_range_blocking(
+        socket,
+        target_addr,
+        kind,
+        object_instance,
+        RangeChoice::BySequenceNumber { reference_sequence_number, count },
+    )
 }
 
 /// Read the RecordCount property of a TrendLog object with ReadProperty.
@@ -741,7 +808,8 @@ mod tests {
             0x31, 0x0A, //                   count: application Signed 10
             0x3F, //                         closing [3]
         ];
-        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, 1, 10), expected);
+        let range = RangeChoice::ByPosition { reference_index: 1, count: 10 };
+        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, range), expected);
     }
 
     #[test]
@@ -754,7 +822,39 @@ mod tests {
             0x31, 0xCE, //                   count: Signed -50 (0xCE)
             0x3F, //                         closing [3]
         ];
-        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, 200, -50), expected);
+        let range = RangeChoice::ByPosition { reference_index: 200, count: -50 };
+        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, range), expected);
+    }
+
+    // ReadRange-Request bySequenceNumber [6] (ASHRAE 135-2016 clause 15.8.1.1.4; same tag
+    // layout as bacnet-stack 1.6.0 src/bacnet/readrange.c read_range_encode:
+    // opening [6], application Unsigned, application Signed, closing [6]).
+    #[test]
+    fn read_range_request_by_sequence_number_backward() {
+        let expected: Vec<u8> = vec![
+            0x0C, 0x05, 0x00, 0x00, 0x01, // [0] objectId trendLog 1
+            0x19, 0x83, //                   [1] log-buffer
+            0x6E, //                         opening [6] bySequenceNumber
+            0x21, 0x07, //                   referenceSequenceNumber: Unsigned 7
+            0x31, 0xFB, //                   count: Signed -5 (0xFB)
+            0x6F, //                         closing [6]
+        ];
+        let range = RangeChoice::BySequenceNumber { reference_sequence_number: 7, count: -5 };
+        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, range), expected);
+    }
+
+    #[test]
+    fn read_range_request_by_sequence_number_forward_multi_octet() {
+        let expected: Vec<u8> = vec![
+            0x0C, 0x05, 0x00, 0x00, 0x01, // [0] objectId trendLog 1
+            0x19, 0x83, //                   [1] log-buffer
+            0x6E, //                         opening [6]
+            0x23, 0x01, 0x11, 0x70, //       referenceSequenceNumber: Unsigned 70000 (0x011170)
+            0x32, 0x00, 0xC8, //             count: Signed 200 (leading 0x00 keeps it positive)
+            0x6F, //                         closing [6]
+        ];
+        let range = RangeChoice::BySequenceNumber { reference_sequence_number: 70_000, count: 200 };
+        assert_eq!(build_read_range_request(TrendLogKind::TrendLog, 1, range), expected);
     }
 
     #[test]
@@ -984,6 +1084,55 @@ mod tests {
             0x31, 0xF6, //                   count Signed -10 (0xF6)
             0x3F, //                         closing [3]
         ];
-        assert_eq!(build_read_range_request(TrendLogKind::TrendLogMultiple, 3, 1, -10), expected);
+        let range = RangeChoice::ByPosition { reference_index: 1, count: -10 };
+        assert_eq!(build_read_range_request(TrendLogKind::TrendLogMultiple, 3, range), expected);
+    }
+
+    #[test]
+    fn any_value_skips_extended_length_tags() {
+        // [10] any-value holding an application CharacterString whose length needs the
+        // extended length octet (length-value-type 5, ASHRAE 135-2016 clause 20.2.1.3.1).
+        let mut short = vec![0xAE, 0x75, 0x0E, 0x00]; // length 14 = encoding octet + 13 chars
+        short.extend_from_slice(b"Hello, world!");
+        short.push(0xAF);
+        assert_eq!(datum(&short).unwrap(), "[any-value]");
+        // 257 content octets: length-value-type 5, then 254, then a 2-octet length 0x0101.
+        let mut long = vec![0xAE, 0x75, 0xFE, 0x01, 0x01, 0x00];
+        long.extend_from_slice(&[b'x'; 256]);
+        long.push(0xAF);
+        assert_eq!(datum(&long).unwrap(), "[any-value]");
+    }
+
+    #[test]
+    fn read_range_ack_first_sequence_number_is_optional_and_multi_octet() {
+        // bacnet-stack 1.6.0 readrange_ack_encode omits [6] for byPosition requests.
+        let mut ack = two_record_ack();
+        ack.truncate(ack.len() - 2);
+        let d = parse_read_range_ack(&ack, TrendLogKind::TrendLog, 1).unwrap();
+        assert_eq!(d.first_sequence_number, None);
+        assert_eq!(d.records.len(), 2);
+
+        // [6] firstSequenceNumber = 70000 in three octets.
+        let mut ack = two_record_ack();
+        ack.truncate(ack.len() - 2);
+        ack.extend_from_slice(&[0x6B, 0x01, 0x11, 0x70]);
+        let d = parse_read_range_ack(&ack, TrendLogKind::TrendLog, 1).unwrap();
+        assert_eq!(d.first_sequence_number, Some(70_000));
+    }
+
+    #[test]
+    fn read_range_ack_with_array_index_and_single_flag_bits() {
+        // [2] propertyArrayIndex between property and resultFlags; resultFlags = first-item
+        // only (bit 0), 5 unused bits.
+        let ack = vec![
+            0x0C, 0x05, 0x00, 0x00, 0x01, // objectId
+            0x19, 0x83, //                   log-buffer
+            0x29, 0x01, //                   [2] array index 1
+            0x3A, 0x05, 0x80, //             resultFlags: first-item
+            0x49, 0x00, //                   itemCount = 0
+            0x5E, 0x5F, //                   empty itemData
+        ];
+        let d = parse_read_range_ack(&ack, TrendLogKind::TrendLog, 1).unwrap();
+        assert!(d.first_item && !d.last_item && !d.more_items);
     }
 }

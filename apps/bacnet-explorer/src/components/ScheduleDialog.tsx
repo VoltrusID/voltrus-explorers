@@ -18,9 +18,16 @@ interface DaySchedule {
   entries: ScheduleEntry[];
 }
 
+interface SpecialEvent {
+  period: string;
+  priority: number;
+  entries: ScheduleEntry[];
+}
+
 interface ScheduleData {
   object_instance: number;
   weekly_schedule: DaySchedule[];
+  exception_schedule: SpecialEvent[];
   schedule_default: string | null;
   effective_period_start: string | null;
   effective_period_end: string | null;
@@ -198,6 +205,69 @@ export function ScheduleDialog({
                 </div>
               ))}
             </div>
+
+            {/* Exception schedule */}
+            {data.exception_schedule.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div
+                  style={{
+                    fontSize: "var(--fs-sm)",
+                    fontWeight: 600,
+                    color: "var(--text-muted)",
+                    marginBottom: 6,
+                  }}
+                >
+                  Exceptions ({data.exception_schedule.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {data.exception_schedule.map((event, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: "var(--radius-lg)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: "var(--fs-sm)",
+                          fontWeight: 600,
+                          color: "var(--text)",
+                          padding: "6px 10px",
+                          background: "var(--sunken)",
+                          borderBottom: event.entries.length > 0 ? "1px solid var(--border)" : undefined,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                      >
+                        <span className="mono">{event.period}</span>
+                        <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+                          priority {event.priority}
+                        </span>
+                      </div>
+                      {event.entries.length > 0 && (
+                        <table className="vt-table">
+                          <tbody>
+                            {event.entries.map((entry, j) => (
+                              <tr key={j}>
+                                <td className="is-mono" style={{ whiteSpace: "nowrap", width: "35%" }}>
+                                  {entry.time}
+                                </td>
+                                <td className="is-mono" style={{ color: "var(--text)" }}>
+                                  {entry.value}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Object property references */}
             {data.object_property_references.length > 0 && (

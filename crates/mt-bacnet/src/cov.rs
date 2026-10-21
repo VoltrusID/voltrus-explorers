@@ -15,13 +15,14 @@
 //! `issueConfirmedNotifications`; `lifetime` is omitted for an indefinite
 //! subscription.
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use mt_protocol::ProtocolError;
 use serde::{Deserialize, Serialize};
 
 use bacnet_rs::app::{Apdu, MaxApduSize, MaxSegments};
+use bacnet_rs::network::Npdu;
 use bacnet_rs::object::ObjectType;
 use bacnet_rs::service::ConfirmedServiceChoice;
 
@@ -87,7 +88,7 @@ pub struct CovPacket {
     pub notification: CovNotification,
     /// `Some(invoke_id)` when the notification arrived as a
     /// ConfirmedCOVNotification-Request: the receiver MUST answer it with a
-    /// SimpleAck carrying this invoke ID (see [`transport::simple_ack_frame`]).
+    /// SimpleAck carrying this invoke ID (see [`simple_ack_for`]).
     /// `None` for UnconfirmedCOVNotification.
     pub confirmed_invoke_id: Option<u8>,
 }
@@ -716,6 +717,61 @@ pub fn parse_cov_packet(frame: &[u8]) -> Option<CovPacket> {
     }
 }
 
+/// UDP-level originator of a received BVLC frame: the 6-octet B/IP address that
+/// follows the header of a Forwarded-NPDU (Annex J.2.5), otherwise `src`. When a
+/// BBMD relays a frame it is the UDP source, but replies belong to the originator.
+pub fn frame_origin(frame: &[u8], src: SocketAddr) -> SocketAddr {
+    match frame {
+        [0x81, 0x04, _, _, a, b, c, d, port_hi, port_lo, ..] => SocketAddr::from((
+            Ipv4Addr::new(*a, *b, *c, *d),
+            u16::from_be_bytes([*port_hi, *port_lo]),
+        )),
+        _ => src,
+    }
+}
+
+/// Build the SimpleAck answering a confirmed request received in `frame` from
+/// UDP source `src`, together with the address to send it to. Returns `None`
+/// when `frame` is not an application-layer BVLC frame.
+///
+/// The destination is [`frame_origin`]. When the request carried an NPDU source
+/// (SNET/SADR, clause 6.2.2) the sender sits behind a router, so the ack names
+/// that network and MAC address as its destination (DNET/DADR, hop count 255).
+pub fn simple_ack_for(
+    frame: &[u8],
+    src: SocketAddr,
+    invoke_id: u8,
+    service_choice: u8,
+) -> Option<(SocketAddr, Vec<u8>)> {
+    let npdu_start = match frame {
+        [0x81, 0x0A | 0x0B, ..] => 4,
+        [0x81, 0x04, ..] => 10,
+        _ => return None,
+    };
+    let (received, _) = Npdu::decode(frame.get(npdu_start..)?).ok()?;
+
+    let mut npdu = Npdu::new();
+    if let Some(source) = received.source {
+        npdu.control.destination_present = true;
+        npdu.destination = Some(source);
+        npdu.hop_count = Some(255);
+    }
+    let mut body = npdu.encode();
+    body.extend_from_slice(
+        &Apdu::SimpleAck {
+            invoke_id,
+            service_choice,
+        }
+        .encode(),
+    );
+
+    let mut ack = Vec::with_capacity(body.len() + 4);
+    ack.extend_from_slice(&[0x81, 0x0A]);
+    ack.extend_from_slice(&((body.len() + 4) as u16).to_be_bytes());
+    ack.extend_from_slice(&body);
+    Some((frame_origin(frame, src), ack))
+}
+
 // ---------------------------------------------------------------------------
 // Blocking helpers (for use from spawn_blocking)
 // ---------------------------------------------------------------------------
@@ -1044,5 +1100,74 @@ mod tests {
         assert_eq!(renewal_delay(3600), Some(Duration::from_secs(2880)));
         assert_eq!(renewal_delay(10), Some(Duration::from_secs(8)));
         assert_eq!(renewal_delay(0), None);
+    }
+
+    /// ConfirmedCOVNotification, service choice 1, invoke id 0x2A, process id 7.
+    fn confirmed_notification_apdu() -> Vec<u8> {
+        let mut apdu = vec![0x00, 0x05, 0x2A, 0x01];
+        apdu.extend_from_slice(&notification_data(&[0x09, 0x07]));
+        apdu
+    }
+
+    // Clause 5.4.1 / 21: SimpleAck = PDU type 2 in the high nibble (0x20), invoke id,
+    // service choice (1 = confirmedCOVNotification). NPDU 01 00 = version 1, no flags.
+    #[test]
+    fn confirmed_notification_is_acked_to_the_udp_source() {
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        let (to, ack) = simple_ack_for(&frame(&confirmed_notification_apdu()), src, 0x2A, 1).unwrap();
+        assert_eq!(to, src);
+        assert_eq!(ack, [0x81, 0x0A, 0x00, 0x09, 0x01, 0x00, 0x20, 0x2A, 0x01]);
+    }
+
+    // Annex J.2.5: Forwarded-NPDU = 81 04 <len> <4-octet IP> <2-octet port> <NPDU>.
+    // The ack goes to the originating B/IP address (192.168.0.5:47808 = C0 A8 00 05 BA C0),
+    // not to the BBMD that relayed the frame.
+    #[test]
+    fn forwarded_notification_is_acked_to_the_bvlc_origin() {
+        let apdu = confirmed_notification_apdu();
+        let len = (4 + 6 + 2 + apdu.len()) as u16;
+        let mut f = vec![0x81, 0x04, (len >> 8) as u8, len as u8, 0xC0, 0xA8, 0x00, 0x05, 0xBA, 0xC0, 0x01, 0x00];
+        f.extend_from_slice(&apdu);
+
+        let pkt = parse_cov_packet(&f).expect("forwarded frame parses");
+        assert_eq!(pkt.confirmed_invoke_id, Some(0x2A));
+
+        let bbmd: SocketAddr = "10.0.0.1:47808".parse().unwrap();
+        let origin: SocketAddr = "192.168.0.5:47808".parse().unwrap();
+        assert_eq!(frame_origin(&f, bbmd), origin);
+        let (to, ack) = simple_ack_for(&f, bbmd, 0x2A, 1).unwrap();
+        assert_eq!(to, origin);
+        assert_eq!(ack, [0x81, 0x0A, 0x00, 0x09, 0x01, 0x00, 0x20, 0x2A, 0x01]);
+    }
+
+    // Clause 6.2.2: a request routed to us carries SNET/SADR (control bit 3). The reply
+    // names that network/MAC as DNET/DADR (control bit 5) followed by hop count 255:
+    // source 01 08 | 00 05 01 0A  ->  ack 01 20 | 00 05 01 0A | FF.
+    #[test]
+    fn routed_notification_is_acked_with_dnet_dadr() {
+        let apdu = confirmed_notification_apdu();
+        let len = (4 + 6 + apdu.len()) as u16;
+        let mut f = vec![0x81, 0x0A, (len >> 8) as u8, len as u8, 0x01, 0x08, 0x00, 0x05, 0x01, 0x0A];
+        f.extend_from_slice(&apdu);
+
+        let pkt = parse_cov_packet(&f).expect("routed frame parses");
+        assert_eq!(pkt.confirmed_invoke_id, Some(0x2A));
+
+        let router: SocketAddr = "192.168.1.1:47808".parse().unwrap();
+        let (to, ack) = simple_ack_for(&f, router, 0x2A, 1).unwrap();
+        assert_eq!(to, router);
+        assert_eq!(
+            ack,
+            [0x81, 0x0A, 0x00, 0x0E, 0x01, 0x20, 0x00, 0x05, 0x01, 0x0A, 0xFF, 0x20, 0x2A, 0x01]
+        );
+    }
+
+    #[test]
+    fn no_ack_for_non_application_frames() {
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        // BVLC-Result (function 0x00) is not an NPDU carrier.
+        assert!(simple_ack_for(&[0x81, 0x00, 0x00, 0x06, 0x00, 0x00], src, 1, 1).is_none());
+        assert!(simple_ack_for(&[0x80, 0x0A, 0x00, 0x04], src, 1, 1).is_none());
+        assert!(simple_ack_for(&[], src, 1, 1).is_none());
     }
 }

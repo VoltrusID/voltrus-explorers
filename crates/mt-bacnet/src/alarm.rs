@@ -17,8 +17,9 @@ use bacnet_rs::service::ConfirmedServiceChoice;
 
 use mt_protocol::ProtocolError;
 
+use crate::cov::frame_origin;
 use crate::helpers::{object_type_from_str, object_type_to_string};
-use crate::transport::{confirmed_request, REQUEST_TIMEOUT};
+use crate::transport::{apdu_of_frame, confirmed_request, REQUEST_TIMEOUT};
 
 /// Upper bound on GetEventInformation pages followed in one call.
 const MAX_EVENT_PAGES: usize = 256;
@@ -650,13 +651,34 @@ fn decode_time_stamp(d: &mut Decoder) -> Decoded<EventTimeStamp> {
     }
 }
 
-/// Character set octet + text to a String. Supports UTF-8 (0) and ISO 8859-1 (5).
+/// Character set octet + text to a String (clause 20.2.9): 0 = UTF-8 (ANSI X3.4),
+/// 3 = UCS-4 and 4 = UCS-2 (both big endian), 5 = ISO 8859-1. The DBCS and JIS
+/// sets (1, 2) are not supported.
 fn decode_character_string(content: &[u8]) -> Decoded<String> {
     let (charset, text) = content
         .split_first()
         .ok_or_else(|| "empty character string".to_string())?;
     match charset {
         0 => Ok(String::from_utf8_lossy(text).into_owned()),
+        3 => {
+            if text.len() % 4 != 0 {
+                return Err(format!("UCS-4 text of {} octets", text.len()));
+            }
+            Ok(text
+                .chunks_exact(4)
+                .map(|c| char::from_u32(u32::from_be_bytes([c[0], c[1], c[2], c[3]])).unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect())
+        }
+        4 => {
+            if text.len() % 2 != 0 {
+                return Err(format!("UCS-2 text of {} octets", text.len()));
+            }
+            let units: Vec<u16> = text
+                .chunks_exact(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
+            Ok(String::from_utf16_lossy(&units))
+        }
         5 => Ok(text.iter().map(|b| char::from(*b)).collect()),
         c => Err(format!("unsupported character set {c}")),
     }
@@ -936,6 +958,58 @@ pub fn parse_alarm_notification(data: &[u8], source: SocketAddr) -> Option<Alarm
     })
 }
 
+/// ConfirmedEventNotification confirmed-service choice (clause 21).
+pub const SERVICE_CONFIRMED_EVENT_NOTIFICATION: u8 = 2;
+/// UnconfirmedEventNotification unconfirmed-service choice.
+const SERVICE_UNCONFIRMED_EVENT_NOTIFICATION: u8 = 3;
+
+/// An event notification as received from the wire.
+#[derive(Debug, Clone)]
+pub struct AlarmPacket {
+    /// The decoded notification.
+    pub notification: AlarmNotification,
+    /// `Some(invoke_id)` when the notification arrived as a
+    /// ConfirmedEventNotification-Request: the receiver MUST answer it with a
+    /// SimpleAck for this invoke ID and [`SERVICE_CONFIRMED_EVENT_NOTIFICATION`]
+    /// (see [`crate::cov::simple_ack_for`]). `None` for UnconfirmedEventNotification.
+    pub confirmed_invoke_id: Option<u8>,
+}
+
+/// Parse a raw BACnet/IP frame. Returns an [`AlarmPacket`] if it is an
+/// unsegmented ConfirmedEventNotification-Request (service choice 2) or an
+/// UnconfirmedEventNotification-Request (service choice 3) that decodes, `None`
+/// otherwise. `src` is the UDP source; the notification's source address is the
+/// BVLC originator for a Forwarded-NPDU.
+pub fn parse_alarm_packet(frame: &[u8], src: SocketAddr) -> Option<AlarmPacket> {
+    let apdu = apdu_of_frame(frame)?;
+    let source = frame_origin(frame, src);
+    match apdu[0] >> 4 {
+        // Confirmed-Request: type/flags, max segments/APDU, invoke id, service
+        // choice, service data (a segmented request inserts sequence number and
+        // window size before the service choice).
+        0 => {
+            if apdu[0] & 0x08 != 0 || apdu.len() < 4 || apdu[3] != SERVICE_CONFIRMED_EVENT_NOTIFICATION {
+                return None;
+            }
+            Some(AlarmPacket {
+                notification: parse_alarm_notification(&apdu[4..], source)?,
+                confirmed_invoke_id: Some(apdu[2]),
+            })
+        }
+        // Unconfirmed-Request: type, service choice, service data.
+        1 => {
+            if apdu.len() < 2 || apdu[1] != SERVICE_UNCONFIRMED_EVENT_NOTIFICATION {
+                return None;
+            }
+            Some(AlarmPacket {
+                notification: parse_alarm_notification(&apdu[2..], source)?,
+                confirmed_invoke_id: None,
+            })
+        }
+        _ => None,
+    }
+}
+
 struct DecodedNotification {
     object_type: ObjectType,
     object_instance: u32,
@@ -963,8 +1037,9 @@ fn decode_event_notification(data: &[u8]) -> Decoded<DecodedNotification> {
     d.context(4, "notificationClass")?;
     d.context(5, "priority")?;
     d.context(6, "eventType")?;
+    // A message text in a character set we cannot render must not drop the alarm itself.
     let message = if d.next_is_context(7) {
-        decode_character_string(d.context(7, "messageText")?)?
+        decode_character_string(d.context(7, "messageText")?).unwrap_or_else(|e| format!("<{e}>"))
     } else {
         String::new()
     };
@@ -1252,9 +1327,8 @@ mod tests {
         assert!(parse_alarm_summary_ack(&[0x0C, 0x00, 0x00, 0x00, 0x05, 0x19, 0x03, 0x2A, 0x05, 0xE0]).is_err());
     }
 
-    #[test]
-    fn parses_event_notification() {
-        let data = [
+    fn event_notification_data() -> Vec<u8> {
+        vec![
             0x09, 0x01, // [0] processIdentifier = 1
             0x1C, 0x02, 0x00, 0x00, 0x01, // [1] initiating device: device(8)<<22 | 1
             0x2C, 0x00, 0x00, 0x00, 0x05, // [2] eventObjectIdentifier analog-input:5
@@ -1267,7 +1341,12 @@ mod tests {
             0x99, 0x01, // [9] ackRequired = TRUE
             0xA9, 0x00, // [10] fromState = normal
             0xB9, 0x03, // [11] toState = high-limit
-        ];
+        ]
+    }
+
+    #[test]
+    fn parses_event_notification() {
+        let data = event_notification_data();
         let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
         let n = parse_alarm_notification(&data, src).unwrap();
         assert_eq!(n.source_ip, "192.168.1.10");
@@ -1282,6 +1361,91 @@ mod tests {
         assert_eq!(n.event_state, "highLimit");
 
         assert!(parse_alarm_notification(&data[..10], src).is_none());
+    }
+
+    /// BVLC Original-Unicast-NPDU (81 0A len) + NPDU (01 00) around `apdu`.
+    fn frame(apdu: &[u8]) -> Vec<u8> {
+        let len = (4 + 2 + apdu.len()) as u16;
+        let mut f = vec![0x81, 0x0A, (len >> 8) as u8, len as u8, 0x01, 0x00];
+        f.extend_from_slice(apdu);
+        f
+    }
+
+    #[test]
+    fn unconfirmed_event_notification_packet() {
+        // Unconfirmed-Request (0x10), UnconfirmedEventNotification (3).
+        let mut apdu = vec![0x10, 0x03];
+        apdu.extend_from_slice(&event_notification_data());
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        let pkt = parse_alarm_packet(&frame(&apdu), src).expect("parses");
+        assert_eq!(pkt.confirmed_invoke_id, None);
+        assert_eq!(pkt.notification.to_state, "highLimit");
+        assert_eq!(pkt.notification.source_ip, "192.168.1.10");
+    }
+
+    #[test]
+    fn confirmed_event_notification_packet_carries_invoke_id() {
+        // Confirmed-Request, max APDU 1476, invoke id 0x2A, ConfirmedEventNotification (2).
+        let mut apdu = vec![0x00, 0x05, 0x2A, 0x02];
+        apdu.extend_from_slice(&event_notification_data());
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        let f = frame(&apdu);
+        let pkt = parse_alarm_packet(&f, src).expect("parses");
+        assert_eq!(pkt.confirmed_invoke_id, Some(0x2A));
+        assert_eq!(pkt.notification.object_instance, 5);
+
+        // The SimpleAck repeats the invoke id and service choice 2.
+        let (to, ack) = crate::cov::simple_ack_for(&f, src, 0x2A, SERVICE_CONFIRMED_EVENT_NOTIFICATION).unwrap();
+        assert_eq!(to, src);
+        assert_eq!(ack, [0x81, 0x0A, 0x00, 0x09, 0x01, 0x00, 0x20, 0x2A, 0x02]);
+    }
+
+    #[test]
+    fn other_services_and_segmented_requests_are_not_event_notifications() {
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        let data = event_notification_data();
+        // Unconfirmed service 2 is UnconfirmedCOVNotification.
+        let mut cov = vec![0x10, 0x02];
+        cov.extend_from_slice(&data);
+        assert!(parse_alarm_packet(&frame(&cov), src).is_none());
+        // Confirmed service 1 is ConfirmedCOVNotification.
+        let mut confirmed_cov = vec![0x00, 0x05, 0x2A, 0x01];
+        confirmed_cov.extend_from_slice(&data);
+        assert!(parse_alarm_packet(&frame(&confirmed_cov), src).is_none());
+        // Segmented flag (0x08): sequence number and window size precede the service choice.
+        let mut segmented = vec![0x08, 0x05, 0x2A, 0x00, 0x01, 0x02];
+        segmented.extend_from_slice(&data);
+        assert!(parse_alarm_packet(&frame(&segmented), src).is_none());
+    }
+
+    // Annex J.2.5 Forwarded-NPDU: the notification's source is the BVLC origin
+    // 192.168.0.5:47808 (C0 A8 00 05 BA C0), not the relaying BBMD.
+    #[test]
+    fn forwarded_event_notification_reports_the_origin() {
+        let mut apdu = vec![0x10, 0x03];
+        apdu.extend_from_slice(&event_notification_data());
+        let len = (4 + 6 + 2 + apdu.len()) as u16;
+        let mut f = vec![0x81, 0x04, (len >> 8) as u8, len as u8, 0xC0, 0xA8, 0x00, 0x05, 0xBA, 0xC0, 0x01, 0x00];
+        f.extend_from_slice(&apdu);
+        let bbmd: SocketAddr = "10.0.0.1:47808".parse().unwrap();
+        let n = parse_alarm_packet(&f, bbmd).unwrap().notification;
+        assert_eq!((n.source_ip.as_str(), n.source_port), ("192.168.0.5", 47808));
+    }
+
+    #[test]
+    fn message_text_in_ucs2_and_unsupported_charsets() {
+        let mut data = event_notification_data();
+        // Replace [7] messageText (7D 05 00 "High") by UCS-2 "Hi": charset 4, 00 48 00 69.
+        let pos = data.iter().position(|&b| b == 0x7D).unwrap();
+        data.splice(pos..pos + 7, [0x7D, 0x05, 0x04, 0x00, 0x48, 0x00, 0x69]);
+        let src: SocketAddr = "192.168.1.10:47808".parse().unwrap();
+        assert_eq!(parse_alarm_notification(&data, src).unwrap().message, "Hi");
+
+        // Charset 2 (JIS) cannot be rendered, but the alarm itself is still reported.
+        data.splice(pos..pos + 7, [0x7B, 0x02, 0x41, 0x42]); // [7] length 3: charset 2 + 2 octets
+        let n = parse_alarm_notification(&data, src).unwrap();
+        assert_eq!(n.message, "<unsupported character set 2>");
+        assert_eq!(n.to_state, "highLimit");
     }
 
     #[test]

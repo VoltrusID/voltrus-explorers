@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Check, ClipboardList, RefreshCw, X } from "lucide-react";
 import { Badge, Button, EmptyState, IconButton } from "@mactools/ui";
 import type { AlarmSummaryEntry, EventInfoEntry, EventInformationResponse } from "../types";
@@ -76,6 +77,23 @@ export function AlarmPanel({ connected, compact = false }: AlarmPanelProps) {
       setLoading(false);
     }
   }, []);
+
+  // The COV listener socket receives event notifications and forwards them here.
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("alarm-notification", () => {
+      void refresh();
+    }).then((off) => {
+      if (cancelled) off();
+      else unlisten = off;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [connected, refresh]);
 
   const handleAck = async (alarm: AlarmSummaryEntry) => {
     const source = ackText.trim();

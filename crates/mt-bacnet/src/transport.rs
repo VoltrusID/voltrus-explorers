@@ -88,13 +88,63 @@ pub fn simple_ack_frame(invoke_id: u8, service_choice: u8) -> Vec<u8> {
     unicast_frame(&apdu, false)
 }
 
+/// Why a confirmed request did not produce service data.
+#[derive(Debug)]
+pub enum RequestFailure {
+    /// The device answered with an Error PDU (clause 18.1).
+    Error { class: u32, code: u32 },
+    /// An Error PDU whose class/code could not be decoded.
+    UndecodableError,
+    /// The device answered with a Reject PDU (clause 18.8) carrying this reason.
+    Reject(u8),
+    /// The device answered with an Abort PDU (clause 18.9) carrying this reason.
+    Abort(u8),
+    /// The request could not be sent, or no reply arrived.
+    Local(ProtocolError),
+}
+
+impl RequestFailure {
+    /// The device could not take the request or could not fit the reply: buffer-overflow
+    /// (Reject/Abort reason 1), segmentation-not-supported (Abort 4) or apdu-too-long (Abort 11).
+    /// Asking for less in one request is the remedy.
+    pub fn is_size_limit(&self) -> bool {
+        matches!(self, RequestFailure::Reject(1) | RequestFailure::Abort(1 | 4 | 11))
+    }
+}
+
+impl std::fmt::Display for RequestFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestFailure::Error { class, code } => write!(
+                f,
+                "BACnet Error from device: {} / {}",
+                error_class_name(*class),
+                error_code_name(*code)
+            ),
+            RequestFailure::UndecodableError => f.write_str("BACnet Error from device (undecodable error codes)"),
+            RequestFailure::Reject(reason) => write!(f, "BACnet Reject from device: {}", reject_reason_name(*reason)),
+            RequestFailure::Abort(reason) => write!(f, "BACnet Abort from device: {}", abort_reason_name(*reason)),
+            RequestFailure::Local(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<RequestFailure> for ProtocolError {
+    fn from(failure: RequestFailure) -> Self {
+        match failure {
+            RequestFailure::Local(e) => e,
+            device => ProtocolError::Other(device.to_string()),
+        }
+    }
+}
+
 /// Result of feeding one received APDU to a [`Transaction`].
 #[derive(Debug, Default)]
 pub struct Handled {
     /// APDU to send back to the device (a SegmentAck), if any.
     pub send: Option<Vec<u8>>,
     /// Final outcome of the transaction, once known.
-    pub done: Option<Result<Vec<u8>, ProtocolError>>,
+    pub done: Option<Result<Vec<u8>, RequestFailure>>,
 }
 
 /// Receive-side state of one outstanding confirmed request.
@@ -154,17 +204,13 @@ impl Transaction {
                 let parsed = parse_enumerated(&apdu[3..]).and_then(|(class, used)| {
                     parse_enumerated(&apdu[3 + used..]).map(|(code, _)| (class, code))
                 });
-                let msg = match parsed {
-                    Some((class, code)) => format!(
-                        "BACnet Error from device: {} / {}",
-                        error_class_name(class),
-                        error_code_name(code)
-                    ),
-                    None => "BACnet Error from device (undecodable error codes)".to_string(),
+                let failure = match parsed {
+                    Some((class, code)) => RequestFailure::Error { class, code },
+                    None => RequestFailure::UndecodableError,
                 };
                 Handled {
                     send: None,
-                    done: Some(Err(ProtocolError::Other(msg))),
+                    done: Some(Err(failure)),
                 }
             }
             // Reject: type, invoke id, reject reason.
@@ -174,10 +220,7 @@ impl Transaction {
                 }
                 Handled {
                     send: None,
-                    done: Some(Err(ProtocolError::Other(format!(
-                        "BACnet Reject from device: {}",
-                        reject_reason_name(apdu[2])
-                    )))),
+                    done: Some(Err(RequestFailure::Reject(apdu[2]))),
                 }
             }
             // Abort: type|server flag, invoke id, abort reason.
@@ -187,10 +230,7 @@ impl Transaction {
                 }
                 Handled {
                     send: None,
-                    done: Some(Err(ProtocolError::Other(format!(
-                        "BACnet Abort from device: {}",
-                        abort_reason_name(apdu[2])
-                    )))),
+                    done: Some(Err(RequestFailure::Abort(apdu[2]))),
                 }
             }
             _ => Handled::default(),
@@ -262,6 +302,19 @@ pub fn confirmed_request(
     service_data: Vec<u8>,
     timeout: Duration,
 ) -> Result<Vec<u8>, ProtocolError> {
+    confirmed_request_detailed(socket, target_addr, service_choice, service_data, timeout).map_err(ProtocolError::from)
+}
+
+/// [`confirmed_request`] that keeps the kind of device failure (Error / Reject / Abort and its
+/// reason) so callers can react to it, e.g. by asking for less when the device cannot fit a reply.
+pub fn confirmed_request_detailed(
+    socket: &UdpSocket,
+    target_addr: SocketAddr,
+    service_choice: ConfirmedServiceChoice,
+    service_data: Vec<u8>,
+    timeout: Duration,
+) -> Result<Vec<u8>, RequestFailure> {
+    let local = RequestFailure::Local;
     let invoke_id = next_invoke_id();
     let apdu = Apdu::ConfirmedRequest {
         segmented: false,
@@ -279,13 +332,13 @@ pub fn confirmed_request(
 
     socket
         .send_to(&unicast_frame(&apdu, true), target_addr)
-        .map_err(|e| ProtocolError::WriteFailed(format!("Send: {e}")))?;
+        .map_err(|e| local(ProtocolError::WriteFailed(format!("Send: {e}"))))?;
 
     // Poll in short slices so the deadline is honoured even if the caller's
     // socket has no (or a long) read timeout configured.
     socket
         .set_read_timeout(Some(RECV_POLL_INTERVAL))
-        .map_err(|e| ProtocolError::Other(format!("Set timeout: {e}")))?;
+        .map_err(|e| local(ProtocolError::Other(format!("Set timeout: {e}"))))?;
 
     let mut txn = Transaction::new(invoke_id);
     let mut buf = [0u8; 1500];
@@ -301,7 +354,7 @@ pub fn confirmed_request(
                     deadline = Instant::now() + timeout;
                     socket
                         .send_to(&unicast_frame(&ack, false), target_addr)
-                        .map_err(|e| ProtocolError::WriteFailed(format!("Send SegmentAck: {e}")))?;
+                        .map_err(|e| local(ProtocolError::WriteFailed(format!("Send SegmentAck: {e}"))))?;
                 }
                 if let Some(result) = handled.done {
                     return result;
@@ -316,13 +369,13 @@ pub fn confirmed_request(
             {
                 continue
             }
-            Err(e) => return Err(ProtocolError::ReadFailed(format!("Recv: {e}"))),
+            Err(e) => return Err(local(ProtocolError::ReadFailed(format!("Recv: {e}")))),
         }
     }
 
-    Err(ProtocolError::Timeout(format!(
+    Err(local(ProtocolError::Timeout(format!(
         "BACnet confirmed request timeout for {target_addr}"
-    )))
+    ))))
 }
 
 /// Decode a leading application-tagged Enumerated (tag 9) or Unsigned value

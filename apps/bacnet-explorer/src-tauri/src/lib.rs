@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use mt_bacnet::transport::{self, Transaction, REQUEST_TIMEOUT};
+use mt_bacnet::alarm::{parse_alarm_packet, SERVICE_CONFIRMED_EVENT_NOTIFICATION};
+use mt_bacnet::cov::simple_ack_for;
 use tokio::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
@@ -497,6 +499,41 @@ async fn read_trend_log(
     .map_err(|e| format!("Task join: {e}"))?
 }
 
+/// ReadRange `bySequenceNumber`: continuation pages of a live log. Sequence numbers do not
+/// shift when a full circular buffer wraps, unlike positions.
+#[tauri::command]
+async fn read_trend_log_by_sequence(
+    state: tauri::State<'_, AppState>,
+    object_type: String,
+    object_instance: u32,
+    reference_sequence_number: u32,
+    count: i32,
+) -> Result<TrendLogData, String> {
+    let kind = TrendLogKind::parse(&object_type).map_err(|e| e.to_string())?;
+    let dev = {
+        let guard = state.connected_device.lock().await;
+        guard.as_ref().ok_or("Not connected")?.clone()
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0")
+            .map_err(|e| format!("Socket bind: {e}"))?;
+        let addr: std::net::SocketAddr = format!("{}:{}", dev.ip, dev.port)
+            .parse().map_err(|e| format!("Invalid addr: {e}"))?;
+        mt_bacnet::trend::read_trend_log_by_sequence_blocking(
+            &socket,
+            addr,
+            kind,
+            object_instance,
+            reference_sequence_number,
+            count,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Task join: {e}"))?
+}
+
 #[tauri::command]
 async fn read_trend_log_count(
     state: tauri::State<'_, AppState>,
@@ -728,13 +765,31 @@ impl CovListener {
             // ConfirmedCOVNotification (service choice 1) must be acknowledged, otherwise
             // the device retransmits and may drop the subscription.
             if let Some(invoke_id) = packet.confirmed_invoke_id {
-                if let Err(e) = self.socket.send_to(&transport::simple_ack_frame(invoke_id, 1), src) {
-                    eprintln!("COV notification SimpleAck to {src} not sent: {e}");
-                }
+                self.ack_confirmed(frame, src, invoke_id, 1);
             }
             if let Err(e) = self.app.emit("cov-notification", &packet.notification) {
                 eprintln!("cov-notification event not delivered: {e}");
             }
+        } else if let Some(packet) = parse_alarm_packet(frame, src) {
+            if let Some(invoke_id) = packet.confirmed_invoke_id {
+                self.ack_confirmed(frame, src, invoke_id, SERVICE_CONFIRMED_EVENT_NOTIFICATION);
+            }
+            if let Err(e) = self.app.emit("alarm-notification", &packet.notification) {
+                eprintln!("alarm-notification event not delivered: {e}");
+            }
+        }
+    }
+
+    /// Send the SimpleAck for a confirmed notification to its originator (the BVLC
+    /// origin of a Forwarded-NPDU, routed through the NPDU source network if any).
+    fn ack_confirmed(&self, frame: &[u8], src: SocketAddr, invoke_id: u8, service_choice: u8) {
+        match simple_ack_for(frame, src, invoke_id, service_choice) {
+            Some((to, ack)) => {
+                if let Err(e) = self.socket.send_to(&ack, to) {
+                    eprintln!("Notification SimpleAck to {to} not sent: {e}");
+                }
+            }
+            None => eprintln!("Notification SimpleAck for invoke id {invoke_id} could not be built"),
         }
     }
 }
@@ -862,7 +917,7 @@ pub fn run() {
             browse_objects, read_object_properties, inspect_device_cmd,
             subscribe_cov_cmd, unsubscribe_cov_cmd, get_cov_subscriptions,
             get_alarm_summary, get_event_information, acknowledge_alarm_cmd,
-            read_trend_log, read_trend_log_count,
+            read_trend_log, read_trend_log_by_sequence, read_trend_log_count,
             read_schedule,
             start_cov_listener, stop_cov_listener,
             sim_start, sim_stop, sim_set_value, sim_set_bool, sim_status, open_device_panel,
