@@ -45,3 +45,20 @@ export async function openTextFile(
   if (!path) return null;
   return { path, text: await readTextFile(path) };
 }
+
+/**
+ * Ask the user where to save a file, without writing anything.
+ * Resolves with the chosen path, or `null` if the user cancelled the panel. Use it when the
+ * writing happens later or in pieces (logging, capture); the panel grants the sandbox access.
+ */
+export async function pickSavePath(
+  defaultName: string,
+  filter: FileFilter = CSV_FILTER,
+): Promise<string | null> {
+  return (await save({ defaultPath: defaultName, filters: [filter] })) ?? null;
+}
+
+/** Append `text` to the file at `path`, creating it if needed. Rejects if the file can not be written. */
+export async function appendTextFile(path: string, text: string): Promise<void> {
+  await writeTextFile(path, text, { append: true });
+}
