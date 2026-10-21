@@ -205,9 +205,12 @@ const TEMPLATES: Record<string, DeviceTemplate> = {
   },
 };
 
+/** Live polling cap in the free tier (by count, never by time). */
+const FREE_POLL_TAGS = 10;
+
 function App() {
   const protocol = useProtocol<EnipConfig, CipTag, unknown>("enip");
-  const { requirePro, status: proStatus } = useProStatus();
+  const { requirePro, openUpsell, pro, status: proStatus } = useProStatus();
   const [mode, setMode] = useState<"scanner" | "adapter">("scanner");
   const [leftWidth, setLeftWidth] = useState(260);
   const [rightWidth, setRightWidth] = useState(220);
@@ -216,6 +219,8 @@ function App() {
   const [mobileTab, setMobileTab] = useState<"connect" | "data" | "log">("connect");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [tags, setTags] = useState<CipTag[]>([]);
+  const [onDemand, setOnDemand] = useState<Record<string, unknown>>({});
+  const polledTags = useMemo(() => (pro ? tags : tags.slice(0, FREE_POLL_TAGS)), [pro, tags]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [editingTag, setEditingTag] = useState<{ name: string; currentValue: string; type?: string } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -259,8 +264,7 @@ function App() {
         if (b.length > 0) {
           setTags(b);
           addLog("info", `Browsed ${b.length} tags from PLC`);
-          protocol.startPolling(b, pollMs);
-          addLog("info", `Polling ${b.length} tags every ${pollMs}ms`);
+          // Polling starts from the effect below.
         } else {
           addLog("info", "No tags found via Symbol class. Device may not be a Logix PLC. Try the CIP Object Browser.");
         }
@@ -268,14 +272,16 @@ function App() {
     }
   }, [protocol.connected, tags.length, addLog, pollMs]);
 
-  // Restart polling when the rate changes while connected.
+  // (Re)start polling when the tag list, the rate or the Pro state changes. Free builds poll the first FREE_POLL_TAGS tags.
   useEffect(() => {
-    if (protocol.connected && tags.length > 0) {
-      protocol.startPolling(tags, pollMs);
-      addLog("info", `Poll rate set to ${pollMs}ms`);
+    if (protocol.connected && polledTags.length > 0) {
+      protocol.startPolling(polledTags, pollMs);
+      addLog("info", `Polling ${polledTags.length} tags every ${pollMs}ms`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pollMs]);
+  }, [protocol.connected, polledTags, pollMs]);
+
+  useEffect(() => { setOnDemand({}); }, [tags, protocol.connected]);
 
   const dragStartRef = useRef({ startX: 0, startY: 0, startWidth: 0, startHeight: 0 });
   const handleDragStart = useCallback((side: "left" | "right" | "table", e: React.MouseEvent) => {
@@ -408,9 +414,29 @@ function App() {
 
   const scannerTableData = !protocol.connected
     ? []
-    : protocol.values.length > 0
-      ? protocol.values.map((v: any, i: number) => ({ name: tags[i]?.name ?? `tag[${i}]`, type: tags[i]?.data_type ?? cipTypeOf(v), elements: tags[i]?.element_count ?? 1, value: formatCipValue(v, hexMode) }))
-      : tags.length > 0 ? tags.map((t) => ({ name: t.name, type: t.data_type, elements: t.element_count, value: "—" })) : [];
+    : tags.map((t, i) => {
+        const v = i < protocol.values.length ? protocol.values[i] : onDemand[t.name];
+        const hasValue = v !== undefined;
+        return {
+          name: t.name,
+          type: t.data_type ?? (hasValue ? cipTypeOf(v) : ""),
+          elements: t.element_count ?? 1,
+          value: hasValue ? formatCipValue(v, hexMode) : i >= polledTags.length ? "Click to read" : "—",
+        };
+      });
+  const handleScannerRowClick = (row: Record<string, unknown>) => {
+    const name = String(row.name);
+    const idx = tags.findIndex((t) => t.name === name);
+    if (idx >= polledTags.length) {
+      invoke<unknown[]>("read_tags", { tags: [tags[idx]] })
+        .then((vals) => setOnDemand((prev) => ({ ...prev, [name]: vals[0] })))
+        .catch((e) => addLog("error", `Read ${name} failed: ${String(e)}`));
+      return;
+    }
+    if (!requirePro("Tag writes")) return;
+    const t = String(row.type);
+    setEditingTag({ name, type: t, currentValue: t.toLowerCase() === "bool" ? (/^(on|true|1)$/i.test(String(row.value)) ? "true" : "false") : String(row.value) });
+  };
   // Numeric tag values for the trend (PLC poll).
   const trendRows = useMemo(() => {
     if (protocol.connected && protocol.values.length > 0) {
@@ -423,7 +449,7 @@ function App() {
   trendRowsRef.current = trendRows;
   // Signature of current values; stable across renders unless a value changed
   // (avoids the infinite effect→setState→render loop the raw array would cause).
-  const valueSig = trendRows.map((r) => r.name + " " + r.v).join("");
+  const valueSig = trendRows.map((r) => r.name + "\u0000" + r.v).join("");
 
   // Append a sample to every tracked series on each new poll / value change.
   useEffect(() => {
@@ -481,7 +507,7 @@ function App() {
           block
           label="Mode"
           value={mode}
-          onChange={setMode}
+          onChange={(v) => { if (v === "adapter" && !requirePro("Adapter mode")) return; setMode(v); }}
           options={[
             { value: "scanner", label: "Scanner" },
             { value: "adapter", label: <>Adapter <ProBadge /></>, title: adapterRunning ? "Simulator running" : undefined },
@@ -547,6 +573,15 @@ function App() {
             meta={tags.length}
             actions={protocol.connected ? <Button variant="ghost" size="sm" onClick={handleBrowseTags}>Browse</Button> : undefined}
           >
+            {!pro && tags.length > FREE_POLL_TAGS && (
+              <button
+                type="button"
+                onClick={() => openUpsell("Live polling of every tag")}
+                style={{ all: "unset", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5, paddingBottom: 6 }}
+              >
+                Polling {FREE_POLL_TAGS} of {tags.length} tags. Click a tag to read it once. Pro polls them all.
+              </button>
+            )}
             {tags.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 {tags.map((t) => (
@@ -631,7 +666,7 @@ function App() {
         columns={columns}
         data={scannerTableData}
         emptyMessage="No tags found on this device"
-        onRowClick={(row) => { if (!requirePro("Tag writes")) return; const t = String(row.type); setEditingTag({ name: String(row.name), type: t, currentValue: t.toLowerCase() === "bool" ? (/^(on|true|1)$/i.test(String(row.value)) ? "true" : "false") : String(row.value) }); }}
+        onRowClick={handleScannerRowClick}
         renderCell={(key: string, row: Record<string, unknown>) => {
           if (key === "trend") {
             const name = String(row.name);

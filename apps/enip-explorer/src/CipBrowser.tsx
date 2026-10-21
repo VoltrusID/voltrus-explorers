@@ -220,7 +220,7 @@ export function CipBrowser({ onClose, onLog, eds }: Props) {
                 <option value="">No decoder</option>
                 {decoders.map((d) => <option key={d.id} value={d.id}>{d.name || "(unnamed)"}</option>)}
               </select>
-              <Button icon={<Settings2 size={14} />} onClick={() => setShowEditor(true)}>Decoders</Button>
+              <Button icon={<Settings2 size={14} />} onClick={() => { if (requirePro("Custom response decoders")) setShowEditor(true); }}>Decoders <ProBadge /></Button>
             </div>
 
             {instances && instances.length > 0 && (
