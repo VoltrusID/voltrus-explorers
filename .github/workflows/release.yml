@@ -15,7 +15,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer]
       appstore:
         description: Mac App Store .pkg
         type: boolean

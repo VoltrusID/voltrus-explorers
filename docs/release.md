@@ -62,6 +62,7 @@ write succeeded.
 | EtherNet/IP Explorer | `com.joyodigitama.enipexplorer.pro` | set in App Store Connect |
 | Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | not set yet (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
+| NATS Explorer | `com.joyodigitama.natsexplorer.pro` | set in App Store Connect before release (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
 
 - Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.
   The logic is `crates/mt-store` (Rust) and `packages/mt-ui/src/pro.tsx` (`ProProvider`, `requirePro`).

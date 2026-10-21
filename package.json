@@ -9,7 +9,8 @@
     "dev:s7": "bun --filter s7-explorer tauri dev",
     "dev:ble": "bun --filter ble-inspector tauri dev",
     "dev:enip": "bun --filter enip-explorer tauri dev",
-    "dev:serial": "bun --filter serial-monitor tauri dev"
+    "dev:serial": "bun --filter serial-monitor tauri dev",
+    "dev:nats": "bun --filter nats-explorer tauri dev"
   },
   "devDependencies": {
     "puppeteer-core": "^25.15.0"

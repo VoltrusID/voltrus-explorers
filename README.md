@@ -11,6 +11,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read values. Pro adds writing values, notification subscriptions and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -51,13 +52,23 @@ and the GitHub Releases have everything.
 | Free | Open a port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, communication log with copy |
 | Pro | Virtual serial port (PTY) for loopback tests and bridging, Modbus RTU frame simulation templates, communication log export to CSV |
 
+### NATS Explorer
+
+Free to download on the App Store; Pro is a one-time in-app purchase. People who bought the app while it was paid
+(before 1.2.0) keep every feature. NATS Explorer was never released as paid, so this applies to nobody yet.
+
+| | |
+| --- | --- |
+| Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export |
+| Pro | JetStream stream and consumer management, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
+
 ## Build from source
 
 Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh).
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats
 ```
 
 Universal release build (unsigned):
@@ -70,6 +81,7 @@ scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/uns
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
@@ -88,6 +100,10 @@ apps/serial-monitor    Tauri app (macOS only), serial terminal
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-serial       RS232/RS485 port configuration, enumeration and client
+apps/nats-explorer     Tauri app (macOS)
+crates/mt-protocol     shared protocol client traits
+crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
+crates/mt-nats         NATS client, embedded server, JetStream, KV/object stores, payload decoding
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
