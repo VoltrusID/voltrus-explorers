@@ -1,0 +1,20 @@
+[package]
+name = "mt-mqtt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mt-protocol = { path = "../mt-protocol" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+rumqttd = "0.20"
+rumqttc = "0.24"
+hex = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
