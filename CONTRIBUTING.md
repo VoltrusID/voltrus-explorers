@@ -3,7 +3,7 @@
 Bug reports with the device make/model and a packet capture (Wireshark `.pcapng`) are the most useful thing you can send:
 protocol quirks of real devices are what these tools live on.
 
-Pull requests: run `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-store` and `bun run --cwd apps/modbus-poll test`, and
+Pull requests: run `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`, and
 keep each PR to one change.
 
 ## Contributor terms

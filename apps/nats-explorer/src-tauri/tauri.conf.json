@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "NATS Explorer",
+  "version": "1.2.0",
+  "identifier": "com.joyodigitama.nats-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NATS Explorer",
+        "width": 1280,
+        "height": 820,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "NATS pub/sub client with an embedded server",
+    "longDescription": "Connect to and inspect NATS servers, publish and subscribe with wildcard subjects and headers, and run an embedded NATS server for local demos and development. Includes JetStream stream and consumer management.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

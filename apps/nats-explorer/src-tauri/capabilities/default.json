@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for NATS Explorer",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-center",
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
+  ]
+}

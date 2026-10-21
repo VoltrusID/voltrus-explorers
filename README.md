@@ -8,6 +8,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -41,7 +42,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:nats
 ```
 
 Universal release build (unsigned):
@@ -51,7 +52,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
@@ -60,8 +61,10 @@ apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/s7-explorer       Tauri app (macOS)
+apps/nats-explorer     Tauri app (macOS)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
+crates/mt-nats         NATS client, embedded server, JetStream, KV/object stores, payload decoding
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
@@ -69,6 +72,12 @@ crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, 
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers
 ```
+
+### Free and Pro in the App Store build
+
+| App | Free | Pro (one-time purchase) |
+| --- | --- | --- |
+| NATS Explorer | Embedded NATS server, connect with any auth mode (user/password, token, NKey, JWT, credentials file, TLS), subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export | JetStream streams and consumers, KV store browser with live watch, object store browser with upload/download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
 
 Maintainers: signed releases run in GitHub Actions, see [docs/release.md](docs/release.md).
 
