@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Apple must grant this per team (https://developer.apple.com/contact/request/networking-multicast)
+	     and Multicast Networking must be enabled on the App ID; a provisioning profile without it makes
+	     the archive fail to sign. scripts/build-ios.sh therefore adds it only when the profile carries it
+	     (see docs/ios-multicast.md). Needed for the Who-Is broadcast and the I-Am replies. -->
+	<key>com.apple.developer.networking.multicast</key>
+	<true/>
+</dict>
+</plist>

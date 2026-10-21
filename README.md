@@ -43,7 +43,7 @@ Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-sto
 ## Layout
 
 ```
-apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
+apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands), also builds for iOS (scripts/build-ios.sh)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 crates/mt-protocol     shared protocol client traits

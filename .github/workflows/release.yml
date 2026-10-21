@@ -6,7 +6,7 @@
 #
 #   appstore  universal .pkg signed for the Mac App Store; uploaded to App Store Connect when `upload` is ticked
 #   dmg       universal Developer ID .dmg, notarized and stapled; attached to a GitHub Release when `github_release`
-#   ios       Modbus Poll only: App Store IPA; uploaded when `upload` is ticked
+#   ios       iPhone/iPad App Store IPA of the selected app (apps/<app>/scripts/build-ios.sh); uploaded when `upload` is ticked
 name: Release
 
 on:
@@ -25,7 +25,7 @@ on:
         type: boolean
         default: true
       ios:
-        description: iOS IPA (modbus-poll only)
+        description: iOS IPA (iPhone and iPad)
         type: boolean
         default: false
       upload:
@@ -129,7 +129,7 @@ jobs:
         run: scripts/ci-keychain.sh cleanup
 
   ios:
-    if: inputs.ios && inputs.app == 'modbus-poll'
+    if: inputs.ios
     # App Store Connect requires the iOS 26 SDK (Xcode 26), which macos-15 images do not select by default.
     runs-on: macos-26
     timeout-minutes: 90
@@ -176,26 +176,36 @@ jobs:
             || openssl pkcs12 -nokeys -clcerts -in "$RUNNER_TEMP/dist.p12" -passin env:APPLE_DIST_P12_PASSWORD; } \
             | openssl x509 -noout -serial | cut -d= -f2)"
           rm -f "$RUNNER_TEMP/dist.p12"
-          python3 scripts/asc-profile.py IOS_APP_STORE com.joyodigitama.modbus-poll "$serial" "$RUNNER_TEMP/ios.mobileprovision"
+          bundle_id="$(python3 -c "import json; print(json.load(open('apps/$APP/src-tauri/tauri.conf.json'))['identifier'])")"
+          python3 scripts/asc-profile.py IOS_APP_STORE "$bundle_id" "$serial" "$RUNNER_TEMP/ios.mobileprovision"
           echo "IOS_MOBILE_PROVISION=$(base64 < "$RUNNER_TEMP/ios.mobileprovision" | tr -d '\n')" >> "$GITHUB_ENV"
+          # Apps with an iOS entitlements file (BACnet Explorer: Who-Is scanning needs the multicast entitlement) only
+          # get it when the profile carries it; otherwise signing the archive would fail.
+          if [[ -f "apps/$APP/src-tauri/entitlements.ios.plist" ]]; then
+            if security cms -D -i "$RUNNER_TEMP/ios.mobileprovision" | grep -q 'com.apple.developer.networking.multicast'; then
+              echo "IOS_MULTICAST=1" >> "$GITHUB_ENV"
+            else
+              echo "::notice::The provisioning profile has no multicast networking entitlement: building without it (Who-Is scanning finds nothing on iOS). See docs/ios-multicast.md."
+            fi
+          fi
           rm -f "$RUNNER_TEMP/ios.mobileprovision"
 
       - name: Build IPA
         env:
           IOS_CERTIFICATE: ${{ secrets.APPLE_DIST_P12_BASE64 }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
-        run: apps/modbus-poll/scripts/build-ios.sh --build-number "$(date +%s)"
+        run: apps/$APP/scripts/build-ios.sh --build-number "$(date +%s)"
 
       - name: Upload to App Store Connect
         if: inputs.upload
         run: |
-          ipa="$(find apps/modbus-poll/src-tauri/gen/apple/build -name '*.ipa' | head -1)"
+          ipa="$(find apps/$APP/src-tauri/gen/apple/build -name '*.ipa' | head -1)"
           xcrun altool --upload-app --type ios --file "$ipa" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: modbus-poll-ios-${{ github.run_number }}
-          path: apps/modbus-poll/src-tauri/gen/apple/build/**/*.ipa
+          name: ${{ inputs.app }}-ios-${{ github.run_number }}
+          path: apps/${{ inputs.app }}/src-tauri/gen/apple/build/**/*.ipa
           if-no-files-found: error
           retention-days: 30
 
