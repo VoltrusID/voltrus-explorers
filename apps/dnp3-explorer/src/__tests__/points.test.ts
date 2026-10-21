@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parsePointsCsv, pointsToCsv, type Dnp3Point } from "../points";
+import { migrateLegacyPoint, parsePointsCsv, pointsToCsv, type Dnp3Point } from "../points";
 
 const POINTS: Dnp3Point[] = [
-  { name: "Voltage", group: 30, variation: 4, index: 0 },
+  { name: "Voltage", group: 30, variation: 5, index: 0 },
   { name: "Breaker, main", group: 10, variation: 2, index: 3 },
   { name: 'Quote "A"', group: 20, variation: 1, index: 12 },
 ];
@@ -10,7 +10,7 @@ const POINTS: Dnp3Point[] = [
 describe("point list CSV", () => {
   it("writes the header and one line per point, quoting names that need it", () => {
     expect(pointsToCsv(POINTS)).toBe(
-      'name,group,variation,index\nVoltage,30,4,0\n"Breaker, main",10,2,3\n"Quote ""A""",20,1,12\n',
+      'name,group,variation,index\nVoltage,30,5,0\n"Breaker, main",10,2,3\n"Quote ""A""",20,1,12\n',
     );
   });
 
@@ -21,6 +21,18 @@ describe("point list CSV", () => {
   it("accepts CRLF line endings and a BOM", () => {
     const text = "\uFEFFname,group,variation,index\r\nA,1,2,7\r\n";
     expect(parsePointsCsv(text).points).toEqual([{ name: "A", group: 1, variation: 2, index: 7 }]);
+  });
+
+  it("converts the object types earlier versions saved to the standard ones", () => {
+    // g30v4 is an int16 input in the standard; the float32 input is g30v5. g32 is an analog
+    // input event; analog output status is g40.
+    const text = "name,group,variation,index\nA,30,4,0\nB,32,1,2\n";
+    expect(parsePointsCsv(text).points).toEqual([
+      { name: "A", group: 30, variation: 5, index: 0 },
+      { name: "B", group: 40, variation: 1, index: 2 },
+    ]);
+    expect(migrateLegacyPoint({ name: "x", group: 30, variation: 4, index: 1 })).toEqual({ name: "x", group: 30, variation: 5, index: 1 });
+    expect(migrateLegacyPoint({ name: "x", group: 1, variation: 2, index: 1 }).variation).toBe(2);
   });
 
   it("rejects bad lines with their line numbers and keeps the good ones", () => {

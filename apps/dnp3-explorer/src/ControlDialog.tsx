@@ -35,6 +35,7 @@ const wholeNumber = (text: string, min: number, max: number) => {
 export function ControlDialog({ address, binary, currentValue, onSubmit, onCancel }: ControlDialogProps) {
   const [mode, setMode] = useState<ControlMode>(() => (localStorage.getItem(MODE_KEY) === "direct" ? "direct" : "select"));
   const [operation, setOperation] = useState("3");
+  const [tcc, setTcc] = useState("0");
   const [count, setCount] = useState("1");
   const [onTime, setOnTime] = useState("1000");
   const [offTime, setOffTime] = useState("0");
@@ -57,11 +58,11 @@ export function ControlDialog({ address, binary, currentValue, onSubmit, onCance
     }
     const countN = wholeNumber(count, 1, 255);
     if (countN === null) return "Count must be a whole number from 1 to 255.";
-    if (!pulse) return { kind: "crob", code: Number(operation), count: countN, onTimeMs: 0, offTimeMs: 0, mode };
+    if (!pulse) return { kind: "crob", code: Number(operation) | Number(tcc), count: countN, onTimeMs: 0, offTimeMs: 0, mode };
     const onN = wholeNumber(onTime, 0, 4294967295);
     const offN = wholeNumber(offTime, 0, 4294967295);
     if (onN === null || offN === null) return "On and off times are whole milliseconds.";
-    return { kind: "crob", code: Number(operation), count: countN, onTimeMs: onN, offTimeMs: offN, mode };
+    return { kind: "crob", code: Number(operation) | Number(tcc), count: countN, onTimeMs: onN, offTimeMs: offN, mode };
   };
 
   const submit = async (e: FormEvent) => {
@@ -117,6 +118,13 @@ export function ControlDialog({ address, binary, currentValue, onSubmit, onCance
             <Field label="Operation">
               <select className="vt-select" value={operation} onChange={(e) => setOperation(e.target.value)}>
                 {CROB_OPERATIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Trip / close" hint="Pairs the operation with a trip or close code, as breaker controls expect.">
+              <select className="vt-select" value={tcc} onChange={(e) => setTcc(e.target.value)}>
+                <option value="0">None</option>
+                <option value="64">Close</option>
+                <option value="128">Trip</option>
               </select>
             </Field>
             <div className="vt-field-row">

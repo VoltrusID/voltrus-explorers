@@ -116,15 +116,24 @@ async fn event_scan_returns_buffered_events() {
         st.detect_events();
     }
 
-    let ev = client.scan_events(1, &points()).await.unwrap();
-    assert!(!ev.is_empty(), "class 1 should return the analog event");
+    // Each scan only reports the points the events belong to.
+    let watched = vec![
+        Dnp3Point { name: "a1".into(), group: 30, variation: 5, index: 1, scale: 1.0 },
+        Dnp3Point { name: "b2".into(), group: 1, variation: 2, index: 2, scale: 1.0 },
+        Dnp3Point { name: "c1".into(), group: 20, variation: 1, index: 1, scale: 1.0 },
+    ];
+    let ev = client.scan_events(1, &watched).await.unwrap();
+    assert_eq!(ev.len(), 1, "class 1 should return the analog event");
+    assert_eq!((ev[0].point.name.as_str(), ev[0].value), ("a1", 100.0));
 
     // After draining class 1, class 3 should still be pending
-    let ev3 = client.scan_events(3, &points()).await.unwrap();
-    assert!(!ev3.is_empty(), "class 3 should return the binary event");
+    let ev3 = client.scan_events(3, &watched).await.unwrap();
+    assert_eq!(ev3.len(), 1, "class 3 should return the binary event");
+    assert_eq!((ev3[0].point.name.as_str(), ev3[0].value), ("b2", 1.0));
 
-    let ev2 = client.scan_events(2, &points()).await.unwrap();
-    assert!(!ev2.is_empty(), "class 2 should return the counter event");
+    let ev2 = client.scan_events(2, &watched).await.unwrap();
+    assert_eq!(ev2.len(), 1, "class 2 should return the counter event");
+    assert_eq!((ev2[0].point.name.as_str(), ev2[0].value), ("c1", 7.0));
 
     client.disconnect().await.unwrap();
 }

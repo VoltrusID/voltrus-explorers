@@ -1,11 +1,16 @@
-#![allow(dead_code)]
+//! DNP3 application layer (IEEE 1815-2012 clause 4): fragment headers, internal indications and
+//! the request builders the master uses.
+//!
+//! A request fragment starts with two octets, application control then function code. A response
+//! fragment has four: application control, function code, IIN1 and IIN2.
 
 use anyhow::Result;
 
 /// DNP3 application function codes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FunctionCode {
+    Confirm = 0x00,
     Read = 0x01,
     Write = 0x02,
     Select = 0x03,
@@ -13,171 +18,264 @@ pub enum FunctionCode {
     DirectOperate = 0x05,
     DirectOperateNoAck = 0x06,
     Freeze = 0x07,
-    FreezeClear = 0x08,
-    FreezeAtTime = 0x09,
+    FreezeNoAck = 0x08,
+    FreezeClear = 0x09,
+    FreezeClearNoAck = 0x0A,
+    FreezeAtTime = 0x0B,
+    FreezeAtTimeNoAck = 0x0C,
     ColdRestart = 0x0D,
     WarmRestart = 0x0E,
+    InitializeData = 0x0F,
     EnableUnsolicited = 0x14,
     DisableUnsolicited = 0x15,
+    DelayMeasure = 0x17,
     Response = 0x81,
     UnsolicitedResponse = 0x82,
 }
 
 impl FunctionCode {
     pub fn from_u8(v: u8) -> Result<Self> {
-        match v {
-            0x01 => Ok(Self::Read),
-            0x02 => Ok(Self::Write),
-            0x03 => Ok(Self::Select),
-            0x04 => Ok(Self::Operate),
-            0x05 => Ok(Self::DirectOperate),
-            0x06 => Ok(Self::DirectOperateNoAck),
-            0x07 => Ok(Self::Freeze),
-            0x08 => Ok(Self::FreezeClear),
-            0x09 => Ok(Self::FreezeAtTime),
-            0x0D => Ok(Self::ColdRestart),
-            0x0E => Ok(Self::WarmRestart),
-            0x14 => Ok(Self::EnableUnsolicited),
-            0x15 => Ok(Self::DisableUnsolicited),
-            0x81 => Ok(Self::Response),
-            0x82 => Ok(Self::UnsolicitedResponse),
+        Ok(match v {
+            0x00 => Self::Confirm,
+            0x01 => Self::Read,
+            0x02 => Self::Write,
+            0x03 => Self::Select,
+            0x04 => Self::Operate,
+            0x05 => Self::DirectOperate,
+            0x06 => Self::DirectOperateNoAck,
+            0x07 => Self::Freeze,
+            0x08 => Self::FreezeNoAck,
+            0x09 => Self::FreezeClear,
+            0x0A => Self::FreezeClearNoAck,
+            0x0B => Self::FreezeAtTime,
+            0x0C => Self::FreezeAtTimeNoAck,
+            0x0D => Self::ColdRestart,
+            0x0E => Self::WarmRestart,
+            0x0F => Self::InitializeData,
+            0x14 => Self::EnableUnsolicited,
+            0x15 => Self::DisableUnsolicited,
+            0x17 => Self::DelayMeasure,
+            0x81 => Self::Response,
+            0x82 => Self::UnsolicitedResponse,
             _ => anyhow::bail!("Unknown function code: 0x{:02X}", v),
-        }
-    }
-}
-
-/// DNP3 object header qualifier codes.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(u8)]
-pub enum QualifierCode {
-    StartStop8 = 0x00,
-    StartStop16 = 0x01,
-    Count8 = 0x07,
-    Count16 = 0x08,
-    CountAndPrefix8 = 0x17,
-}
-
-/// DNP3 Internal Indications (IIN) -- 2 bytes of device status flags.
-#[derive(Debug, Clone, Default)]
-pub struct Iin {
-    pub all_stations: bool,
-    pub device_restart: bool,
-    pub device_trouble: bool,
-    pub local_control: bool,
-    pub need_time: bool,
-    pub class_1_events: bool,
-    pub class_2_events: bool,
-    pub class_3_events: bool,
-}
-
-impl Iin {
-    pub fn to_low_byte(&self) -> u8 {
-        let mut byte = 0u8;
-        if self.all_stations {
-            byte |= 0x01;
-        }
-        if self.device_restart {
-            byte |= 0x02;
-        }
-        if self.device_trouble {
-            byte |= 0x04;
-        }
-        if self.local_control {
-            byte |= 0x08;
-        }
-        if self.need_time {
-            byte |= 0x10;
-        }
-        if self.class_1_events {
-            byte |= 0x20;
-        }
-        if self.class_2_events {
-            byte |= 0x40;
-        }
-        if self.class_3_events {
-            byte |= 0x80;
-        }
-        byte
-    }
-
-    pub fn from_bytes(low: u8, _high: u8) -> Self {
-        Self {
-            all_stations: low & 0x01 != 0,
-            device_restart: low & 0x02 != 0,
-            device_trouble: low & 0x04 != 0,
-            local_control: low & 0x08 != 0,
-            need_time: low & 0x10 != 0,
-            class_1_events: low & 0x20 != 0,
-            class_2_events: low & 0x40 != 0,
-            class_3_events: low & 0x80 != 0,
-        }
-    }
-}
-
-/// DNP3 ASDU header (4 bytes: function, control, IIN low, IIN high).
-#[derive(Debug, Clone)]
-pub struct AsduHeader {
-    pub function: FunctionCode,
-    pub sequence: u8,
-    pub iin: Iin,
-}
-
-impl AsduHeader {
-    pub fn encode(&self) -> [u8; 4] {
-        let ac = 0xC0 | (self.sequence & 0x0F);
-        [self.function as u8, ac, self.iin.to_low_byte(), 0x00]
-    }
-
-    pub fn decode(bytes: &[u8; 4]) -> Result<Self> {
-        let function = FunctionCode::from_u8(bytes[0])?;
-        let sequence = bytes[1] & 0x0F;
-        let iin = Iin::from_bytes(bytes[2], bytes[3]);
-        Ok(Self {
-            function,
-            sequence,
-            iin,
         })
     }
 }
 
-/// DNP3 object header in an ASDU.
-#[derive(Debug, Clone)]
-pub struct ObjectHeader {
-    pub group: u8,
-    pub variation: u8,
-    pub qualifier: QualifierCode,
-    pub start_stop_or_count: Vec<u8>,
+/// Application control octet: FIR | FIN | CON | UNS | SEQ (4 bits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppControl {
+    /// First fragment of a message.
+    pub fir: bool,
+    /// Final fragment of a message.
+    pub fin: bool,
+    /// The receiver must answer this fragment with a CONFIRM.
+    pub con: bool,
+    /// Unsolicited response.
+    pub uns: bool,
+    pub seq: u8,
 }
 
-impl ObjectHeader {
-    pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = vec![self.group, self.variation, self.qualifier as u8];
-        bytes.extend_from_slice(&self.start_stop_or_count);
-        bytes
+impl AppControl {
+    /// A complete single-fragment message with sequence number `seq`.
+    pub const fn single(seq: u8) -> Self {
+        Self { fir: true, fin: true, con: false, uns: false, seq: seq & 0x0F }
+    }
+
+    pub fn to_byte(self) -> u8 {
+        (if self.fir { 0x80 } else { 0 })
+            | (if self.fin { 0x40 } else { 0 })
+            | (if self.con { 0x20 } else { 0 })
+            | (if self.uns { 0x10 } else { 0 })
+            | (self.seq & 0x0F)
+    }
+
+    pub fn from_byte(byte: u8) -> Self {
+        Self {
+            fir: byte & 0x80 != 0,
+            fin: byte & 0x40 != 0,
+            con: byte & 0x20 != 0,
+            uns: byte & 0x10 != 0,
+            seq: byte & 0x0F,
+        }
     }
 }
 
-/// Build a READ request ASDU for a class-based poll.
-pub fn build_read_request(sequence: u8, group: u8, variation: u8) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::Read,
-        sequence,
-        iin: Iin::default(),
-    };
-    let mut asdu = header.encode().to_vec();
-    asdu.push(group);
-    asdu.push(variation);
-    asdu.push(QualifierCode::Count8 as u8);
-    asdu.push(0x01);
+/// Internal indications (IIN1 and IIN2), carried in every response.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Iin {
+    // IIN1
+    pub all_stations: bool,
+    pub class_1_events: bool,
+    pub class_2_events: bool,
+    pub class_3_events: bool,
+    pub need_time: bool,
+    pub local_control: bool,
+    pub device_trouble: bool,
+    pub device_restart: bool,
+    // IIN2
+    pub no_func_code_support: bool,
+    pub object_unknown: bool,
+    pub parameter_error: bool,
+    pub event_buffer_overflow: bool,
+    pub already_executing: bool,
+    pub config_corrupt: bool,
+}
+
+impl Iin {
+    pub fn to_bytes(&self) -> [u8; 2] {
+        let bit = |set: bool, mask: u8| if set { mask } else { 0 };
+        [
+            bit(self.all_stations, 0x01)
+                | bit(self.class_1_events, 0x02)
+                | bit(self.class_2_events, 0x04)
+                | bit(self.class_3_events, 0x08)
+                | bit(self.need_time, 0x10)
+                | bit(self.local_control, 0x20)
+                | bit(self.device_trouble, 0x40)
+                | bit(self.device_restart, 0x80),
+            bit(self.no_func_code_support, 0x01)
+                | bit(self.object_unknown, 0x02)
+                | bit(self.parameter_error, 0x04)
+                | bit(self.event_buffer_overflow, 0x08)
+                | bit(self.already_executing, 0x10)
+                | bit(self.config_corrupt, 0x20),
+        ]
+    }
+
+    pub fn from_bytes(low: u8, high: u8) -> Self {
+        Self {
+            all_stations: low & 0x01 != 0,
+            class_1_events: low & 0x02 != 0,
+            class_2_events: low & 0x04 != 0,
+            class_3_events: low & 0x08 != 0,
+            need_time: low & 0x10 != 0,
+            local_control: low & 0x20 != 0,
+            device_trouble: low & 0x40 != 0,
+            device_restart: low & 0x80 != 0,
+            no_func_code_support: high & 0x01 != 0,
+            object_unknown: high & 0x02 != 0,
+            parameter_error: high & 0x04 != 0,
+            event_buffer_overflow: high & 0x08 != 0,
+            already_executing: high & 0x10 != 0,
+            config_corrupt: high & 0x20 != 0,
+        }
+    }
+
+    /// Combine the indications of several fragments of one response.
+    pub fn merge(&mut self, other: &Iin) {
+        let [a1, a2] = self.to_bytes();
+        let [b1, b2] = other.to_bytes();
+        *self = Self::from_bytes(a1 | b1, a2 | b2);
+    }
+
+    /// The IIN2 conditions that mean the outstation refused or could not parse the request.
+    /// `object_unknown` is only counted when `strict_objects` is set, because an outstation that
+    /// lacks one of several requested classes still answers with the data it has.
+    pub fn error(&self, strict_objects: bool) -> Option<String> {
+        let mut problems = Vec::new();
+        if self.no_func_code_support {
+            problems.push("function code not supported (IIN2.0)");
+        }
+        if self.object_unknown && strict_objects {
+            problems.push("object unknown (IIN2.1)");
+        }
+        if self.parameter_error {
+            problems.push("parameter error (IIN2.2)");
+        }
+        if self.already_executing {
+            problems.push("already executing (IIN2.4)");
+        }
+        if self.config_corrupt {
+            problems.push("configuration corrupt (IIN2.5)");
+        }
+        if problems.is_empty() { None } else { Some(problems.join(", ")) }
+    }
+}
+
+/// Parsed application header of a request or a response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsduHeader {
+    pub control: AppControl,
+    pub function: FunctionCode,
+    /// Present in responses; default (all clear) for requests.
+    pub iin: Iin,
+}
+
+impl AsduHeader {
+    pub fn sequence(&self) -> u8 {
+        self.control.seq
+    }
+
+    /// Decode a response fragment: returns the header and the object bytes that follow it.
+    pub fn decode_response(asdu: &[u8]) -> Result<(Self, &[u8])> {
+        if asdu.len() < 4 {
+            anyhow::bail!("Response fragment too short: {} bytes", asdu.len());
+        }
+        let function = FunctionCode::from_u8(asdu[1])?;
+        Ok((
+            Self {
+                control: AppControl::from_byte(asdu[0]),
+                function,
+                iin: Iin::from_bytes(asdu[2], asdu[3]),
+            },
+            &asdu[4..],
+        ))
+    }
+}
+
+/// Split a request fragment into its application control, raw function code and object bytes.
+/// The function code stays raw so an outstation can still answer one it does not know.
+pub fn split_request(asdu: &[u8]) -> Option<(AppControl, u8, &[u8])> {
+    if asdu.len() < 2 {
+        return None;
+    }
+    Some((AppControl::from_byte(asdu[0]), asdu[1], &asdu[2..]))
+}
+
+/// Qualifier 0x06: no range field, all objects.
+pub const QUALIFIER_ALL: u8 = 0x06;
+
+/// Build a single-fragment request: 2-octet header followed by `objects`.
+pub fn build_request(function: FunctionCode, sequence: u8, objects: &[u8]) -> Vec<u8> {
+    let mut asdu = Vec::with_capacity(2 + objects.len());
+    asdu.push(AppControl::single(sequence).to_byte());
+    asdu.push(function as u8);
+    asdu.extend_from_slice(objects);
     asdu
 }
 
-/// Build a READ request for integrity poll (Class 0 = Group 60 Var 1).
-pub fn build_integrity_poll_request(sequence: u8) -> Vec<u8> {
-    build_read_request(sequence, 60, 1)
+/// Build a single-fragment, solicited response: 4-octet header followed by `objects`.
+pub fn build_response(sequence: u8, iin: &Iin, objects: &[u8]) -> Vec<u8> {
+    build_response_fragment(AppControl::single(sequence), iin, objects)
 }
 
-/// Build a READ request for event scan (Class 1/2/3 = Group 60 Var 2/3/4).
+/// Build one response fragment with explicit application control.
+pub fn build_response_fragment(control: AppControl, iin: &Iin, objects: &[u8]) -> Vec<u8> {
+    let mut asdu = Vec::with_capacity(4 + objects.len());
+    asdu.push(control.to_byte());
+    asdu.push(FunctionCode::Response as u8);
+    asdu.extend_from_slice(&iin.to_bytes());
+    asdu.extend_from_slice(objects);
+    asdu
+}
+
+/// Build a READ for the given (group, variation) pairs, each with qualifier 0x06 (all objects).
+pub fn build_read_request(sequence: u8, objects: &[(u8, u8)]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(3 * objects.len());
+    for &(group, variation) in objects {
+        body.extend_from_slice(&[group, variation, QUALIFIER_ALL]);
+    }
+    build_request(FunctionCode::Read, sequence, &body)
+}
+
+/// Integrity poll: class 1, 2 and 3 events, then class 0 static data
+/// (g60v2, g60v3, g60v4, g60v1, all with qualifier 0x06).
+pub fn build_integrity_poll_request(sequence: u8) -> Vec<u8> {
+    build_read_request(sequence, &[(60, 2), (60, 3), (60, 4), (60, 1)])
+}
+
+/// Event scan for one class (g60v2 / g60v3 / g60v4); any other value polls class 0.
 pub fn build_event_scan_request(sequence: u8, class: u8) -> Vec<u8> {
     let variation = match class {
         1 => 2,
@@ -185,348 +283,47 @@ pub fn build_event_scan_request(sequence: u8, class: u8) -> Vec<u8> {
         3 => 4,
         _ => 1,
     };
-    build_read_request(sequence, 60, variation)
+    build_read_request(sequence, &[(60, variation)])
 }
 
-/// Build a FREEZE request.
+/// FREEZE of all counters: g20v0 with qualifier 0x06.
 pub fn build_freeze_request(sequence: u8) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::Freeze,
-        sequence,
-        iin: Iin::default(),
-    };
-    let mut asdu = header.encode().to_vec();
-    asdu.push(20);
-    asdu.push(0);
-    asdu.push(QualifierCode::Count8 as u8);
-    asdu.push(0x00);
-    asdu
+    build_request(FunctionCode::Freeze, sequence, &[20, 0, QUALIFIER_ALL])
 }
 
-/// Build a WRITE request carrying the current time (Group 50 Var 1, Time and Date).
-/// DNP3 time is milliseconds since Unix epoch as a little-endian u64.
+/// DNP3 timestamp: 48-bit unsigned milliseconds since the Unix epoch, little-endian.
+pub fn dnp3_time_bytes(unix_ms: u64) -> [u8; 6] {
+    let b = unix_ms.to_le_bytes();
+    [b[0], b[1], b[2], b[3], b[4], b[5]]
+}
+
+/// WRITE of the current time: g50v1 (time and date), qualifier 0x07, one object of 6 octets.
 pub fn build_time_sync_request(sequence: u8) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::Write,
-        sequence,
-        iin: Iin::default(),
-    };
-    let mut asdu = header.encode().to_vec();
-    asdu.push(50); // group 50 — Time and Date
-    asdu.push(1); // var 1
-    asdu.push(QualifierCode::Count8 as u8);
-    asdu.push(0x01);
-    let now = now_ms();
-    asdu.extend_from_slice(&now.to_le_bytes());
-    asdu
+    build_time_sync_request_at(sequence, now_ms())
 }
 
-/// Build a COLD RESTART request (0x0D). No objects in the ASDU.
+/// WRITE of `unix_ms` as g50v1.
+pub fn build_time_sync_request_at(sequence: u8, unix_ms: u64) -> Vec<u8> {
+    let mut body = vec![50, 1, 0x07, 0x01];
+    body.extend_from_slice(&dnp3_time_bytes(unix_ms));
+    build_request(FunctionCode::Write, sequence, &body)
+}
+
+/// COLD RESTART (0x0D). No objects.
 pub fn build_cold_restart_request(sequence: u8) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::ColdRestart,
-        sequence,
-        iin: Iin::default(),
-    };
-    header.encode().to_vec()
+    build_request(FunctionCode::ColdRestart, sequence, &[])
 }
 
-/// Build a WARM RESTART request (0x0E). No objects in the ASDU.
+/// WARM RESTART (0x0E). No objects.
 pub fn build_warm_restart_request(sequence: u8) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::WarmRestart,
-        sequence,
-        iin: Iin::default(),
-    };
-    header.encode().to_vec()
+    build_request(FunctionCode::WarmRestart, sequence, &[])
 }
 
-/// CROB (Group 12 Var 1) control code operation types: the low nibble of the control code byte.
-pub mod crob_code {
-    pub const PULSE_ON: u8 = 0x01;
-    pub const PULSE_OFF: u8 = 0x02;
-    pub const LATCH_ON: u8 = 0x03;
-    pub const LATCH_OFF: u8 = 0x04;
-}
-
-/// Largest point index a control request can carry: objects use the 1-byte prefix qualifier (0x17).
-pub const MAX_CONTROL_INDEX: u16 = 255;
-
-/// Control relay output block (Group 12 Var 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Crob {
-    pub code: u8,
-    pub count: u8,
-    pub on_time_ms: u32,
-    pub off_time_ms: u32,
-}
-
-impl Crob {
-    /// One 1000 ms pulse on or off.
-    pub fn pulse(on: bool) -> Self {
-        Self {
-            code: if on { crob_code::PULSE_ON } else { crob_code::PULSE_OFF },
-            count: 1,
-            on_time_ms: 1000,
-            off_time_ms: 0,
-        }
-    }
-
-    /// True when the operation drives the output on (pulse on or latch on).
-    pub fn drives_on(&self) -> bool {
-        matches!(self.code & 0x0F, crob_code::PULSE_ON | crob_code::LATCH_ON)
-    }
-}
-
-/// The object carried by a control request: a CROB (Group 12 Var 1) or an analog output block
-/// (Group 41 Var 3, float32).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ControlObject {
-    Crob(Crob),
-    AnalogOutput(f32),
-}
-
-/// One control point with the value to command (SELECT, OPERATE or DIRECT OPERATE).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ControlRequest {
-    pub index: u16,
-    pub object: ControlObject,
-}
-
-/// Control status carried in the last byte of an echoed control object.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlStatus {
-    Success,
-    Timeout,
-    NoSelect,
-    FormatError,
-    NotSupported,
-    AlreadyActive,
-    HardwareError,
-    Local,
-    TooManyObjs,
-    NotAuthorized,
-    AutomationInhibit,
-    ProcessingLimited,
-    OutOfRange,
-    NonParticipating,
-    Undefined,
-    Other(u8),
-}
-
-impl ControlStatus {
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::Success,
-            1 => Self::Timeout,
-            2 => Self::NoSelect,
-            3 => Self::FormatError,
-            4 => Self::NotSupported,
-            5 => Self::AlreadyActive,
-            6 => Self::HardwareError,
-            7 => Self::Local,
-            8 => Self::TooManyObjs,
-            9 => Self::NotAuthorized,
-            10 => Self::AutomationInhibit,
-            11 => Self::ProcessingLimited,
-            12 => Self::OutOfRange,
-            126 => Self::NonParticipating,
-            127 => Self::Undefined,
-            other => Self::Other(other),
-        }
-    }
-
-    pub fn as_u8(self) -> u8 {
-        match self {
-            Self::Success => 0,
-            Self::Timeout => 1,
-            Self::NoSelect => 2,
-            Self::FormatError => 3,
-            Self::NotSupported => 4,
-            Self::AlreadyActive => 5,
-            Self::HardwareError => 6,
-            Self::Local => 7,
-            Self::TooManyObjs => 8,
-            Self::NotAuthorized => 9,
-            Self::AutomationInhibit => 10,
-            Self::ProcessingLimited => 11,
-            Self::OutOfRange => 12,
-            Self::NonParticipating => 126,
-            Self::Undefined => 127,
-            Self::Other(v) => v,
-        }
-    }
-}
-
-impl std::fmt::Display for ControlStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            Self::Success => "SUCCESS",
-            Self::Timeout => "TIMEOUT (the select expired before the operate)",
-            Self::NoSelect => "NO_SELECT (no matching select)",
-            Self::FormatError => "FORMAT_ERROR",
-            Self::NotSupported => "NOT_SUPPORTED",
-            Self::AlreadyActive => "ALREADY_ACTIVE",
-            Self::HardwareError => "HARDWARE_ERROR",
-            Self::Local => "LOCAL (point is under local control)",
-            Self::TooManyObjs => "TOO_MANY_OBJS",
-            Self::NotAuthorized => "NOT_AUTHORIZED",
-            Self::AutomationInhibit => "AUTOMATION_INHIBIT",
-            Self::ProcessingLimited => "PROCESSING_LIMITED",
-            Self::OutOfRange => "OUT_OF_RANGE",
-            Self::NonParticipating => "NON_PARTICIPATING",
-            Self::Undefined => "UNDEFINED",
-            Self::Other(v) => return write!(f, "status {v}"),
-        };
-        f.write_str(text)
-    }
-}
-
-impl ControlRequest {
-    pub fn group(&self) -> u8 {
-        match self.object {
-            ControlObject::Crob(_) => 12,
-            ControlObject::AnalogOutput(_) => 41,
-        }
-    }
-
-    pub fn variation(&self) -> u8 {
-        match self.object {
-            ControlObject::Crob(_) => 1,
-            ControlObject::AnalogOutput(_) => 3,
-        }
-    }
-
-    /// Reject requests that cannot be encoded on the wire.
-    pub fn validate(&self) -> Result<()> {
-        if self.index > MAX_CONTROL_INDEX {
-            anyhow::bail!(
-                "Point index {} is above {MAX_CONTROL_INDEX}; only 1-byte indices are supported",
-                self.index
-            );
-        }
-        match self.object {
-            ControlObject::Crob(c) => {
-                if !matches!(c.code & 0x0F, 1..=4) {
-                    anyhow::bail!("CROB control code {:#04x} is not pulse on/off or latch on/off", c.code);
-                }
-                if c.count == 0 {
-                    anyhow::bail!("CROB count must be at least 1");
-                }
-            }
-            ControlObject::AnalogOutput(v) => {
-                if !v.is_finite() {
-                    anyhow::bail!("Analog output value must be a finite number");
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Object header and the single prefixed object, with `status` in its last byte.
-    /// Requests carry status 0; the outstation echoes the object with the result.
-    pub fn encode_objects(&self, status: ControlStatus) -> Vec<u8> {
-        let mut out = vec![
-            self.group(),
-            self.variation(),
-            QualifierCode::CountAndPrefix8 as u8,
-            0x01,
-            self.index as u8,
-        ];
-        match self.object {
-            ControlObject::Crob(c) => {
-                out.push(c.code);
-                out.push(c.count);
-                out.extend_from_slice(&c.on_time_ms.to_le_bytes());
-                out.extend_from_slice(&c.off_time_ms.to_le_bytes());
-            }
-            ControlObject::AnalogOutput(v) => out.extend_from_slice(&v.to_le_bytes()),
-        }
-        out.push(status.as_u8());
-        out
-    }
-}
-
-/// Build a SELECT, OPERATE or DIRECT OPERATE request ASDU for one control point.
-pub fn build_control_request(
-    function: FunctionCode,
-    sequence: u8,
-    request: &ControlRequest,
-) -> Result<Vec<u8>> {
-    request.validate()?;
-    let header = AsduHeader {
-        function,
-        sequence,
-        iin: Iin::default(),
-    };
-    let mut asdu = header.encode().to_vec();
-    asdu.extend_from_slice(&request.encode_objects(ControlStatus::Success));
-    Ok(asdu)
-}
-
-/// Build the response to a control request: the request object echoed with `status`.
-pub fn build_control_response(sequence: u8, request: &ControlRequest, status: ControlStatus) -> Vec<u8> {
-    let header = AsduHeader {
-        function: FunctionCode::Response,
-        sequence,
-        iin: Iin::default(),
-    };
-    let mut asdu = header.encode().to_vec();
-    asdu.extend_from_slice(&request.encode_objects(status));
-    asdu
-}
-
-/// A control object read back from a request or response ASDU.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ControlEcho {
-    pub request: ControlRequest,
-    pub status: ControlStatus,
-}
-
-/// Parse the first control object (CROB or analog output block) of an ASDU.
-/// Returns `Ok(None)` when the ASDU carries no objects.
-pub fn parse_control_objects(asdu: &[u8]) -> Result<Option<ControlEcho>> {
-    if asdu.len() <= 4 {
-        return Ok(None);
-    }
-    if asdu.len() < 9 {
-        anyhow::bail!("Control object truncated ({} bytes)", asdu.len());
-    }
-    let (group, variation, qualifier, count) = (asdu[4], asdu[5], asdu[6], asdu[7]);
-    if qualifier != QualifierCode::CountAndPrefix8 as u8 {
-        anyhow::bail!("Unsupported control qualifier {qualifier:#04x}");
-    }
-    if count == 0 {
-        anyhow::bail!("Control object count is 0");
-    }
-    let index = asdu[8] as u16;
-    let body = &asdu[9..];
-    let (object, status) = match (group, variation) {
-        (12, 1) => {
-            if body.len() < 11 {
-                anyhow::bail!("CROB truncated ({} of 11 bytes)", body.len());
-            }
-            let crob = Crob {
-                code: body[0],
-                count: body[1],
-                on_time_ms: u32::from_le_bytes([body[2], body[3], body[4], body[5]]),
-                off_time_ms: u32::from_le_bytes([body[6], body[7], body[8], body[9]]),
-            };
-            (ControlObject::Crob(crob), body[10])
-        }
-        (41, 3) => {
-            if body.len() < 5 {
-                anyhow::bail!("Analog output block truncated ({} of 5 bytes)", body.len());
-            }
-            let value = f32::from_le_bytes([body[0], body[1], body[2], body[3]]);
-            (ControlObject::AnalogOutput(value), body[4])
-        }
-        _ => anyhow::bail!("Unexpected object g{group}v{variation} in a control message"),
-    };
-    Ok(Some(ControlEcho {
-        request: ControlRequest { index, object },
-        status: ControlStatus::from_u8(status),
-    }))
+/// Application-layer CONFIRM for a received fragment with CON set. Echoes that fragment's
+/// sequence number; `uns` is set when confirming an unsolicited response.
+pub fn build_confirm(sequence: u8, uns: bool) -> Vec<u8> {
+    let control = AppControl { uns, ..AppControl::single(sequence) };
+    vec![control.to_byte(), FunctionCode::Confirm as u8]
 }
 
 fn now_ms() -> u64 {
@@ -536,248 +333,125 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-
-/// A parsed object from an ASDU response.
-#[derive(Debug, Clone)]
-pub struct ParsedObject {
-    pub group: u8,
-    pub variation: u8,
-    pub start_index: u16,
-    pub count: usize,
-    pub prefix_size: usize,
-    pub data: Vec<u8>,
-}
-
-/// Estimate the byte size of a single object instance based on its group,
-/// variation, and prefix size. Sizes match the bare-value wire format produced
-/// by the outstation and consumed by the `objects` parsers (no flag byte).
-fn estimate_object_size(group: u8, variation: u8, prefix_size: usize) -> usize {
-    let data_size = match (group, variation) {
-        (1, 1) | (10, 1) => 0,                    // packed
-        (1, 2) | (10, 2) | (12, 1) => 1,          // flag byte only
-        (20, 2) | (21, 2) | (30, 2) | (32, 2) | (40, 2) => 2, // u16
-        (20, 1) | (20, 5) | (21, 1) | (21, 5) => 4, // counter u32
-        (30, 1) | (30, 3) | (32, 1) | (40, 1) => 4, // int u32
-        (30, 4) | (30, 6) | (32, 3) | (40, 3) => 4, // float32
-        (32, 4) | (40, 4) => 8,                   // float64
-        _ => 0,
-    };
-    prefix_size + data_size
-}
-
-/// Parse a response ASDU into object headers and data.
-pub fn parse_response_asdu(data: &[u8]) -> Result<(AsduHeader, Vec<ParsedObject>)> {
-    if data.len() < 4 {
-        anyhow::bail!("ASDU too short: {} bytes", data.len());
-    }
-    let header_bytes: [u8; 4] = [data[0], data[1], data[2], data[3]];
-    let header = AsduHeader::decode(&header_bytes)?;
-
-    let mut objects = Vec::new();
-    let mut offset = 4;
-    while offset + 3 <= data.len() {
-        let group = data[offset];
-        let variation = data[offset + 1];
-        let qualifier_byte = data[offset + 2];
-        offset += 3;
-
-        let (count, start_index, prefix_size) = match qualifier_byte {
-            0x00 => {
-                if offset + 2 > data.len() {
-                    break;
-                }
-                let start = data[offset] as u16;
-                let stop = data[offset + 1] as u16;
-                offset += 2;
-                let count = (stop - start + 1) as usize;
-                (count, start, 0)
-            }
-            0x07 => {
-                if offset + 1 > data.len() {
-                    break;
-                }
-                let count = data[offset] as usize;
-                offset += 1;
-                (count, 0, 0)
-            }
-            0x17 => {
-                if offset + 1 > data.len() {
-                    break;
-                }
-                let count = data[offset] as usize;
-                offset += 1;
-                (count, 0, 1)
-            }
-            _ => {
-                tracing::warn!("Unsupported qualifier: 0x{:02X}", qualifier_byte);
-                break;
-            }
-        };
-
-        let object_data = data[offset..].to_vec();
-
-        let per_object_bytes = estimate_object_size(group, variation, prefix_size);
-        let total_data_bytes = per_object_bytes.saturating_mul(count);
-        objects.push(ParsedObject {
-            group,
-            variation,
-            start_index,
-            count,
-            prefix_size,
-            data: object_data,
-        });
-        offset = offset.saturating_add(total_data_bytes).min(data.len());
-    }
-
-    Ok((header, objects))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_asdu_header_encode() {
-        let header = AsduHeader {
-            function: FunctionCode::Read,
-            sequence: 5,
-            iin: Iin::default(),
-        };
-        let bytes = header.encode();
-        assert_eq!(bytes[0], FunctionCode::Read as u8);
-        assert_eq!(bytes[1], 0xC5);
-        assert_eq!(bytes[2], 0x00);
-        assert_eq!(bytes[3], 0x00);
+    fn app_control_bits() {
+        let c = AppControl::from_byte(0xE3);
+        assert!(c.fir && c.fin && c.con && !c.uns);
+        assert_eq!(c.seq, 3);
+        assert_eq!(c.to_byte(), 0xE3);
+        assert_eq!(AppControl::single(5).to_byte(), 0xC5);
+        assert_eq!(AppControl { uns: true, ..AppControl::single(0) }.to_byte(), 0xD0);
+        // Sequence is four bits.
+        assert_eq!(AppControl::single(17).seq, 1);
     }
 
     #[test]
-    fn test_asdu_header_decode() {
-        let bytes = [0x01, 0xC5, 0x02, 0x00];
-        let header = AsduHeader::decode(&bytes).unwrap();
-        assert_eq!(header.function, FunctionCode::Read);
-        assert_eq!(header.sequence, 5);
+    fn iin_bit_positions_follow_the_standard() {
+        // IIN1: bit 0 all stations, 1-3 class 1-3 events, 4 need time, 5 local control,
+        // 6 device trouble, 7 device restart. IIN2: bit 0 function code not supported,
+        // 1 object unknown, 2 parameter error, 3 event buffer overflow, 4 already executing,
+        // 5 configuration corrupt.
+        let iin = Iin::from_bytes(0x96, 0x00);
+        assert!(iin.class_1_events && iin.class_2_events && !iin.class_3_events);
+        assert!(iin.need_time && iin.device_restart);
+        assert!(!iin.device_trouble && !iin.local_control && !iin.all_stations);
+        assert_eq!(iin.to_bytes(), [0x96, 0x00]);
+
+        let errors = Iin::from_bytes(0x00, 0x07);
+        assert!(errors.no_func_code_support && errors.object_unknown && errors.parameter_error);
+        assert_eq!(errors.to_bytes(), [0x00, 0x07]);
+        for byte in 0..=255u8 {
+            assert_eq!(Iin::from_bytes(byte, byte & 0x3F).to_bytes(), [byte, byte & 0x3F]);
+        }
+    }
+
+    #[test]
+    fn iin_errors_ignore_unknown_object_unless_strict() {
+        let iin = Iin::from_bytes(0, 0x02);
+        assert_eq!(iin.error(false), None);
+        assert!(iin.error(true).unwrap().contains("IIN2.1"));
+        assert!(Iin::from_bytes(0, 0x01).error(false).unwrap().contains("IIN2.0"));
+        assert!(Iin::from_bytes(0, 0x04).error(false).unwrap().contains("IIN2.2"));
+    }
+
+    #[test]
+    fn iin_merge_combines_fragments() {
+        let mut a = Iin::from_bytes(0x02, 0x00);
+        a.merge(&Iin::from_bytes(0x10, 0x08));
+        assert!(a.class_1_events && a.need_time && a.event_buffer_overflow);
+    }
+
+    #[test]
+    fn response_header_is_four_octets() {
+        let (header, rest) = AsduHeader::decode_response(&[0xE3, 0x81, 0x96, 0x00, 0xAA]).unwrap();
+        assert_eq!(header.function, FunctionCode::Response);
+        assert_eq!(header.sequence(), 3);
+        assert!(header.control.con);
         assert!(header.iin.device_restart);
+        assert_eq!(rest, [0xAA]);
+        assert!(AsduHeader::decode_response(&[0xC0, 0x81, 0x00]).is_err());
+        assert!(AsduHeader::decode_response(&[0xC0, 0x42, 0x00, 0x00]).is_err());
     }
 
     #[test]
-    fn test_object_header_count_based() {
-        let oh = ObjectHeader {
-            group: 30,
-            variation: 4,
-            qualifier: QualifierCode::Count8,
-            start_stop_or_count: vec![2],
-        };
-        let bytes = oh.encode();
-        assert_eq!(bytes[0], 30);
-        assert_eq!(bytes[1], 4);
-        assert_eq!(bytes[2], QualifierCode::Count8 as u8);
-        assert_eq!(bytes[3], 2);
+    fn request_header_is_two_octets() {
+        let req = build_request(FunctionCode::Read, 7, &[60, 1, 6]);
+        assert_eq!(req, [0xC7, 0x01, 60, 1, 6]);
+        let (control, function, objects) = split_request(&req).unwrap();
+        assert_eq!(control.seq, 7);
+        assert_eq!(function, 0x01);
+        assert_eq!(objects, [60, 1, 6]);
+        assert!(split_request(&[0xC0]).is_none());
     }
 
     #[test]
-    fn test_function_code_values() {
+    fn function_code_values() {
+        assert_eq!(FunctionCode::Confirm as u8, 0x00);
         assert_eq!(FunctionCode::Read as u8, 0x01);
         assert_eq!(FunctionCode::Write as u8, 0x02);
+        assert_eq!(FunctionCode::Select as u8, 0x03);
+        assert_eq!(FunctionCode::Operate as u8, 0x04);
         assert_eq!(FunctionCode::DirectOperate as u8, 0x05);
         assert_eq!(FunctionCode::Freeze as u8, 0x07);
+        assert_eq!(FunctionCode::FreezeClear as u8, 0x09);
+        assert_eq!(FunctionCode::ColdRestart as u8, 0x0D);
+        assert_eq!(FunctionCode::WarmRestart as u8, 0x0E);
+        assert_eq!(FunctionCode::EnableUnsolicited as u8, 0x14);
+        assert_eq!(FunctionCode::DisableUnsolicited as u8, 0x15);
         assert_eq!(FunctionCode::Response as u8, 0x81);
-    }
-
-    #[test]
-    fn test_iin_flags() {
-        let mut iin = Iin::default();
-        assert!(!iin.device_restart);
-        iin.device_restart = true;
-        assert!(iin.device_restart);
-        let byte = iin.to_low_byte();
-        assert_eq!(byte & 0x02, 0x02);
-    }
-}
-
-#[cfg(test)]
-mod control_tests {
-    use super::*;
-
-    fn crob(index: u16) -> ControlRequest {
-        ControlRequest {
-            index,
-            object: ControlObject::Crob(Crob {
-                code: crob_code::LATCH_OFF,
-                count: 2,
-                on_time_ms: 300,
-                off_time_ms: 700,
-            }),
+        assert_eq!(FunctionCode::UnsolicitedResponse as u8, 0x82);
+        for code in 0..=255u8 {
+            if let Ok(f) = FunctionCode::from_u8(code) {
+                assert_eq!(f as u8, code);
+            }
         }
     }
 
     #[test]
-    fn select_and_operate_use_function_codes_3_and_4() {
-        let select = build_control_request(FunctionCode::Select, 6, &crob(5)).unwrap();
-        let operate = build_control_request(FunctionCode::Operate, 7, &crob(5)).unwrap();
-        assert_eq!(select[0], 0x03);
-        assert_eq!(operate[0], 0x04);
-        assert_eq!(select[1], 0xC6);
-        assert_eq!(operate[1], 0xC7);
-        // Same object bytes after the 4-byte header.
-        assert_eq!(select[4..], operate[4..]);
+    fn dnp3_time_is_48_bits() {
+        assert_eq!(dnp3_time_bytes(0x0000_AABB_CCDD_EEFF), [0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA]);
+        let req = build_time_sync_request_at(1, 0x0102_0304_0506);
+        assert_eq!(req.len(), 2 + 4 + 6);
+        assert_eq!(req[..6], [0xC1, 0x02, 50, 1, 0x07, 0x01]);
     }
 
     #[test]
-    fn crob_wire_layout() {
-        let asdu = build_control_request(FunctionCode::Select, 0, &crob(5)).unwrap();
-        let mut expected = vec![12, 1, 0x17, 1, 5, crob_code::LATCH_OFF, 2];
-        expected.extend_from_slice(&300u32.to_le_bytes());
-        expected.extend_from_slice(&700u32.to_le_bytes());
-        expected.push(0); // status in a request
-        assert_eq!(asdu[4..], expected[..]);
+    fn class_polls_use_qualifier_06() {
+        assert_eq!(build_event_scan_request(0, 1), [0xC0, 0x01, 60, 2, 0x06]);
+        assert_eq!(build_event_scan_request(0, 2), [0xC0, 0x01, 60, 3, 0x06]);
+        assert_eq!(build_event_scan_request(0, 3), [0xC0, 0x01, 60, 4, 0x06]);
+        assert_eq!(build_freeze_request(2), [0xC2, 0x07, 20, 0, 0x06]);
+        assert_eq!(build_cold_restart_request(3), [0xC3, 0x0D]);
+        assert_eq!(build_warm_restart_request(4), [0xC4, 0x0E]);
     }
 
     #[test]
-    fn analog_output_wire_layout() {
-        let req = ControlRequest { index: 7, object: ControlObject::AnalogOutput(-2.5) };
-        let asdu = build_control_request(FunctionCode::Operate, 0, &req).unwrap();
-        let mut expected = vec![41, 3, 0x17, 1, 7];
-        expected.extend_from_slice(&(-2.5f32).to_le_bytes());
-        expected.push(0);
-        assert_eq!(asdu[4..], expected[..]);
-    }
-
-    #[test]
-    fn response_round_trips_with_status() {
-        for req in [crob(3), ControlRequest { index: 9, object: ControlObject::AnalogOutput(10.25) }] {
-            let reply = build_control_response(4, &req, ControlStatus::NoSelect);
-            assert_eq!(reply[0], FunctionCode::Response as u8);
-            let echo = parse_control_objects(&reply).unwrap().unwrap();
-            assert_eq!(echo.request, req);
-            assert_eq!(echo.status, ControlStatus::NoSelect);
-        }
-    }
-
-    #[test]
-    fn empty_and_truncated_responses() {
-        let bare = AsduHeader { function: FunctionCode::Response, sequence: 0, iin: Iin::default() }.encode();
-        assert_eq!(parse_control_objects(&bare).unwrap(), None);
-        let reply = build_control_response(0, &crob(1), ControlStatus::Success);
-        assert!(parse_control_objects(&reply[..reply.len() - 3]).is_err());
-        assert!(parse_control_objects(&reply[..7]).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_unencodable_requests() {
-        assert!(crob(256).validate().is_err());
-        assert!(crob(255).validate().is_ok());
-        let mut bad_code = crob(0);
-        bad_code.object = ControlObject::Crob(Crob { code: 0x00, count: 1, on_time_ms: 0, off_time_ms: 0 });
-        assert!(bad_code.validate().is_err());
-        let nan = ControlRequest { index: 0, object: ControlObject::AnalogOutput(f32::NAN) };
-        assert!(build_control_request(FunctionCode::Select, 0, &nan).is_err());
-    }
-
-    #[test]
-    fn status_codes_round_trip() {
-        for v in 0..=255u8 {
-            assert_eq!(ControlStatus::from_u8(v).as_u8(), v);
-        }
-        assert_eq!(ControlStatus::from_u8(2), ControlStatus::NoSelect);
+    fn confirm_echoes_sequence_and_unsolicited_bit() {
+        assert_eq!(build_confirm(3, false), [0xC3, 0x00]);
+        assert_eq!(build_confirm(3, true), [0xD3, 0x00]);
     }
 }

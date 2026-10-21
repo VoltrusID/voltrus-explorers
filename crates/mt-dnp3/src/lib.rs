@@ -26,7 +26,7 @@
 //!     let points = vec![Dnp3Point {
 //!         name: "voltage".into(),
 //!         group: 30,
-//!         variation: 4,
+//!         variation: 5,
 //!         index: 0,
 //!         scale: 1.0,
 //!     }];
@@ -39,6 +39,7 @@
 
 pub mod application;
 pub mod client;
+pub mod control;
 pub mod datalink;
 pub mod objects;
 pub mod server;
@@ -47,10 +48,10 @@ pub mod transport;
 pub mod types;
 
 // Re-export the primary public API at the crate root.
-pub use application::{ControlEcho, ControlObject, ControlRequest, ControlStatus, Crob, crob_code};
 pub use client::{Dnp3Client, SequenceTracker, build_link_reset_frame, event_scan, read_points, write_point};
+pub use control::{ControlEcho, ControlObject, ControlRequest, ControlStatus, Crob, crob_code};
 pub use datalink::{ControlByte, Dnp3Frame, crc16, describe_frame};
-pub use objects::{Dnp3PointValue, common_group_variations, group_variation_name, parse_objects};
+pub use objects::{Dnp3PointValue, common_group_variations, group_variation_name, parse_points};
 pub use server::{OutstationState, start_outstation_server};
 pub use simulation::{Dnp3Simulation, start_simulation, stop_simulation, tick_values};
 pub use transport::{MAX_SEGMENT_PAYLOAD, TransportHeader, TransportReassembler, TransportSegment, segment_asdu};

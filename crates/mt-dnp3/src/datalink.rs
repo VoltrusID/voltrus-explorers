@@ -39,18 +39,20 @@ pub fn describe_frame(frame: &Dnp3Frame) -> String {
     if frame.data.is_empty() {
         return format!("{dir} LNK dst={} src={} fc={:#04x} | link-service", frame.destination, frame.source, frame.link_control.function);
     }
-    // User data is a transport-layer PDU: byte 0 is the transport header
-    // (FIR|FIN|sequence), byte 1 the application control octet.
+    // User data is a transport-layer PDU: byte 0 is the transport header (FIR|FIN|sequence),
+    // then the application fragment: control octet, function code, and for a response the two
+    // IIN octets, then object headers.
     let th = frame.data[0];
     let mut s = format!(
         "{dir} LNK dst={} src={} fc={:#04x} fir={} fin={} seq={} | ",
         frame.destination, frame.source, frame.link_control.function,
-        th & 0x80 != 0, th & 0x40 != 0, th & 0x0F
+        th & 0x80 != 0, th & 0x40 != 0, th & 0x3F
     );
-    if frame.data.len() >= 4 {
+    if frame.data.len() >= 3 {
         let app = frame.data[1];
-        let func = app & 0x3F;
+        let func = frame.data[2];
         let app_name = match func {
+            0x00 => "CONFIRM",
             0x01 => "READ",
             0x02 => "WRITE",
             0x03 => "SELECT",
@@ -58,29 +60,36 @@ pub fn describe_frame(frame: &Dnp3Frame) -> String {
             0x05 => "DIRECT_OPERATE",
             0x06 => "DIRECT_OPERATE_NOACK",
             0x07 => "FREEZE",
-            0x08 => "FREEZE_CLEAR",
-            0x09 => "FREEZE_AT_TIME",
+            0x08 => "FREEZE_NOACK",
+            0x09 => "FREEZE_CLEAR",
+            0x0A => "FREEZE_CLEAR_NOACK",
+            0x0B => "FREEZE_AT_TIME",
+            0x0C => "FREEZE_AT_TIME_NOACK",
             0x0D => "COLD_RESTART",
             0x0E => "WARM_RESTART",
             0x14 => "ENABLE_UNSOLICITED",
             0x15 => "DISABLE_UNSOLICITED",
+            0x17 => "DELAY_MEASURE",
             0x81 => "RESPONSE",
             0x82 => "UNSOLICITED_RESPONSE",
             _ => "UNKNOWN",
         };
-        let seq = app & 0x0F;
-        let iin = frame.data[3];
-        let mut parts = vec![format!("{app_name} seq={seq}")];
-        if iin != 0 {
-            parts.push(format!("IIN=0x{iin:02X}"));
-        }
-        if frame.data.len() >= 7 {
-            let group = frame.data[4];
-            let variation = frame.data[5];
-            parts.push(format!("G{group}V{variation}"));
-            if let Some(c) = frame.data.get(7) {
-                parts.push(format!("count={c}"));
+        let mut parts = vec![format!("{app_name} seq={}", app & 0x0F)];
+        for (bit, name) in [(0x80, "FIR"), (0x40, "FIN"), (0x20, "CON"), (0x10, "UNS")] {
+            if app & bit != 0 {
+                parts.push(name.to_string());
             }
+        }
+        let objects_at = if func >= 0x81 {
+            if frame.data.len() >= 5 && (frame.data[3] != 0 || frame.data[4] != 0) {
+                parts.push(format!("IIN={:02X}{:02X}", frame.data[3], frame.data[4]));
+            }
+            5
+        } else {
+            3
+        };
+        if frame.data.len() >= objects_at + 3 {
+            parts.push(format!("G{}V{}", frame.data[objects_at], frame.data[objects_at + 1]));
         }
         s.push_str(&parts.join(" "));
         s.push_str(&format!(" | {}B", frame.data.len()));

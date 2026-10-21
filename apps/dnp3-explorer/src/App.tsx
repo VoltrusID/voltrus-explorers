@@ -42,7 +42,7 @@ import {
 import appIcon from "../src-tauri/icons/128x128.png";
 import { BUILTIN_TEMPLATES, loadCustomTemplates, saveCustomTemplates, type DeviceTemplate } from "./templates";
 import { ControlDialog } from "./ControlDialog";
-import { POINT_TYPES, parsePointsCsv, pointsToCsv, type Dnp3Point } from "./points";
+import { POINT_TYPES, migrateLegacyPoint, parsePointsCsv, pointsToCsv, type Dnp3Point } from "./points";
 import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
 
@@ -116,11 +116,11 @@ const FREE_POINT_LIMIT = 10;
 const FREE_PROFILE_LIMIT = 1;
 const POINTS_KEY = "dnp3-explorer-points";
 const DEFAULT_POINTS: Dnp3Point[] = [
-  { name: "Voltage", group: 30, variation: 4, index: 0 },
-  { name: "Current", group: 30, variation: 4, index: 1 },
-  { name: "Frequency", group: 30, variation: 4, index: 2 },
+  { name: "Voltage", group: 30, variation: 5, index: 0 },
+  { name: "Current", group: 30, variation: 5, index: 1 },
+  { name: "Frequency", group: 30, variation: 5, index: 2 },
   { name: "BreakerStatus", group: 1, variation: 2, index: 0 },
-  { name: "Power", group: 30, variation: 4, index: 3 },
+  { name: "Power", group: 30, variation: 5, index: 3 },
 ];
 
 function loadPoints(): Dnp3Point[] {
@@ -128,7 +128,7 @@ function loadPoints(): Dnp3Point[] {
     const raw = localStorage.getItem(POINTS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) return parsed.map(migrateLegacyPoint);
     }
   } catch { /* fall through to defaults */ }
   return DEFAULT_POINTS;
@@ -142,7 +142,7 @@ function App() {
   const protocol = useProtocol<Dnp3Config, Dnp3Point, unknown>("dnp3");
   const { requirePro, pro, status: proStatus } = useProStatus();
   const [points, setPoints] = useState<Dnp3Point[]>(loadPoints);
-  const [newPoint, setNewPoint] = useState({ name: "", type: "30:4", index: "0" });
+  const [newPoint, setNewPoint] = useState({ name: "", type: "30:5", index: "0" });
   useEffect(() => { savePoints(points); }, [points]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [editingPoint, setEditingPoint] = useState<string | null>(null);
