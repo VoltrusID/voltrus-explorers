@@ -811,7 +811,6 @@ function App() {
               value={payloadFormat}
               onChange={(e) => {
                 const v = e.target.value as "raw" | "json" | "hex" | "base64";
-                if ((v === "hex" || v === "base64") && !requirePro("Hex and Base64 payload decoders")) return;
                 setPayloadFormat(v);
               }}
               aria-label="Payload format"
@@ -819,8 +818,8 @@ function App() {
             >
               <option value="raw">Raw</option>
               <option value="json">JSON</option>
-              <option value="hex">{pro ? "Hex" : "Hex (Pro)"}</option>
-              <option value="base64">{pro ? "Base64" : "Base64 (Pro)"}</option>
+              <option value="hex">Hex</option>
+              <option value="base64">Base64</option>
             </select>
             {dataView === "history" && historyCount > 0 && (
               <Button size="sm" variant="ghost" onClick={handleExportHistory}>

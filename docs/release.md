@@ -75,7 +75,7 @@ the user starts server mode).
 | BLE Inspector | `com.joyodigitama.bleinspector.pro` | USD 4.99 (never paid; `free_since` 1.2.0, free from its first release) |
 | S7 Explorer | `com.joyodigitama.s7explorer.pro` | USD 19.99 (never sold before; `free_since` is `1.4.0`) |
 | Serial Monitor | `com.joyodigitama.serialmonitor.pro` | USD 4.99 (never sold before, free from its first App Store release, `free_since` 1.5.0) |
-| MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | not created in App Store Connect yet; the app was never paid, so it is free from its first release (`free_since` 1.2.0) |
+| MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | USD 4.99 (the app was never paid, so it is free from its first release; `free_since` 1.2.0) |
 | OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | USD 9.99 (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
 
 - Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.

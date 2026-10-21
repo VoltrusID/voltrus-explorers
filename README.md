@@ -93,8 +93,8 @@ Free to download on the App Store; Pro is a one-time in-app purchase. Version 1.
 
 | | |
 | --- | --- |
-| Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw and JSON payload views, one saved connection profile, communication log with CSV export |
-| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, Hex and Base64 payload decoders, message history export to CSV |
+| Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw, JSON, Hex and Base64 payload views, one saved connection profile, communication log with CSV export |
+| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, message history export to CSV |
 
 Version 1.2.0 is the first release, and it is free.
 | OPC UA Explorer | |
