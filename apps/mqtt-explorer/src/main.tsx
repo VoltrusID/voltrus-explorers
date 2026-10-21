@@ -8,7 +8,6 @@ const PRO_FEATURES = [
   "Embedded local broker with auth, TLS and WebSocket",
   "More than one saved connection profile",
   "Custom CA, client certificates and Last Will",
-  "Hex and Base64 payload decoders",
   "Message history export to CSV",
 ];
 
