@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "@mactools/ui/styles.css";
+
+.send-composer > .vt-segmented {
+  flex-shrink: 0;
+}

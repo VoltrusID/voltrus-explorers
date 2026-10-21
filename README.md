@@ -10,6 +10,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read values. Pro adds writing values, notification subscriptions and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -42,6 +43,13 @@ Siemens AG; it is not affiliated with or endorsed by Siemens.
 | Pro | Write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
 
 EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
+The App Store build of Serial Monitor is free to download too; Pro is a one-time in-app purchase. Builds from source
+and the GitHub Releases have everything.
+
+| Serial Monitor | |
+| --- | --- |
+| Free | Open a port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, communication log with copy |
+| Pro | Virtual serial port (PTY) for loopback tests and bridging, Modbus RTU frame simulation templates, communication log export to CSV |
 
 ## Build from source
 
@@ -49,7 +57,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial
 ```
 
 Universal release build (unsigned):
@@ -60,6 +68,8 @@ scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/uns
 ```
 
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
+`bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 
 ## Layout
 
@@ -74,6 +84,10 @@ apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator
+apps/serial-monitor    Tauri app (macOS only), serial terminal
+crates/mt-protocol     shared protocol client traits
+crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
+crates/mt-serial       RS232/RS485 port configuration, enumeration and client
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation

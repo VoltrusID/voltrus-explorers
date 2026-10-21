@@ -1,0 +1,18 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for Serial Monitor",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:window:allow-set-size",
+    "core:window:allow-center",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
+  ]
+}

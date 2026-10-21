@@ -40,19 +40,21 @@ jobs:
           restore-keys: cargo-test-${{ runner.os }}-
 
       - name: Crate tests
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-serial -p mt-store
 
       - name: Install frontend deps
         run: bun install --frozen-lockfile
 
       - name: Typecheck and build frontends
         run: |
-          for app in bacnet-explorer modbus-poll dnp3-explorer s7-explorer ble-inspector enip-explorer; do
+          for app in bacnet-explorer modbus-poll dnp3-explorer s7-explorer ble-inspector enip-explorer serial-monitor; do
             (cd "apps/$app" && bunx tsc --noEmit -p . && bun run build)
           done
 
       - name: Frontend tests
-        run: bun run --cwd apps/modbus-poll test
+        run: |
+          bun run --cwd apps/modbus-poll test
+          bun run --cwd apps/serial-monitor test
 
   macos:
     runs-on: macos-15
@@ -60,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer]
+        app: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
