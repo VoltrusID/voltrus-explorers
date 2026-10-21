@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
-import { Badge, EmptyState, IconButton, ValueEditor } from "@mactools/ui";
+import { Badge, EmptyState, IconButton, ValueEditor, useProStatus } from "@mactools/ui";
 import type { BacnetPropertyEntry, BacnetValue } from "../types";
 import { bacnetValueToString, formatObjectType } from "../types";
 import { WRITE_KIND_TYPES, parseWriteValue, writeInitialText, writeKindFor } from "../writeValue";
@@ -48,6 +48,7 @@ export function PropertyInspector({
   unitName,
   unitSymbol,
 }: PropertyInspectorProps) {
+  const { requirePro } = useProStatus();
   const label = formatObjectType(objectType);
   const writeKind = writeKindFor(objectType);
   const [editing, setEditing] = useState<{ propertyName: string; currentText: string } | null>(null);
@@ -169,12 +170,13 @@ export function PropertyInspector({
                           label={`Write ${entry.property_name}`}
                           className="property-inspector-edit"
                           style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)" }}
-                          onClick={() =>
+                          onClick={() => {
+                            if (!requirePro("Writing properties")) return;
                             setEditing({
                               propertyName: entry.property_name,
                               currentText: writeInitialText(writeKind, value),
-                            })
-                          }
+                            });
+                          }}
                         >
                           <Pencil size={12} strokeWidth={1.75} />
                         </IconButton>

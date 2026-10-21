@@ -35,8 +35,8 @@ takes effect when `free_since` is set in their `store.json`).
 
 | BACnet Explorer | |
 | --- | --- |
-| Free | Who-Is discovery, connect to a device, browse objects, read any property, communication log with CSV export |
-| Pro | Write properties (all priorities, relinquish), live trends and COV, trend log and schedule viewers, alarms and events with acknowledge, device simulator |
+| Free | Who-Is discovery, connect to one device at a time, browse objects, read any property, watch list with manual refresh, communication log with CSV export |
+| Pro | Write properties (all priorities, relinquish), several devices open at once, object list CSV export, auto-refresh watch list, live trends and COV, trend log and schedule viewers, alarms and events with acknowledge, device simulator |
 
 | DNP3 Explorer | |
 | --- | --- |

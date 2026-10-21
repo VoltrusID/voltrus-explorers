@@ -9,6 +9,9 @@ import "./styles.css";
 // the device control panel instead of the full app.
 const PRO_FEATURES = [
   "Write properties with priority and relinquish",
+  "Several devices open at once",
+  "Export the object list to CSV",
+  "Auto-refresh watch list",
   "Live trends with COV subscriptions",
   "Alarm and event summary with acknowledge",
   "Virtual BACnet device simulator",

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, ExternalLink, LineChart, ListTree, Play, Plug, Radar, ScrollText, Square } from "lucide-react";
+import { Bell, ExternalLink, LineChart, ListTree, Play, Plug, Radar, ScrollText, Square, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import {
   Button,
@@ -10,7 +10,9 @@ import {
   Dialog,
   EmptyState,
   Field,
+  IconButton,
   Section,
+  Segmented,
   StatusBar,
   Tabs,
   Toolbar,
@@ -33,6 +35,18 @@ import TrendPanel from "./components/TrendPanel";
 import { trendKey, useBacnetTrend } from "./hooks/useBacnetTrend";
 import { TrendLogDialog } from "./components/TrendLogDialog";
 import { ScheduleDialog } from "./components/ScheduleDialog";
+import { WatchPanel, type WatchItem } from "./components/WatchPanel";
+
+/** Free opens one device at a time; several at once is Pro. */
+const FREE_DEVICE_LIMIT = 1;
+
+interface OpenDevice {
+  ip: string;
+  port: number;
+  device_id: number;
+}
+
+const deviceKeyOf = (d: OpenDevice) => `${d.ip}:${d.port}:${d.device_id}`;
 
 const TEMPLATES: Record<string, DeviceTemplate> = {
   ahu: {
@@ -124,9 +138,15 @@ function App() {
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
     setLog((prev) => [...prev, { timestamp: Date.now(), direction, message }]);
   }, []);
-  const trend = useBacnetTrend(protocol.connected, (message) => addLog("error", message));
+  // Open devices. Several at once is Pro; the backend acts on the active one.
+  const [devices, setDevices] = useState<OpenDevice[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const connected = devices.length > 0;
+  const connectedDevice = devices.find((d) => deviceKeyOf(d) === activeKey) ?? null;
+  const openKeys = devices.map(deviceKeyOf);
+  const trend = useBacnetTrend(activeKey, openKeys, (message) => addLog("error", message));
   const trendKeys = new Set(trend.series.map((s) => s.key));
-  const { requirePro, status: proStatus } = useProStatus();
+  const { requirePro, pro, status: proStatus } = useProStatus();
   // Adding a series is Pro; removing one never is.
   const toggleTrend = (obj: { type: string; instance: number }, name: string) => {
     if (!trendKeys.has(trendKey(obj.type, obj.instance)) && !requirePro("Live trends")) return;
@@ -157,10 +177,12 @@ function App() {
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [connectingDevice, setConnectingDevice] = useState<number | null>(null);
-  const [connectedDevice, setConnectedDevice] = useState<{ ip: string; port: number; device_id: number } | null>(null);
 
   // View mode: "browse" (object browser w/ trend) or "alarms"
-  const [viewMode, setViewMode] = useState<"browse" | "alarms">("browse");
+  const [viewMode, setViewMode] = useState<"browse" | "watch" | "alarms">("browse");
+  const [objectsPane, setObjectsPane] = useState<"browse" | "watch">("browse");
+  // Watch lists belong to a device; the panel shows (and reads) the active device's.
+  const [watchLists, setWatchLists] = useState<Record<string, WatchItem[]>>({});
 
   // Dialogs
   const [trendLogObject, setTrendLogObject] = useState<{ type: "trendLog" | "trendLogMultiple"; instance: number } | null>(null);
@@ -197,30 +219,101 @@ function App() {
   const handleConnect = useCallback(
     async (values: Record<string, string | number>): Promise<boolean> => {
       const config: BacnetConfig = { id: `${values.ip}:${values.deviceId}`, ip: String(values.ip), port: Number(values.port), device_id: Number(values.deviceId) };
+      const ref: OpenDevice = { ip: config.ip, port: config.port, device_id: config.device_id };
+      const key = deviceKeyOf(ref);
+      const alreadyOpen = devices.some((d) => deviceKeyOf(d) === key);
+      if (!alreadyOpen && devices.length >= FREE_DEVICE_LIMIT && !requirePro("Several devices at once")) return false;
       addLog("info", `Connecting to ${config.ip}:${config.port} (device ${config.device_id})…`);
       const ok = await protocol.connect(config);
       if (ok) {
         addLog("info", "Connected. Use Browse Objects to explore the device.");
         setViewMode("browse");
-        setConnectedDevice({ ip: config.ip, port: config.port, device_id: config.device_id });
+        setDevices((prev) => (prev.some((d) => deviceKeyOf(d) === key) ? prev : [...prev, ref]));
+        setActiveKey(key);
         if (isMobile) setPhoneTab("objects");
       } else {
         addLog("error", protocol.error ? `Connection failed: ${protocol.error}` : "Connection failed (no BACnet response within 3s).");
       }
       return ok;
     },
-    [protocol, addLog, isMobile],
+    [protocol, addLog, isMobile, devices, requirePro],
+  );
+
+  /** Close one open device; when it was the active one, another open device takes over. */
+  const closeDevice = useCallback(
+    async (key: string) => {
+      const target = devices.find((d) => deviceKeyOf(d) === key);
+      if (!target) return;
+      const remaining = devices.filter((d) => deviceKeyOf(d) !== key);
+      const next = key === activeKey ? remaining[remaining.length - 1] ?? null : null;
+      try {
+        await invoke("close_device", { device: target });
+        if (next) await invoke("activate_device", { device: next });
+      } catch (e) {
+        addLog("error", `Closing ${target.ip}:${target.port} failed: ${e}`);
+      }
+      setWatchLists((prev) => {
+        const { [key]: _closed, ...rest } = prev;
+        return rest;
+      });
+      setDevices(remaining);
+      if (remaining.length === 0) {
+        protocol.stopPolling();
+        await protocol.disconnect();
+        setActiveKey(null);
+        setViewMode("browse");
+        setObjectsPane("browse");
+        setAlarmsOpened(false);
+        setPhoneTab("devices");
+        addLog("info", "Disconnected");
+      } else {
+        if (key === activeKey) setActiveKey(next ? deviceKeyOf(next) : null);
+        addLog("info", `Closed ${target.ip}:${target.port}`);
+      }
+    },
+    [devices, activeKey, protocol, addLog],
   );
 
   const handleDisconnect = useCallback(() => {
-    protocol.disconnect();
-    protocol.stopPolling();
-    setViewMode("browse");
-    setConnectedDevice(null);
-    setAlarmsOpened(false);
-    setPhoneTab("devices");
-    addLog("info", "Disconnected");
-  }, [protocol, addLog]);
+    if (activeKey) void closeDevice(activeKey);
+  }, [activeKey, closeDevice]);
+
+  const activateDevice = useCallback(
+    async (key: string) => {
+      if (key === activeKey) return;
+      const target = devices.find((d) => deviceKeyOf(d) === key);
+      if (!target) return;
+      try {
+        await invoke("activate_device", { device: target });
+        setActiveKey(key);
+      } catch (e) {
+        addLog("error", `Switching to ${target.ip}:${target.port} failed: ${e}`);
+      }
+    },
+    [devices, activeKey, addLog],
+  );
+
+  const watchItems = activeKey ? watchLists[activeKey] ?? [] : [];
+  const watchKeys = new Set(watchItems.map((i) => i.key));
+  const toggleWatch = (obj: { type: string; instance: number }, name: string) => {
+    if (!activeKey) return;
+    const key = trendKey(obj.type, obj.instance);
+    setWatchLists((prev) => {
+      const list = prev[activeKey] ?? [];
+      const next = list.some((i) => i.key === key)
+        ? list.filter((i) => i.key !== key)
+        : [...list, { key, type: obj.type, instance: obj.instance, name }];
+      return { ...prev, [activeKey]: next };
+    });
+  };
+  const removeWatch = (key: string) => {
+    if (!activeKey) return;
+    setWatchLists((prev) => ({ ...prev, [activeKey]: (prev[activeKey] ?? []).filter((i) => i.key !== key) }));
+  };
+  const clearWatch = () => {
+    if (!activeKey) return;
+    setWatchLists((prev) => ({ ...prev, [activeKey]: [] }));
+  };
 
   const handleDiscover = useCallback(async () => {
     addLog("info", "Broadcasting Who-Is…");
@@ -480,26 +573,70 @@ function App() {
           ]}
           onSubmit={handleConnect}
           onDisconnect={handleDisconnect}
-          connected={protocol.connected}
+          connected={connected && !pro}
           loading={protocol.loading}
           initialValues={
-            connectedDevice
+            connectedDevice && !pro
               ? { ip: connectedDevice.ip, port: connectedDevice.port, deviceId: connectedDevice.device_id }
               : undefined
           }
         />
-        {protocol.connected && !isMobile && (
+        {connected && !isMobile && (
           <Tabs
             label="View"
             value={viewMode}
             onChange={(v) => { if (v === "alarms" && !requirePro("Alarms and events")) return; setViewMode(v); }}
             items={[
               { value: "browse" as const, label: "Browse" },
+              { value: "watch" as const, label: watchItems.length ? `Watch (${watchItems.length})` : "Watch" },
               { value: "alarms" as const, label: <>Alarms <ProBadge /></> },
             ]}
           />
         )}
       </Section>
+      {connected && (
+        <Section title="Open devices" meta={pro ? undefined : <ProBadge />}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {devices.map((d) => {
+              const key = deviceKeyOf(d);
+              const isActive = key === activeKey;
+              return (
+                <div
+                  key={key}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    minHeight: "var(--control-h)",
+                    paddingLeft: 8,
+                    border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+                    background: isActive ? "var(--selection)" : "transparent",
+                    borderRadius: "var(--radius)",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void activateDevice(key)}
+                    aria-pressed={isActive}
+                    style={{ flex: 1, minWidth: 0, minHeight: "var(--control-h)", textAlign: "left", background: "none", border: "none", color: "var(--text)", cursor: "pointer", padding: 0 }}
+                  >
+                    <div className="mono" style={{ fontSize: "var(--fs-sm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {d.ip}:{d.port}
+                    </div>
+                    <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>Device {d.device_id}</div>
+                  </button>
+                  <IconButton label={`Close ${d.ip}:${d.port}`} onClick={() => void closeDevice(key)}>
+                    <X size={14} strokeWidth={1.75} />
+                  </IconButton>
+                </div>
+              );
+            })}
+          </div>
+          {!pro && (
+            <span className="vt-hint">One device at a time. Connecting a second device needs Pro.</span>
+          )}
+        </Section>
+      )}
       <Section title="Devices" meta={discoveredDevices.length > 0 ? `${discoveredDevices.length} found` : undefined}>
         <Button block icon={<Radar size={14} strokeWidth={1.75} />} loading={discovering} onClick={handleDiscover}>
           Discover devices
@@ -552,7 +689,7 @@ function App() {
               </Button>
             ) : (
               <>
-                {inlinePanel && !protocol.connected && simBoundPort != null && (
+                {inlinePanel && !connected && simBoundPort != null && (
                   <Button
                     variant="primary"
                     block
@@ -581,24 +718,51 @@ function App() {
     </>
   );
 
+  // One browser per open device, all mounted so each keeps its browsed list; only the active device's is shown.
+  const renderBrowsers = (layout: "split" | "stacked") =>
+    devices.map((d) => {
+      const key = deviceKeyOf(d);
+      const isActive = key === activeKey;
+      const wrapperStyle: React.CSSProperties =
+        layout === "stacked"
+          ? { flex: 1, minHeight: 0, flexDirection: "column", display: isActive ? "flex" : "none" }
+          : { height: "100%", display: isActive ? "block" : "none" };
+      return (
+        <div key={key} style={wrapperStyle}>
+          <ObjectBrowser
+            layout={layout}
+            active={isActive}
+            deviceLabel={`${d.ip}-${d.device_id}`}
+            onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
+            trendKeys={trendKeys}
+            onToggleTrend={toggleTrend}
+            onOpenTrendLog={openTrendLog}
+            onOpenSchedule={openSchedule}
+            watchKeys={watchKeys}
+            onToggleWatch={toggleWatch}
+            onExportResult={addLog}
+            treeWidth={layout === "split" && isTouch ? 208 : undefined}
+          />
+        </div>
+      );
+    });
+
   // ── Main content area ──
-  const mainContent = viewMode === "alarms" && protocol.connected ? (
-    <AlarmPanel connected={protocol.connected} compact={isTouch && viewportWidth < 900} />
-  ) : viewMode === "browse" && protocol.connected ? (
+  const mainContent = viewMode === "alarms" && connected ? (
+    <AlarmPanel key={activeKey ?? ""} connected={connected} compact={isTouch && viewportWidth < 900} />
+  ) : (viewMode === "browse" || viewMode === "watch") && connected ? (
     <>
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        <ObjectBrowser
-          onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
-          trendKeys={trendKeys}
-          onToggleTrend={toggleTrend}
-          onOpenTrendLog={openTrendLog}
-          onOpenSchedule={openSchedule}
-          treeWidth={isTouch ? 208 : undefined}
-        />
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: viewMode === "browse" ? "block" : "none" }}>
+        {renderBrowsers("split")}
       </div>
+      {viewMode === "watch" && (
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <WatchPanel key={activeKey ?? ""} items={watchItems} onRemove={removeWatch} onClear={clearWatch} />
+        </div>
+      )}
       {/* Horizontal drag handle — resize the trend panel (mouse only) */}
       <div
-        hidden={isTouch}
+        hidden={isTouch || viewMode !== "browse"}
         onMouseDown={(e) => handleDragStart("trend", e)}
         style={{
           height: 4,
@@ -611,7 +775,7 @@ function App() {
         onMouseEnter={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "var(--border)"; }}
         onMouseLeave={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "transparent"; }}
       />
-      <div style={{ height: trendHeight, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ height: trendHeight, flexShrink: 0, display: viewMode === "browse" ? "flex" : "none", flexDirection: "column", overflow: "hidden" }}>
         {trend.hasSeries ? (
           <TrendPanel
             series={trend.series.map((s) => ({ id: s.key, name: s.name, color: s.color, source: s.source, points: s.points }))}
@@ -708,16 +872,26 @@ function App() {
       {phonePage("devices", sidebarContent, "bx-page vt-sidebar")}
       {phonePage(
         "objects",
-        protocol.connected ? (
-          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column" }}>
-            <ObjectBrowser
-              layout="stacked"
-              onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
-              trendKeys={trendKeys}
-              onToggleTrend={toggleTrend}
-              onOpenTrendLog={openTrendLog}
-              onOpenSchedule={openSchedule}
+        connected ? (
+          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <Segmented
+              label="Objects view"
+              block
+              value={objectsPane}
+              onChange={setObjectsPane}
+              options={[
+                { value: "browse", label: "Browse" },
+                { value: "watch", label: `Watch${watchItems.length ? ` (${watchItems.length})` : ""}` },
+              ]}
             />
+            <div style={{ flex: 1, minHeight: 0, display: objectsPane === "browse" ? "flex" : "none", flexDirection: "column" }}>
+              {renderBrowsers("stacked")}
+            </div>
+            {objectsPane === "watch" && (
+              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <WatchPanel key={activeKey ?? ""} items={watchItems} onRemove={removeWatch} onClear={clearWatch} compact />
+              </div>
+            )}
           </div>
         ) : (
           needsConnection("browse its objects")
@@ -725,7 +899,7 @@ function App() {
       )}
       {phonePage(
         "trend",
-        !protocol.connected ? (
+        !connected ? (
           needsConnection("trend its points")
         ) : trend.hasSeries ? (
           <TrendPanel
@@ -749,9 +923,9 @@ function App() {
       )}
       {phonePage(
         "alarms",
-        protocol.connected && alarmsOpened ? (
+        connected && alarmsOpened ? (
           <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column" }}>
-            <AlarmPanel connected={protocol.connected} compact />
+            <AlarmPanel key={activeKey ?? ""} connected={connected} compact />
           </div>
         ) : (
           needsConnection("read its alarms")
@@ -763,7 +937,7 @@ function App() {
           <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
         </div>,
       )}
-      <StatusBar connected={protocol.connected} error={protocol.error} device={connectedDevice} />
+      <StatusBar connected={connected} error={protocol.error} device={connectedDevice} />
       <MobileTabBar tabs={phoneTabs} active={phoneTab} onChange={selectPhoneTab} />
     </div>
   );
@@ -773,8 +947,8 @@ function App() {
       <Toolbar
         title="BACnet Explorer"
         icon={appIcon}
-        context={protocol.connected && connectedDevice ? `${connectedDevice.ip}:${connectedDevice.port}` : undefined}
-        connected={protocol.connected}
+        context={connected && connectedDevice ? `${connectedDevice.ip}:${connectedDevice.port}` : undefined}
+        connected={connected}
         onDisconnect={handleDisconnect}
         onInfo={() => setShowInfo(true)}
       />
@@ -813,7 +987,7 @@ function App() {
 
       {!isMobile && (
         <StatusBar
-          connected={protocol.connected}
+          connected={connected}
           error={protocol.error}
           device={connectedDevice}
         />

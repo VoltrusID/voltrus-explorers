@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Activity,
@@ -9,17 +9,20 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Download,
   Eye,
   Gauge,
   LineChart,
   ListTree,
   Server,
+  Star,
   ToggleLeft,
   type LucideIcon,
 } from "lucide-react";
-import { Button, EmptyState, IconButton } from "@mactools/ui";
+import { Button, EmptyState, IconButton, ProBadge, saveTextFile, useProStatus } from "@mactools/ui";
 import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry, BacnetValue } from "../types";
 import { formatObjectType } from "../types";
+import { buildObjectListCsv, type ObjectListRow } from "../objectCsv";
 import { trendKey } from "../hooks/useBacnetTrend";
 import { PropertyInspector } from "./PropertyInspector";
 import { DeviceInspector } from "./DeviceInspector";
@@ -58,6 +61,14 @@ interface ObjectBrowserProps {
   layout?: "split" | "stacked";
   /** Width of the tree pane in the split layout. */
   treeWidth?: number;
+  /** False while another open device is shown: this browser stays mounted but must not read. */
+  active?: boolean;
+  /** Used in the exported file name. */
+  deviceLabel?: string;
+  watchKeys?: Set<string>;
+  onToggleWatch?: (obj: { type: string; instance: number }, name: string) => void;
+  /** One-line result for the communication log after an export finished or failed. */
+  onExportResult?: (level: "info" | "error", message: string) => void;
 }
 
 // ── Styles ──
@@ -163,6 +174,8 @@ function objectKey(obj: BacnetObjectInfo): string {
 
 export function ObjectBrowser(props: ObjectBrowserProps) {
   const { onObjectSelect, trendKeys, onToggleTrend, onOpenTrendLog, onOpenSchedule, layout = "split", treeWidth } = props;
+  const { active: deviceActive = true, deviceLabel, watchKeys, onToggleWatch, onExportResult } = props;
+  const { requirePro } = useProStatus();
   const stacked = layout === "stacked";
 
   const [objects, setObjects] = useState<BacnetObjectInfo[]>([]);
@@ -175,6 +188,72 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
   const [propertiesLoading, setPropertiesLoading] = useState(false);
   const [propertiesError, setPropertiesError] = useState<string | null>(null);
   const propertiesRequest = useRef(0);
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
+  const exportCancelled = useRef(false);
+  const deviceActiveRef = useRef(deviceActive);
+  deviceActiveRef.current = deviceActive;
+
+  // One read per object (the browse reply carries no names), a few at a time.
+  const exportList = useCallback(async () => {
+    if (!requirePro("Export object list to CSV")) return;
+    const list = objects;
+    if (list.length === 0 || exportProgress) return;
+    exportCancelled.current = false;
+    setExportProgress({ done: 0, total: list.length });
+    const rows: ObjectListRow[] = new Array(list.length);
+    let next = 0;
+    let done = 0;
+    let stoppedBy: string | null = null;
+    const worker = async () => {
+      while (stoppedBy === null) {
+        if (exportCancelled.current) {
+          stoppedBy = "cancelled";
+          return;
+        }
+        if (!deviceActiveRef.current) {
+          stoppedBy = "another device was selected";
+          return;
+        }
+        const index = next++;
+        if (index >= list.length) return;
+        const object = list[index];
+        try {
+          const detail = await invoke<BacnetObjectDetail | null>("read_object_properties", {
+            objectType: object.object_type,
+            objectInstance: object.object_instance,
+          });
+          rows[index] = { object, detail };
+        } catch (e) {
+          rows[index] = { object, detail: null, error: String(e) };
+        }
+        done += 1;
+        setExportProgress({ done, total: list.length });
+      }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+      if (stoppedBy !== null) {
+        if (stoppedBy !== "cancelled") onExportResult?.("error", `Object list export stopped: ${stoppedBy}`);
+        return;
+      }
+      const failed = rows.filter((r) => r.error).length;
+      const name = `bacnet-objects-${(deviceLabel ?? "device").replace(/[^A-Za-z0-9_.-]+/g, "-")}.csv`;
+      const path = await saveTextFile(name, buildObjectListCsv(rows));
+      if (path) {
+        onExportResult?.(
+          "info",
+          `Object list exported to ${path} (${list.length} objects${failed ? `, ${failed} could not be read` : ""})`,
+        );
+      }
+    } catch (e) {
+      onExportResult?.("error", `Object list export failed: ${e}`);
+    } finally {
+      setExportProgress(null);
+    }
+  }, [objects, exportProgress, requirePro, deviceLabel, onExportResult]);
+
+  // Leaving the view (unmount) stops a running export.
+  useEffect(() => () => { exportCancelled.current = true; }, []);
 
   // Browse objects
   const handleBrowse = useCallback(async () => {
@@ -185,6 +264,7 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
     setProperties([]);
     setDetail(null);
     propertiesRequest.current += 1; // drop any in-flight property read
+    exportCancelled.current = true; // an export in progress describes the old list
     setPropertiesError(null);
     setPropertiesLoading(false);
     try {
@@ -306,6 +386,23 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
           </Button>
         </div>
 
+        <div style={{ padding: "0 10px 4px" }}>
+          {exportProgress ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
+                Reading {exportProgress.done} of {exportProgress.total}
+              </span>
+              <Button size="sm" onClick={() => { exportCancelled.current = true; }}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button block disabled={objects.length === 0} icon={<Download size={14} strokeWidth={1.75} />} onClick={exportList}>
+              Export CSV <ProBadge />
+            </Button>
+          )}
+        </div>
+
         {error && (
           <div style={{ margin: "4px 10px 8px", padding: "6px 8px", fontSize: "var(--fs-xs)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }}>
             {error}
@@ -361,6 +458,26 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
                               {obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`}
                             </span>
                             <span style={instanceLabel}>{obj.object_instance}</span>
+                            {onToggleWatch && (() => {
+                              const k = trendKey(obj.object_type, obj.object_instance);
+                              const watched = watchKeys?.has(k);
+                              return (
+                                <IconButton
+                                  size="sm"
+                                  label={watched ? "Remove from watch list" : "Add to watch list"}
+                                  pressed={watched}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleWatch(
+                                      { type: obj.object_type, instance: obj.object_instance },
+                                      obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`,
+                                    );
+                                  }}
+                                >
+                                  <Star size={12} strokeWidth={1.75} />
+                                </IconButton>
+                              );
+                            })()}
                             {onToggleTrend && (() => {
                               const k = trendKey(obj.object_type, obj.object_instance);
                               const active = trendKeys?.has(k);

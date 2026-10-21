@@ -33,12 +33,35 @@ use mt_protocol::ProtocolClient;
 
 static NEXT_SUBSCRIBER_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Every open device keeps its own client. `client` / `connected_device` mirror the
+/// active one: all device commands (browse, read, write, COV, alarms ...) act on it.
 struct AppState {
+    sessions: Arc<Mutex<Vec<Session>>>,
     client: Arc<Mutex<Option<BacnetClient>>>,
     connected_device: Arc<Mutex<Option<ConnectedDevice>>>,
     cov_subscriptions: Arc<Mutex<Vec<CovSubscriptionInfo>>>,
     cov_listener: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     sim_device: Arc<Mutex<Option<SimDevice>>>,
+}
+
+#[derive(Clone)]
+struct Session {
+    device: ConnectedDevice,
+    client: BacnetClient,
+}
+
+/// Identifies an open device (BACnet/IP address plus device instance).
+#[derive(Clone, serde::Deserialize)]
+struct DeviceRef {
+    ip: String,
+    port: u16,
+    device_id: u32,
+}
+
+impl DeviceRef {
+    fn matches(&self, d: &ConnectedDevice) -> bool {
+        d.ip == self.ip && d.port == self.port && d.device_id == self.device_id
+    }
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -164,6 +187,25 @@ struct ConnectedDevice {
     device_id: u32,
 }
 
+/// Make `session` the device the commands act on. COV state belongs to one device, so
+/// switching drops the listener and the desired subscriptions (the old device lets them
+/// expire; the UI re-creates the trend subscriptions it still wants on the new device).
+/// The lock order matches `disconnect`: device first, then the listener, then the rest.
+async fn set_active(state: &AppState, session: Option<Session>) {
+    *state.connected_device.lock().await = None;
+    stop_cov_listener_inner(&state.cov_listener).await;
+    state.cov_subscriptions.lock().await.clear();
+    match session {
+        Some(s) => {
+            *state.client.lock().await = Some(s.client);
+            *state.connected_device.lock().await = Some(s.device);
+        }
+        None => {
+            state.client.lock().await.take();
+        }
+    }
+}
+
 /// Snapshot of the connected device. The lock is released before returning so
 /// callers never hold it across a network await.
 async fn current_device(state: &AppState) -> Result<ConnectedDevice, String> {
@@ -188,12 +230,64 @@ async fn current_client(state: &AppState) -> Result<BacnetClient, String> {
 
 #[tauri::command]
 async fn connect(state: tauri::State<'_, AppState>, config: BacnetConfig) -> Result<(), String> {
-    let ip = config.ip.clone();
-    let port = config.port;
-    let device_id = config.device_id;
+    let device = ConnectedDevice {
+        ip: config.ip.clone(),
+        port: config.port,
+        device_id: config.device_id,
+    };
     let client = BacnetClient::connect(config).await.map_err(|e| e.to_string())?;
-    *state.client.lock().await = Some(client);
-    *state.connected_device.lock().await = Some(ConnectedDevice { ip, port, device_id });
+    let r = DeviceRef { ip: device.ip.clone(), port: device.port, device_id: device.device_id };
+    let session = Session { device, client };
+    {
+        let mut sessions = state.sessions.lock().await;
+        sessions.retain(|s| !r.matches(&s.device));
+        sessions.push(session.clone());
+    }
+    if is_active(&state, &r).await {
+        // Reconnecting the active device only swaps its client; COV state stays valid.
+        *state.client.lock().await = Some(session.client);
+    } else {
+        set_active(&state, Some(session)).await;
+    }
+    Ok(())
+}
+
+async fn is_active(state: &AppState, device: &DeviceRef) -> bool {
+    state
+        .connected_device
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|d| device.matches(d))
+}
+
+/// Switch the device the commands act on to one that is already open.
+#[tauri::command]
+async fn activate_device(state: tauri::State<'_, AppState>, device: DeviceRef) -> Result<(), String> {
+    let session = state
+        .sessions
+        .lock()
+        .await
+        .iter()
+        .find(|s| device.matches(&s.device))
+        .cloned()
+        .ok_or_else(|| "Device is not open".to_string())?;
+    let already_active = is_active(&state, &device).await;
+    if !already_active {
+        set_active(&state, Some(session)).await;
+    }
+    Ok(())
+}
+
+/// Close one open device. When it was the active one nothing is active afterwards:
+/// the caller activates another open device (or none is left).
+#[tauri::command]
+async fn close_device(state: tauri::State<'_, AppState>, device: DeviceRef) -> Result<(), String> {
+    state.sessions.lock().await.retain(|s| !device.matches(&s.device));
+    let was_active = is_active(&state, &device).await;
+    if was_active {
+        set_active(&state, None).await;
+    }
     Ok(())
 }
 
@@ -225,16 +319,13 @@ async fn discover(timeout_secs: u64) -> Result<Vec<BacnetDiscoveredDevice>, Stri
     discover_devices(timeout_secs).await.map_err(|e| e.to_string())
 }
 
+/// Close every open device.
 #[tauri::command]
 async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    // Clear the connected device first, then stop the COV listener (see
-    // start_cov_listener for why in this order), then the remaining state. No
-    // network await happens under any of these locks (commands clone what they
+    // No network await happens under any of these locks (commands clone what they
     // need), so none of them can be held for long. Never hold two locks at once.
-    *state.connected_device.lock().await = None;
-    stop_cov_listener_inner(&state.cov_listener).await;
-    state.cov_subscriptions.lock().await.clear();
-    state.client.lock().await.take();
+    state.sessions.lock().await.clear();
+    set_active(&state, None).await;
     Ok(())
 }
 
@@ -759,6 +850,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
+            sessions: Arc::new(Mutex::new(Vec::new())),
             client: Arc::new(Mutex::new(None)),
             connected_device: Arc::new(Mutex::new(None)),
             cov_subscriptions: Arc::new(Mutex::new(Vec::new())),
@@ -766,7 +858,7 @@ pub fn run() {
             sim_device: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
-            connect, read_tags, write_tag, discover, disconnect,
+            connect, activate_device, close_device, read_tags, write_tag, discover, disconnect,
             browse_objects, read_object_properties, inspect_device_cmd,
             subscribe_cov_cmd, unsubscribe_cov_cmd, get_cov_subscriptions,
             get_alarm_summary, get_event_information, acknowledge_alarm_cmd,

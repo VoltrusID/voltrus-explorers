@@ -31,7 +31,13 @@ export function trendKey(type: string, instance: number) {
   return `${type}:${instance}`;
 }
 
-export function useBacnetTrend(connected: boolean, onError?: (message: string) => void) {
+/**
+ * Trend series for the active device. `deviceKey` is `null` when no device is open; `openKeys`
+ * lists every open device. Series of an open device that is not active are kept aside and come
+ * back (without the readings taken meanwhile) when that device is activated again.
+ */
+export function useBacnetTrend(deviceKey: string | null, openKeys: string[], onError?: (message: string) => void) {
+  const connected = deviceKey !== null;
   const [series, setSeries] = useState<Map<string, TrendEntry>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
   const [pollMs, setPollMs] = useState(1000);
@@ -59,6 +65,12 @@ export function useBacnetTrend(connected: boolean, onError?: (message: string) =
   seriesRef.current = series;
   const windowRef = useRef(windowSec);
   windowRef.current = windowSec;
+  const openKeysRef = useRef(openKeys);
+  openKeysRef.current = openKeys;
+  const errorsRef = useRef(errors);
+  errorsRef.current = errors;
+  const stashRef = useRef(new Map<string, { series: Map<string, TrendEntry>; errors: Map<string, string> }>());
+  const ownerRef = useRef<string | null>(null);
 
   const appendPoint = useCallback((key: string, v: number) => {
     if (isNaN(v)) return;
@@ -134,6 +146,28 @@ export function useBacnetTrend(connected: boolean, onError?: (message: string) =
     onErrorRef.current?.(message);
   }, []);
 
+  // ── Device switch: park the series of the device being left, restore those of the one entered ──
+  // Declared before the effects below so they already see the restored series.
+  useEffect(() => {
+    const previous = ownerRef.current;
+    if (previous === deviceKey) return;
+    const open = new Set(openKeysRef.current);
+    if (previous !== null && open.has(previous)) {
+      stashRef.current.set(previous, { series: seriesRef.current, errors: errorsRef.current });
+    }
+    for (const k of Array.from(stashRef.current.keys())) if (!open.has(k)) stashRef.current.delete(k);
+    ownerRef.current = deviceKey;
+    subscribedRef.current = new Map();
+    const restored = (deviceKey !== null ? stashRef.current.get(deviceKey) : undefined) ?? {
+      series: new Map<string, TrendEntry>(),
+      errors: new Map<string, string>(),
+    };
+    if (deviceKey !== null) stashRef.current.delete(deviceKey);
+    seriesRef.current = restored.series;
+    setSeries(restored.series);
+    setErrors(restored.errors);
+  }, [deviceKey]);
+
   // ── Poll: read presentValue of each poll-source object (proven read_object_properties path) ──
   useEffect(() => {
     if (!connected) return;
@@ -165,7 +199,7 @@ export function useBacnetTrend(connected: boolean, onError?: (message: string) =
     tick();
     const id = setInterval(tick, Math.max(100, pollMs));
     return () => { cancelled = true; clearInterval(id); };
-  }, [connected, pollMs, appendPoint, setPollError]);
+  }, [deviceKey, pollMs, appendPoint, setPollError]);
 
   // ── COV: listen for notifications and for backend failures ──
   useEffect(() => {
@@ -204,7 +238,7 @@ export function useBacnetTrend(connected: boolean, onError?: (message: string) =
       cancelled = true;
       for (const u of unlisteners) u();
     };
-  }, [connected, appendPoint, fallBackToPoll]);
+  }, [deviceKey, appendPoint, fallBackToPoll]);
 
   // ── COV: subscribe/unsubscribe diff for cov-source objects ──
   // The object each key was subscribed with is remembered here, because by the time a
@@ -254,15 +288,6 @@ export function useBacnetTrend(connected: boolean, onError?: (message: string) =
       return next;
     });
   }, [series]);
-
-  // Clear on disconnect.
-  useEffect(() => {
-    if (!connected) {
-      setSeries(new Map());
-      setErrors(new Map());
-      subscribedRef.current = new Map();
-    }
-  }, [connected]);
 
   return {
     series: Array.from(series.values()),
