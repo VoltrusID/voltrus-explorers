@@ -1,39 +1,31 @@
-//! BACnet Schedule browser module.
+//! BACnet Schedule object reader (ASHRAE 135 clause 12.24).
 //!
-//! Provides parsing for BACnet Schedule object properties using ReadProperty.
-//!
-//! A Schedule object defines a weekly schedule of time-value pairs for each day
-//! of the week, plus an optional default value and effective period.
-//!
-//! # Protocol Details
-//!
-//! Uses BACnet ReadProperty (confirmed service choice 12) to read:
-//! - WeeklySchedule (property 123) — 7 days of time-value pairs
+//! Reads, with plain ReadProperty requests:
+//! - WeeklySchedule (property 123) — 7 × BACnetDailySchedule, Monday..Sunday
 //! - ScheduleDefault (property 174) — fallback value
-//! - EffectivePeriod (property 32) — date range when schedule is active
-//! - ListOfObjectPropertyReferences (property 350) — referenced properties
+//! - EffectivePeriod (property 32) — BACnetDateRange
+//! - ListOfObjectPropertyReferences (property 54)
+//!
+//! WeeklySchedule is mandatory: any failure reading it fails the whole call.
+//! The other properties are optional: only an Error PDU with error code
+//! `unknown-property` means "the object does not have it"; every other failure
+//! (timeout, abort, reject, other errors, malformed data) is propagated.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::time::Duration;
 
-use bacnet_rs::app::{Apdu, MaxApduSize, MaxSegments};
-use bacnet_rs::network::Npdu;
-use bacnet_rs::object::ObjectType;
 use bacnet_rs::service::ConfirmedServiceChoice;
 
 use mt_protocol::ProtocolError;
 
-// ---------------------------------------------------------------------------
-// Invoke ID counter (separate from alarm.rs and cov.rs)
-// ---------------------------------------------------------------------------
+use crate::transport;
 
-/// Start at 250 to stay out of alarm.rs (100+) and cov.rs (10+) ranges.
-static SCHED_INVOKE_ID: AtomicU8 = AtomicU8::new(250);
+/// Object type number of the Schedule object (BACnetObjectType 17).
+const SCHEDULE_OBJECT_TYPE: u32 = 17;
 
-fn next_invoke_id() -> u8 {
-    SCHED_INVOKE_ID.fetch_add(1, Ordering::Relaxed)
-}
+const PROP_EFFECTIVE_PERIOD: u32 = 32;
+const PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES: u32 = 54;
+const PROP_WEEKLY_SCHEDULE: u32 = 123;
+const PROP_SCHEDULE_DEFAULT: u32 = 174;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -62,22 +54,20 @@ pub struct DaySchedule {
 pub struct ScheduleData {
     /// Object instance number of the Schedule object.
     pub object_instance: u32,
-    /// Weekly schedule (up to 7 days, Mon-Sun).
+    /// Weekly schedule (7 days, Monday..Sunday).
     pub weekly_schedule: Vec<DaySchedule>,
     /// Default value when no schedule entry is active.
     pub schedule_default: Option<String>,
-    /// Start date of the effective period (YYYY-MM-DD).
+    /// Start date of the effective period (YYYY-MM-DD); `None` when the device
+    /// does not report the property or the date is fully unspecified.
     pub effective_period_start: Option<String>,
-    /// End date of the effective period (YYYY-MM-DD).
+    /// End date of the effective period (YYYY-MM-DD); same rules as the start.
     pub effective_period_end: Option<String>,
     /// Referenced object properties as strings.
     pub object_property_references: Vec<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Day names
-// ---------------------------------------------------------------------------
-
+/// BACnetDailySchedule index 0 is Monday (clause 12.24.5).
 const DAY_NAMES: [&str; 7] = [
     "Monday",
     "Tuesday",
@@ -89,924 +79,463 @@ const DAY_NAMES: [&str; 7] = [
 ];
 
 // ---------------------------------------------------------------------------
-// BER encoding helpers (context-tagged)
+// Request encoding
 // ---------------------------------------------------------------------------
 
-/// Encode a context-tagged unsigned integer (primitive).
-/// BACnet tag byte: [tag_num(4) | context(1) | length(3)]
-fn encode_context_unsigned(buf: &mut Vec<u8>, tag_num: u8, value: u32) {
-    let tag_byte = (tag_num << 4) | 0x08; // context bit set, length in low 3 bits
-    if value <= 255 {
-        buf.push(tag_byte | 1);
-        buf.push(value as u8);
-    } else if value <= 65535 {
-        buf.push(tag_byte | 2);
-        buf.extend_from_slice(&[(value >> 8) as u8, value as u8]);
-    } else {
-        buf.push(tag_byte | 4);
-        buf.extend_from_slice(&value.to_be_bytes());
-    }
-}
-
-/// Encode a context-tagged BACnet object identifier (4-byte packed value).
-fn encode_context_object_id(buf: &mut Vec<u8>, tag_num: u8, obj_type: ObjectType, instance: u32) {
-    let type_u32: u32 = obj_type.into();
-    let value = (type_u32 << 22) | (instance & 0x3FFFFF);
-    buf.push((tag_num << 4) | 0x0C); // context tag, length 4
-    buf.extend_from_slice(&value.to_be_bytes());
+/// ReadProperty-Request service data (clause 15.5.1.1):
+/// `[0] objectIdentifier, [1] propertyIdentifier`.
+fn encode_read_property(object_instance: u32, property_id: u32) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(11);
+    // Context tag 0, length 4: object id = type << 22 | instance.
+    buf.push(0x0C);
+    buf.extend_from_slice(&((SCHEDULE_OBJECT_TYPE << 22) | (object_instance & 0x3F_FFFF)).to_be_bytes());
+    // Context tag 1, minimal-length unsigned property id.
+    let bytes = property_id.to_be_bytes();
+    let skip = bytes.iter().take(3).take_while(|b| **b == 0).count();
+    let value = &bytes[skip..];
+    buf.push(0x18 | value.len() as u8);
+    buf.extend_from_slice(value);
+    buf
 }
 
 // ---------------------------------------------------------------------------
-// BER decoding helpers
+// Tag decoding (clause 20.2.1)
 // ---------------------------------------------------------------------------
 
-/// Read the tag byte and determine tag number, is_opening, is_closing.
-/// Returns `(tag_number, is_opening, is_closing, consumed)`.
-fn read_tag_info(data: &[u8], pos: usize) -> Option<(u8, bool, bool, usize)> {
-    if pos >= data.len() {
-        return None;
-    }
-    let byte = data[pos];
-    let tag_num = (byte >> 4) & 0x0F;
-    let is_context = (byte & 0x08) != 0;
-    let is_opening = is_context && (byte & 0x07) == 0x06;
-    let is_closing = is_context && (byte & 0x07) == 0x07;
+fn malformed(what: &str) -> ProtocolError {
+    ProtocolError::Other(format!("Malformed Schedule response: {what}"))
+}
 
-    if is_opening || is_closing {
-        return Some((tag_num, is_opening, is_closing, 1));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TagKind {
+    Primitive,
+    Opening,
+    Closing,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Tag {
+    number: u32,
+    context: bool,
+    kind: TagKind,
+    /// Bytes occupied by the tag header (initial octet + extensions).
+    header: usize,
+    /// Content length for primitive tags (0 for opening/closing and for
+    /// application-tagged Booleans, whose value lives in the header).
+    len: usize,
+    /// Raw length/value/type bits of the initial octet.
+    lvt: u8,
+}
+
+impl Tag {
+    fn end(&self, pos: usize) -> usize {
+        pos + self.header + self.len
     }
 
-    // Primitive: compute total consumed (header + value length)
-    let length = (byte & 0x07) as usize;
-    let consumed = if length == 5 {
-        // Extended length in next byte
-        if pos + 1 >= data.len() {
-            return None;
+    fn content<'a>(&self, data: &'a [u8], pos: usize) -> &'a [u8] {
+        &data[pos + self.header..self.end(pos)]
+    }
+}
+
+fn read_tag(data: &[u8], pos: usize) -> Result<Tag, ProtocolError> {
+    let b = *data.get(pos).ok_or_else(|| malformed("truncated tag"))?;
+    let mut header = 1;
+    let mut number = (b >> 4) as u32;
+    if number == 0x0F {
+        number = *data.get(pos + 1).ok_or_else(|| malformed("truncated tag number"))? as u32;
+        header = 2;
+    }
+    let context = b & 0x08 != 0;
+    let lvt = b & 0x07;
+    let tag = |kind, header, len| Tag { number, context, kind, header, len, lvt };
+
+    if context && lvt == 6 {
+        return Ok(tag(TagKind::Opening, header, 0));
+    }
+    if context && lvt == 7 {
+        return Ok(tag(TagKind::Closing, header, 0));
+    }
+
+    let len = if !context && number == 1 {
+        // Application Boolean: the value is in the length bits.
+        0
+    } else if lvt == 5 {
+        let first = *data.get(pos + header).ok_or_else(|| malformed("truncated length"))?;
+        header += 1;
+        match first {
+            254 => {
+                let raw = data
+                    .get(pos + header..pos + header + 2)
+                    .ok_or_else(|| malformed("truncated length"))?;
+                header += 2;
+                u16::from_be_bytes([raw[0], raw[1]]) as usize
+            }
+            255 => {
+                let raw = data
+                    .get(pos + header..pos + header + 4)
+                    .ok_or_else(|| malformed("truncated length"))?;
+                header += 4;
+                u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize
+            }
+            n => n as usize,
         }
-        let ext_len = data[pos + 1] as usize;
-        2 + ext_len
-    } else if length == 6 {
-        // Also extended (some encodings use 6 for length-in-next-byte)
-        if pos + 1 >= data.len() {
-            return None;
-        }
-        let ext_len = data[pos + 1] as usize;
-        2 + ext_len
     } else {
-        1 + length
+        lvt as usize
     };
 
-    Some((tag_num, false, false, consumed))
+    if pos + header + len > data.len() {
+        return Err(malformed("element extends past end of data"));
+    }
+    Ok(tag(TagKind::Primitive, header, len))
 }
 
-/// Advance `pos` past a single TLV element. Returns the new position.
-fn skip_tag(data: &[u8], pos: usize) -> usize {
-    if let Some((_, _, _, consumed)) = read_tag_info(data, pos) {
-        pos + consumed
-    } else {
-        pos + 1
+/// Read a primitive context tag with the given number; returns its content and
+/// the position after it.
+fn read_context_primitive(
+    data: &[u8],
+    pos: usize,
+    number: u32,
+) -> Result<(&[u8], usize), ProtocolError> {
+    let tag = read_tag(data, pos)?;
+    if !tag.context || tag.kind != TagKind::Primitive || tag.number != number {
+        return Err(malformed(&format!("expected context tag [{number}] at offset {pos}")));
     }
+    Ok((tag.content(data, pos), tag.end(pos)))
 }
 
-/// Read the value portion of an application-tagged element.
-/// Returns `(app_tag_number, value_bytes, total_consumed)`.
-fn read_application_tag(data: &[u8], pos: usize) -> Option<(u8, &[u8], usize)> {
-    if pos >= data.len() {
-        return None;
+/// Expect an opening or closing context tag `number` at `pos`; returns the
+/// position after it.
+fn expect_bracket(
+    data: &[u8],
+    pos: usize,
+    number: u32,
+    kind: TagKind,
+) -> Result<usize, ProtocolError> {
+    let tag = read_tag(data, pos)?;
+    if !tag.context || tag.kind != kind || tag.number != number {
+        return Err(malformed(&format!("expected {kind:?} tag [{number}] at offset {pos}")));
     }
-    let byte = data[pos];
-    let is_context = (byte & 0x08) != 0;
-    if is_context {
-        return None;
+    Ok(tag.end(pos))
+}
+
+fn be_unsigned(bytes: &[u8]) -> Result<u64, ProtocolError> {
+    if bytes.is_empty() || bytes.len() > 8 {
+        return Err(malformed("unsigned integer length"));
     }
+    Ok(bytes.iter().fold(0u64, |acc, b| (acc << 8) | *b as u64))
+}
 
-    let app_tag = (byte >> 4) & 0x0F;
-    let len_bits = byte & 0x07;
+fn be_signed(bytes: &[u8]) -> Result<i64, ProtocolError> {
+    let raw = be_unsigned(bytes)?;
+    let shift = 64 - 8 * bytes.len() as u32;
+    Ok(((raw << shift) as i64) >> shift)
+}
 
-    let (length, header_size) = if len_bits == 6 {
-        // Extended length: next byte is length
-        if pos + 1 >= data.len() {
-            return None;
-        }
-        let len = data[pos + 1] as usize;
-        (len, 2)
-    } else if len_bits == 7 {
-        return None;
-    } else {
-        (len_bits as usize, 1)
+// ---------------------------------------------------------------------------
+// Value formatting
+// ---------------------------------------------------------------------------
+
+/// Format a BACnetTime ("HH:MM:SS"); 0xFF fields render as "**".
+fn format_time(content: &[u8]) -> Result<String, ProtocolError> {
+    let [h, m, s, _hundredths] = content else {
+        return Err(malformed("Time must be 4 octets"));
     };
+    let field = |v: u8| if v == 0xFF { "**".to_string() } else { format!("{v:02}") };
+    Ok(format!("{}:{}:{}", field(*h), field(*m), field(*s)))
+}
 
-    let value_start = pos + header_size;
-    if value_start + length > data.len() {
-        return None;
+/// Format a BACnetDate: year (ONE octet, year-1900), month, day, day-of-week.
+///
+/// Returns `None` when year, month and day are all unspecified (0xFF).
+/// Partially specified dates keep wildcards visible ("****", "**", "odd", ...).
+fn format_date(content: &[u8]) -> Result<Option<String>, ProtocolError> {
+    let [y, m, d, _weekday] = content else {
+        return Err(malformed("Date must be 4 octets"));
+    };
+    if *y == 0xFF && *m == 0xFF && *d == 0xFF {
+        return Ok(None);
     }
+    let year = if *y == 0xFF { "****".to_string() } else { (1900 + *y as u32).to_string() };
+    let month = match *m {
+        0xFF => "**".to_string(),
+        13 => "odd".to_string(),
+        14 => "even".to_string(),
+        n => format!("{n:02}"),
+    };
+    let day = match *d {
+        0xFF => "**".to_string(),
+        32 => "last".to_string(),
+        33 => "odd".to_string(),
+        34 => "even".to_string(),
+        n => format!("{n:02}"),
+    };
+    Ok(Some(format!("{year}-{month}-{day}")))
+}
 
-    Some((app_tag, &data[value_start..value_start + length], header_size + length))
+fn format_character_string(content: &[u8]) -> Result<String, ProtocolError> {
+    let (encoding, text) = content
+        .split_first()
+        .ok_or_else(|| malformed("empty CharacterString"))?;
+    match encoding {
+        // ISO 10646 UTF-8
+        0 => Ok(String::from_utf8_lossy(text).into_owned()),
+        // ISO 10646 UCS-2 (big endian)
+        4 => Ok(char::decode_utf16(
+            text.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])),
+        )
+        .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()),
+        // ISO 8859-1
+        5 => Ok(text.iter().map(|b| *b as char).collect()),
+        n => Err(malformed(&format!("unsupported CharacterString encoding {n}"))),
+    }
+}
+
+/// Decode one application-tagged value at `pos` into a display string.
+fn parse_application_value(data: &[u8], pos: usize) -> Result<(String, usize), ProtocolError> {
+    let tag = read_tag(data, pos)?;
+    if tag.context || tag.kind != TagKind::Primitive {
+        return Err(malformed(&format!("expected application-tagged value at offset {pos}")));
+    }
+    let content = tag.content(data, pos);
+    let text = match tag.number {
+        0 => "Null".to_string(),
+        1 => (tag.lvt != 0).to_string(),
+        2 => be_unsigned(content)?.to_string(),
+        3 => be_signed(content)?.to_string(),
+        4 => {
+            let raw: [u8; 4] = content.try_into().map_err(|_| malformed("Real must be 4 octets"))?;
+            f32::from_be_bytes(raw).to_string()
+        }
+        5 => {
+            let raw: [u8; 8] = content.try_into().map_err(|_| malformed("Double must be 8 octets"))?;
+            f64::from_be_bytes(raw).to_string()
+        }
+        6 => content.iter().map(|b| format!("{b:02X}")).collect::<String>(),
+        7 => format_character_string(content)?,
+        8 => {
+            let (unused, bits) = content
+                .split_first()
+                .ok_or_else(|| malformed("empty BitString"))?;
+            let total = (bits.len() * 8).saturating_sub(*unused as usize);
+            (0..total)
+                .map(|i| if bits[i / 8] & (0x80 >> (i % 8)) != 0 { '1' } else { '0' })
+                .collect()
+        }
+        9 => be_unsigned(content)?.to_string(),
+        10 => format_date(content)?.unwrap_or_else(|| "any".to_string()),
+        11 => format_time(content)?,
+        12 => {
+            let (obj_type, instance) = split_object_id(content)?;
+            format!("object_{obj_type}:{instance}")
+        }
+        n => return Err(malformed(&format!("unknown application tag {n}"))),
+    };
+    Ok((text, tag.end(pos)))
+}
+
+fn split_object_id(content: &[u8]) -> Result<(u32, u32), ProtocolError> {
+    let raw: [u8; 4] = content
+        .try_into()
+        .map_err(|_| malformed("ObjectIdentifier must be 4 octets"))?;
+    let raw = u32::from_be_bytes(raw);
+    Ok((raw >> 22, raw & 0x3F_FFFF))
 }
 
 // ---------------------------------------------------------------------------
-// Parse helpers
+// ReadProperty-ACK framing and property parsers
 // ---------------------------------------------------------------------------
 
-/// Parse a BACnetTime (4 bytes: hour, minute, second, hundredths) at `pos`.
-/// Returns "HH:MM:SS" and new position.
-fn parse_bacnet_time(data: &[u8], pos: usize) -> (String, usize) {
-    if pos + 4 > data.len() {
-        return (String::new(), pos);
-    }
-    let hour = data[pos];
-    let minute = data[pos + 1];
-    let second = data[pos + 2];
-    // hundredths = data[pos + 3] — not displayed
-    let time_str = format!("{hour:02}:{minute:02}:{second:02}");
-    (time_str, pos + 4)
-}
-
-/// Parse a BACnetDate (4 bytes: year MSB, year LSB, month, day, weekday)
-/// at `pos`. Returns "YYYY-MM-DD" and new position.
-fn parse_bacnet_date(data: &[u8], pos: usize) -> (String, usize) {
-    if pos + 4 > data.len() {
-        return (String::new(), pos);
-    }
-    let year = ((data[pos] as u16) << 8) | data[pos + 1] as u16;
-    let month = data[pos + 2];
-    let day = data[pos + 3];
-    // weekday = data[pos + 4] if present, but standard BACnetDate is 4 bytes
-    let date_str = format!("{year}-{month:02}-{day:02}");
-    (date_str, pos + 4)
-}
-
-/// Parse an application-tagged value at `pos` into a display string.
-/// Returns `(display_string, new_position)`.
-fn parse_application_value(data: &[u8], pos: usize) -> (String, usize) {
-    if let Some((app_tag, value_bytes, consumed)) = read_application_tag(data, pos) {
-        let display = match app_tag {
-            // Null
-            0 => "Null".into(),
-            // Boolean
-            1 => {
-                if !value_bytes.is_empty() && value_bytes[0] != 0 {
-                    "true".into()
-                } else {
-                    "false".into()
-                }
-            }
-            // Unsigned integer
-            2 => bytes_to_u32(value_bytes).to_string(),
-            // Signed integer
-            3 => bytes_to_i32(value_bytes).to_string(),
-            // Real (4-byte IEEE 754)
-            4 if value_bytes.len() == 4 => {
-                let bytes: [u8; 4] = value_bytes.try_into().unwrap_or([0; 4]);
-                let f = f32::from_be_bytes(bytes);
-                format!("{f:.4}")
-            }
-            // Double (8-byte IEEE 754)
-            5 if value_bytes.len() == 8 => {
-                let bytes: [u8; 8] = value_bytes.try_into().unwrap_or([0; 8]);
-                let f = f64::from_be_bytes(bytes);
-                format!("{f:.6}")
-            }
-            // Enumerated
-            9 => bytes_to_u32(value_bytes).to_string(),
-            // Character String (tag 7)
-            7 if value_bytes.len() >= 1 => {
-                // First byte is encoding (0 = ISO-8859-1)
-                if value_bytes[0] == 0 && value_bytes.len() > 1 {
-                    String::from_utf8_lossy(&value_bytes[1..]).into_owned()
-                } else {
-                    String::from_utf8_lossy(value_bytes).into_owned()
-                }
-            }
-            // Octet String (tag 10)
-            10 => value_bytes
-                .iter()
-                .map(|b| format!("{b:02X}"))
-                .collect(),
-            // Object Identifier (tag 12)
-            12 if value_bytes.len() == 4 => {
-                let raw = u32::from_be_bytes(
-                    value_bytes.try_into().unwrap_or([0; 4]),
-                );
-                let type_val = (raw >> 22) & 0x3FF;
-                let instance = raw & 0x3FFFFF;
-                format!("object_{type_val}:{instance}")
-            }
-            _ => format!("unknown_tag_{app_tag}"),
-        };
-        (display, pos + consumed)
-    } else {
-        (String::new(), skip_tag(data, pos))
-    }
-}
-
-/// Parse an application-tagged value and also try to read it as BACnetTime
-/// (4 raw bytes). Used when the tag is context-encoded inside a daily schedule.
-fn parse_schedule_value(data: &[u8], pos: usize) -> (String, usize) {
-    if pos >= data.len() {
-        return (String::new(), pos);
-    }
-    let byte = data[pos];
-    let is_context = (byte & 0x08) != 0;
-
-    if is_context {
-        // Context-tagged value inside schedule entry — try to extract as unsigned
-        let tag_num = (byte >> 4) & 0x0F;
-        let len_bits = byte & 0x07;
-
-        let (length, header_size) = if len_bits == 6 || (byte & 0x04) != 0 && len_bits == 0 {
-            // Extended length
-            if pos + 1 >= data.len() {
-                return (String::new(), skip_tag(data, pos));
-            }
-            let ext_len = data[pos + 1] as usize;
-            (ext_len, 2)
-        } else if len_bits == 7 {
-            return (String::new(), skip_tag(data, pos));
-        } else {
-            (len_bits as usize, 1)
-        };
-
-        let value_start = pos + header_size;
-        if value_start + length > data.len() {
-            return (String::new(), skip_tag(data, pos));
-        }
-
-        // The value is the application-encoded data within the context wrapper
-        let inner = &data[value_start..value_start + length];
-        if inner.is_empty() {
-            return (String::new(), pos + header_size + length);
-        }
-
-        // Decode inner application tag
-        let inner_tag = inner[0];
-        let inner_app = (inner_tag >> 4) & 0x0F;
-        let inner_len = inner_tag & 0x07;
-        let inner_is_context = (inner_tag & 0x08) != 0;
-
-        if inner_is_context {
-            // Nested context tag — just skip
-            return (format!("ctx_tag_{tag_num}"), pos + header_size + length);
-        }
-
-        let (data_len, data_offset) = if inner_len == 6 {
-            if inner.len() < 2 {
-                return (String::new(), pos + header_size + length);
-            }
-            (inner[1] as usize, 2)
-        } else if inner_len == 7 {
-            return (String::new(), pos + header_size + length);
-        } else {
-            (inner_len as usize, 1)
-        };
-
-        if data_offset + data_len > inner.len() {
-            return (String::new(), pos + header_size + length);
-        }
-
-        let val_bytes = &inner[data_offset..data_offset + data_len];
-        let display = match inner_app {
-            0 => "Null".into(),
-            1 => {
-                if !val_bytes.is_empty() && val_bytes[0] != 0 {
-                    "true".into()
-                } else {
-                    "false".into()
-                }
-            }
-            2 => bytes_to_u32(val_bytes).to_string(),
-            3 => bytes_to_i32(val_bytes).to_string(),
-            4 if val_bytes.len() == 4 => {
-                let b: [u8; 4] = val_bytes.try_into().unwrap_or([0; 4]);
-                format!("{:.4}", f32::from_be_bytes(b))
-            }
-            5 if val_bytes.len() == 8 => {
-                let b: [u8; 8] = val_bytes.try_into().unwrap_or([0; 8]);
-                format!("{:.6}", f64::from_be_bytes(b))
-            }
-            9 => bytes_to_u32(val_bytes).to_string(),
-            7 if val_bytes.len() >= 1 => {
-                if val_bytes[0] == 0 && val_bytes.len() > 1 {
-                    String::from_utf8_lossy(&val_bytes[1..]).into_owned()
-                } else {
-                    String::from_utf8_lossy(val_bytes).into_owned()
-                }
-            }
-            _ => format!("tag_{inner_app}"),
-        };
-
-        (display, pos + header_size + length)
-    } else {
-        // Application-tagged — parse directly
-        parse_application_value(data, pos)
-    }
-}
-
-/// Parse the WeeklySchedule from raw service data bytes.
-///
-/// WeeklySchedule ::= SEQUENCE OF [7] BACnetDailySchedule
-/// BACnetDailySchedule ::= SEQUENCE OF BACnetTimeValue
-/// BACnetTimeValue ::= SEQUENCE {
-///     Time  BACnetTime (application tag, 4 bytes),
-///     Value (application-tagged)
-/// }
-///
-/// The data may be wrapped in opening/closing tags or be a flat sequence.
-fn parse_weekly_schedule(data: &[u8]) -> Vec<DaySchedule> {
-    let mut pos = 0;
-    let mut days = Vec::new();
-
-    // Check for outer opening tag (context tag constructed)
-    if let Some((_, is_opening, _, _)) = read_tag_info(data, pos) {
-        if is_opening {
-            pos += 1; // skip opening tag
-        }
+/// Strip the ReadProperty-ACK wrapper (clause 15.5.1.2) and return the bytes
+/// between the `[3]` opening and closing tags:
+/// `[0] objectIdentifier, [1] propertyIdentifier, [2] arrayIndex OPTIONAL,
+/// [3] { propertyValue }`.
+fn strip_read_property_ack(data: &[u8], expected_property: u32) -> Result<&[u8], ProtocolError> {
+    let (_object, pos) = read_context_primitive(data, 0, 0)?;
+    let (property, mut pos) = read_context_primitive(data, pos, 1)?;
+    let property = be_unsigned(property)?;
+    if property != expected_property as u64 {
+        return Err(malformed(&format!(
+            "ACK is for property {property}, requested {expected_property}"
+        )));
     }
 
-    for day_idx in 0..7 {
-        if pos >= data.len() {
-            break;
-        }
+    let next = read_tag(data, pos)?;
+    if next.context && next.kind == TagKind::Primitive && next.number == 2 {
+        pos = next.end(pos);
+    }
 
-        let mut entries = Vec::new();
-
-        // Check for inner opening tag (constructed)
-        let had_inner_open = if let Some((_, is_opening, is_closing, _)) = read_tag_info(data, pos)
-        {
-            if is_opening {
-                pos += 1;
-                true
-            } else if is_closing {
-                // This is the outer closing tag — we're done
-                break;
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        // Read time-value pairs until inner closing tag or next opening tag or end
-        while pos < data.len() {
-            if let Some((_, _, is_closing, _)) = read_tag_info(data, pos) {
-                if is_closing {
-                    pos += 1;
-                    break;
-                }
-            }
-
-            // Check for next day's opening tag — stop current day
-            if let Some((_, is_opening, _, _)) = read_tag_info(data, pos) {
-                if is_opening && had_inner_open {
-                    break;
-                }
-            }
-
-            // Try to read a BACnetTimeValue sequence
-            // The Time is application-tagged: tag byte where low nibble encodes length.
-            // BACnetTime is always 4 bytes with application tag 10 (0x0A... but no).
-            // Actually BACnetTime is just 4 bytes. In the TLV encoding:
-            //   - It could be context-tagged with the Time as primitive value
-            //   - Or it could be the raw 4 bytes within a context-tagged wrapper
-
-            // Look for a SEQUENCE wrapper (context tag constructed) for TimeValue
-            if let Some((_, is_opening, _, consumed)) = read_tag_info(data, pos) {
-                if is_opening {
-                    // TimeValue is wrapped in opening/closing tags
-                    pos += consumed;
-                    // Read Time (should be context tag 0 with 4 bytes, or application Time)
-                    let (time_str, new_pos) = read_time_value_time(data, pos);
-                    pos = new_pos;
-                    // Read Value
-                    let (value_str, new_pos) = parse_schedule_value(data, pos);
-                    pos = new_pos;
-                    // Skip closing tag
-                    if let Some((_, _, is_closing, consumed)) = read_tag_info(data, pos) {
-                        if is_closing {
-                            pos += consumed;
-                        }
+    let start = expect_bracket(data, pos, 3, TagKind::Opening)?;
+    let mut depth = 1usize;
+    let mut p = start;
+    loop {
+        let tag = read_tag(data, p)?;
+        match tag.kind {
+            TagKind::Opening => depth += 1,
+            TagKind::Closing => {
+                depth -= 1;
+                if depth == 0 {
+                    if tag.end(p) != data.len() {
+                        return Err(malformed("trailing bytes after property value"));
                     }
-                    entries.push(ScheduleEntry {
-                        time: time_str,
-                        value: value_str,
-                    });
-                    continue;
+                    return Ok(&data[start..p]);
                 }
             }
-
-            // Flat format: time bytes directly, then value
-            // Check if this looks like a time (context tag with 4 bytes of hour/min/sec/hundredths)
-            let (time_str, new_pos) = read_time_value_time(data, pos);
-            if time_str.is_empty() || new_pos == pos {
-                // Not a time — skip this element
-                pos = skip_tag(data, pos);
-                continue;
-            }
-            pos = new_pos;
-
-            // Read the value following the time
-            let (value_str, new_pos) = parse_schedule_value(data, pos);
-            pos = new_pos;
-
-            entries.push(ScheduleEntry {
-                time: time_str,
-                value: value_str,
-            });
+            TagKind::Primitive => {}
         }
-
-        let day_name = if day_idx < DAY_NAMES.len() {
-            DAY_NAMES[day_idx].to_string()
-        } else {
-            format!("Day {}", day_idx + 1)
-        };
-
-        days.push(DaySchedule {
-            day_name,
-            entries,
-        });
-    }
-
-    days
-}
-
-/// Try to read a BACnetTime from the current position.
-/// The time could be:
-/// - Context tag 0 with 4 raw bytes (hour, min, sec, hundredths)
-/// - Application-tagged with 4 bytes
-fn read_time_value_time(data: &[u8], pos: usize) -> (String, usize) {
-    if pos >= data.len() {
-        return (String::new(), pos);
-    }
-
-    let byte = data[pos];
-    let is_context = (byte & 0x08) != 0;
-    let tag_num = (byte >> 4) & 0x0F;
-
-    if is_context {
-        // Context-tagged time: tag_num, length in low bits
-        let len_bits = byte & 0x07;
-        let (length, header_size) = if len_bits == 6 || (byte & 0x04) != 0 && len_bits == 0 {
-            if pos + 1 >= data.len() {
-                return (String::new(), pos);
-            }
-            (data[pos + 1] as usize, 2)
-        } else if len_bits == 7 {
-            return (String::new(), pos);
-        } else {
-            (len_bits as usize, 1)
-        };
-
-        let value_start = pos + header_size;
-        if length == 4 && value_start + 4 <= data.len() {
-            return parse_bacnet_time(data, value_start);
-        }
-        (String::new(), pos + header_size + length)
-    } else {
-        // Application-tagged: check if it's 4 bytes that look like time
-        let _app_tag = tag_num;
-        let len_bits = byte & 0x07;
-        let (length, header_size) = if len_bits == 6 {
-            if pos + 1 >= data.len() {
-                return (String::new(), pos);
-            }
-            (data[pos + 1] as usize, 2)
-        } else if len_bits == 7 {
-            return (String::new(), pos);
-        } else {
-            (len_bits as usize, 1)
-        };
-
-        let value_start = pos + header_size;
-        if length == 4 && value_start + 4 <= data.len() {
-            let h = data[value_start];
-            let m = data[value_start + 1];
-            let s = data[value_start + 2];
-            // Validate: hour < 24, minute < 60, second < 60
-            if h < 24 && m < 60 && s < 60 {
-                return parse_bacnet_time(data, value_start);
-            }
-        }
-        (String::new(), pos + header_size + length)
+        p = tag.end(p);
     }
 }
 
-/// Parse ScheduleDefault from raw service data.
-/// ScheduleDefault is a single application-tagged value.
-fn parse_schedule_default(data: &[u8]) -> Option<String> {
-    if data.is_empty() {
-        return None;
-    }
-    let (value, _) = parse_application_value(data, 0);
-    if value.is_empty() || value == "Null" {
-        None
-    } else {
-        Some(value)
-    }
-}
-
-/// Parse EffectivePeriod from raw service data.
-/// EffectivePeriod is a SEQUENCE containing:
-///   [0] BACnetDate (start date)
-///   [1] BACnetDate (end date)
-fn parse_effective_period(data: &[u8]) -> (Option<String>, Option<String>) {
+/// WeeklySchedule ::= SEQUENCE SIZE(7) OF BACnetDailySchedule
+/// BACnetDailySchedule ::= SEQUENCE { [0] day-schedule SEQUENCE OF BACnetTimeValue }
+/// BACnetTimeValue ::= SEQUENCE { time Time, value ABSTRACT-SYNTAX.&Type }
+///
+/// Wire form of each day: `0E {B4 hh mm ss hs <app-value>}* 0F`.
+fn parse_weekly_schedule(data: &[u8]) -> Result<Vec<DaySchedule>, ProtocolError> {
+    let mut days = Vec::with_capacity(7);
     let mut pos = 0;
-
-    // Skip opening tag if present
-    if let Some((_, is_opening, _, consumed)) = read_tag_info(data, pos) {
-        if is_opening {
-            pos += consumed;
-        }
-    }
-
-    // [0] Start date — context tag 0, 4 bytes
-    let start_date = if let Some((tag_num, _, _, consumed)) = read_tag_info(data, pos) {
-        if tag_num == 0 && (data[pos] & 0x08) != 0 {
-            let len_bits = data[pos] & 0x07;
-            let value_start = pos + 1;
-            if len_bits == 4 && value_start + 4 <= data.len() {
-                let (date_str, new_pos) = parse_bacnet_date(data, value_start);
-                pos = new_pos;
-                Some(date_str)
-            } else if (data[pos] & 0x04) != 0 && len_bits == 0 && pos + 1 < data.len() {
-                // Extended length
-                let ext_len = data[pos + 1] as usize;
-                let vs = pos + 2;
-                if ext_len == 4 && vs + 4 <= data.len() {
-                    let (date_str, new_pos) = parse_bacnet_date(data, vs);
-                    pos = new_pos;
-                    Some(date_str)
-                } else {
-                    pos += consumed;
-                    None
-                }
-            } else {
-                pos += consumed;
-                None
-            }
-        } else {
-            pos += consumed;
-            None
-        }
-    } else {
-        None
-    };
-
-    // [1] End date — context tag 1, 4 bytes
-    let end_date = if let Some((tag_num, _, _, _consumed)) = read_tag_info(data, pos) {
-        if tag_num == 1 && (data[pos] & 0x08) != 0 {
-            let len_bits = data[pos] & 0x07;
-            let value_start = pos + 1;
-            if len_bits == 4 && value_start + 4 <= data.len() {
-                let (date_str, _new_pos) = parse_bacnet_date(data, value_start);
-                Some(date_str)
-            } else if (data[pos] & 0x04) != 0 && len_bits == 0 && pos + 1 < data.len() {
-                let ext_len = data[pos + 1] as usize;
-                let vs = pos + 2;
-                if ext_len == 4 && vs + 4 <= data.len() {
-                    let (date_str, _) = parse_bacnet_date(data, vs);
-                    Some(date_str)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    (start_date, end_date)
-}
-
-/// Parse ListOfObjectPropertyReferences from raw service data.
-/// Each reference is: ObjectIdentifier + PropertyIdentifier (context tags 0 and 1).
-fn parse_object_property_references(data: &[u8]) -> Vec<String> {
-    let mut pos = 0;
-    let mut refs = Vec::new();
-
-    // Skip outer opening tag if present
-    if let Some((_, is_opening, _, consumed)) = read_tag_info(data, pos) {
-        if is_opening {
-            pos += consumed;
-        }
-    }
-
     while pos < data.len() {
-        // Check for closing tag
-        if let Some((_, _, is_closing, _)) = read_tag_info(data, pos) {
-            if is_closing {
+        pos = expect_bracket(data, pos, 0, TagKind::Opening)?;
+        let mut entries = Vec::new();
+        loop {
+            let tag = read_tag(data, pos)?;
+            if tag.context && tag.kind == TagKind::Closing && tag.number == 0 {
+                pos = tag.end(pos);
                 break;
             }
-        }
-
-        // Check for opening tag (next reference entry)
-        if let Some((_, is_opening, _, consumed)) = read_tag_info(data, pos) {
-            if is_opening {
-                pos += consumed;
+            if tag.context || tag.kind != TagKind::Primitive || tag.number != 11 {
+                return Err(malformed(&format!("expected Time in day schedule at offset {pos}")));
             }
+            let time = format_time(tag.content(data, pos))?;
+            let (value, next) = parse_application_value(data, tag.end(pos))?;
+            entries.push(ScheduleEntry { time, value });
+            pos = next;
         }
-
-        // [0] ObjectIdentifier — context tag 0, 4 bytes
-        let obj_ref = if let Some((tag_num, _, _, consumed)) = read_tag_info(data, pos) {
-            if tag_num == 0 && (data[pos] & 0x08) != 0 {
-                let len_bits = data[pos] & 0x07;
-                let value_start = pos + 1;
-                if len_bits == 4 && value_start + 4 <= data.len() {
-                    let raw = u32::from_be_bytes([
-                        data[value_start],
-                        data[value_start + 1],
-                        data[value_start + 2],
-                        data[value_start + 3],
-                    ]);
-                    let type_val = (raw >> 22) & 0x3FF;
-                    let instance = raw & 0x3FFFFF;
-                    pos = value_start + 4;
-                    Some(format!("object_{type_val}:{instance}"))
-                } else {
-                    pos += consumed;
-                    None
-                }
-            } else {
-                pos += consumed;
-                None
-            }
-        } else {
-            pos += 1;
-            None
-        };
-
-        // [1] PropertyIdentifier — context tag 1, 1-4 bytes (enumerated)
-        let prop_ref = if let Some((tag_num, _, _, consumed)) = read_tag_info(data, pos) {
-            if tag_num == 1 && (data[pos] & 0x08) != 0 {
-                let len_bits = data[pos] & 0x07;
-                let value_start = pos + 1;
-                if value_start + (len_bits as usize) <= data.len() && len_bits > 0 {
-                    let val = match len_bits {
-                        1 => data[value_start] as u32,
-                        2 => ((data[value_start] as u32) << 8) | data[value_start + 1] as u32,
-                        4 => u32::from_be_bytes([
-                            data[value_start],
-                            data[value_start + 1],
-                            data[value_start + 2],
-                            data[value_start + 3],
-                        ]),
-                        _ => 0
-                    };
-                    pos = value_start + (len_bits as usize);
-                    Some(val.to_string())
-                } else {
-                    pos += consumed;
-                    None
-                }
-            } else {
-                pos += consumed;
-                None
-            }
-        } else {
-            pos += 1;
-            None
-        };
-
-        // Skip closing tag if present
-        if let Some((_, _, is_closing, consumed)) = read_tag_info(data, pos) {
-            if is_closing {
-                pos += consumed;
-            }
-        }
-
-        match (obj_ref, prop_ref) {
-            (Some(obj), Some(prop)) => refs.push(format!("{obj}.{prop}")),
-            (Some(obj), None) => refs.push(obj),
-            _ => {}
-        }
+        let day_name = DAY_NAMES
+            .get(days.len())
+            .ok_or_else(|| malformed("WeeklySchedule has more than 7 days"))?;
+        days.push(DaySchedule { day_name: (*day_name).to_string(), entries });
     }
-
-    refs
+    if days.len() != 7 {
+        return Err(malformed(&format!("WeeklySchedule has {} days, expected 7", days.len())));
+    }
+    Ok(days)
 }
 
-// ---------------------------------------------------------------------------
-// Send confirmed request helper
-// ---------------------------------------------------------------------------
-
-/// Send a ReadProperty confirmed request and return the raw service data.
-fn send_read_property(
-    socket: &std::net::UdpSocket,
-    target_addr: SocketAddr,
-    object_type: ObjectType,
-    object_instance: u32,
-    property_id: u32,
-) -> Result<Vec<u8>, ProtocolError> {
-    let invoke_id = next_invoke_id();
-
-    // Build ReadProperty service data:
-    //   context-tag 0: ObjectIdentifier (Schedule type=17, given instance)
-    //   context-tag 1: PropertyIdentifier (enumerated value)
-    let mut service_data = Vec::new();
-    encode_context_object_id(&mut service_data, 0, object_type, object_instance);
-    encode_context_unsigned(&mut service_data, 1, property_id);
-
-    let apdu = Apdu::ConfirmedRequest {
-        segmented: false,
-        more_follows: false,
-        segmented_response_accepted: true,
-        max_segments: MaxSegments::Unspecified,
-        max_response_size: MaxApduSize::Up1476,
-        invoke_id,
-        sequence_number: None,
-        proposed_window_size: None,
-        service_choice: ConfirmedServiceChoice::ReadProperty,
-        service_data,
-    };
-
-    let apdu_data = apdu.encode();
-    let mut npdu = Npdu::new();
-    npdu.control.expecting_reply = true;
-    let npdu_data = npdu.encode();
-
-    let mut message = npdu_data;
-    message.extend_from_slice(&apdu_data);
-
-    // BVLC Original-Unicast-NPDU
-    let mut bvlc = vec![0x81, 0x0A, 0x00, 0x00];
-    bvlc.extend_from_slice(&message);
-    let len = bvlc.len() as u16;
-    bvlc[2] = (len >> 8) as u8;
-    bvlc[3] = (len & 0xFF) as u8;
-
-    socket
-        .send_to(&bvlc, target_addr)
-        .map_err(|e| ProtocolError::WriteFailed(format!("Schedule send ReadProperty: {e}")))?;
-
-    let mut buf = [0u8; 1500];
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(6) {
-        match socket.recv_from(&mut buf) {
-            Ok((len, source)) if source == target_addr => {
-                if len < 4 || buf[0] != 0x81 {
-                    continue;
-                }
-                let bvlc_len = ((buf[2] as usize) << 8) | buf[3] as usize;
-                if len != bvlc_len {
-                    continue;
-                }
-                let npdu_start = 4;
-                if let Ok((_npdu, npdu_len)) = Npdu::decode(&buf[npdu_start..len]) {
-                    let apdu_start = npdu_start + npdu_len;
-                    if let Ok(Apdu::ComplexAck {
-                        invoke_id: resp_invoke_id,
-                        service_data,
-                        ..
-                    }) = Apdu::decode(&buf[apdu_start..len])
-                    {
-                        if resp_invoke_id != invoke_id {
-                            continue;
-                        }
-                        return Ok(service_data);
-                    }
-                    if let Ok(Apdu::SimpleAck {
-                        invoke_id: resp_invoke_id,
-                        ..
-                    }) = Apdu::decode(&buf[apdu_start..len])
-                    {
-                        if resp_invoke_id != invoke_id {
-                            continue;
-                        }
-                        return Ok(Vec::new());
-                    }
-                }
-            }
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(ProtocolError::ReadFailed(format!("Schedule recv: {e}"))),
-        }
+/// ScheduleDefault is a single application-tagged primitive value.
+fn parse_schedule_default(data: &[u8]) -> Result<String, ProtocolError> {
+    let (value, end) = parse_application_value(data, 0)?;
+    if end != data.len() {
+        return Err(malformed("trailing bytes after ScheduleDefault"));
     }
-
-    Err(ProtocolError::Timeout(format!(
-        "BACnet ReadProperty timeout for schedule at {target_addr}"
-    )))
+    Ok(value)
 }
 
-// ---------------------------------------------------------------------------
-// Strip ReadProperty response wrapper
-// ---------------------------------------------------------------------------
-
-/// A ReadProperty response wraps the value in:
-///   context-tag 0: PropertyIdentifier (enumerated)
-///   context-tag 1: ArrayIndex (optional, unsigned)
-///   application-tagged: the actual value
-///
-/// This helper strips the wrapper and returns just the value data.
-fn strip_read_property_response(data: &[u8]) -> Vec<u8> {
+/// BACnetDateRange ::= SEQUENCE { startDate Date, endDate Date }, both
+/// application-tagged: `A4 yy mm dd wd A4 yy mm dd wd`.
+fn parse_effective_period(data: &[u8]) -> Result<(Option<String>, Option<String>), ProtocolError> {
+    let mut dates = [None, None];
     let mut pos = 0;
-
-    // Skip context-tag 0 (PropertyIdentifier)
-    pos = skip_tag(data, pos);
-    // Skip optional context-tag 1 (ArrayIndex)
-    if pos < data.len() {
-        let byte = data[pos];
-        let tag_num = (byte >> 4) & 0x0F;
-        let is_context = (byte & 0x08) != 0;
-        if is_context && tag_num == 1 {
-            pos = skip_tag(data, pos);
+    for slot in &mut dates {
+        let tag = read_tag(data, pos)?;
+        if tag.context || tag.kind != TagKind::Primitive || tag.number != 10 {
+            return Err(malformed(&format!("expected application Date at offset {pos}")));
         }
+        *slot = format_date(tag.content(data, pos))?;
+        pos = tag.end(pos);
     }
+    if pos != data.len() {
+        return Err(malformed("trailing bytes after EffectivePeriod"));
+    }
+    let [start, end] = dates;
+    Ok((start, end))
+}
 
-    // The remaining bytes are the value
-    if pos < data.len() {
-        data[pos..].to_vec()
-    } else {
-        data.to_vec()
+/// ListOfObjectPropertyReferences ::= SEQUENCE OF BACnetDeviceObjectPropertyReference
+/// BACnetDeviceObjectPropertyReference ::= SEQUENCE {
+///     [0] objectIdentifier, [1] propertyIdentifier,
+///     [2] propertyArrayIndex OPTIONAL, [3] deviceIdentifier OPTIONAL }
+fn parse_object_property_references(data: &[u8]) -> Result<Vec<String>, ProtocolError> {
+    let mut refs = Vec::new();
+    let mut pos = 0;
+    while pos < data.len() {
+        let (object, next) = read_context_primitive(data, pos, 0)?;
+        let (obj_type, instance) = split_object_id(object)?;
+        let (property, next) = read_context_primitive(data, next, 1)?;
+        let mut text = format!("object_{obj_type}:{instance}.{}", be_unsigned(property)?);
+        pos = next;
+
+        if pos < data.len() {
+            let tag = read_tag(data, pos)?;
+            if tag.context && tag.kind == TagKind::Primitive && tag.number == 2 {
+                text.push_str(&format!("[{}]", be_unsigned(tag.content(data, pos))?));
+                pos = tag.end(pos);
+            }
+        }
+        if pos < data.len() {
+            let tag = read_tag(data, pos)?;
+            if tag.context && tag.kind == TagKind::Primitive && tag.number == 3 {
+                let (dev_type, dev_instance) = split_object_id(tag.content(data, pos))?;
+                text.push_str(&format!(" @ object_{dev_type}:{dev_instance}"));
+                pos = tag.end(pos);
+            }
+        }
+        refs.push(text);
     }
+    Ok(refs)
 }
 
 // ---------------------------------------------------------------------------
 // Main public API
 // ---------------------------------------------------------------------------
 
-/// Read all schedule properties from a BACnet Schedule object.
-///
-/// Reads WeeklySchedule, ScheduleDefault, EffectivePeriod, and
-/// ListOfObjectPropertyReferences using individual ReadProperty requests.
-///
-/// Uses `ObjectType::Schedule` (type 17) for all requests.
-pub fn read_schedule_blocking(
-    socket: &std::net::UdpSocket,
-    target_addr: SocketAddr,
+/// Only an Error PDU with code `unknown-property` means the object simply
+/// lacks an optional property.
+fn is_unknown_property(err: &ProtocolError) -> bool {
+    err.to_string().contains("unknown-property")
+}
+
+/// Read and parse an optional property: `Ok(None)` only for `unknown-property`.
+fn read_optional<R, T>(
+    read_property: &mut R,
+    property_id: u32,
+    parse: impl FnOnce(&[u8]) -> Result<T, ProtocolError>,
+) -> Result<Option<T>, ProtocolError>
+where
+    R: FnMut(u32) -> Result<Vec<u8>, ProtocolError>,
+{
+    match read_property(property_id) {
+        Ok(ack) => parse(strip_read_property_ack(&ack, property_id)?).map(Some),
+        Err(e) if is_unknown_property(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Assemble [`ScheduleData`] using `read_property(property_id)` to obtain the
+/// ReadProperty-ACK service data of each property.
+fn read_schedule_with<R>(
     object_instance: u32,
-) -> Result<ScheduleData, ProtocolError> {
-    // Property IDs:
-    // WeeklySchedule = 123
-    // ScheduleDefault = 174
-    // EffectivePeriod = 32
-    // ListOfObjectPropertyReferences = 350
+    mut read_property: R,
+) -> Result<ScheduleData, ProtocolError>
+where
+    R: FnMut(u32) -> Result<Vec<u8>, ProtocolError>,
+{
+    let weekly_ack = read_property(PROP_WEEKLY_SCHEDULE)?;
+    let weekly_schedule =
+        parse_weekly_schedule(strip_read_property_ack(&weekly_ack, PROP_WEEKLY_SCHEDULE)?)?;
 
-    // Read WeeklySchedule
-    let weekly_schedule = match send_read_property(
-        socket,
-        target_addr,
-        ObjectType::Schedule,
-        object_instance,
-        123,
-    ) {
-        Ok(data) => {
-            let stripped = strip_read_property_response(&data);
-            parse_weekly_schedule(&stripped)
-        }
-        Err(e) => {
-            // If WeeklySchedule read fails, return empty schedule
-            // rather than failing the entire operation
-            eprintln!("Warning: WeeklySchedule read failed: {e}");
-            Vec::new()
-        }
-    };
-
-    // Read ScheduleDefault
-    let schedule_default = match send_read_property(
-        socket,
-        target_addr,
-        ObjectType::Schedule,
-        object_instance,
-        174,
-    ) {
-        Ok(data) => {
-            let stripped = strip_read_property_response(&data);
-            parse_schedule_default(&stripped)
-        }
-        Err(_) => None,
-    };
-
-    // Read EffectivePeriod
-    let (effective_period_start, effective_period_end) = match send_read_property(
-        socket,
-        target_addr,
-        ObjectType::Schedule,
-        object_instance,
-        32,
-    ) {
-        Ok(data) => {
-            let stripped = strip_read_property_response(&data);
-            parse_effective_period(&stripped)
-        }
-        Err(_) => (None, None),
-    };
-
-    // Read ListOfObjectPropertyReferences
-    let object_property_references = match send_read_property(
-        socket,
-        target_addr,
-        ObjectType::Schedule,
-        object_instance,
-        350,
-    ) {
-        Ok(data) => {
-            let stripped = strip_read_property_response(&data);
-            parse_object_property_references(&stripped)
-        }
-        Err(_) => Vec::new(),
-    };
+    let schedule_default =
+        read_optional(&mut read_property, PROP_SCHEDULE_DEFAULT, parse_schedule_default)?;
+    let (effective_period_start, effective_period_end) =
+        read_optional(&mut read_property, PROP_EFFECTIVE_PERIOD, parse_effective_period)?
+            .unwrap_or((None, None));
+    let object_property_references = read_optional(
+        &mut read_property,
+        PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES,
+        parse_object_property_references,
+    )?
+    .unwrap_or_default();
 
     Ok(ScheduleData {
         object_instance,
@@ -1018,28 +547,24 @@ pub fn read_schedule_blocking(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Utility helpers
-// ---------------------------------------------------------------------------
-
-/// Convert raw bytes to a big-endian u32.
-fn bytes_to_u32(bytes: &[u8]) -> u32 {
-    match bytes.len() {
-        0 => 0,
-        1 => bytes[0] as u32,
-        2 => ((bytes[0] as u32) << 8) | (bytes[1] as u32),
-        3 => ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32),
-        _ => u32::from_be_bytes(
-            bytes[..4.min(bytes.len())]
-                .try_into()
-                .unwrap_or([0; 4]),
-        ),
-    }
-}
-
-/// Convert raw bytes to a big-endian i32.
-fn bytes_to_i32(bytes: &[u8]) -> i32 {
-    bytes_to_u32(bytes) as i32
+/// Read all schedule properties from a BACnet Schedule object.
+///
+/// Failure to read WeeklySchedule, or any failure other than
+/// `unknown-property` on an optional property, is returned as an error.
+pub fn read_schedule_blocking(
+    socket: &std::net::UdpSocket,
+    target_addr: SocketAddr,
+    object_instance: u32,
+) -> Result<ScheduleData, ProtocolError> {
+    read_schedule_with(object_instance, |property_id| {
+        transport::confirmed_request(
+            socket,
+            target_addr,
+            ConfirmedServiceChoice::ReadProperty,
+            encode_read_property(object_instance, property_id),
+            transport::REQUEST_TIMEOUT,
+        )
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,113 +575,244 @@ fn bytes_to_i32(bytes: &[u8]) -> i32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_bacnet_time() {
-        // 14:30:00.00
-        let data = [14, 30, 0, 0];
-        let (time, pos) = parse_bacnet_time(&data, 0);
-        assert_eq!(time, "14:30:00");
-        assert_eq!(pos, 4);
-    }
-
-    #[test]
-    fn test_parse_bacnet_time_midnight() {
-        let data = [0, 0, 0, 0];
-        let (time, pos) = parse_bacnet_time(&data, 0);
-        assert_eq!(time, "00:00:00");
-        assert_eq!(pos, 4);
-    }
-
-    #[test]
-    fn test_parse_bacnet_date() {
-        // 2024-06-15
-        let data = [0x07, 0xE8, 0x06, 0x0F]; // year=2024, month=6, day=15
-        let (date, pos) = parse_bacnet_date(&data, 0);
-        assert_eq!(date, "2024-06-15");
-        assert_eq!(pos, 4);
-    }
-
-    #[test]
-    fn test_parse_application_value_real() {
-        // Application tag 4 (Real), length 4: value 72.0
-        let data = vec![0x44, 0x42, 0x90, 0x00, 0x00];
-        let (val, pos) = parse_application_value(&data, 0);
-        assert_eq!(val, "72.0000");
-        assert_eq!(pos, 5);
-    }
-
-    #[test]
-    fn test_parse_application_value_unsigned() {
-        // Application tag 2 (Unsigned), length 1: value 42
-        let data = vec![0x21, 42];
-        let (val, pos) = parse_application_value(&data, 0);
-        assert_eq!(val, "42");
-        assert_eq!(pos, 2);
-    }
-
-    #[test]
-    fn test_parse_application_value_boolean() {
-        // Application tag 1 (Boolean), length 1: true
-        let data = vec![0x11, 0x01];
-        let (val, pos) = parse_application_value(&data, 0);
-        assert_eq!(val, "true");
-        assert_eq!(pos, 2);
-    }
-
-    #[test]
-    fn test_parse_application_value_enumerated() {
-        // Application tag 9 (Enumerated), length 1: value 3
-        let data = vec![0x91, 3];
-        let (val, pos) = parse_application_value(&data, 0);
-        assert_eq!(val, "3");
-        assert_eq!(pos, 2);
-    }
-
-    #[test]
-    fn test_encode_context_unsigned() {
-        let mut buf = Vec::new();
-        encode_context_unsigned(&mut buf, 0, 42);
-        assert_eq!(buf, vec![0x09, 42]);
-    }
-
-    #[test]
-    fn test_encode_context_object_id() {
-        let mut buf = Vec::new();
-        encode_context_object_id(&mut buf, 0, ObjectType::Schedule, 1);
-        // Schedule = type 17 => (17 << 22) | 1 = 0x04400001
-        assert_eq!(buf, vec![0x0C, 0x04, 0x40, 0x00, 0x01]);
-    }
-
-    #[test]
-    fn test_strip_read_property_response() {
-        // Context tag 0 (property identifier), context tag 1 (array index),
-        // then application-tagged value (Real 72.0)
-        let data = vec![
-            0x09, 123,       // context tag 0, value 123 (WeeklySchedule)
-            0x19, 0x00,      // context tag 1, value 0 (array index)
-            0x44, 0x42, 0x90, 0x00, 0x00, // application tag 4 (Real), 72.0
+    /// ReadProperty-ACK for Schedule #1 wrapping `value` in [3] open/close.
+    fn ack(property: u8, value: &[u8]) -> Vec<u8> {
+        let mut v = vec![
+            0x0C, 0x04, 0x40, 0x00, 0x01, // [0] object id: type 17 (Schedule) << 22 | 1
+            0x19, property, // [1] property identifier, 1 octet
+            0x3E, // [3] opening
         ];
-        let stripped = strip_read_property_response(&data);
-        assert_eq!(stripped, vec![0x44, 0x42, 0x90, 0x00, 0x00]);
+        v.extend_from_slice(value);
+        v.push(0x3F); // [3] closing
+        v
+    }
+
+    fn weekly_value() -> Vec<u8> {
+        let mut v = Vec::new();
+        // Monday: 08:00 -> true, 18:00 -> false
+        v.extend_from_slice(&[
+            0x0E, // [0] opening (day-schedule)
+            0xB4, 0x08, 0x00, 0x00, 0x00, // Time 08:00:00.00
+            0x11, // application Boolean, value true (in length bits)
+            0xB4, 0x12, 0x00, 0x00, 0x00, // Time 18:00:00.00
+            0x10, // application Boolean, value false
+            0x0F, // [0] closing
+        ]);
+        // Tuesday: 06:30 -> Real 21.5
+        v.extend_from_slice(&[
+            0x0E, 0xB4, 0x06, 0x1E, 0x00, 0x00, // Time 06:30:00.00
+            0x44, 0x41, 0xAC, 0x00, 0x00, // Real 0x41AC0000 = 21.5
+            0x0F,
+        ]);
+        // Wednesday .. Saturday: empty
+        for _ in 0..4 {
+            v.extend_from_slice(&[0x0E, 0x0F]);
+        }
+        // Sunday: 00:00 -> Unsigned 3
+        v.extend_from_slice(&[0x0E, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x21, 0x03, 0x0F]);
+        v
+    }
+
+    fn default_ack() -> Vec<u8> {
+        ack(174, &[0x44, 0x41, 0xA0, 0x00, 0x00]) // Real 0x41A00000 = 20.0
+    }
+
+    fn period_ack() -> Vec<u8> {
+        ack(
+            32,
+            &[
+                0xA4, 0x7C, 0x01, 0x01, 0x01, // Date: 1900+124=2024, Jan 1, Monday(1)
+                0xA4, 0x7C, 0x0C, 0x1F, 0x02, // Date: 2024, Dec 31, Tuesday(2)
+            ],
+        )
+    }
+
+    fn unknown_property() -> ProtocolError {
+        ProtocolError::Other("BACnet Error from device: property / unknown-property".into())
     }
 
     #[test]
-    fn test_skip_tag_primitive() {
-        let data = vec![0x09, 42]; // context tag 0, length 1
-        assert_eq!(skip_tag(&data, 0), 2);
+    fn read_property_request_uses_property_54_for_references() {
+        assert_eq!(
+            encode_read_property(1, PROP_LIST_OF_OBJECT_PROPERTY_REFERENCES),
+            vec![
+                0x0C, 0x04, 0x40, 0x00, 0x01, // [0] Schedule #1
+                0x19, 0x36, // [1] property 54 (list-of-object-property-references)
+            ]
+        );
+        assert_eq!(
+            encode_read_property(4_194_303, PROP_WEEKLY_SCHEDULE),
+            vec![
+                0x0C, 0x04, 0x7F, 0xFF, 0xFF, // [0] Schedule #4194303 (0x04400000 | 0x3FFFFF)
+                0x19, 0x7B, // [1] property 123
+            ]
+        );
     }
 
     #[test]
-    fn test_skip_tag_opening() {
-        let data = vec![0x0E]; // context tag 0, opening
-        assert_eq!(skip_tag(&data, 0), 1);
+    fn effective_period_decodes_application_dates() {
+        let data = period_ack();
+        let value = strip_read_property_ack(&data, 32).unwrap();
+        let (start, end) = parse_effective_period(value).unwrap();
+        assert_eq!(start.as_deref(), Some("2024-01-01"));
+        assert_eq!(end.as_deref(), Some("2024-12-31"));
     }
 
     #[test]
-    fn test_bytes_to_u32() {
-        assert_eq!(bytes_to_u32(&[1]), 1);
-        assert_eq!(bytes_to_u32(&[0, 1]), 1);
-        assert_eq!(bytes_to_u32(&[0, 0, 0, 1]), 1);
-        assert_eq!(bytes_to_u32(&[]), 0);
+    fn effective_period_wildcards_are_none() {
+        // Both dates entirely unspecified (0xFF everywhere): schedule always effective.
+        let value = [0xA4, 0xFF, 0xFF, 0xFF, 0xFF, 0xA4, 0xFF, 0xFF, 0xFF, 0xFF];
+        assert_eq!(parse_effective_period(&value).unwrap(), (None, None));
+        // Start year specified, month/day wildcards.
+        let value = [0xA4, 0x7C, 0xFF, 0xFF, 0xFF, 0xA4, 0xFF, 0xFF, 0xFF, 0xFF];
+        let (start, end) = parse_effective_period(&value).unwrap();
+        assert_eq!(start.as_deref(), Some("2024-**-**"));
+        assert_eq!(end, None);
+    }
+
+    #[test]
+    fn effective_period_rejects_context_tagged_dates() {
+        // The old (wrong) encoding: [0] and [1] context tags.
+        let value = [0x0C, 0x7C, 0x01, 0x01, 0x01, 0x1C, 0x7C, 0x0C, 0x1F, 0x02];
+        assert!(parse_effective_period(&value).is_err());
+    }
+
+    #[test]
+    fn weekly_schedule_decodes_seven_days() {
+        let data = ack(123, &weekly_value());
+        let value = strip_read_property_ack(&data, 123).unwrap();
+        let days = parse_weekly_schedule(value).unwrap();
+        assert_eq!(days.len(), 7);
+        assert_eq!(days[0].day_name, "Monday");
+        assert_eq!(days[6].day_name, "Sunday");
+        assert_eq!(days[0].entries.len(), 2);
+        assert_eq!(days[0].entries[0].time, "08:00:00");
+        assert_eq!(days[0].entries[0].value, "true");
+        assert_eq!(days[0].entries[1].time, "18:00:00");
+        assert_eq!(days[0].entries[1].value, "false");
+        assert_eq!(days[1].entries[0].time, "06:30:00");
+        assert_eq!(days[1].entries[0].value, "21.5");
+        assert!(days[2..6].iter().all(|d| d.entries.is_empty()));
+        assert_eq!(days[6].entries[0].value, "3");
+    }
+
+    #[test]
+    fn weekly_schedule_with_wrong_day_count_is_error() {
+        let value = [0x0E, 0x0F, 0x0E, 0x0F]; // only two days
+        assert!(parse_weekly_schedule(&value).is_err());
+    }
+
+    #[test]
+    fn ack_with_array_index_and_wrong_property() {
+        // [2] arrayIndex present between property and value.
+        let data = [
+            0x0C, 0x04, 0x40, 0x00, 0x01, 0x19, 0x7B, 0x29, 0x01, // index 1
+            0x3E, 0x0E, 0x0F, 0x3F,
+        ];
+        assert_eq!(strip_read_property_ack(&data, 123).unwrap(), &[0x0E, 0x0F]);
+        assert!(strip_read_property_ack(&data, 32).is_err());
+    }
+
+    #[test]
+    fn references_decode_device_object_property_references() {
+        let value = [
+            0x0C, 0x00, 0x00, 0x00, 0x05, // [0] analog-input #5
+            0x19, 0x55, // [1] property 85 (present-value)
+            0x0C, 0x00, 0xC0, 0x00, 0x02, // [0] type 3 (binary-input) << 22 | 2
+            0x19, 0x55, // [1] present-value
+            0x29, 0x02, // [2] array index 2
+            0x3C, 0x02, 0x00, 0x00, 0x09, // [3] device #9 (type 8 << 22 | 9)
+        ];
+        assert_eq!(
+            parse_object_property_references(&value).unwrap(),
+            vec!["object_0:5.85", "object_3:2.85[2] @ object_8:9"]
+        );
+    }
+
+    #[test]
+    fn read_schedule_assembles_all_properties() {
+        let refs = ack(54, &[0x0C, 0x00, 0x00, 0x00, 0x05, 0x19, 0x55]);
+        let data = read_schedule_with(1, |p| match p {
+            123 => Ok(ack(123, &weekly_value())),
+            174 => Ok(default_ack()),
+            32 => Ok(period_ack()),
+            54 => Ok(refs.clone()),
+            other => panic!("unexpected property {other}"),
+        })
+        .unwrap();
+        assert_eq!(data.weekly_schedule.len(), 7);
+        assert_eq!(data.schedule_default.as_deref(), Some("20"));
+        assert_eq!(data.effective_period_start.as_deref(), Some("2024-01-01"));
+        assert_eq!(data.effective_period_end.as_deref(), Some("2024-12-31"));
+        assert_eq!(data.object_property_references, vec!["object_0:5.85"]);
+    }
+
+    #[test]
+    fn weekly_schedule_failure_propagates() {
+        let err = read_schedule_with(1, |_| {
+            Err(ProtocolError::Timeout("no reply".into()))
+        })
+        .unwrap_err();
+        assert!(matches!(err, ProtocolError::Timeout(_)));
+
+        // Even unknown-property on the mandatory WeeklySchedule is an error.
+        assert!(read_schedule_with(1, |_| Err(unknown_property())).is_err());
+
+        // Malformed WeeklySchedule data is an error, not an empty schedule.
+        assert!(read_schedule_with(1, |_| Ok(ack(123, &[0x0E]))).is_err());
+    }
+
+    #[test]
+    fn optional_property_only_tolerates_unknown_property() {
+        let weekly = ack(123, &weekly_value());
+
+        // unknown-property on every optional property: omitted.
+        let data = read_schedule_with(1, |p| match p {
+            123 => Ok(weekly.clone()),
+            _ => Err(unknown_property()),
+        })
+        .unwrap();
+        assert_eq!(data.schedule_default, None);
+        assert_eq!(data.effective_period_start, None);
+        assert_eq!(data.effective_period_end, None);
+        assert!(data.object_property_references.is_empty());
+
+        // Timeout on EffectivePeriod: propagates.
+        let err = read_schedule_with(1, |p| match p {
+            123 => Ok(weekly.clone()),
+            174 => Ok(default_ack()),
+            32 => Err(ProtocolError::Timeout("no reply".into())),
+            _ => Err(unknown_property()),
+        })
+        .unwrap_err();
+        assert!(matches!(err, ProtocolError::Timeout(_)));
+
+        // A different Error PDU on the references list: propagates.
+        let err = read_schedule_with(1, |p| match p {
+            123 => Ok(weekly.clone()),
+            54 => Err(ProtocolError::Other(
+                "BACnet Error from device: object / unknown-object".into(),
+            )),
+            _ => Err(unknown_property()),
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown-object"));
+    }
+
+    #[test]
+    fn application_values() {
+        assert_eq!(parse_application_value(&[0x44, 0x42, 0x90, 0x00, 0x00], 0).unwrap(), ("72".into(), 5));
+        assert_eq!(parse_application_value(&[0x21, 42], 0).unwrap(), ("42".into(), 2));
+        assert_eq!(parse_application_value(&[0x91, 3], 0).unwrap(), ("3".into(), 2));
+        assert_eq!(parse_application_value(&[0x00], 0).unwrap(), ("Null".into(), 1));
+        // Signed, 1 octet, 0xFE = -2
+        assert_eq!(parse_application_value(&[0x31, 0xFE], 0).unwrap(), ("-2".into(), 2));
+        // CharacterString length 3: encoding 0 (UTF-8) + "hi"
+        assert_eq!(
+            parse_application_value(&[0x73, 0x00, b'h', b'i'], 0).unwrap(),
+            ("hi".into(), 4)
+        );
+        // Truncated Real is an error.
+        assert!(parse_application_value(&[0x44, 0x42, 0x90], 0).is_err());
     }
 }

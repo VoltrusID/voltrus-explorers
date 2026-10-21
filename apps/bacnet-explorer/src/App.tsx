@@ -14,16 +14,21 @@ import {
   StatusBar,
   Tabs,
   Toolbar,
+  ProBadge,
+  ProAboutRow,
+  useProStatus,
   LogPanel,
   ValueEditor,
   useProtocol,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
-import type { BacnetConfig, BacnetObject, BacnetDiscoveredDevice, SimPoint, SimPointDef, SimInfo, DeviceTemplate } from "./types";
+import type { BacnetConfig, BacnetObject, BacnetValue, BacnetDiscoveredDevice, SimPoint, SimPointDef, SimInfo, DeviceTemplate } from "./types";
+import { bacnetValueToNumber } from "./types";
+import { WRITE_KIND_TYPES, parseWriteValue, writeKindFor, type WriteKind } from "./writeValue";
 import { ObjectBrowser } from "./components/ObjectBrowser";
 import { AlarmPanel } from "./components/AlarmPanel";
 import TrendPanel from "./components/TrendPanel";
-import { useBacnetTrend } from "./hooks/useBacnetTrend";
+import { trendKey, useBacnetTrend } from "./hooks/useBacnetTrend";
 import { TrendLogDialog } from "./components/TrendLogDialog";
 import { ScheduleDialog } from "./components/ScheduleDialog";
 
@@ -102,12 +107,39 @@ function templateToSimPoints(t: DeviceTemplate): SimPointDef[] {
   }));
 }
 
+type EditTarget = { kind: "sim"; point: SimPoint } | { kind: "device"; tag: BacnetObject };
+
+function editTargetKind(t: EditTarget): WriteKind {
+  if (t.kind === "sim") return t.point.isBool ? "bool" : writeKindFor(t.point.object_type);
+  return writeKindFor(t.tag.object_type);
+}
+
 // ── Shared styles ──
 
 function App() {
   const protocol = useProtocol<BacnetConfig, BacnetObject, unknown>("bacnet");
-  const trend = useBacnetTrend(protocol.connected);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
+    setLog((prev) => [...prev, { timestamp: Date.now(), direction, message }]);
+  }, []);
+  const trend = useBacnetTrend(protocol.connected, (message) => addLog("error", message));
   const trendKeys = new Set(trend.series.map((s) => s.key));
+  const { requirePro, status: proStatus } = useProStatus();
+  // Adding a series is Pro; removing one never is.
+  const toggleTrend = (obj: { type: string; instance: number }, name: string) => {
+    if (!trendKeys.has(trendKey(obj.type, obj.instance)) && !requirePro("Live trends")) return;
+    trend.toggle(obj, name);
+  };
+
+  // Trend log and schedule viewers are Pro.
+  const openTrendLog = (obj: { type: "trendLog" | "trendLogMultiple"; instance: number }) => {
+    if (!requirePro("Trend log viewer")) return;
+    setTrendLogObject(obj);
+  };
+  const openSchedule = (instance: number) => {
+    if (!requirePro("Schedule viewer")) return;
+    setScheduleObject(instance);
+  };
 
   // ── State ──
   const [objects] = useState<BacnetObject[]>([
@@ -117,7 +149,6 @@ function App() {
     { name: "Setpoint", object_type: "analogValue", object_instance: 1, property: "presentValue" },
     { name: "DamperCmd", object_type: "analogOutput", object_instance: 1, property: "presentValue" },
   ]);
-  const [log, setLog] = useState<LogEntry[]>([]);
   const [editingObject, setEditingObject] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
   const [discoveredDevices, setDiscoveredDevices] = useState<BacnetDiscoveredDevice[]>([]);
@@ -130,7 +161,7 @@ function App() {
   const [viewMode, setViewMode] = useState<"browse" | "alarms">("browse");
 
   // Dialogs
-  const [trendLogObject, setTrendLogObject] = useState<number | null>(null);
+  const [trendLogObject, setTrendLogObject] = useState<{ type: "trendLog" | "trendLogMultiple"; instance: number } | null>(null);
   const [scheduleObject, setScheduleObject] = useState<number | null>(null);
 
   // Resizable panels
@@ -152,10 +183,6 @@ function App() {
   const [simBoundPort, setSimBoundPort] = useState<number | null>(null);
 
   // ── Callbacks ──
-  const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
-    setLog((prev) => [...prev, { timestamp: Date.now(), direction, message }]);
-  }, []);
-
   const handleConnect = useCallback(
     async (values: Record<string, string | number>): Promise<boolean> => {
       const config: BacnetConfig = { id: `${values.ip}:${values.deviceId}`, ip: String(values.ip), port: Number(values.port), device_id: Number(values.deviceId) };
@@ -262,6 +289,20 @@ function App() {
     return () => { if (unlisten) unlisten(); };
   }, []);
 
+  const markSimStopped = useCallback(() => {
+    setSimRunning(false);
+    setSimValues({});
+    setSimBoundPort(null);
+    addLog("info", "Simulation stopped");
+  }, [addLog]);
+
+  // The simulator can be stopped from the control-panel window as well.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen("sim-stopped", () => markSimStopped()).then((f) => { unlisten = f; });
+    return () => { if (unlisten) unlisten(); };
+  }, [markSimStopped]);
+
   const openDevicePanel = useCallback(async () => {
     try {
       await invoke("open_device_panel");
@@ -271,7 +312,7 @@ function App() {
   }, [addLog]);
 
   const handleSimStart = useCallback(async () => {
-    if (!simTemplate) return;
+    if (!simTemplate || !requirePro("Device simulator")) return;
     try {
       const points = templateToSimPoints(TEMPLATES[simTemplate]);
       const info = await invoke<SimInfo>("sim_start", {
@@ -286,14 +327,86 @@ function App() {
     } catch (e) {
       addLog("error", `Simulation start failed: ${e}`);
     }
-  }, [simTemplate, simDeviceId, simPort, addLog]);
+  }, [simTemplate, simDeviceId, simPort, addLog, requirePro]);
 
+  // sim_stop emits "sim-stopped" (also when the control-panel window stops the
+  // simulator), which resets this window's state in the listener above.
   const handleSimStop = useCallback(async () => {
-    try { await invoke("sim_stop"); } catch {}
-    setSimRunning(false);
-    setSimValues({});
-    addLog("info", "Simulation stopped");
-  }, [addLog]);
+    try {
+      await invoke("sim_stop");
+    } catch (e) {
+      addLog("error", `Simulation stop failed: ${e}`);
+      try {
+        if (!(await invoke<boolean>("sim_status"))) markSimStopped();
+      } catch (statusError) {
+        addLog("error", `Could not read simulator status: ${statusError}`);
+      }
+    }
+  }, [addLog, markSimStopped]);
+
+  // The polling table shows the simulator's template points while it runs, or the
+  // placeholder tag list. Resolve a clicked row to something that can be written.
+  const resolveEditTarget = useCallback(
+    (name: string): EditTarget | null => {
+      if (simRunning && simTemplate) {
+        const point = TEMPLATES[simTemplate].points.find((p) => p.label === name);
+        return point ? { kind: "sim", point } : null;
+      }
+      const tag = objects.find((o) => o.name === name);
+      return tag ? { kind: "device", tag } : null;
+    },
+    [simRunning, simTemplate, objects],
+  );
+
+  const openRowEditor = useCallback(
+    (name: string) => {
+      const target = resolveEditTarget(name);
+      if (!target) {
+        addLog("error", `Cannot write "${name}": row does not map to a known object`);
+        return;
+      }
+      if (target.kind === "sim" && SIM_WRITABLE_TYPES[target.point.object_type] !== true) {
+        addLog("error", `Cannot write "${name}": ${target.point.object_type} is read-only`);
+        return;
+      }
+      setEditingObject(name);
+    },
+    [resolveEditTarget, addLog],
+  );
+
+  const handleTableWrite = useCallback(
+    async (name: string, input: string) => {
+      const target = resolveEditTarget(name);
+      setEditingObject(null);
+      if (!target) {
+        addLog("error", `Write to "${name}" dropped: row does not map to a known object`);
+        return;
+      }
+      let value: BacnetValue;
+      try {
+        value = parseWriteValue(editTargetKind(target), input);
+      } catch (e) {
+        addLog("error", `Write to ${name} rejected: ${e instanceof Error ? e.message : String(e)}`);
+        return;
+      }
+      addLog("tx", `Write ${input} to ${name}`);
+      try {
+        if (target.kind === "sim") {
+          if ("Enum" in value) {
+            await invoke("sim_set_bool", { key: target.point.key, active: value.Enum === 1 });
+          } else {
+            await invoke("sim_set_value", { key: target.point.key, value: bacnetValueToNumber(value) });
+          }
+        } else {
+          await invoke("write_tag", { tag: target.tag, value });
+          protocol.readTags(objects);
+        }
+      } catch (e) {
+        addLog("error", `Write to ${name} failed: ${e}`);
+      }
+    },
+    [resolveEditTarget, addLog, protocol, objects],
+  );
 
   // ── Table config (polling mode) ──
   const columns = [
@@ -352,10 +465,10 @@ function App() {
           <Tabs
             label="View"
             value={viewMode}
-            onChange={setViewMode}
+            onChange={(v) => { if (v === "alarms" && !requirePro("Alarms and events")) return; setViewMode(v); }}
             items={[
               { value: "browse" as const, label: "Browse" },
-              { value: "alarms" as const, label: "Alarms" },
+              { value: "alarms" as const, label: <>Alarms <ProBadge /></> },
             ]}
           />
         )}
@@ -365,7 +478,7 @@ function App() {
           Discover devices
         </Button>
       </Section>
-      <Section title="Simulation">
+      <Section title="Simulation" meta={<ProBadge />}>
         <span className="vt-hint">
           Runs a virtual BACnet device on this machine so you can test browsing, reads and writes without hardware.
         </span>
@@ -440,7 +553,9 @@ function App() {
         <ObjectBrowser
           onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
           trendKeys={trendKeys}
-          onToggleTrend={trend.toggle}
+          onToggleTrend={toggleTrend}
+          onOpenTrendLog={openTrendLog}
+          onOpenSchedule={openSchedule}
         />
       </div>
       {/* Horizontal drag handle — resize the trend panel */}
@@ -467,6 +582,7 @@ function App() {
             pollMs={trend.pollMs}
             onPollMsChange={trend.setPollMs}
             onSourceChange={trend.setSource}
+            notices={Object.fromEntries(trend.errors)}
             theme="dark"
           />
         ) : (
@@ -485,7 +601,7 @@ function App() {
           columns={columns}
           data={tableData}
           selectable
-          onRowClick={(row) => setEditingObject(String(row.name))}
+          onRowClick={(row) => openRowEditor(String(row.name))}
         />
       </div>
       <div
@@ -569,9 +685,9 @@ function App() {
               viewMode === "alarms" && protocol.connected ? (
                 <AlarmPanel connected={protocol.connected} />
               ) : viewMode === "browse" && protocol.connected ? (
-                <ObjectBrowser trendKeys={trendKeys} onToggleTrend={trend.toggle} />
+                <ObjectBrowser trendKeys={trendKeys} onToggleTrend={toggleTrend} onOpenTrendLog={openTrendLog} onOpenSchedule={openSchedule} />
               ) : (
-                <DataTable columns={columns} data={tableData} selectable onRowClick={(row) => setEditingObject(String(row.name))} />
+                <DataTable columns={columns} data={tableData} selectable onRowClick={(row) => openRowEditor(String(row.name))} />
               )
             )}
             {mobileTab === "log" && (
@@ -627,19 +743,16 @@ function App() {
 
       {/* Value editor modal */}
       {editingObject && (() => {
-        const obj = objects.find((o) => o.name === editingObject);
+        const target = resolveEditTarget(editingObject);
+        if (!target) return null;
+        const kind = editTargetKind(target);
         return (
           <ValueEditor
             address={editingObject}
-            onSubmit={async (value, dataType) => {
-              addLog("tx", `Write ${value} (${dataType}) to ${editingObject}`);
-              if (obj) {
-                const numValue = dataType === "bool" ? (value === "true" ? 1 : 0) : Number(value);
-                await protocol.writeTag(obj, { Float64: numValue });
-                protocol.readTags(objects);
-              }
-              setEditingObject(null);
-            }}
+            currentValue={kind === "bool" ? (target.kind === "sim" && simValues[target.point.key] === "Active" ? "true" : "false") : undefined}
+            currentDataType={kind}
+            types={WRITE_KIND_TYPES[kind]}
+            onSubmit={(value) => handleTableWrite(editingObject, value)}
             onCancel={() => setEditingObject(null)}
           />
         );
@@ -649,9 +762,13 @@ function App() {
       <Dialog open={showInfo} onClose={() => setShowInfo(false)} title="BACnet Explorer" width={360}
         footer={
           <>
-            <Button variant="ghost" onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>
-              Source on GitHub
-            </Button>
+            {/* No outbound source link in App Store builds: review treats links to builds that unlock paid
+                features elsewhere as steering away from in-app purchase. */}
+            {proStatus && !proStatus.store && (
+              <Button variant="ghost" onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>
+                Source on GitHub
+              </Button>
+            )}
             <Button onClick={() => setShowInfo(false)}>Close</Button>
           </>
         }
@@ -662,9 +779,10 @@ function App() {
             Browse objects, read and write properties, subscribe to COV notifications, view trend logs, and manage
             schedules across your building automation network.
           </p>
-          <p style={{ margin: 0, color: "var(--text-muted)" }}>
+          <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
             Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama
           </p>
+          <ProAboutRow />
         </div>
       </Dialog>
 
@@ -736,7 +854,8 @@ function App() {
       {/* Trend Log dialog */}
       {trendLogObject !== null && (
         <TrendLogDialog
-          objectInstance={trendLogObject}
+          objectType={trendLogObject.type}
+          objectInstance={trendLogObject.instance}
           onClose={() => setTrendLogObject(null)}
         />
       )}

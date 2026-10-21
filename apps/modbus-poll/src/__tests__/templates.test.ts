@@ -4,8 +4,6 @@ import {
   type RegisterDef,
   initialValues,
   numRegisters,
-  tickValues,
-  valuesToRegisters,
   decodeRegisters,
   loadCustomTemplates,
   saveCustomTemplates,
@@ -77,113 +75,6 @@ describe("numRegisters", () => {
   });
 });
 
-describe("tickValues", () => {
-  it("counter increments", () => {
-    const profile = makeProfile([counterReg("energy", 1000, 10)]);
-    const values = [1000];
-    const result = tickValues(profile, values, 0);
-    expect(result.values[0]).toBeGreaterThan(1000);
-  });
-
-  it("clamps to min/max", () => {
-    const profile = makeProfile([floatReg("v", 50, 40, 60, 10000)]);
-    let values = [50];
-    for (let i = 0; i < 50; i++) {
-      const result = tickValues(profile, values, 0);
-      values = result.values;
-      expect(values[0]).toBeGreaterThanOrEqual(40);
-      expect(values[0]).toBeLessThanOrEqual(60);
-    }
-  });
-
-  it("advances loadFactor", () => {
-    const profile = makeProfile([floatReg("v", 50, 0, 100, 0)]);
-    const result = tickValues(profile, [50], 0);
-    expect(result.loadFactor).not.toBe(0);
-  });
-
-  it("multiple registers tick independently", () => {
-    const profile = makeProfile([
-      floatReg("v", 50, 0, 100, 1),
-      counterReg("energy", 0, 5),
-    ]);
-    const values = [50, 0];
-    const result = tickValues(profile, values, 0);
-    // Counter should increase
-    expect(result.values[1]).toBeGreaterThan(0);
-    // Float should stay in bounds
-    expect(result.values[0]).toBeGreaterThanOrEqual(0);
-    expect(result.values[0]).toBeLessThanOrEqual(100);
-  });
-
-  it("counter with zero rate stays near zero", () => {
-    const profile = makeProfile([counterReg("energy", 0, 0)]);
-    const result = tickValues(profile, [0], 0);
-    // With rate 0, the variation is (random - 0.5) * 0 * 0.1 = 0
-    expect(result.values[0]).toBe(0);
-  });
-});
-
-describe("valuesToRegisters", () => {
-  it("encodes float32 220.5 correctly", () => {
-    const profile = makeProfile([floatReg("v", 220.5, 0, 300, 0)], 0);
-    const writes = valuesToRegisters([220.5], profile);
-    // 220.5f32 = 0x435C8000
-    expect(writes).toHaveLength(2);
-    expect(writes[0]).toEqual({ address: 0, value: 0x435C });
-    expect(writes[1]).toEqual({ address: 1, value: 0x8000 });
-  });
-
-  it("encodes counter correctly", () => {
-    const profile = makeProfile([counterReg("energy", 1000000, 10)], 0);
-    const writes = valuesToRegisters([1000000], profile);
-    expect(writes).toHaveLength(4);
-    expect(writes[0]).toEqual({ address: 0, value: 0 }); // hi16(hi32)
-    expect(writes[1]).toEqual({ address: 1, value: 0 }); // lo16(hi32)
-    expect(writes[2]).toEqual({ address: 2, value: 0x000F }); // hi16(lo32)
-    expect(writes[3]).toEqual({ address: 3, value: 0x4240 }); // lo16(lo32)
-  });
-
-  it("uses base address offset", () => {
-    const profile = makeProfile([floatReg("v", 220.5, 0, 300, 0)], 100);
-    const writes = valuesToRegisters([220.5], profile);
-    expect(writes[0].address).toBe(100);
-    expect(writes[1].address).toBe(101);
-  });
-
-  it("encodes zero float32 correctly", () => {
-    const profile = makeProfile([floatReg("v", 0, 0, 100, 0)], 0);
-    const writes = valuesToRegisters([0], profile);
-    expect(writes).toHaveLength(2);
-    expect(writes[0]).toEqual({ address: 0, value: 0 });
-    expect(writes[1]).toEqual({ address: 1, value: 0 });
-  });
-
-  it("encodes zero counter correctly", () => {
-    const profile = makeProfile([counterReg("energy", 0, 10)], 0);
-    const writes = valuesToRegisters([0], profile);
-    expect(writes).toHaveLength(4);
-    expect(writes.every(w => w.value === 0)).toBe(true);
-  });
-
-  it("multi-register profile produces correct offsets", () => {
-    const profile = makeProfile([
-      floatReg("v1", 100, 0, 200, 0),
-      counterReg("energy", 500, 10),
-    ], 10);
-    const writes = valuesToRegisters([100, 500], profile);
-    // float at base 10: regs 10-11
-    expect(writes[0].address).toBe(10);
-    expect(writes[1].address).toBe(11);
-    // counter at base+2: regs 12-15
-    expect(writes[2].address).toBe(12);
-    expect(writes[3].address).toBe(13);
-    expect(writes[4].address).toBe(14);
-    expect(writes[5].address).toBe(15);
-    expect(writes).toHaveLength(6);
-  });
-});
-
 describe("decodeRegisters", () => {
   it("round-trips float32 value", () => {
     const profile = makeProfile([floatReg("v", 0, 0, 300, 0)], 0);
@@ -198,13 +89,22 @@ describe("decodeRegisters", () => {
     expect(decoded[0].decoded).toContain("220.5");
   });
 
-  it("round-trips counter value", () => {
+  it("decodes a counter as big-endian float64 over 4 registers", () => {
     const profile = makeProfile([counterReg("energy", 0, 10)], 0);
-    const regs = [0, 0, 0x000F, 0x4240]; // 1000000
+    // 1234567.5 = 0x4132D68780000000 as IEEE 754 binary64, written AB CD EF GH:
+    // 0x4132 0xD687 0x8000 0x0000
+    const regs = [0x4132, 0xD687, 0x8000, 0x0000];
     const decoded = decodeRegisters(regs, profile);
     expect(decoded).toHaveLength(1);
     expect(decoded[0].count).toBe(4);
-    expect(decoded[0].type).toBe("UInt64 Counter BE");
+    expect(decoded[0].type).toBe("Float64 Counter BE");
+    expect(decoded[0].decoded.replace(/[^0-9.]/g, "")).toBe("1234567.5");
+  });
+
+  it("matches the Rust simulator's counter layout (1000000.0 = 412E 8480 0000 0000)", () => {
+    const profile = makeProfile([counterReg("energy", 0, 10)], 0);
+    const decoded = decodeRegisters([0x412E, 0x8480, 0, 0], profile);
+    expect(decoded[0].decoded.replace(/[^0-9.]/g, "")).toBe("1000000");
   });
 
   it("handles zero float32", () => {

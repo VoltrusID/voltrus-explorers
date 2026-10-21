@@ -4,13 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# App Store build: Pro sold as an in-app purchase (see crates/mt-store).
+store = ["mt-store/store"]
+
 [build-dependencies]
 tauri-build = { workspace = true }
 
 [dependencies]
 mt-bacnet = { path = "../../../crates/mt-bacnet" }
 mt-protocol = { path = "../../../crates/mt-protocol" }
+mt-store = { path = "../../../crates/mt-store" }
 tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-fs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

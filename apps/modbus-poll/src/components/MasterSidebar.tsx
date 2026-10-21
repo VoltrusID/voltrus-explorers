@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ConnectionForm, Badge, Button, Field, IconButton, Section, Segmented } from "@mactools/ui";
+import { ConnectionForm, Badge, Button, Field, IconButton, ProBadge, Section, Segmented, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Pencil, Radar, RefreshCw, ScanSearch, X } from "lucide-react";
 import { SaveProfileAsInput } from "../SaveProfileAsInput";
-import { ENDIAN_OPTS } from "../constants";
+import { ENDIAN_OPTS, VIRTUAL_PORT } from "../constants";
 import { useStore } from "../store";
 
 const BAUD_PRESETS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
@@ -11,16 +11,17 @@ interface Props {
   protocol: {
     connected: boolean;
     loading: boolean;
-    cancel: () => void;
   };
   masterFormRef: React.RefObject<Record<string, string | number> | null>;
   formKey: number;
   onConnect: (values: Record<string, string | number>) => void;
+  onCancelConnect: () => void;
   onDisconnect: () => void;
   onRtuConnect: () => void;
   onScanBus: () => void;
+  onSelectScanUnit: (unitId: number) => void;
   onAutoDetect: () => void;
-  disconnectDuringScanRef: React.RefObject<boolean>;
+  autoDetecting: boolean;
   saveProfileAs: (name: string) => void;
   saveProfileChanges: () => void;
   loadProfile: (name: string) => void;
@@ -29,8 +30,7 @@ interface Props {
 
 export function MasterSidebar({
   protocol, masterFormRef, formKey,
-  onConnect, onDisconnect, onRtuConnect, onScanBus, onAutoDetect,
-  disconnectDuringScanRef,
+  onConnect, onCancelConnect, onDisconnect, onRtuConnect, onScanBus, onSelectScanUnit, onAutoDetect, autoDetecting,
   saveProfileAs, saveProfileChanges, loadProfile, deleteProfile,
 }: Props) {
   const {
@@ -48,8 +48,10 @@ export function MasterSidebar({
     busScanArea, setBusScanArea, busScanStart, setBusScanStart, busScanEnd, setBusScanEnd,
     serialPorts,
     connProfiles, activeConnProfile, setActiveConnProfile, profileDirty,
-    autoDetecting, addLog, platform,
+    addLog, platform,
   } = useStore();
+
+  const { requirePro } = useProStatus();
 
   // iOS has no serial ports — Modbus TCP only.
   const isIos = platform === "ios";
@@ -60,10 +62,10 @@ export function MasterSidebar({
         label="Mode"
         block
         value={mode}
-        onChange={(v) => setMode(v)}
+        onChange={(v) => { if (v === "slave" && !requirePro("Slave simulator")) return; setMode(v); }}
         options={[
           { value: "master", label: "Master" },
-          { value: "slave", label: "Slave", title: slaveRunning ? "Slave server running" : undefined },
+          { value: "slave", label: <>Slave <ProBadge /></>, title: slaveRunning ? "Slave server running" : undefined },
         ]}
       />
 
@@ -76,10 +78,10 @@ export function MasterSidebar({
               block
               size="sm"
               value={transport}
-              onChange={(v) => setTransport(v)}
+              onChange={(v) => { if (v === "rtu" && !requirePro("Modbus RTU (serial)")) return; setTransport(v); }}
               options={[
                 { value: "tcp", label: "TCP" },
-                { value: "rtu", label: "RTU" },
+                { value: "rtu", label: <>RTU <ProBadge /></> },
               ]}
             />
           </div>
@@ -97,7 +99,7 @@ export function MasterSidebar({
             onSubmit={(vals) => { if (masterFormRef.current) masterFormRef.current = vals; onConnect(vals); }}
             onChange={(vals) => setTcpFormValues(vals)}
             onDisconnect={onDisconnect}
-            onCancel={() => { protocol.cancel(); addLog("info", "Connection cancelled"); }}
+            onCancel={onCancelConnect}
             connected={protocol.connected}
             loading={protocol.loading}
           />
@@ -109,7 +111,7 @@ export function MasterSidebar({
                   <input
                     className="vt-input vt-input--mono"
                     style={{ flex: 1 }}
-                    placeholder="/dev/ttys087"
+                    placeholder="/dev/cu.usbserial-0001"
                     value={rtuPort}
                     onChange={(e) => setRtuPort(e.target.value)}
                     disabled={protocol.connected}
@@ -117,6 +119,7 @@ export function MasterSidebar({
                 ) : (
                   <select className="vt-select" style={{ flex: 1 }} value={rtuPort} onChange={(e) => setRtuPort(e.target.value)} disabled={protocol.connected}>
                     <option value="">Select port…</option>
+                    <option value={VIRTUAL_PORT}>In-app virtual slave</option>
                     {serialPorts.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                 )}
@@ -141,19 +144,19 @@ export function MasterSidebar({
                       value={rtuBaud || ""}
                       placeholder="Custom baud"
                       onChange={(e) => setRtuBaud(Number(e.target.value))}
-                      disabled={protocol.connected || rtuPortManual}
+                      disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
                     />
                     <IconButton
                       label="Back to preset baud rates"
                       size="sm"
                       onClick={() => setRtuBaud(9600)}
-                      disabled={protocol.connected || rtuPortManual}
+                      disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
                     >
                       <X size={16} strokeWidth={1.75} />
                     </IconButton>
                   </>
                 ) : (
-                  <select className="vt-select" style={{ flex: 1 }} value={rtuBaud} onChange={(e) => { const v = e.target.value; if (v === "custom") setRtuBaud(0); else setRtuBaud(Number(v)); }} disabled={protocol.connected || rtuPortManual}>
+                  <select className="vt-select" style={{ flex: 1 }} value={rtuBaud} onChange={(e) => { const v = e.target.value; if (v === "custom") setRtuBaud(0); else setRtuBaud(Number(v)); }} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                     {BAUD_PRESETS.map((b) => <option key={b} value={b}>{b}</option>)}
                     <option value="custom">Custom…</option>
                   </select>
@@ -162,19 +165,19 @@ export function MasterSidebar({
             </Field>
             <div style={{ display: "flex", gap: 4 }}>
               <div style={{ flex: 1 }}><Field label="Data bits">
-                <select className="vt-select" value={rtuDataBits} onChange={(e) => setRtuDataBits(Number(e.target.value))} disabled={protocol.connected || rtuPortManual}>
+                <select className="vt-select" value={rtuDataBits} onChange={(e) => setRtuDataBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value={7}>7</option>
                   <option value={8}>8</option>
                 </select>
               </Field></div>
               <div style={{ flex: 1 }}><Field label="Stop bits">
-                <select className="vt-select" value={rtuStopBits} onChange={(e) => setRtuStopBits(Number(e.target.value))} disabled={protocol.connected || rtuPortManual}>
+                <select className="vt-select" value={rtuStopBits} onChange={(e) => setRtuStopBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value={1}>1</option>
                   <option value={2}>2</option>
                 </select>
               </Field></div>
               <div style={{ flex: 1 }}><Field label="Parity">
-                <select className="vt-select" value={rtuParity} onChange={(e) => setRtuParity(e.target.value)} disabled={protocol.connected || rtuPortManual}>
+                <select className="vt-select" value={rtuParity} onChange={(e) => setRtuParity(e.target.value)} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value="none">None</option>
                   <option value="even">Even</option>
                   <option value="odd">Odd</option>
@@ -196,7 +199,7 @@ export function MasterSidebar({
               {!protocol.connected ? (
                 <>
                   <Button variant="primary" style={{ flex: 1 }} onClick={onRtuConnect}>Connect RTU</Button>
-                  <Button variant="ghost" onClick={onAutoDetect} disabled={protocol.connected || !rtuPort || autoDetecting} icon={<Radar size={14} strokeWidth={1.75} />}>
+                  <Button variant="ghost" onClick={onAutoDetect} disabled={protocol.connected || !rtuPort || rtuPort === VIRTUAL_PORT || autoDetecting} icon={<Radar size={14} strokeWidth={1.75} />}>
                     {autoDetecting ? "Detecting…" : "Auto-detect"}
                   </Button>
                 </>
@@ -205,7 +208,7 @@ export function MasterSidebar({
               )}
             </div>
             {/* Bus Scanner */}
-            {protocol.connected && !rtuPortManual && (
+            {protocol.connected && (
               <BusScanner
                 busScanning={busScanning}
                 busScanResults={busScanResults}
@@ -214,7 +217,7 @@ export function MasterSidebar({
                 busScanStart={busScanStart}
                 busScanEnd={busScanEnd}
                 showBusScanner={showBusScanner}
-                disconnectDuringScanRef={disconnectDuringScanRef}
+                onSelectUnit={onSelectScanUnit}
                 onScan={onScanBus}
                 onSetBusScanAddr={setBusScanAddr}
                 onSetBusScanArea={setBusScanArea}
@@ -299,14 +302,15 @@ export function MasterSidebar({
               size="sm"
               value={endianness}
               onChange={(v) => setEndianness(v)}
-              options={ENDIAN_OPTS.map((e) => ({ value: e.value, label: e.label }))}
+              // The order is applied when the connection is made.
+              options={ENDIAN_OPTS.map((e) => ({ value: e.value, label: e.label, disabled: protocol.connected, title: protocol.connected ? "Disconnect to change the word order" : undefined }))}
             />
           </Field>
         </div>
       </Section>
 
       {/* Network scan */}
-      <Section title="Network scan">
+      <Section title="Network scan" meta={<ProBadge />}>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", gap: 4 }}>
             <input
@@ -320,7 +324,7 @@ export function MasterSidebar({
               size="sm"
               variant="primary"
               onClick={async () => {
-                if (!scanSubnet) return;
+                if (!scanSubnet || !requirePro("Network scan")) return;
                 setScanning(true);
                 setScanResults([]);
                 addLog("info", `Scanning ${scanSubnet}.0/24 on port 502...`);
@@ -361,7 +365,7 @@ export function MasterSidebar({
 }
 
 // Bus Scanner sub-component
-function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, busScanStart, busScanEnd, showBusScanner, disconnectDuringScanRef, onScan, onSetBusScanAddr, onSetBusScanArea, onSetBusScanStart, onSetBusScanEnd, onToggleShow }: {
+function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, busScanStart, busScanEnd, showBusScanner, onSelectUnit, onScan, onSetBusScanAddr, onSetBusScanArea, onSetBusScanStart, onSetBusScanEnd, onToggleShow }: {
   busScanning: boolean;
   busScanResults: { unit_id: number; value: number }[];
   busScanAddr: number;
@@ -369,7 +373,7 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
   busScanStart: number;
   busScanEnd: number;
   showBusScanner: boolean;
-  disconnectDuringScanRef: React.RefObject<boolean>;
+  onSelectUnit: (unitId: number) => void;
   onScan: () => void;
   onSetBusScanAddr: (v: number) => void;
   onSetBusScanArea: (v: string) => void;
@@ -417,7 +421,7 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
             </Field></div>
           </div>
           {busScanning ? (
-            <Button variant="danger" size="sm" onClick={async () => { try { await invoke("stop_scan_bus"); } catch (e) { console.error("stop_scan_bus failed:", e); } }}>
+            <Button variant="danger" size="sm" onClick={async () => { try { await invoke("stop_scan_bus"); } catch (e) { addLog("error", `Could not stop the scan: ${String(e)}`); } }}>
               Stop scan
             </Button>
           ) : (
@@ -437,11 +441,7 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
                 </thead>
                 <tbody>
                   {busScanResults.map((r) => (
-                    <tr key={r.unit_id} onClick={() => {
-                      useStore.getState().setRtuUnitId(r.unit_id);
-                      addLog("info", `Selected Unit ID ${r.unit_id}, reconnecting…`);
-                      if (disconnectDuringScanRef.current) disconnectDuringScanRef.current = false;
-                    }} style={{ cursor: "pointer" }}>
+                    <tr key={r.unit_id} onClick={() => onSelectUnit(r.unit_id)} title="Poll this unit ID" style={{ cursor: "pointer" }}>
                       <td style={{ padding: "3px 6px", textAlign: "right", fontSize: "var(--fs-xs)" }}>{r.unit_id}</td>
                       <td style={{ padding: "3px 6px", fontSize: "var(--fs-xs)" }}>{r.value}</td>
                       <td className="mono" style={{ padding: "3px 6px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>0x{r.value.toString(16).toUpperCase().padStart(4, "0")}</td>

@@ -145,6 +145,9 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
                 </select>
               </Field></div>
             </div>
+            <Field label="Unit ID (1-247)">
+              <input className="vt-input" type="number" min={1} max={247} value={slaveUnitId} onChange={(e) => setSlaveUnitId(Number(e.target.value))} disabled={slaveRunning} />
+            </Field>
             <Field label="Registers">
               <input className="vt-input" type="number" value={slaveRegCount} onChange={(e) => setSlaveRegCount(Number(e.target.value))} disabled={slaveRunning} />
             </Field>

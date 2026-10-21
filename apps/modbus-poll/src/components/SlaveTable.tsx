@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function SlaveTable({ handleSlaveRegWrite }: Props) {
-  const { slaveRegs, activeProfile, lockedRegs, setLockedRegs, slavePage, setSlavePage } = useStore();
+  const { slaveRegs, activeProfile, lockedRegs, setLockedRegs, slavePage, setSlavePage, addLog } = useStore();
 
   const PAGE_SIZE = 50;
   const slaveViewStart = activeProfile ? activeProfile.baseAddress : slavePage * PAGE_SIZE;
@@ -80,7 +80,9 @@ export function SlaveTable({ handleSlaveRegWrite }: Props) {
                           try {
                             await invoke("sim_lock_register", { registerIndex: idx, locked: newLocked });
                             setLockedRegs((() => { const next = new Set(lockedRegs); newLocked ? next.add(idx) : next.delete(idx); return next; })());
-                          } catch { /* ignore */ }
+                          } catch (e) {
+                            addLog("error", `${newLocked ? "Lock" : "Unlock"} ${row.name} failed: ${String(e)}`);
+                          }
                         }}
                       >
                         {lockedRegs.has(idx) ? <Lock size={16} strokeWidth={1.75} /> : <LockOpen size={16} strokeWidth={1.75} />}

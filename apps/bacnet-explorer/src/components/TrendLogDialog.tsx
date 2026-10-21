@@ -9,9 +9,10 @@ import {
   type Time,
 } from "lightweight-charts";
 import { LineChart, Download } from "lucide-react";
-import { Button, Dialog, EmptyState, Tabs } from "@mactools/ui";
+import { Button, Dialog, EmptyState, Tabs, saveTextFile } from "@mactools/ui";
 
 interface TrendLogDialogProps {
+  objectType: "trendLog" | "trendLogMultiple";
   objectInstance: number;
   onClose: () => void;
 }
@@ -25,7 +26,11 @@ interface LogRecord {
 interface TrendLogData {
   object_instance: number;
   records: LogRecord[];
-  total_count: number;
+  item_count: number;
+  first_item: boolean;
+  last_item: boolean;
+  more_items: boolean;
+  first_sequence_number: number | null;
 }
 
 const BATCH_SIZE = 60;
@@ -44,65 +49,96 @@ function parseChartRecords(records: LogRecord[]): LineData<Time>[] {
   return data;
 }
 
-export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps) {
+export function TrendLogDialog({ objectType, objectInstance, onClose }: TrendLogDialogProps) {
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [records, setRecords] = useState<LogRecord[]>([]);
+  // 1-based position of the oldest loaded record; everything below it is unloaded.
+  const [oldestIndex, setOldestIndex] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
   const [viewTab, setViewTab] = useState<"chart" | "table">("chart");
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  // Bumped on every (re)load and on unmount so late responses are ignored.
+  const generation = useRef(0);
 
-  const loadRecords = useCallback(
-    async (startIndex: number, append: boolean) => {
-      try {
-        if (append) {
-          setLoadingMore(true);
-        } else {
-          setLoading(true);
-        }
-        setError(null);
+  const hasMore = oldestIndex > 1;
 
-        const data: TrendLogData = await invoke("read_trend_log", {
-          objectInstance,
-          startIndex,
-          count: -BATCH_SIZE,
-        });
-
-        if (append) {
-          setRecords((prev) => [...data.records, ...prev]);
-        } else {
-          setRecords(data.records);
-        }
-
-        setHasMore(startIndex > 0);
-
-        if (!append) {
-          try {
-            const count: number = await invoke("read_trend_log_count", {
-              objectInstance,
-            });
-            setTotalCount(count);
-          } catch {
-            // Non-critical
-          }
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
+  // Newest page: ReadRange byPosition, referenceIndex = total, negative count reads
+  // the BATCH_SIZE records that END at the reference index.
+  const loadInitial = useCallback(async () => {
+    const gen = ++generation.current;
+    setLoading(true);
+    setLoadingMore(false);
+    setError(null);
+    try {
+      const total: number = await invoke("read_trend_log_count", { objectType, objectInstance });
+      if (gen !== generation.current) return;
+      if (total === 0) {
+        setTotalCount(0);
+        setRecords([]);
+        setOldestIndex(1);
+        return;
       }
-    },
-    [objectInstance],
-  );
+      const data: TrendLogData = await invoke("read_trend_log", {
+        objectType,
+        objectInstance,
+        referenceIndex: total,
+        count: -Math.min(BATCH_SIZE, total),
+      });
+      if (gen !== generation.current) return;
+      if (data.records.length === 0) {
+        throw new Error(`Device reported ${total} records but returned none`);
+      }
+      setTotalCount(total);
+      setRecords(data.records);
+      setOldestIndex(total - data.records.length + 1);
+    } catch (e) {
+      if (gen !== generation.current) return;
+      setRecords([]);
+      setTotalCount(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (gen === generation.current) setLoading(false);
+    }
+  }, [objectType, objectInstance]);
+
+  // Older page: the records ending just before the oldest one already loaded.
+  const loadMore = useCallback(async () => {
+    if (oldestIndex <= 1) return;
+    const gen = generation.current;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const reference = oldestIndex - 1;
+      const data: TrendLogData = await invoke("read_trend_log", {
+        objectType,
+        objectInstance,
+        referenceIndex: reference,
+        count: -Math.min(BATCH_SIZE, reference),
+      });
+      if (gen !== generation.current) return;
+      if (data.records.length === 0) {
+        throw new Error("Device returned no older records");
+      }
+      setRecords((prev) => [...data.records, ...prev]);
+      setOldestIndex(oldestIndex - data.records.length);
+    } catch (e) {
+      if (gen !== generation.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (gen === generation.current) setLoadingMore(false);
+    }
+  }, [objectType, objectInstance, oldestIndex]);
 
   useEffect(() => {
-    loadRecords(0, false);
-  }, [loadRecords]);
+    loadInitial();
+    return () => {
+      generation.current++;
+    };
+  }, [loadInitial]);
 
   // Chart setup & update
   useEffect(() => {
@@ -165,12 +201,7 @@ export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps)
     };
   }, [viewTab, records]);
 
-  const handleLoadMore = () => {
-    const newStartIndex = records.length;
-    loadRecords(newStartIndex, true);
-  };
-
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (records.length === 0) return;
 
     const header = "Timestamp,Value,Status Flags";
@@ -182,13 +213,13 @@ export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps)
     });
 
     const csv = [header, ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `trend-log-${objectInstance}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `${objectType === "trendLogMultiple" ? "trend-log-multiple" : "trend-log"}-${objectInstance}.csv`;
+    try {
+      // null means the user cancelled the save panel; a failed write rejects.
+      await saveTextFile(filename, csv);
+    } catch (e) {
+      setError(`Export CSV failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const displayCount = totalCount ?? records.length;
@@ -197,7 +228,7 @@ export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps)
   return (
     <Dialog open onClose={onClose} title={
       <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-        Trend log #{objectInstance}
+        {objectType === "trendLogMultiple" ? "Trend log multiple" : "Trend log"} #{objectInstance}
         {displayCount > 0 && (
           <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", fontWeight: 400 }}>
             ({displayCount} records)
@@ -214,12 +245,15 @@ export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps)
         )}
 
         {error && (
-          <div style={{ padding: "6px 10px", fontSize: "var(--fs-sm)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }} role="alert">
-            {error}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px", fontSize: "var(--fs-sm)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }} role="alert">
+            <span>{error}</span>
+            {records.length === 0 && (
+              <Button onClick={() => void loadInitial()}>Retry</Button>
+            )}
           </div>
         )}
 
-        {!loading && !error && (
+        {!loading && !(error && records.length === 0) && (
           <>
             {records.length === 0 ? (
               <EmptyState
@@ -285,7 +319,7 @@ export function TrendLogDialog({ objectInstance, onClose }: TrendLogDialogProps)
 
             {/* Buttons */}
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
-              <Button onClick={handleLoadMore} loading={loadingMore} disabled={!hasMore}>
+              <Button onClick={() => void loadMore()} loading={loadingMore} disabled={!hasMore}>
                 {loadingMore ? "Loading…" : hasMore ? "Load more" : "All loaded"}
               </Button>
 

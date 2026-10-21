@@ -40,7 +40,7 @@ jobs:
           restore-keys: cargo-test-${{ runner.os }}-
 
       - name: Crate tests
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-store
 
       - name: Install frontend deps
         run: bun install --frozen-lockfile
@@ -85,3 +85,10 @@ jobs:
 
       - name: Build universal app (unsigned)
         run: scripts/build-macos.sh ${{ matrix.app }} unsigned
+
+      # The App Store variant links StoreKit through Swift (tauri-plugin-iap); compile it for both slices
+      # so a break shows up here instead of in the release job.
+      - name: Check App Store variant (store feature)
+        run: |
+          crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
+          cargo check -p "$crate" --features store --target aarch64-apple-darwin --target x86_64-apple-darwin

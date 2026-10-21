@@ -11,6 +11,10 @@
     "core:window:allow-set-size",
     "core:window:allow-center",
     "core:window:allow-close",
-    "core:event:default"
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
   ]
 }

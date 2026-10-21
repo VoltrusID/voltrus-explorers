@@ -1,8 +1,11 @@
 mod system;
 
 use std::collections::HashMap;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+use mt_bacnet::transport::{self, Transaction, REQUEST_TIMEOUT};
 use tokio::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
@@ -12,15 +15,15 @@ use mt_bacnet::{
     read_object_properties as read_object_properties_fn,
     inspect_device as inspect_device_fn,
     BacnetDiscoveredDevice, BacnetObjectInfo,
-    BacnetObjectDetail, BacnetPropertyEntry, DeviceInspection,
+    BacnetObjectDetail, DeviceInspection,
     // COV
     build_subscribe_cov_frame, build_cancel_cov_frame, CovSubscriptionInfo,
-    parse_cov_packet, CovNotification,
+    parse_cov_packet, renewal_delay,
     // Alarms
     get_alarm_summary_blocking, get_event_information_blocking,
-    acknowledge_alarm_blocking, AlarmSummaryEntry, EventInformationResponse,
+    acknowledge_alarm_blocking, AlarmSummaryEntry, EventInformationResponse, EventTimeStamp,
     // Trend
-    read_trend_log_blocking, read_trend_log_count_blocking, LogRecord, TrendLogData,
+    read_trend_log_blocking, read_trend_log_count_blocking, TrendLogData, TrendLogKind,
     // Schedule
     read_schedule_blocking, ScheduleData,
     // Device simulator
@@ -34,7 +37,7 @@ struct AppState {
     client: Arc<Mutex<Option<BacnetClient>>>,
     connected_device: Arc<Mutex<Option<ConnectedDevice>>>,
     cov_subscriptions: Arc<Mutex<Vec<CovSubscriptionInfo>>>,
-    cov_listener_running: Arc<AtomicBool>,
+    cov_listener: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     sim_device: Arc<Mutex<Option<SimDevice>>>,
 }
 
@@ -83,14 +86,16 @@ async fn sim_start(
 
 #[tauri::command]
 async fn sim_stop(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    if let Some(dev) = state.sim_device.lock().await.take() {
+    // Take the device out under the lock, stop it after the guard is dropped.
+    let dev = state.sim_device.lock().await.take();
+    if let Some(dev) = dev {
         dev.stop();
     }
     // Close the device control panel if it's open.
     if let Some(w) = app.get_webview_window("device-panel") {
         let _ = w.close();
     }
-    Ok(())
+    app.emit("sim-stopped", ()).map_err(|e| e.to_string())
 }
 
 /// Open the device control panel as a separate OS window. Built from Rust so it
@@ -150,6 +155,28 @@ struct ConnectedDevice {
     device_id: u32,
 }
 
+/// Snapshot of the connected device. The lock is released before returning so
+/// callers never hold it across a network await.
+async fn current_device(state: &AppState) -> Result<ConnectedDevice, String> {
+    state
+        .connected_device
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "Not connected".to_string())
+}
+
+/// Cheap clone of the connected client (shared socket); the lock is released
+/// before returning.
+async fn current_client(state: &AppState) -> Result<BacnetClient, String> {
+    state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "Not connected".to_string())
+}
+
 #[tauri::command]
 async fn connect(state: tauri::State<'_, AppState>, config: BacnetConfig) -> Result<(), String> {
     let ip = config.ip.clone();
@@ -166,8 +193,7 @@ async fn read_tags(
     state: tauri::State<'_, AppState>,
     tags: Vec<BacnetObject>,
 ) -> Result<Vec<BacnetValue>, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
+    let client = current_client(&state).await?;
     client.read(&tags).await.map_err(|e| e.to_string())
 }
 
@@ -176,10 +202,13 @@ async fn write_tag(
     state: tauri::State<'_, AppState>,
     tag: BacnetObject,
     value: BacnetValue,
+    priority: Option<u8>,
 ) -> Result<(), String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("Not connected")?;
-    client.write(&tag, value).await.map_err(|e| e.to_string())
+    let client = current_client(&state).await?;
+    client
+        .write_with_priority(&tag, value, priority)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -189,21 +218,14 @@ async fn discover(timeout_secs: u64) -> Result<Vec<BacnetDiscoveredDevice>, Stri
 
 #[tauri::command]
 async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    // Stop the COV listener loop first.
-    state.cov_listener_running.store(false, Ordering::Relaxed);
-
-    // Clear connected-device + COV state immediately so the UI updates, even if a
-    // poll/browse still holds the client lock. Never hold two locks at once.
+    // Clear the connected device first, then stop the COV listener (see
+    // start_cov_listener for why in this order), then the remaining state. No
+    // network await happens under any of these locks (commands clone what they
+    // need), so none of them can be held for long. Never hold two locks at once.
     *state.connected_device.lock().await = None;
+    stop_cov_listener_inner(&state.cov_listener).await;
     state.cov_subscriptions.lock().await.clear();
-
-    // Drop the client with a bounded wait so a stuck in-flight poll can't block
-    // disconnect forever. UDP is connectionless; BacnetClient::disconnect is a no-op.
-    if let Ok(mut guard) =
-        tokio::time::timeout(std::time::Duration::from_millis(500), state.client.lock()).await
-    {
-        guard.take();
-    }
+    state.client.lock().await.take();
     Ok(())
 }
 
@@ -211,8 +233,7 @@ async fn disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn browse_objects(state: tauri::State<'_, AppState>) -> Result<Vec<BacnetObjectInfo>, String> {
-    let dev = state.connected_device.lock().await;
-    let dev = dev.as_ref().ok_or("Not connected")?;
+    let dev = current_device(&state).await?;
     browse_objects_fn(&dev.ip, dev.port, dev.device_id)
         .await
         .map_err(|e| e.to_string())
@@ -224,8 +245,7 @@ async fn read_object_properties(
     object_type: String,
     object_instance: u32,
 ) -> Result<Option<BacnetObjectDetail>, String> {
-    let dev = state.connected_device.lock().await;
-    let dev = dev.as_ref().ok_or("Not connected")?;
+    let dev = current_device(&state).await?;
     let details = read_object_properties_fn(&dev.ip, dev.port, &object_type, object_instance)
         .await
         .map_err(|e| e.to_string())?;
@@ -234,8 +254,7 @@ async fn read_object_properties(
 
 #[tauri::command]
 async fn inspect_device_cmd(state: tauri::State<'_, AppState>) -> Result<DeviceInspection, String> {
-    let dev = state.connected_device.lock().await;
-    let dev = dev.as_ref().ok_or("Not connected")?;
+    let dev = current_device(&state).await?;
     inspect_device_fn(&dev.ip, dev.port, dev.device_id)
         .await
         .map_err(|e| e.to_string())
@@ -317,7 +336,7 @@ async fn get_event_information(state: tauri::State<'_, AppState>) -> Result<Even
             .map_err(|e| format!("Socket bind: {e}"))?;
         let addr: std::net::SocketAddr = format!("{}:{}", dev.ip, dev.port)
             .parse().map_err(|e| format!("Invalid addr: {e}"))?;
-        get_event_information_blocking(&socket, addr, None)
+        get_event_information_blocking(&socket, addr)
             .map_err(|e| e.to_string())
     })
     .await
@@ -330,7 +349,8 @@ async fn acknowledge_alarm_cmd(
     object_type: String,
     object_instance: u32,
     event_state: u32,
-    ack_text: String,
+    time_stamp: EventTimeStamp,
+    ack_source: String,
 ) -> Result<(), String> {
     let dev = {
         let guard = state.connected_device.lock().await;
@@ -342,19 +362,7 @@ async fn acknowledge_alarm_cmd(
             .map_err(|e| format!("Socket bind: {e}"))?;
         let addr: std::net::SocketAddr = format!("{}:{}", dev.ip, dev.port)
             .parse().map_err(|e| format!("Invalid addr: {e}"))?;
-        acknowledge_alarm_blocking(&socket, addr, &object_type, object_instance, event_state, &ack_text, None)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("Task join: {e}"))?
-}
-
-// ── BBMD Registration ──
-
-#[tauri::command]
-async fn register_bbmd(bbmd_ip: String, bbmd_port: u16, ttl: u16) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        mt_bacnet::register_bbmd(&bbmd_ip, bbmd_port, ttl)
+        acknowledge_alarm_blocking(&socket, addr, &object_type, object_instance, event_state, &time_stamp, &ack_source, None)
             .map_err(|e| e.to_string())
     })
     .await
@@ -366,10 +374,12 @@ async fn register_bbmd(bbmd_ip: String, bbmd_port: u16, ttl: u16) -> Result<(), 
 #[tauri::command]
 async fn read_trend_log(
     state: tauri::State<'_, AppState>,
+    object_type: String,
     object_instance: u32,
-    start_index: u32,
+    reference_index: u32,
     count: i32,
 ) -> Result<TrendLogData, String> {
+    let kind = TrendLogKind::parse(&object_type).map_err(|e| e.to_string())?;
     let dev = {
         let guard = state.connected_device.lock().await;
         guard.as_ref().ok_or("Not connected")?.clone()
@@ -380,7 +390,7 @@ async fn read_trend_log(
             .map_err(|e| format!("Socket bind: {e}"))?;
         let addr: std::net::SocketAddr = format!("{}:{}", dev.ip, dev.port)
             .parse().map_err(|e| format!("Invalid addr: {e}"))?;
-        read_trend_log_blocking(&socket, addr, object_instance, start_index, count)
+        read_trend_log_blocking(&socket, addr, kind, object_instance, reference_index, count)
             .map_err(|e| e.to_string())
     })
     .await
@@ -390,8 +400,10 @@ async fn read_trend_log(
 #[tauri::command]
 async fn read_trend_log_count(
     state: tauri::State<'_, AppState>,
+    object_type: String,
     object_instance: u32,
 ) -> Result<u32, String> {
+    let kind = TrendLogKind::parse(&object_type).map_err(|e| e.to_string())?;
     let dev = {
         let guard = state.connected_device.lock().await;
         guard.as_ref().ok_or("Not connected")?.clone()
@@ -402,7 +414,7 @@ async fn read_trend_log_count(
             .map_err(|e| format!("Socket bind: {e}"))?;
         let addr: std::net::SocketAddr = format!("{}:{}", dev.ip, dev.port)
             .parse().map_err(|e| format!("Invalid addr: {e}"))?;
-        read_trend_log_count_blocking(&socket, addr, object_instance)
+        read_trend_log_count_blocking(&socket, addr, kind, object_instance)
             .map_err(|e| e.to_string())
     })
     .await
@@ -435,120 +447,313 @@ async fn read_schedule(
 
 // ── COV Notification Listener ──
 
+/// Emitted when a SubscribeCOV (or renewal) fails: the device answered with an
+/// Error/Reject/Abort PDU, did not answer in time, or the request could not be
+/// sent. The failed subscription is removed from `cov_subscriptions`.
+#[derive(Clone, serde::Serialize)]
+struct CovSubscribeFailed {
+    object_type: String,
+    object_instance: u32,
+    message: String,
+}
+
+/// Emitted when the listener thread dies on a socket error.
+#[derive(Clone, serde::Serialize)]
+struct CovListenerError {
+    message: String,
+}
+
+type CovKey = (String, u32);
+
+/// A SubscribeCOV request sent from the listener socket, awaiting its reply.
+struct CovPending {
+    key: CovKey,
+    subscriber_id: u32,
+    addr: SocketAddr,
+    sent_at: Instant,
+    txn: Transaction,
+}
+
+/// State owned by the single COV listener thread. It sends SubscribeCOV /
+/// cancellations from its own socket so the device routes notifications (and
+/// replies) back to that socket.
+struct CovListener {
+    app: tauri::AppHandle,
+    socket: UdpSocket,
+    cov_subs: Arc<Mutex<Vec<CovSubscriptionInfo>>>,
+    /// Subscriptions sent from this socket: key -> (subscriber id, time of the last SubscribeCOV).
+    sent: HashMap<CovKey, (u32, Instant)>,
+    /// Outstanding SubscribeCOV requests by invoke id.
+    pending: HashMap<u8, CovPending>,
+}
+
+impl CovListener {
+    /// Bring the device in line with the desired subscription set: subscribe new
+    /// entries, renew those near expiry, cancel removed ones.
+    fn reconcile(&mut self, addr: SocketAddr, current: &[CovSubscriptionInfo]) {
+        for s in current {
+            let key = (s.object_type.clone(), s.object_instance);
+            match self.sent.get(&key).copied() {
+                None => self.subscribe(addr, s),
+                Some((sid, _)) if sid != s.subscriber_process_id => {
+                    self.cancel(addr, &key, sid);
+                    self.subscribe(addr, s);
+                }
+                Some((_, sent_at)) => {
+                    let due = renewal_delay(s.lifetime).is_some_and(|d| sent_at.elapsed() >= d);
+                    if due && !self.pending.values().any(|p| p.key == key) {
+                        self.subscribe(addr, s);
+                    }
+                }
+            }
+        }
+
+        let removed: Vec<(CovKey, u32)> = self
+            .sent
+            .iter()
+            .filter(|(k, _)| !current.iter().any(|s| s.object_type == k.0 && s.object_instance == k.1))
+            .map(|(k, (sid, _))| (k.clone(), *sid))
+            .collect();
+        for (key, sid) in removed {
+            self.cancel(addr, &key, sid);
+        }
+    }
+
+    /// Send SubscribeCOV (initial or renewal) and track the reply.
+    fn subscribe(&mut self, addr: SocketAddr, s: &CovSubscriptionInfo) {
+        let key = (s.object_type.clone(), s.object_instance);
+        let sid = s.subscriber_process_id;
+        let invoke_id = transport::next_invoke_id();
+        let frame = match build_subscribe_cov_frame(
+            invoke_id,
+            sid,
+            &s.object_type,
+            s.object_instance,
+            s.confirmed_notifications,
+            s.lifetime,
+        ) {
+            Ok(f) => f,
+            Err(e) => return self.fail(&key, sid, e.to_string()),
+        };
+        if let Err(e) = self.socket.send_to(&frame, addr) {
+            return self.fail(&key, sid, format!("Send SubscribeCOV: {e}"));
+        }
+        let now = Instant::now();
+        self.sent.insert(key.clone(), (sid, now));
+        self.pending.retain(|_, p| p.key != key);
+        self.pending.insert(
+            invoke_id,
+            CovPending {
+                key,
+                subscriber_id: sid,
+                addr,
+                sent_at: now,
+                txn: Transaction::new(invoke_id),
+            },
+        );
+    }
+
+    /// Send a cancellation (SubscribeCOV without confirmed flag and lifetime) and
+    /// forget the subscription. The reply is not tracked: the subscription is
+    /// gone from the UI either way.
+    fn cancel(&mut self, addr: SocketAddr, key: &CovKey, sid: u32) {
+        self.sent.remove(key);
+        self.pending.retain(|_, p| p.key != *key);
+        let invoke_id = transport::next_invoke_id();
+        match build_cancel_cov_frame(invoke_id, sid, &key.0, key.1) {
+            Ok(frame) => {
+                if let Err(e) = self.socket.send_to(&frame, addr) {
+                    eprintln!("COV cancel for {}:{} not sent: {e}", key.0, key.1);
+                }
+            }
+            Err(e) => eprintln!("COV cancel for {}:{} not built: {e}", key.0, key.1),
+        }
+    }
+
+    /// Drop a subscription that could not be established or renewed and tell the UI.
+    fn fail(&mut self, key: &CovKey, sid: u32, message: String) {
+        self.sent.remove(key);
+        self.pending.retain(|_, p| p.key != *key);
+        // Runs on a spawn_blocking thread, so blocking_lock is allowed; the lock is only
+        // ever held briefly. Only remove the entry this failure belongs to.
+        self.cov_subs.blocking_lock().retain(|s| {
+            !(s.object_type == key.0 && s.object_instance == key.1 && s.subscriber_process_id == sid)
+        });
+        let payload = CovSubscribeFailed {
+            object_type: key.0.clone(),
+            object_instance: key.1,
+            message,
+        };
+        if let Err(e) = self.app.emit("cov-subscribe-failed", payload) {
+            eprintln!("cov-subscribe-failed event not delivered: {e}");
+        }
+    }
+
+    /// Fail every SubscribeCOV that got no reply within the request timeout.
+    fn expire_pending(&mut self) {
+        let expired: Vec<(u8, CovKey, u32, SocketAddr)> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.sent_at.elapsed() >= REQUEST_TIMEOUT)
+            .map(|(id, p)| (*id, p.key.clone(), p.subscriber_id, p.addr))
+            .collect();
+        for (id, key, sid, addr) in expired {
+            self.pending.remove(&id);
+            self.fail(&key, sid, format!("SubscribeCOV timed out: no reply from {addr}"));
+        }
+    }
+
+    /// Handle one received datagram: a reply to a pending SubscribeCOV, or a COV notification.
+    fn handle_frame(&mut self, src: SocketAddr, frame: &[u8]) {
+        if let Some(apdu) = transport::apdu_of_frame(frame) {
+            let mut finished = Vec::new();
+            for (id, p) in self.pending.iter_mut() {
+                if p.addr != src {
+                    continue;
+                }
+                if let Some(result) = p.txn.handle(apdu).done {
+                    finished.push((*id, result));
+                }
+            }
+            for (id, result) in finished {
+                if let Some(p) = self.pending.remove(&id) {
+                    if let Err(e) = result {
+                        self.fail(&p.key, p.subscriber_id, e.to_string());
+                    }
+                }
+            }
+        }
+
+        if let Some(packet) = parse_cov_packet(frame) {
+            // ConfirmedCOVNotification (service choice 1) must be acknowledged, otherwise
+            // the device retransmits and may drop the subscription.
+            if let Some(invoke_id) = packet.confirmed_invoke_id {
+                if let Err(e) = self.socket.send_to(&transport::simple_ack_frame(invoke_id, 1), src) {
+                    eprintln!("COV notification SimpleAck to {src} not sent: {e}");
+                }
+            }
+            if let Err(e) = self.app.emit("cov-notification", &packet.notification) {
+                eprintln!("cov-notification event not delivered: {e}");
+            }
+        }
+    }
+}
+
+/// Listener thread body; returns when `token` is cleared or the socket fails.
+fn run_cov_listener(
+    mut l: CovListener,
+    token: Arc<AtomicBool>,
+    conn_dev: Arc<Mutex<Option<ConnectedDevice>>>,
+) {
+    let mut buf = [0u8; 1500];
+
+    while token.load(Ordering::Relaxed) {
+        // When either lock is busy, skip the diff for this pass: a busy lock must
+        // never be read as "no subscriptions", which would cancel them all.
+        let snapshot = match (conn_dev.try_lock(), l.cov_subs.try_lock()) {
+            (Ok(dev), Ok(subs)) => Some((
+                dev.as_ref()
+                    .and_then(|d| format!("{}:{}", d.ip, d.port).parse::<SocketAddr>().ok()),
+                subs.clone(),
+            )),
+            _ => None,
+        };
+        if let Some((Some(addr), current)) = snapshot {
+            l.reconcile(addr, &current);
+        }
+
+        match l.socket.recv_from(&mut buf) {
+            Ok((len, src)) => l.handle_frame(src, &buf[..len]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::ConnectionReset
+                ) => {}
+            Err(e) => {
+                let message = format!("COV listener stopped: socket receive failed: {e}");
+                if let Err(e) = l.app.emit("cov-listener-error", CovListenerError { message }) {
+                    eprintln!("cov-listener-error event not delivered: {e}");
+                }
+                break;
+            }
+        }
+        l.expire_pending();
+    }
+    token.store(false, Ordering::Relaxed);
+}
+
+/// Bind the listener socket: BACnet's well-known port when free, otherwise an
+/// ephemeral one (the device notifies the source address of the SubscribeCOV).
+fn bind_cov_socket() -> Result<UdpSocket, String> {
+    let socket = UdpSocket::bind("0.0.0.0:47808")
+        .or_else(|_| UdpSocket::bind("0.0.0.0:0"))
+        .map_err(|e| format!("COV listener could not bind a UDP socket: {e}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .map_err(|e| format!("COV listener socket setup failed: {e}"))?;
+    Ok(socket)
+}
+
+/// Signal the current COV listener (if any) to exit and forget it. A listener
+/// started afterwards gets its own token, so a stop-then-start can never
+/// re-arm the old thread.
+async fn stop_cov_listener_inner(slot: &Mutex<Option<Arc<AtomicBool>>>) {
+    if let Some(token) = slot.lock().await.take() {
+        token.store(false, Ordering::Relaxed);
+    }
+}
+
 #[tauri::command]
 async fn start_cov_listener(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Single listener task owns the 47808 socket and sends SubscribeCOV /
-    // cancellations from it, so the device routes notifications back to this socket.
-    if state.cov_listener_running.load(Ordering::Relaxed) {
+    // The connection is checked while holding the listener slot; `disconnect` clears the
+    // device before it takes the slot, so a racing start either fails here or is stopped.
+    let mut slot = state.cov_listener.lock().await;
+    if state.connected_device.lock().await.is_none() {
+        return Err("Not connected".into());
+    }
+    if slot.as_ref().is_some_and(|t| t.load(Ordering::Relaxed)) {
         return Ok(());
     }
-    state.cov_listener_running.store(true, Ordering::Relaxed);
 
-    let running = state.cov_listener_running.clone();
-    let cov_subs = state.cov_subscriptions.clone();
-    let conn_dev = state.connected_device.clone();
-    let _dev = {
-        let guard = state.connected_device.lock().await;
-        guard.as_ref().ok_or("Not connected")?.clone()
+    let socket = bind_cov_socket()?;
+    let token = Arc::new(AtomicBool::new(true));
+    *slot = Some(token.clone());
+
+    let listener = CovListener {
+        app,
+        socket,
+        cov_subs: state.cov_subscriptions.clone(),
+        sent: HashMap::new(),
+        pending: HashMap::new(),
     };
-
-    tokio::task::spawn_blocking(move || {
-        let socket = match std::net::UdpSocket::bind("0.0.0.0:47808") {
-            Ok(s) => s,
-            Err(_) => match std::net::UdpSocket::bind("0.0.0.0:0") {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("COV listener bind failed: {e}");
-                    running.store(false, Ordering::Relaxed);
-                    return;
-                }
-            },
-        };
-        socket.set_read_timeout(Some(std::time::Duration::from_millis(250))).ok();
-
-        // (object_type, instance) -> subscriber_process_id already sent.
-        let mut sent: HashMap<(String, u32), u32> = HashMap::new();
-        let mut buf = [0u8; 1500];
-
-        while running.load(Ordering::Relaxed) {
-            let dev_addr = match conn_dev.try_lock() {
-                Ok(g) => g.as_ref().and_then(|d| format!("{}:{}", d.ip, d.port).parse::<std::net::SocketAddr>().ok()),
-                Err(_) => None,
-            };
-
-            let current: Vec<CovSubscriptionInfo> = match cov_subs.try_lock() {
-                Ok(g) => g.clone(),
-                Err(_) => Vec::new(),
-            };
-            let current_keys: Vec<(String, u32)> = current
-                .iter()
-                .map(|s| (s.object_type.clone(), s.object_instance))
-                .collect();
-
-            if let Some(addr) = dev_addr {
-                // Subscribe new entries.
-                for s in &current {
-                    let k = (s.object_type.clone(), s.object_instance);
-                    if !sent.contains_key(&k) {
-                        if let Ok(frame) = build_subscribe_cov_frame(
-                            s.subscriber_process_id,
-                            &s.object_type,
-                            s.object_instance,
-                            s.confirmed_notifications,
-                            s.lifetime,
-                        ) {
-                            let _ = socket.send_to(&frame, addr);
-                        }
-                        sent.insert(k, s.subscriber_process_id);
-                    }
-                }
-                // Cancel removed entries.
-                let removed: Vec<(String, u32, u32)> = sent
-                    .iter()
-                    .filter(|(k, _)| !current_keys.contains(k))
-                    .map(|((ot, oi), sid)| (ot.clone(), *oi, *sid))
-                    .collect();
-                for (ot, oi, sid) in removed {
-                    if let Ok(frame) = build_cancel_cov_frame(sid, &ot, oi) {
-                        let _ = socket.send_to(&frame, addr);
-                    }
-                    sent.remove(&(ot, oi));
-                }
-            }
-
-            match socket.recv_from(&mut buf) {
-                Ok((len, _src)) => {
-                    if let Some(notification) = parse_cov_packet(&buf[..len]) {
-                        let _ = app.emit("cov-notification", &notification);
-                    }
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                Err(_) => {}
-            }
-        }
-        running.store(false, Ordering::Relaxed);
-    });
-
+    let conn_dev = state.connected_device.clone();
+    tokio::task::spawn_blocking(move || run_cov_listener(listener, token, conn_dev));
     Ok(())
 }
 
 #[tauri::command]
 async fn stop_cov_listener(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.cov_listener_running.store(false, Ordering::Relaxed);
+    stop_cov_listener_inner(&state.cov_listener).await;
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
+        // Native open/save panels + writes to the paths the user picked (the only
+        // file access the sandboxed App Store build has).
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             client: Arc::new(Mutex::new(None)),
             connected_device: Arc::new(Mutex::new(None)),
             cov_subscriptions: Arc::new(Mutex::new(Vec::new())),
-            cov_listener_running: Arc::new(AtomicBool::new(false)),
+            cov_listener: Arc::new(Mutex::new(None)),
             sim_device: Arc::new(Mutex::new(None)),
         })
         .invoke_handler(tauri::generate_handler![
@@ -556,12 +761,12 @@ pub fn run() {
             browse_objects, read_object_properties, inspect_device_cmd,
             subscribe_cov_cmd, unsubscribe_cov_cmd, get_cov_subscriptions,
             get_alarm_summary, get_event_information, acknowledge_alarm_cmd,
-            register_bbmd,
             read_trend_log, read_trend_log_count,
             read_schedule,
             start_cov_listener, stop_cov_listener,
             sim_start, sim_stop, sim_set_value, sim_set_bool, sim_status, open_device_panel,
-            system::open_url
+            system::open_url,
+            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -87,33 +87,29 @@ export function ScheduleDialog({
 
         {!loading && !error && data && (
           <div style={{ overflowY: "auto", margin: "0 -18px", padding: "0 18px", maxHeight: "60vh" }}>
-            {/* Effective period */}
-            <div
-              style={{
-                fontSize: "var(--fs-sm)",
-                color: "var(--text-dim)",
-                marginBottom: 10,
-                padding: "8px 10px",
-                background: "var(--sunken)",
-                borderRadius: "var(--radius)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              {data.effective_period_start && data.effective_period_end ? (
-                <>
-                  <span style={{ color: "var(--text-muted)" }}>Start </span>
-                  <span className="mono" style={{ color: "var(--text)" }}>
-                    {data.effective_period_start}
-                  </span>
-                  <span style={{ color: "var(--text-muted)" }}> to end </span>
-                  <span className="mono" style={{ color: "var(--text)" }}>
-                    {data.effective_period_end}
-                  </span>
-                </>
-              ) : (
-                <span style={{ color: "var(--text-muted)" }}>Always active</span>
-              )}
-            </div>
+            {/* Effective period (only when the device reports one) */}
+            {(data.effective_period_start || data.effective_period_end) && (
+              <div
+                style={{
+                  fontSize: "var(--fs-sm)",
+                  color: "var(--text-dim)",
+                  marginBottom: 10,
+                  padding: "8px 10px",
+                  background: "var(--sunken)",
+                  borderRadius: "var(--radius)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>Effective </span>
+                <span className="mono" style={{ color: "var(--text)" }}>
+                  {data.effective_period_start ?? "any"}
+                </span>
+                <span style={{ color: "var(--text-muted)" }}> to </span>
+                <span className="mono" style={{ color: "var(--text)" }}>
+                  {data.effective_period_end ?? "any"}
+                </span>
+              </div>
+            )}
 
             {/* Default value */}
             {data.schedule_default && (

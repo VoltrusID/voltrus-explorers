@@ -5,7 +5,8 @@ export { Toolbar } from "./components/Toolbar";
 export { LogPanel, type LogEntry } from "./components/LogPanel";
 export { HexViewer } from "./components/HexViewer";
 export { ValueEditor } from "./components/ValueEditor";
-export { useProtocol } from "./hooks/useProtocol";
+export { useProtocol, type WriteResult } from "./hooks/useProtocol";
+export { saveTextFile, openTextFile, CSV_FILTER, type FileFilter } from "./files";
 export {
   Badge,
   Button,
@@ -37,3 +38,4 @@ export {
   type TabsProps,
   type Tone,
 } from "./primitives";
+export { ProProvider, ProBadge, ProAboutRow, useProStatus, type ProProviderProps, type StoreStatus } from "./pro";

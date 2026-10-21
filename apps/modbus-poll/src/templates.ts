@@ -191,75 +191,6 @@ export function numRegisters(profile: DeviceProfile): number {
   return profile.registers.reduce((sum, r) => sum + (r.isCounter ? 4 : 2), 0);
 }
 
-export function tickValues(
-  profile: DeviceProfile,
-  values: number[],
-  loadFactor: number
-): { values: number[]; loadFactor: number } {
-  const next = [...values];
-  const newLoad = (loadFactor + (2 * Math.PI) / 900 + (Math.random() - 0.5) * 0.002) % (2 * Math.PI);
-  const load = 1 + 0.15 * Math.sin(newLoad);
-
-  for (let i = 0; i < profile.registers.length; i++) {
-    const def = profile.registers[i];
-    if (def.isCounter) {
-      const variation = (Math.random() - 0.5) * def.counterRate * 0.1;
-      next[i] = next[i] + def.counterRate + variation;
-    } else {
-      const drift = (Math.random() * 2 - 1) * def.drift;
-      let loadEffect = 0;
-      if (def.unit === "W" || def.unit === "A" || def.unit === "VA" || def.unit === "var") {
-        loadEffect = (load - 1) * Math.abs(def.initial) * 0.1;
-      } else if (def.unit === "V" || def.unit === "kV") {
-        loadEffect = -(load - 1) * 0.5;
-      }
-      next[i] = Math.min(Math.max(next[i] + drift + loadEffect, def.min), def.max);
-    }
-  }
-
-  return { values: next, loadFactor: newLoad };
-}
-
-export interface RegWrite {
-  address: number;
-  value: number;
-}
-
-export function valuesToRegisters(values: number[], profile: DeviceProfile): RegWrite[] {
-  const writes: RegWrite[] = [];
-  let offset = 0;
-  const base = profile.baseAddress;
-
-  for (let i = 0; i < profile.registers.length; i++) {
-    const def = profile.registers[i];
-    if (def.isCounter) {
-      // u64 stored as 4 u16 (big-endian)
-      const raw = Math.floor(values[i]);
-      const hi32 = Math.floor(raw / 4294967296) >>> 0;
-      const lo32 = (raw >>> 0) & 0xffffffff;
-      writes.push(
-        { address: base + offset, value: (hi32 >>> 16) & 0xffff },
-        { address: base + offset + 1, value: hi32 & 0xffff },
-        { address: base + offset + 2, value: (lo32 >>> 16) & 0xffff },
-        { address: base + offset + 3, value: lo32 & 0xffff }
-      );
-      offset += 4;
-    } else {
-      // Float32 stored as 2 u16 (big-endian IEEE 754)
-      const buf = new ArrayBuffer(4);
-      new Float32Array(buf)[0] = values[i];
-      const bits = new Uint32Array(buf)[0];
-      writes.push(
-        { address: base + offset, value: (bits >>> 16) & 0xffff },
-        { address: base + offset + 1, value: bits & 0xffff }
-      );
-      offset += 2;
-    }
-  }
-
-  return writes;
-}
-
 /** Decode raw u16 register array into labeled values based on a profile. */
 export interface DecodedReg {
   address: number;
@@ -268,7 +199,7 @@ export interface DecodedReg {
   unit: string;
   raw: string;          // hex representation
   decimals: number[];   // raw u16 decimal values
-  type: string;         // "Float32 BE" or "UInt64 Counter BE"
+  type: string;         // "Float32 BE" or "Float64 Counter BE"
   decoded: string;      // human-readable value
 }
 
@@ -283,9 +214,10 @@ export function decodeRegisters(regs: number[], profile: DeviceProfile): Decoded
 
     if (def.isCounter) {
       const r = [regs[offset] ?? 0, regs[offset + 1] ?? 0, regs[offset + 2] ?? 0, regs[offset + 3] ?? 0];
-      const hi32 = (r[0] << 16) | r[1];
-      const lo32 = (r[2] << 16) | r[3];
-      const value = hi32 * 4294967296 + lo32;
+      // The simulator writes counters as IEEE 754 binary64 over 4 registers, AB CD EF GH.
+      const view = new DataView(new ArrayBuffer(8));
+      r.forEach((word, k) => view.setUint16(k * 2, word));
+      const value = view.getFloat64(0);
       result.push({
         address: addr,
         count: 4,
@@ -293,8 +225,8 @@ export function decodeRegisters(regs: number[], profile: DeviceProfile): Decoded
         unit: def.unit,
         raw: r.map((v) => v.toString(16).toUpperCase().padStart(4, "0")).join(" "),
         decimals: r,
-        type: "UInt64 Counter BE",
-        decoded: value.toLocaleString() + (def.unit ? ` ${def.unit}` : ""),
+        type: "Float64 Counter BE",
+        decoded: value.toLocaleString(undefined, { maximumFractionDigits: 3 }) + (def.unit ? ` ${def.unit}` : ""),
       });
       offset += 4;
     } else {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, currentMonitor, LogicalSize } from "@tauri-apps/api/window";
 import {
@@ -11,14 +11,19 @@ import {
   IconButton,
   Tabs,
   useProtocol,
+  useProStatus,
+  saveTextFile,
+  openTextFile,
 } from "@mactools/ui";
 import { ChartLine, Moon, Sun } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import TrafficPanel from "./TrafficPanel";
 import TrendPanel from "./TrendPanel";
-import type { ModbusConfig, ReadBlock } from "./types";
-import { sidebarStyle } from "./constants";
-import { typeStep } from "./helpers";
+import type { ModbusConfig } from "./types";
+import { VIRTUAL_PORT, sidebarStyle } from "./constants";
+import { buildReadPlan, isBitArea, isWritableArea, readPlanKey, type ReadTag } from "./helpers";
+import { blocksToCsv, parseBlocksCsv } from "./csv";
+import { startTrafficFeed } from "./trafficStore";
 import { useStore } from "./store";
 
 // Hooks
@@ -28,7 +33,7 @@ import { useTrend } from "./hooks/useTrend";
 import { usePanelResize } from "./hooks/usePanelResize";
 
 // Utilities
-import { formatValue, displayAddr, extractRaw } from "./utils/format";
+import { buildTableRows, type TableRow } from "./utils/rows";
 
 // Components
 import { MasterSidebar } from "./components/MasterSidebar";
@@ -40,8 +45,21 @@ import { MobileTabBar } from "./components/MobileTabBar";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
 
+const NO_VALUES: unknown[] = [];
+
+const NUMERIC_WRITE_TYPES = [
+  { value: "uint16", label: "UInt16" },
+  { value: "int16", label: "Int16" },
+  { value: "int32", label: "Int32" },
+  { value: "float32", label: "Float32" },
+  { value: "float64", label: "Float64" },
+];
+const COIL_WRITE_TYPES = [{ value: "bool", label: "Bool" }];
+
 function App() {
-  const protocol = useProtocol<ModbusConfig, ReadBlock, unknown>("modbus");
+  const protocol = useProtocol<ModbusConfig, ReadTag, unknown>("modbus");
+  const { startPolling, stopPolling } = protocol;
+  const { requirePro } = useProStatus();
   const {
     mode, setMode, leftWidth, rightWidth, tableHeight,
     dragSide, isMobile, setIsMobile,
@@ -49,15 +67,15 @@ function App() {
     addLog, setLog, editingTag, setEditingTag,
     theme, setTheme,
     transport, tcpFormValues, formKey,
-    serialPorts, setSerialPorts,
-    rtuPort, rtuPortManual, rtuBaud, rtuDataBits, rtuStopBits,
+    setSerialPorts,
+    rtuPort, rtuBaud, rtuDataBits, rtuStopBits,
     rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval,
     useOneBased, displayFormat, endianness,
     slaveRunning,
     trendSeries, setTrendSeries, trendWindow, setTrendWindow,
     bottomTab, setBottomTab,
-    slaveTransport,
-    mobileTab, log, platform, setPlatform,
+    slaveTransport, busScanning,
+    mobileTab, log, setPlatform,
   } = useStore();
 
   // ── Window init ──
@@ -77,6 +95,9 @@ function App() {
       }
     })();
   }, []);
+
+  // ── Traffic history: recorded for the whole session, whichever panel is showing ──
+  useEffect(() => startTrafficFeed(), []);
 
   // ── Hooks ──
   const {
@@ -112,7 +133,7 @@ function App() {
   // ── Auto-detect RTU ──
   const [autoDetecting, setAutoDetecting] = useState(false);
   const handleAutoDetect = useCallback(async () => {
-    if (!rtuPort) return;
+    if (!rtuPort || rtuPort === VIRTUAL_PORT) return;
     setAutoDetecting(true);
     addLog("info", `Auto-detecting RTU on ${rtuPort}...`);
     try {
@@ -138,21 +159,13 @@ function App() {
   // ── Protocol error logging ──
   useEffect(() => { if (protocol.error) addLog("error", protocol.error); }, [protocol.error, addLog]);
 
-  // ── Poll logging ──
-  useEffect(() => {
-    if (mode !== "master" || !protocol.connected || protocol.pollCount <= 0) return;
-    const n = tableData.length;
-    const first = tableData[0];
-    const last = tableData[n - 1];
-    if (!first || !last) return;
-    const range = n === 1 ? `${first.name}=${first.value}` : `${first.name}…${last.name} (${n} regs)`;
-    addLog("rx", `Poll #${protocol.pollCount}: ${range} (${protocol.latency}ms)`);
-  }, [protocol.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Load serial ports ──
   useEffect(() => {
     if ((mode === "master" && transport === "rtu") || (mode === "slave" && slaveTransport === "rtu")) {
-      invoke<string[]>("list_serial_ports").then(setSerialPorts).catch(() => setSerialPorts([]));
+      invoke<string[]>("list_serial_ports").then(setSerialPorts).catch((e) => {
+        setSerialPorts([]);
+        addLog("error", `Could not list serial ports: ${String(e)}`);
+      });
     }
   }, [mode, transport, slaveTransport]);
 
@@ -161,23 +174,61 @@ function App() {
     if (activeBlockTab >= blocks.length) setActiveBlockTab(Math.max(0, blocks.length - 1));
   }, [blocks.length, activeBlockTab]);
 
+  // ── Polling ──
+  // One tag per displayed value; `read_tags` returns one value per tag, so rows index values by tag.
+  const plan = useMemo(() => buildReadPlan(blocks), [blocks]);
+  const planKey = useMemo(() => readPlanKey(plan), [plan]);
+  /** Poll interval of the live session; null while not connected. */
+  const pollIntervalRef = useRef<number | null>(null);
+  /** The plan the running poll was started with: values only line up with rows while it matches the current one. */
+  const [polledKey, setPolledKey] = useState<string | null>(null);
+
+  const beginPolling = useCallback((intervalMs: number) => {
+    pollIntervalRef.current = intervalMs;
+    startPolling(plan.tags, intervalMs);
+    setPolledKey(planKey);
+  }, [startPolling, plan, planKey]);
+
+  // Editing, adding, removing or reordering blocks while connected re-targets the running poll.
+  useEffect(() => {
+    if (pollIntervalRef.current === null || busScanning || polledKey === planKey) return;
+    beginPolling(pollIntervalRef.current);
+  }, [planKey, polledKey, busScanning, beginPolling]);
+
+  const endSession = useCallback(() => {
+    pollIntervalRef.current = null;
+    setPolledKey(null);
+    stopPolling();
+  }, [stopPolling]);
+
+  // ── Table data ──
+  const liveValues = protocol.connected && polledKey === planKey && !protocol.stale ? protocol.values : NO_VALUES;
+  const tableData = useMemo(
+    () => buildTableRows(blocks, plan, liveValues, { useOneBased, displayFormat }),
+    [blocks, plan, liveValues, useOneBased, displayFormat],
+  );
+
+  // Exception responses: say which request the device rejected (once per distinct set, not every poll).
+  const failureSig = useMemo(
+    () => Array.from(new Set(tableData.flatMap((r) => (r.error ? [r.error] : [])))).join("\n"),
+    [tableData],
+  );
+  useEffect(() => {
+    if (failureSig) failureSig.split("\n").forEach((m) => addLog("error", m));
+  }, [failureSig, addLog]);
+
+  // ── Poll logging ──
+  useEffect(() => {
+    if (mode !== "master" || !protocol.connected || protocol.pollCount <= 0) return;
+    const n = tableData.length;
+    const first = tableData[0];
+    const last = tableData[n - 1];
+    if (!first || !last) return;
+    const range = n === 1 ? `${first.name}=${first.value}` : `${first.name}…${last.name} (${n} values)`;
+    addLog("rx", `Poll #${protocol.pollCount}: ${range} (${protocol.latency}ms)`);
+  }, [protocol.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Connection handlers ──
-  const disconnectDuringScanRef = useRef(false);
-
-  const buildReadTags = useCallback(() =>
-    blocks.flatMap((b) => {
-      const step = typeStep(b.type);
-      return Array.from({ length: b.quantity }, (_, i) => ({
-        name: `${b.name}_${(b.address + i * step).toString().padStart(3, "0")}`,
-        address: b.address + i * step,
-        quantity: step,
-        area: b.area,
-        register_area: b.area,
-        type: b.type,
-        scale: 1.0,
-      }));
-    }), [blocks]);
-
   const handleConnect = useCallback(async (values: Record<string, string | number>) => {
     const config: ModbusConfig = {
       host: String(values.host), port: Number(values.port),
@@ -188,98 +239,104 @@ function App() {
     const ok = await protocol.connect(config);
     if (ok) {
       addLog("rx", "Connected");
-      const readTags = buildReadTags();
-      protocol.startPolling(readTags, config.poll_interval_ms);
-      addLog("info", `Polling ${readTags.length} registers (${blocks.length} blocks) every ${config.poll_interval_ms}ms`);
+      beginPolling(config.poll_interval_ms);
+      addLog("info", `Polling ${plan.tags.length} values (${blocks.length} blocks) every ${config.poll_interval_ms}ms`);
     }
-  }, [protocol, addLog, blocks, endianness, buildReadTags]);
+  }, [protocol.connect, addLog, blocks.length, endianness, beginPolling, plan]);
+
+  const handleCancelConnect = useCallback(async () => {
+    protocol.cancel();
+    // `disconnect` also aborts a connect still waiting for the device, and drops the
+    // client if the connect finished just before the cancel arrived.
+    try {
+      await invoke("disconnect");
+    } catch (e) { addLog("error", `Cancel failed: ${String(e)}`); }
+    addLog("info", "Connection cancelled");
+  }, [protocol.cancel, addLog]);
 
   const handleDisconnect = useCallback(async () => {
-    disconnectDuringScanRef.current = true;
-    protocol.stopPolling();
+    endSession();
     await protocol.disconnect();
     addLog("info", "Disconnected");
-  }, [protocol, addLog]);
+  }, [endSession, protocol.disconnect, addLog]);
 
   const handleRtuConnect = useCallback(async () => {
     if (!rtuPort) { addLog("error", "No serial port selected"); return; }
     try {
-      if (rtuPortManual) {
-        addLog("info", `Connecting virtual RTU ${rtuPort}…`);
-        await invoke("connect_rtu_virtual", { unitId: rtuUnitId });
+      if (rtuPort === VIRTUAL_PORT) {
+        addLog("info", "Connecting to the in-app virtual slave…");
+        await invoke("connect_rtu_virtual", { unitId: rtuUnitId, endianness });
       } else {
+        if (!(rtuBaud > 0)) { addLog("error", "Enter a baud rate"); return; }
         addLog("info", `Connecting RTU ${rtuPort} @ ${rtuBaud} baud…`);
         await invoke("connect_rtu", {
           serialConfig: { port_name: rtuPort, baud_rate: rtuBaud, data_bits: rtuDataBits, stop_bits: rtuStopBits, parity: rtuParity },
-          unitId: rtuUnitId, timeoutMs: rtuTimeout,
+          unitId: rtuUnitId, endianness, timeoutMs: rtuTimeout,
         });
       }
       addLog("rx", "RTU connected");
       protocol.setConnected(true);
-      const readTags = buildReadTags();
-      protocol.startPolling(readTags, rtuPollInterval);
-      addLog("info", `Polling ${readTags.length} registers via RTU every ${rtuPollInterval}ms (timeout ${rtuTimeout}ms)`);
+      beginPolling(rtuPollInterval);
+      addLog("info", `Polling ${plan.tags.length} values via RTU every ${rtuPollInterval}ms (timeout ${rtuTimeout}ms)`);
     } catch (e) { addLog("error", `RTU connect failed: ${String(e)}`); }
-  }, [rtuPort, rtuPortManual, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval, buildReadTags, protocol, addLog]);
+  }, [rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval, endianness, beginPolling, plan, protocol.setConnected, addLog]);
 
   const handleScanBus = useCallback(async () => {
     if (!protocol.connected) { addLog("error", "Not connected. Connect to a serial port first."); return; }
-    if (!rtuPort || rtuPortManual) { addLog("error", "Select a real serial port for bus scanning"); return; }
     const { setBusScanning, setBusScanResults, busScanAddr, busScanArea, busScanStart, busScanEnd } = useStore.getState();
     setBusScanning(true);
     setBusScanResults([]);
     addLog("info", `Scanning bus IDs ${busScanStart}–${busScanEnd} (reg ${busScanAddr}, ${busScanArea})…`);
-    protocol.stopPolling();
+    stopPolling();
     try {
       const results = await invoke<{ unit_id: number; value: number }[]>("scan_bus", {
         registerAddress: busScanAddr, registerArea: busScanArea, startId: busScanStart, endId: busScanEnd,
       });
       setBusScanResults(results);
-      addLog("rx", `Bus scan complete: ${results.length} device(s) found`);
-    } catch (e) { addLog("error", `Bus scan failed: ${String(e)}`); }
-    finally {
+      addLog("rx", `Bus scan finished: ${results.length} device(s) found`);
+    } catch (e) {
+      // Disconnecting during a scan closes the connection under it; that is not a scan failure.
+      if (pollIntervalRef.current === null) addLog("info", "Bus scan aborted: disconnected");
+      else addLog("error", `Bus scan failed: ${String(e)}`);
+    } finally {
       setBusScanning(false);
-      if (protocol.connected && !disconnectDuringScanRef.current) {
-        protocol.startPolling(buildReadTags(), rtuPollInterval);
-      }
-      disconnectDuringScanRef.current = false;
+      // The scan (also when stopped) leaves the connection up and back on its unit ID; resume
+      // polling unless the user disconnected meanwhile.
+      if (pollIntervalRef.current !== null) beginPolling(pollIntervalRef.current);
     }
-  }, [protocol, buildReadTags, rtuPollInterval, rtuPort, rtuPortManual, addLog]);
+  }, [protocol.connected, stopPolling, beginPolling, addLog]);
 
-  // ── CSV export/import ──
-  const exportBlocksCsv = useCallback(() => {
-    const header = "name,address,quantity,type,area";
-    const rows = blocks.map((b) => `${b.name},${b.address},${b.quantity},${b.type},${b.area}`);
-    const csv = [header, ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "modbus-blocks.csv"; a.click();
-    URL.revokeObjectURL(url);
-    addLog("info", `Exported ${blocks.length} blocks to CSV`);
-  }, [blocks, addLog]);
-
-  const importBlocksCsv = useCallback(() => {
-    const input = document.createElement("input"); input.type = "file"; input.accept = ".csv";
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return;
-      const text = await file.text();
-      const lines = text.trim().split("\n");
-      const imported: ReadBlock[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        const parts = lines[i].split(",").map((s) => s.trim());
-        if (parts.length >= 5) {
-          const addr = Number(parts[1]); const qty = Number(parts[2]);
-          if (!isNaN(addr) && !isNaN(qty) && qty > 0) {
-            imported.push({ name: parts[0], address: addr, quantity: qty, type: parts[3], area: parts[4] });
-          }
-        }
-      }
-      if (imported.length > 0) { setBlocks(imported); addLog("info", `Imported ${imported.length} blocks from CSV`); }
-    };
-    input.click();
+  const handleSelectScanUnit = useCallback(async (unitId: number) => {
+    try {
+      await invoke("set_unit_id", { unitId });
+      useStore.getState().setRtuUnitId(unitId);
+      addLog("info", `Now polling unit ID ${unitId}`);
+    } catch (e) { addLog("error", `Could not switch to unit ID ${unitId}: ${String(e)}`); }
   }, [addLog]);
 
-  // ── Table data ──
+  // ── CSV export/import ──
+  const exportBlocksCsv = useCallback(async () => {
+    if (!requirePro("CSV export")) return;
+    try {
+      const path = await saveTextFile("modbus-blocks.csv", blocksToCsv(blocks));
+      if (path) addLog("info", `Exported ${blocks.length} blocks to ${path}`);
+    } catch (e) { addLog("error", `CSV export failed: ${String(e)}`); }
+  }, [blocks, addLog, requirePro]);
+
+  const importBlocksCsv = useCallback(async () => {
+    if (!requirePro("CSV import")) return;
+    try {
+      const file = await openTextFile();
+      if (!file) return;
+      const { blocks: imported, errors } = parseBlocksCsv(file.text);
+      errors.forEach((message) => addLog("error", `${file.path}: ${message}`));
+      if (imported.length === 0) { addLog("error", `No valid blocks in ${file.path}`); return; }
+      setBlocks(imported);
+      addLog("info", `Imported ${imported.length} blocks from ${file.path}${errors.length > 0 ? ` (${errors.length} line(s) skipped)` : ""}`);
+    } catch (e) { addLog("error", `CSV import failed: ${String(e)}`); }
+  }, [addLog, requirePro]);
+
+  // ── Table columns & trend ──
   const columns = [
     { key: "name", label: "Name", width: "140px" },
     { key: "address", label: "Addr", width: useOneBased ? "60px" : "50px", align: "right" as const },
@@ -289,41 +346,56 @@ function App() {
     { key: "trend", label: "Chart", width: "56px" },
   ];
 
-  const tableData = blocks.flatMap((b, blockIdx) => {
-    const step = typeStep(b.type);
-    if (b.type === "string") {
-      const flatStart = blocks.slice(0, blockIdx).reduce((sum, prev) => sum + prev.quantity * typeStep(prev.type), 0);
-      const chars: string[] = [];
-      for (let i = 0; i < b.quantity; i++) {
-        const raw = extractRaw(protocol.values[flatStart + i]);
-        if (!isNaN(raw)) { chars.push(String.fromCharCode((raw >> 8) & 0xFF)); chars.push(String.fromCharCode(raw & 0xFF)); }
-      }
-      const str = chars.join("").replace(/\0+$/, "");
-      const allHex: string[] = [];
-      for (let i = 0; i < b.quantity; i++) {
-        const raw = extractRaw(protocol.values[flatStart + i]);
-        allHex.push(isNaN(raw) ? "????" : ((raw | 0) & 0xFFFF).toString(16).toUpperCase().padStart(4, "0"));
-      }
-      return [{ name: b.name, address: displayAddr(b.address, b.area, useOneBased), rawAddress: b.address, hex: allHex.join(" "), type: "string", value: str || "—", _blockIdx: blockIdx }];
-    }
-    return Array.from({ length: b.quantity }, (_, i) => {
-      const flatIndex = blocks.slice(0, blockIdx).reduce((sum, prev) => sum + prev.quantity * typeStep(prev.type), 0) + i * step;
-      const raw = extractRaw(protocol.values[flatIndex]);
-      const isCoil = b.area === "coil" || b.area === "discrete";
-      return {
-        name: `${b.name}_${(b.address + i * step).toString().padStart(3, "0")}`,
-        address: displayAddr(b.address + i * step, b.area, useOneBased),
-        rawAddress: b.address + i * step,
-        hex: isNaN(raw) ? "---" : "0x" + ((raw | 0) & 0xFFFF).toString(16).toUpperCase().padStart(4, "0"),
-        type: b.type, area: b.area,
-        value: isNaN(raw) ? "—" : isCoil ? (raw !== 0 ? "ON" : "OFF") : formatValue(raw, b.type, displayFormat),
-        _blockIdx: blockIdx,
-      };
-    });
-  });
-
   const { toggleTrend } = useTrend(tableData);
+  // Adding a trend series is Pro; removing one never is.
+  const toggleTrendPro = (name: string) => {
+    if (!trendSeries.has(name) && !requirePro("Live trends")) return;
+    toggleTrend(name);
+  };
   const activeBlockData = blocks.length > 1 ? tableData.filter((r) => r._blockIdx === activeBlockTab) : tableData;
+
+  // ── Write dialog ──
+  const [writeError, setWriteError] = useState<string | null>(null);
+  const closeEditor = useCallback(() => { setWriteError(null); setEditingTag(null); }, []);
+
+  const openEditor = (row: TableRow) => {
+    if (!isWritableArea(row.area)) {
+      addLog("info", `${row.name} is in the ${row.area} area, which is read-only`);
+      return;
+    }
+    const bit = isBitArea(row.area);
+    setWriteError(null);
+    setEditingTag({
+      name: row.name,
+      address: row.rawAddress,
+      type: bit ? "bool" : row.type,
+      area: row.area,
+      // The polled number, not its display format ("ON", "0x00FF", "0000000011111111"…).
+      currentValue: bit ? (row.rawValue ? "true" : "false") : row.rawValue === null ? "" : String(row.rawValue),
+    });
+  };
+
+  const handleWrite = async (value: string, dataType: string) => {
+    if (!editingTag) return;
+    const isBool = dataType === "bool";
+    const numValue = isBool ? (value === "true" ? 1 : 0) : Number(value.trim());
+    if (!isBool && (value.trim() === "" || !Number.isFinite(numValue))) {
+      setWriteError(`"${value}" is not a number`);
+      return;
+    }
+    addLog("tx", `Write ${value} (${dataType}) to ${editingTag.name}`);
+    const result = await protocol.writeTag(
+      { name: editingTag.name, address: editingTag.address, quantity: 1, area: editingTag.area, register_area: editingTag.area, type: isBool ? "uint16" : dataType, scale: 1.0 },
+      numValue,
+    );
+    if (!result.ok) {
+      setWriteError(result.error ?? "Write failed");
+      return;
+    }
+    addLog("rx", `Wrote ${editingTag.name}`);
+    closeEditor();
+    await protocol.readTags(plan.tags);
+  };
 
   // ── Data table section ──
   const dataTable = mode === "master" ? (
@@ -338,23 +410,24 @@ function App() {
           />
         </div>
       )}
-      <DataTable columns={columns} data={activeBlockData} selectable onRowClick={(row) => {
-        const r = row as Record<string, unknown>; const area = String(r.area ?? "holding"); const isCoil = area === "coil" || area === "discrete";
-        setEditingTag({ name: String(r.name), address: Number(r.rawAddress ?? r.address), type: isCoil ? "bool" : String(r.type), area, currentValue: String(r.value) });
-      }} renderCell={(key, row) => {
+      <DataTable columns={columns} data={activeBlockData} selectable onRowClick={(row) => openEditor(row as unknown as TableRow)} renderCell={(key, row) => {
+        const r = row as unknown as TableRow;
         if (key === "trend") {
-          const name = String(row.name); const active = trendSeries.has(name);
+          const name = r.name; const active = trendSeries.has(name);
           return (
-            <IconButton size="sm" outline pressed={active} label={active ? `Remove ${name} from trend` : `Add ${name} to trend`} onClick={(e) => { e.stopPropagation(); toggleTrend(name); }}>
+            <IconButton size="sm" outline pressed={active} label={active ? `Remove ${name} from trend` : `Add ${name} to trend`} onClick={(e) => { e.stopPropagation(); toggleTrendPro(name); }}>
               <ChartLine size={13} strokeWidth={1.75} />
             </IconButton>
           );
         }
         if (key === "value") {
-          const area = String((row as Record<string, unknown>).area ?? "holding"); const isCoil = area === "coil" || area === "discrete";
-          if (isCoil) {
-            const val = String(row[key] ?? ""); const isOn = val === "ON";
-            return <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: "var(--radius-sm)", fontSize: "var(--fs-xs)", fontWeight: 600, background: isOn ? "var(--success-soft)" : "var(--sunken)", color: isOn ? "var(--success)" : "var(--text-muted)", border: `1px solid ${isOn ? "var(--success)" : "var(--border)"}` }}>{val}</span>;
+          if (r.error) {
+            const code = /\(0x([0-9A-Fa-f]{2})\)/.exec(r.error)?.[1];
+            return <span title={r.error} style={{ color: "var(--danger)", fontWeight: 600 }}>{code ? `EXC 0x${code}` : "ERR"}</span>;
+          }
+          if (isBitArea(r.area) && r.rawValue !== null) {
+            const isOn = r.value === "ON";
+            return <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: "var(--radius-sm)", fontSize: "var(--fs-xs)", fontWeight: 600, background: isOn ? "var(--success-soft)" : "var(--sunken)", color: isOn ? "var(--success)" : "var(--text-muted)", border: `1px solid ${isOn ? "var(--success)" : "var(--border)"}` }}>{r.value}</span>;
           }
         }
         return String(row[key] ?? "");
@@ -368,14 +441,22 @@ function App() {
     </div>
   );
 
+  const logPanel = (
+    <LogPanel entries={log} exportPrefix="modbus-log" onExport={(path) => addLog("info", `Log exported to ${path}`)} onClear={() => setLog([])} />
+  );
+  const trendPanel = (
+    <TrendPanel series={Array.from(trendSeries.values())} onRemove={(name) => setTrendSeries((prev) => { const next = new Map(prev); next.delete(name); return next; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme={theme} />
+  );
+
   // ── Sidebar content ──
   const sidebarContent = mode === "master" ? (
     <MasterSidebar
       protocol={protocol} masterFormRef={masterFormRef} formKey={formKey}
-      onConnect={handleConnect} onDisconnect={handleDisconnect}
-      onRtuConnect={handleRtuConnect} onScanBus={handleScanBus}
-      onAutoDetect={handleAutoDetect} disconnectDuringScanRef={disconnectDuringScanRef}
-      saveProfileAs={saveProfileAs} saveProfileChanges={saveProfileChanges}
+      onConnect={handleConnect} onCancelConnect={handleCancelConnect} onDisconnect={handleDisconnect}
+      onRtuConnect={handleRtuConnect} onScanBus={handleScanBus} onSelectScanUnit={handleSelectScanUnit}
+      onAutoDetect={handleAutoDetect} autoDetecting={autoDetecting}
+      saveProfileAs={(name) => requirePro("Saved connection profiles") && saveProfileAs(name)}
+      saveProfileChanges={() => requirePro("Saved connection profiles") && saveProfileChanges()}
       loadProfile={loadProfile} deleteProfile={deleteProfile}
     />
   ) : (
@@ -409,7 +490,9 @@ function App() {
             {mobileTab === "data" && dataTable}
             {mobileTab === "blocks" && mode === "master" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}><BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} /></div>}
             {mobileTab === "template" && mode === "slave" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}><TemplatePanel applyProfile={applyProfile} toggleSimulation={toggleSimulation} saveCustomTemplate={saveCustomTemplate} /></div>}
-            {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />}
+            {mobileTab === "log" && logPanel}
+            {mobileTab === "traffic" && <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 280 }}><TrafficPanel /></div>}
+            {mobileTab === "trend" && <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 280 }}>{trendPanel}</div>}
           </div>
           <MobileTabBar />
           <StatusBar connected={mode === "master" ? protocol.connected : slaveRunning} latency={protocol.latency} pollCount={protocol.pollCount} error={protocol.error} />
@@ -450,13 +533,7 @@ function App() {
               onChange={setBottomTab}
             />
             <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-              {bottomTab === "log" ? (
-                <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} />
-              ) : bottomTab === "traffic" ? (
-                <TrafficPanel />
-              ) : (
-                <TrendPanel series={Array.from(trendSeries.values())} onRemove={(name) => setTrendSeries((prev) => { const next = new Map(prev); next.delete(name); return next; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme={theme} />
-              )}
+              {bottomTab === "log" ? logPanel : bottomTab === "traffic" ? <TrafficPanel /> : trendPanel}
             </div>
           </main>
 
@@ -486,17 +563,10 @@ function App() {
           address={editingTag.name}
           currentValue={editingTag.currentValue}
           currentDataType={editingTag.type}
-          onSubmit={async (value, dataType) => {
-            addLog("tx", `Write ${value} (${dataType}) to ${editingTag.name}`);
-            const numValue = dataType === "bool" ? (value === "true" ? 1 : 0) : Number(value);
-            await protocol.writeTag(
-              { name: editingTag.name, address: editingTag.address, quantity: 1, area: editingTag.area, register_area: editingTag.area, type: dataType === "bool" ? "uint16" : editingTag.type, scale: 1.0 },
-              numValue,
-            );
-            await protocol.readTags(buildReadTags());
-            setEditingTag(null);
-          }}
-          onCancel={() => setEditingTag(null)}
+          types={editingTag.type === "bool" ? COIL_WRITE_TYPES : NUMERIC_WRITE_TYPES}
+          error={writeError}
+          onSubmit={handleWrite}
+          onCancel={closeEditor}
         />
       )}
 

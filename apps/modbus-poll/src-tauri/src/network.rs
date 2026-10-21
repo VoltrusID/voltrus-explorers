@@ -14,12 +14,16 @@ pub async fn scan_network(subnet: String, port: u16) -> Result<Vec<ScanResult>, 
         let p = port;
         handles.push(tokio::spawn(async move {
             let target = format!("{}:{}", addr, p);
-            let open = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                tokio::net::TcpStream::connect(&target),
-            )
-            .await
-            .is_ok();
+            // Only a completed TCP handshake means the port is open; a refusal or
+            // an unreachable error also finishes quickly but is not a device.
+            let open = matches!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    tokio::net::TcpStream::connect(&target),
+                )
+                .await,
+                Ok(Ok(_))
+            );
             ScanResult {
                 ip: addr,
                 port_open: open,
@@ -82,6 +86,8 @@ pub async fn auto_detect_rtu(
     ];
     let stop_bits_opts = [(1u8, serialport::StopBits::One), (2u8, serialport::StopBits::Two)];
 
+    let mut opened_any = false;
+    let mut open_error: Option<String> = None;
     for &baud in &baud_rates {
         for &(parity, parity_name) in &parities {
             for &(stop, stop_bits) in &stop_bits_opts {
@@ -93,8 +99,12 @@ pub async fn auto_detect_rtu(
 
                 let stream = match tokio_serial::SerialStream::open(&builder) {
                     Ok(s) => s,
-                    Err(_) => continue,
+                    Err(e) => {
+                        open_error.get_or_insert(e.to_string());
+                        continue;
+                    }
                 };
+                opened_any = true;
 
                 let ctx = tokio_modbus::client::rtu::attach_slave(stream, Slave(unit_id));
 
@@ -107,7 +117,9 @@ pub async fn auto_detect_rtu(
                 ).await;
 
                 match result {
-                    Ok(Ok(Ok(_))) => {
+                    // Any well-formed, CRC-valid reply proves the serial settings are right,
+                    // including a Modbus exception (e.g. Illegal Data Address for register 0).
+                    Ok(Ok(_)) => {
                         return Ok(Some(serde_json::json!({
                             "baud_rate": baud,
                             "parity": parity_name,
@@ -124,5 +136,11 @@ pub async fn auto_detect_rtu(
         }
     }
 
+    if !opened_any {
+        return Err(format!(
+            "Could not open {port_name}: {}",
+            open_error.unwrap_or_else(|| "unknown error".into())
+        ));
+    }
     Ok(None)
 }

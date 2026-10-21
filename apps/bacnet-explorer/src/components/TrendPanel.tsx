@@ -31,6 +31,8 @@ interface Props {
   pollMs?: number;
   onPollMsChange?: (ms: number) => void;
   onSourceChange?: (name: string, source: "poll" | "cov") => void;
+  /** Per-series warning keyed by series id (e.g. COV subscription failed, fell back to Poll). */
+  notices?: Record<string, string>;
 }
 
 function getChartColors() {
@@ -42,12 +44,11 @@ function getChartColors() {
   };
 }
 
-export default function TrendPanel({ series, onRemove, windowSec, onWindowChange, theme, pollMs, onPollMsChange, onSourceChange }: Props) {
+export default function TrendPanel({ series, onRemove, windowSec, onWindowChange, theme, pollMs, onPollMsChange, onSourceChange, notices }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<ISeriesApi<"Line">[]>([]);
   const [userScrolled, setUserScrolled] = useState(false);
-  const [covNotice, setCovNotice] = useState(false);
   const suppressNextRef = useRef(false);
 
   useEffect(() => {
@@ -167,12 +168,14 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-      {covNotice && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", fontSize: "var(--fs-xs)", color: "var(--text-muted)", background: "var(--accent-soft)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          <span>COV subscriptions are under development, using Poll for now.</span>
-          <button className="vt-btn vt-btn--sm" style={{ marginLeft: "auto" }} onClick={() => setCovNotice(false)}>Dismiss</button>
-        </div>
-      )}
+      {series.map((s) => {
+        const notice = notices?.[s.id ?? s.name];
+        return notice ? (
+          <div key={`notice-${s.id ?? s.name}`} role="alert" style={{ padding: "4px 8px", fontSize: "var(--fs-xs)", color: "var(--danger)", background: "var(--danger-soft)", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            {notice}
+          </div>
+        ) : null;
+      })}
       {series.length > 0 && (
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, flexWrap: "wrap", gap: 4 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -183,22 +186,25 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
               <span style={{ width: 8, height: 8, borderRadius: 2, background: s.color || COLORS[i % COLORS.length], display: "inline-block" }} aria-hidden="true" />
               {s.name}
               {onSourceChange && (
-                <button
-                  className="vt-btn vt-btn--sm"
-                  aria-pressed={s.source === "poll"}
-                  onClick={() => onSourceChange(sid, "poll")}
-                  title="Data source: Poll"
-                >
-                  Poll
-                </button>
+                <>
+                  <button
+                    className="vt-btn vt-btn--sm"
+                    aria-pressed={s.source === "poll"}
+                    onClick={() => onSourceChange(sid, "poll")}
+                    title="Data source: Poll"
+                  >
+                    Poll
+                  </button>
+                  <button
+                    className="vt-btn vt-btn--sm"
+                    aria-pressed={s.source === "cov"}
+                    onClick={() => onSourceChange(sid, "cov")}
+                    title="Data source: COV (change-of-value notifications)"
+                  >
+                    COV
+                  </button>
+                </>
               )}
-              <button
-                className="vt-btn vt-btn--sm"
-                onClick={() => setCovNotice(true)}
-                title="COV, under development"
-              >
-                COV
-              </button>
               <IconButton size="sm" label={`Remove ${s.name} from trend`} onClick={() => onRemove(sid)}>
                 <X size={12} strokeWidth={1.75} />
               </IconButton>

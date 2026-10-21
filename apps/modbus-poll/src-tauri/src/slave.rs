@@ -1,42 +1,51 @@
 use tauri::Emitter;
 use crate::state::*;
 
-#[tauri::command]
-pub async fn slave_start(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    config: mt_modbus::SlaveConfig,
-) -> Result<(), String> {
-    let (slave_state, log_rx, shutdown_tx) = mt_modbus::start_slave_server(
-        config.port,
-        &config.bind_addr,
-        config.register_count,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
+/// Record a freshly started server in the app state and forward its log as `slave-log` events.
+async fn install_server(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    handles: mt_modbus::SlaveHandles,
+) {
+    let (slave_state, log_rx, shutdown_tx) = handles;
     {
         let mut slave = state.slave.lock().await;
         slave.state = Some(slave_state);
         slave.shutdown_tx = Some(shutdown_tx);
         slave.log_rx = Some(log_rx);
+        slave.sim_locks = Default::default();
     }
 
-    // Forward slave logs to Tauri events
-    let app_clone = app.clone();
+    let app = app.clone();
     let slave_arc = state.slave.clone();
     tokio::spawn(async move {
         let mut rx = {
             let mut slave = slave_arc.lock().await;
             slave.log_rx.take()
         };
-        if let Some(ref mut rx) = rx {
+        if let Some(rx) = &mut rx {
             while let Some(entry) = rx.recv().await {
-                app_clone.emit("slave-log", &entry).ok();
+                app.emit("slave-log", &entry).ok();
             }
         }
     });
+}
 
+#[tauri::command]
+pub async fn slave_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    config: mt_modbus::SlaveConfig,
+) -> Result<(), String> {
+    let handles = mt_modbus::start_slave_server(
+        config.port,
+        &config.bind_addr,
+        config.register_count,
+        config.unit_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    install_server(&app, &state, handles).await;
     Ok(())
 }
 
@@ -47,39 +56,20 @@ pub async fn slave_start_rtu(
     state: tauri::State<'_, AppState>,
     serial_config: mt_modbus::RtuSerialConfig,
     register_count: u16,
+    unit_id: u8,
 ) -> Result<(), String> {
-    let (slave_state, log_rx, shutdown_tx) = mt_modbus::start_slave_server_rtu(
+    let handles = mt_modbus::start_slave_server_rtu(
         &serial_config.port_name,
         serial_config.baud_rate,
         serial_config.data_bits,
         serial_config.stop_bits,
         serial_config.parity,
         register_count,
+        unit_id,
     )
     .await
     .map_err(|e| e.to_string())?;
-
-    {
-        let mut slave = state.slave.lock().await;
-        slave.state = Some(slave_state);
-        slave.shutdown_tx = Some(shutdown_tx);
-        slave.log_rx = Some(log_rx);
-    }
-
-    let app_clone = app.clone();
-    let slave_arc = state.slave.clone();
-    tokio::spawn(async move {
-        let mut rx = {
-            let mut slave = slave_arc.lock().await;
-            slave.log_rx.take()
-        };
-        if let Some(ref mut rx) = rx {
-            while let Some(entry) = rx.recv().await {
-                app_clone.emit("slave-log", &entry).ok();
-            }
-        }
-    });
-
+    install_server(&app, &state, handles).await;
     Ok(())
 }
 
@@ -89,34 +79,19 @@ pub async fn slave_start_rtu_virtual(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     register_count: u16,
+    unit_id: u8,
 ) -> Result<String, String> {
     let (slave_state, log_rx, shutdown_tx, slave_path, slave_fd) =
-        mt_modbus::start_slave_server_rtu_virtual(register_count)
+        mt_modbus::start_slave_server_rtu_virtual(register_count, unit_id)
             .await
             .map_err(|e| e.to_string())?;
 
     {
         let mut slave = state.slave.lock().await;
-        slave.state = Some(slave_state);
-        slave.shutdown_tx = Some(shutdown_tx);
-        slave.log_rx = Some(log_rx);
         slave.virtual_slave_fd = Some(slave_fd);
         slave.virtual_slave_path = Some(slave_path.clone());
     }
-
-    let app_clone = app.clone();
-    let slave_arc = state.slave.clone();
-    tokio::spawn(async move {
-        let mut rx = {
-            let mut slave = slave_arc.lock().await;
-            slave.log_rx.take()
-        };
-        if let Some(ref mut rx) = rx {
-            while let Some(entry) = rx.recv().await {
-                app_clone.emit("slave-log", &entry).ok();
-            }
-        }
-    });
+    install_server(&app, &state, (slave_state, log_rx, shutdown_tx)).await;
 
     Ok(slave_path)
 }
@@ -124,6 +99,10 @@ pub async fn slave_start_rtu_virtual(
 #[tauri::command]
 pub async fn slave_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut slave = state.slave.lock().await;
+    // The simulation task writes into this server's registers; it must not outlive it.
+    if let Some(running) = slave.sim_running.take() {
+        mt_modbus::stop_simulation(&running);
+    }
     if let Some(tx) = slave.shutdown_tx.take() {
         let _ = tx.send(true);
     }
@@ -136,6 +115,8 @@ pub async fn slave_stop(state: tauri::State<'_, AppState>) -> Result<(), String>
     }
     slave.state = None;
     slave.log_rx = None;
+    slave.sim_values = None;
+    slave.sim_locks = Default::default();
     Ok(())
 }
 

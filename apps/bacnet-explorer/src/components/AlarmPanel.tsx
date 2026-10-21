@@ -1,9 +1,46 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ClipboardList, RefreshCw, X } from "lucide-react";
 import { Badge, Button, EmptyState, IconButton } from "@mactools/ui";
-import type { AlarmSummaryEntry, EventInfoEntry } from "../types";
+import type { AlarmSummaryEntry, EventInfoEntry, EventInformationResponse } from "../types";
 import { formatObjectType } from "../types";
+
+/** BACnetEventState numbers (ASHRAE 135 clause 21), keyed by the names alarm.rs emits. */
+const EVENT_STATE_NUMBERS: Record<string, number> = {
+  normal: 0,
+  fault: 1,
+  offnormal: 2,
+  highLimit: 3,
+  lowLimit: 4,
+  lifeSafetyAlarm: 5,
+};
+
+function eventStateNumber(name: string): number | null {
+  if (name in EVENT_STATE_NUMBERS) return EVENT_STATE_NUMBERS[name];
+  const unknown = /^unknown\((\d+)\)$/.exec(name);
+  return unknown ? Number(unknown[1]) : null;
+}
+
+/**
+ * Index into an event summary's timestamps ([to-offnormal, to-fault, to-normal])
+ * for the transition that put the object into `state`.
+ */
+function transitionIndex(state: number): number {
+  if (state === 0) return 2; // to-normal
+  if (state === 1) return 1; // to-fault
+  return 0; // offnormal, high-limit, low-limit, life-safety-alarm, ... -> to-offnormal
+}
+
+/** Event summaries for one object. The device returns its whole event list. */
+async function fetchObjectEvents(objectType: string, objectInstance: number): Promise<EventInfoEntry[]> {
+  const response = await invoke<EventInformationResponse>("get_event_information");
+  if (response.more_events) {
+    throw new Error("The device reported more event summaries than it returned");
+  }
+  return response.entries.filter(
+    (e) => e.object_type === objectType && e.object_instance === objectInstance,
+  );
+}
 
 interface AlarmPanelProps {
   connected: boolean;
@@ -18,10 +55,12 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
   const [ackRow, setAckRow] = useState<string | null>(null);
   const [ackText, setAckText] = useState<string>("");
 
-  // Event info panel
+  // Event info panel. The ref holds the key of the request whose result may still be shown.
   const [eventInfo, setEventInfo] = useState<EventInfoEntry[] | null>(null);
   const [eventInfoKey, setEventInfoKey] = useState<string | null>(null);
   const [eventInfoLoading, setEventInfoLoading] = useState(false);
+  const eventInfoKeyRef = useRef<string | null>(null);
+  const [ackBusy, setAckBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -36,46 +75,72 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
     }
   }, []);
 
-  const handleAck = async (objType: string, objInstance: number) => {
-    if (!ackText.trim()) return;
+  const handleAck = async (alarm: AlarmSummaryEntry) => {
+    const source = ackText.trim();
+    if (!source) return;
 
     setError(null);
+    setAckBusy(true);
     try {
+      const state = eventStateNumber(alarm.alarm_state);
+      if (state === null) {
+        throw new Error(`Cannot acknowledge: unrecognised alarm state "${alarm.alarm_state}"`);
+      }
+      // AcknowledgeAlarm must quote the time stamp of the transition being acknowledged.
+      const entries = await fetchObjectEvents(alarm.object_type, alarm.object_instance);
+      const entry = entries[0];
+      if (!entry) {
+        throw new Error(`The device returned no event information for ${alarm.object_identifier}`);
+      }
+      const timeStamp = entry.transition_time_stamps[transitionIndex(state)];
+      if (!timeStamp) {
+        throw new Error(`The device returned no time stamp for the ${alarm.alarm_state} transition of ${alarm.object_identifier}`);
+      }
       await invoke("acknowledge_alarm_cmd", {
-        objectType: objType,
-        objectInstance: objInstance,
-        eventState: 0,
-        ackText: ackText.trim(),
+        objectType: alarm.object_type,
+        objectInstance: alarm.object_instance,
+        eventState: state,
+        timeStamp,
+        ackSource: source,
       });
       setAckRow(null);
       setAckText("");
       refresh();
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAckBusy(false);
     }
+  };
+
+  const closeEventInfo = () => {
+    eventInfoKeyRef.current = null;
+    setEventInfo(null);
+    setEventInfoKey(null);
+    setEventInfoLoading(false);
   };
 
   const handleGetEventInfo = async (objType: string, objInstance: number) => {
     const key = `${objType}-${objInstance}`;
-    if (eventInfoKey === key) {
-      setEventInfo(null);
-      setEventInfoKey(null);
+    if (eventInfoKeyRef.current === key) {
+      closeEventInfo();
       return;
     }
 
-    setEventInfoLoading(true);
+    eventInfoKeyRef.current = key;
     setEventInfoKey(key);
+    setEventInfo(null);
+    setEventInfoLoading(true);
     try {
-      const result = await invoke<EventInfoEntry[]>("get_event_information", {
-        objectType: objType,
-        objectInstance: objInstance,
-      });
-      setEventInfo(result);
+      const entries = await fetchObjectEvents(objType, objInstance);
+      if (eventInfoKeyRef.current !== key) return; // superseded or closed meanwhile
+      setEventInfo(entries);
     } catch (e) {
-      setError(String(e));
+      if (eventInfoKeyRef.current !== key) return;
+      setError(e instanceof Error ? e.message : String(e));
       setEventInfo(null);
     } finally {
-      setEventInfoLoading(false);
+      if (eventInfoKeyRef.current === key) setEventInfoLoading(false);
     }
   };
 
@@ -177,12 +242,12 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
                           <input
                             className="vt-input vt-input--sm"
                             type="text"
-                            placeholder="Ack text…"
+                            placeholder="Acknowledged by…"
                             value={ackText}
                             onChange={(e) => setAckText(e.target.value)}
                             autoFocus
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") handleAck(alarm.object_type, alarm.object_instance);
+                              if (e.key === "Enter") handleAck(alarm);
                               if (e.key === "Escape") setAckRow(null);
                             }}
                           />
@@ -190,7 +255,8 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
                             size="sm"
                             variant="primary"
                             disabled={!ackText.trim()}
-                            onClick={() => handleAck(alarm.object_type, alarm.object_instance)}
+                            loading={ackBusy}
+                            onClick={() => handleAck(alarm)}
                           >
                             Send
                           </Button>
@@ -218,10 +284,7 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
             <IconButton
               size="sm"
               label="Close event information"
-              onClick={() => {
-                setEventInfo(null);
-                setEventInfoKey(null);
-              }}
+              onClick={closeEventInfo}
             >
               <X size={14} strokeWidth={1.75} />
             </IconButton>
@@ -236,7 +299,7 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
             <EmptyState
               compact
               title="No events"
-              description="This object has no event information."
+              description="The device reports no event information for this object."
             />
           )}
           {!eventInfoLoading && eventInfo && eventInfo.length > 0 && (
@@ -244,28 +307,34 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
               <thead>
                 <tr>
                   <th style={{ textAlign: "left" }}>Event state</th>
-                  <th style={{ textAlign: "left" }}>Type</th>
                   <th style={{ textAlign: "left" }}>Notify type</th>
-                  <th style={{ textAlign: "left" }}>Message</th>
-                  <th style={{ textAlign: "left" }}>Timestamp</th>
+                  <th style={{ textAlign: "left" }}>Acked</th>
+                  <th style={{ textAlign: "left" }}>Enabled</th>
+                  <th style={{ textAlign: "left" }}>To offnormal</th>
+                  <th style={{ textAlign: "left" }}>To fault</th>
+                  <th style={{ textAlign: "left" }}>To normal</th>
                 </tr>
               </thead>
               <tbody>
-                {eventInfo.map((ev, i) => (
-                  <tr key={i}>
+                {eventInfo.map((ev) => (
+                  <tr key={ev.object_identifier}>
                     <td>
-                      <Badge tone={ev.event_state.toLowerCase() === "normal" ? "success" : "danger"}>
+                      <Badge tone={ev.event_state === "normal" ? "success" : "danger"}>
                         {ev.event_state}
                       </Badge>
                     </td>
-                    <td className="is-mono">{ev.event_type}</td>
                     <td className="is-mono">{ev.notify_type}</td>
-                    <td style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>
-                      {ev.message_text || "—"}
+                    <td className="is-mono" style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
+                      {ev.acknowledged_transitions || "—"}
                     </td>
-                    <td className="is-mono" style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                      {ev.time_stamp || "—"}
+                    <td className="is-mono" style={{ color: "var(--text-muted)", fontSize: "var(--fs-xs)" }}>
+                      {ev.event_enable || "—"}
                     </td>
+                    {[0, 1, 2].map((i) => (
+                      <td key={i} className="is-mono" style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                        {ev.event_time_stamps[i] ?? "—"}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>

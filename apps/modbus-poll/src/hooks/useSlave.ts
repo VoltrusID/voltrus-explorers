@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
-  BUILTIN_PROFILES,
-  loadCustomTemplates,
   saveCustomTemplates,
   initialValues,
   numRegisters,
@@ -15,13 +13,13 @@ import { useStore } from "../store";
 export function useSlave() {
   const {
     slaveRunning, setSlaveRunning, slavePort, slaveRegCount, setSlaveRegCount,
-    slaveUnitId, slavePollMs, slaveRegs, setSlaveRegs,
+    slaveUnitId, slavePollMs, setSlaveRegs,
     slaveTransport, slaveRtuPort, slaveRtuBaud, slaveRtuDataBits,
     slaveRtuStopBits, slaveRtuParity, slaveRtuVirtualPort, setSlaveVirtualPortPath,
-    activeProfile, setActiveProfile, simValues, setSimValues, simRunning, setSimRunning,
-    simSpeed, setSimSpeed, customTemplates, setCustomTemplates,
-    showCustomDialog, setShowCustomDialog, customName, setCustomName, customRegs, setCustomRegs,
-    lockedRegs, setLockedRegs, addLog,
+    activeProfile, setActiveProfile, setSimValues, simRunning, setSimRunning,
+    simSpeed, customTemplates, setCustomTemplates,
+    setShowCustomDialog, customName, setCustomName, customRegs,
+    setLockedRegs, addLog,
   } = useStore();
 
   const prevRegsRef = useRef<number[]>([]);
@@ -75,9 +73,30 @@ export function useSlave() {
     return () => clearInterval(poll);
   }, [activeProfile, slaveRunning]);
 
+  /** Start the server for the configured transport; resolves with a description for the log. */
+  const startServer = useCallback(async (registerCount: number): Promise<string> => {
+    if (slaveTransport === "tcp") {
+      await invoke("slave_start", { config: { port: slavePort, unit_id: slaveUnitId, register_count: registerCount, bind_addr: "0.0.0.0" } });
+      return `Slave TCP server (unit ${slaveUnitId}) started on port ${slavePort} (${registerCount} registers)`;
+    }
+    if (slaveRtuVirtualPort) {
+      const path = await invoke<string>("slave_start_rtu_virtual", { registerCount, unitId: slaveUnitId });
+      setSlaveVirtualPortPath(path);
+      return `Virtual RTU slave (unit ${slaveUnitId}) started at ${path} (${registerCount} registers)`;
+    }
+    if (!slaveRtuPort) throw new Error("No serial port selected");
+    await invoke("slave_start_rtu", {
+      serialConfig: { port_name: slaveRtuPort, baud_rate: slaveRtuBaud, data_bits: slaveRtuDataBits, stop_bits: slaveRtuStopBits, parity: slaveRtuParity },
+      registerCount, unitId: slaveUnitId,
+    });
+    return `Slave RTU server (unit ${slaveUnitId}) started on ${slaveRtuPort} @ ${slaveRtuBaud} baud (${registerCount} registers)`;
+  }, [slaveTransport, slavePort, slaveUnitId, slaveRtuVirtualPort, slaveRtuPort, slaveRtuBaud, slaveRtuDataBits, slaveRtuStopBits, slaveRtuParity]);
+
   const applyProfile = useCallback(async (profile: DeviceProfile) => {
     setActiveProfile(profile);
     setSimRunning(false);
+    // A different profile has different registers; locks of the previous one must not carry over.
+    setLockedRegs(new Set());
     const needed = profile.baseAddress + numRegisters(profile);
     setSlaveRegCount(needed);
     const vals = initialValues(profile);
@@ -86,18 +105,7 @@ export function useSlave() {
       if (needed !== slaveRegCount) {
         try {
           await invoke("slave_stop");
-          if (slaveTransport === "tcp") {
-            await invoke("slave_start", { config: { port: slavePort, unit_id: slaveUnitId, register_count: needed, bind_addr: "0.0.0.0" } });
-          } else if (slaveRtuVirtualPort) {
-            const path = await invoke<string>("slave_start_rtu_virtual", { registerCount: needed });
-            setSlaveVirtualPortPath(path);
-          } else {
-            if (!slaveRtuPort) { addLog("error", "No serial port selected"); return; }
-            await invoke("slave_start_rtu", {
-              serialConfig: { port_name: slaveRtuPort, baud_rate: slaveRtuBaud, data_bits: slaveRtuDataBits, stop_bits: slaveRtuStopBits, parity: slaveRtuParity },
-              registerCount: needed,
-            });
-          }
+          await startServer(needed);
           addLog("info", `Slave restarted with ${needed} registers for profile`);
         } catch (e) {
           addLog("error", `Slave restart failed: ${String(e)}`);
@@ -111,7 +119,7 @@ export function useSlave() {
         addLog("error", `Load profile failed: ${String(e)}`);
       }
     }
-  }, [slaveRunning, slaveRegCount, slaveTransport, slavePort, slaveUnitId, slaveRtuPort, slaveRtuBaud, slaveRtuDataBits, slaveRtuStopBits, slaveRtuParity, slaveRtuVirtualPort, addLog]);
+  }, [slaveRunning, slaveRegCount, startServer, addLog]);
 
   const toggleSimulation = useCallback(async () => {
     if (!activeProfile || !slaveRunning) return;
@@ -154,36 +162,21 @@ export function useSlave() {
 
   const handleSlaveStart = useCallback(async () => {
     try {
-      if (slaveTransport === "tcp") {
-        await invoke("slave_start", { config: { port: slavePort, unit_id: slaveUnitId, register_count: slaveRegCount, bind_addr: "0.0.0.0" } });
-        addLog("info", `Slave TCP server started on port ${slavePort} (${slaveRegCount} registers)`);
-      } else if (slaveRtuVirtualPort) {
-        const path = await invoke<string>("slave_start_rtu_virtual", { registerCount: slaveRegCount });
-        setSlaveVirtualPortPath(path);
-        addLog("info", `Virtual RTU slave started at ${path} (${slaveRegCount} registers)`);
-      } else {
-        if (!slaveRtuPort) { addLog("error", "No serial port selected"); return; }
-        await invoke("slave_start_rtu", {
-          serialConfig: { port_name: slaveRtuPort, baud_rate: slaveRtuBaud, data_bits: slaveRtuDataBits, stop_bits: slaveRtuStopBits, parity: slaveRtuParity },
-          registerCount: slaveRegCount,
-        });
-        addLog("info", `Slave RTU server started on ${slaveRtuPort} @ ${slaveRtuBaud} baud (${slaveRegCount} registers)`);
-      }
+      addLog("info", await startServer(slaveRegCount));
       setSlaveRunning(true);
       const regs = await invoke<number[]>("slave_read_registers", { start: 0, count: slaveRegCount });
       setSlaveRegs(regs);
     } catch (e) {
       addLog("error", `Slave start failed: ${String(e)}`);
     }
-  }, [slaveTransport, slavePort, slaveUnitId, slaveRegCount, slaveRtuVirtualPort, slaveRtuPort, slaveRtuBaud, slaveRtuDataBits, slaveRtuStopBits, slaveRtuParity, addLog]);
+  }, [startServer, slaveRegCount, addLog]);
 
   const handleSlaveStop = useCallback(async () => {
     try {
-      if (simRunning) {
-        try { await invoke("sim_stop"); } catch { /* */ }
-        setSimRunning(false);
-      }
+      // The backend stops the simulation together with the server.
       await invoke("slave_stop");
+      setSimRunning(false);
+      setLockedRegs(new Set());
       setSlaveRunning(false);
       setSlaveRegs([]);
       setSlaveVirtualPortPath("");
@@ -191,7 +184,7 @@ export function useSlave() {
     } catch (e) {
       addLog("error", `Slave stop failed: ${String(e)}`);
     }
-  }, [simRunning, addLog]);
+  }, [addLog]);
 
   const handleSlaveRegWrite = useCallback(async (address: number, value: number) => {
     try {

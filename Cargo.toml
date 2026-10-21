@@ -4,6 +4,7 @@ members = [
     "crates/mt-protocol",
     "crates/mt-modbus",
     "crates/mt-bacnet",
+    "crates/mt-store",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
 ]
@@ -22,3 +23,5 @@ anyhow = "1"
 thiserror = "2"
 tauri = { version = "2", features = [] }
 tauri-build = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"

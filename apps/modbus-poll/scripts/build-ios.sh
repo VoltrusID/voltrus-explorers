@@ -148,7 +148,8 @@ fi
 # ============================================================
 step "Step 3/3: Building iOS app (aarch64, App Store export)"
 
-BUILD_ARGS=(--target aarch64 --export-method app-store-connect --ci)
+# iOS ships only through the App Store, so it always sells Pro (StoreKit).
+BUILD_ARGS=(--target aarch64 --export-method app-store-connect --ci --features store)
 if [[ -n "$OPEN_XCODE" ]]; then BUILD_ARGS+=(--open); fi
 if [[ -n "$NO_SIGN" ]]; then BUILD_ARGS+=(--no-sign); fi
 if [[ -n "$BUILD_NUMBER" ]]; then BUILD_ARGS+=(--build-number "$BUILD_NUMBER"); fi

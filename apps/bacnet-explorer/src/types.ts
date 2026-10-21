@@ -143,7 +143,8 @@ export interface CovSubscription {
 
 export interface CovNotificationValue {
   property_name: string;
-  value: string;
+  /** Serialized `BacnetValue`; the unit variant `Null` arrives as the bare string "Null". */
+  value: BacnetValue | "Null";
   raw_value: string;
 }
 
@@ -157,6 +158,18 @@ export interface CovNotificationEvent {
   timestamp: number;
 }
 
+/** `cov-subscribe-failed`: SubscribeCOV was refused, timed out or could not be sent. */
+export interface CovSubscribeFailedEvent {
+  object_type: string;
+  object_instance: number;
+  message: string;
+}
+
+/** `cov-listener-error`: the COV listener thread stopped on a socket error. */
+export interface CovListenerErrorEvent {
+  message: string;
+}
+
 export interface AlarmSummaryEntry {
   object_identifier: string;
   object_type: string;
@@ -165,15 +178,48 @@ export interface AlarmSummaryEntry {
   acked_transitions: string;
 }
 
+/** BACnetTime; null = unspecified (0xFF). */
+export interface BacnetTime {
+  hour: number | null;
+  minute: number | null;
+  second: number | null;
+  hundredths: number | null;
+}
+
+/** BACnetDate; year is the full year, weekday 1 = Monday ... 7 = Sunday, null = unspecified. */
+export interface BacnetDate {
+  year: number | null;
+  month: number | null;
+  day: number | null;
+  weekday: number | null;
+}
+
+/** BACnetTimeStamp CHOICE. */
+export type EventTimeStamp =
+  | { kind: "time"; time: BacnetTime }
+  | { kind: "sequenceNumber"; sequence_number: number }
+  | { kind: "dateTime"; date: BacnetDate; time: BacnetTime };
+
 export interface EventInfoEntry {
   object_identifier: string;
   object_type: string;
+  object_type_id: number;
   object_instance: number;
   event_state: string;
-  event_type: string;
-  message_text: string;
+  acknowledged_transitions: string;
+  event_enable: string;
+  /** Display strings: [to-offnormal, to-fault, to-normal]. */
+  event_time_stamps: string[];
+  /** As received: [to-offnormal, to-fault, to-normal]. */
+  transition_time_stamps: EventTimeStamp[];
   notify_type: string;
-  time_stamp: string;
+  /** [to-offnormal, to-fault, to-normal]. */
+  event_priorities: number[];
+}
+
+export interface EventInformationResponse {
+  entries: EventInfoEntry[];
+  more_events: boolean;
 }
 
 export function bacnetValueToNumber(v: BacnetValue): number {

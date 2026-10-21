@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Copy, FileDown, Download, Trash2 } from "lucide-react";
 import { Badge, EmptyState, IconButton, Segmented, type Tone } from "../primitives";
+import { saveTextFile } from "../files";
 
 export interface LogEntry {
   timestamp: number;
@@ -47,18 +48,21 @@ function fmtTsFull(ts: number) {
 interface LogPanelProps {
   entries: LogEntry[];
   maxHeight?: string;
-  onExport?: (filename: string) => void;
+  /** Called with the saved path after a successful CSV export. */
+  onExport?: (path: string) => void;
   onClear?: () => void;
   filterDirection?: string | null;
+  /** Default file name prefix of exported CSVs. */
+  exportPrefix?: string;
 }
 
 const VISIBLE_LIMIT = 500;
 
-export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirection }: LogPanelProps) {
+export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showExport, setShowExport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportMsg, setExportMsg] = useState<{ text: string; failed?: boolean } | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter | null>(() =>
     filterDirection === "tx" || filterDirection === "rx" || filterDirection === "info" ? filterDirection : null,
@@ -103,31 +107,31 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirectio
       return `${fmtTs(e.timestamp)} ${d.label} ${e.message}`;
     }).join("\n");
     navigator.clipboard.writeText(text);
-    setExportMsg("Copied to clipboard");
+    setExportMsg({ text: "Copied to clipboard" });
     setTimeout(() => setExportMsg(null), 1500);
     setShowExport(false);
   }, [filtered]);
 
-  const exportCsv = useCallback(() => {
+  const exportCsv = useCallback(async () => {
+    setShowExport(false);
     const header = "Timestamp,Direction,Message";
     const rows = filtered.map((e) => {
       const d = dirConfig[e.direction];
       return `${fmtTsFull(e.timestamp)},${d.label},"${e.message.replace(/"/g, '""')}"`;
     });
     const csv = [header, ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const filename = `modbus-log-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    setExportMsg(`Saved: ~/Downloads/${filename}`);
-    setTimeout(() => setExportMsg(null), 3000);
-    onExport?.(filename);
-    setShowExport(false);
-  }, [filtered, onExport]);
+    const filename = `${exportPrefix}-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`;
+    try {
+      const path = await saveTextFile(filename, csv);
+      if (!path) return; // panel cancelled
+      setExportMsg({ text: `Saved: ${path}` });
+      setTimeout(() => setExportMsg(null), 3000);
+      onExport?.(path);
+    } catch (e) {
+      setExportMsg({ text: `Export failed: ${String(e)}`, failed: true });
+      setTimeout(() => setExportMsg(null), 8000);
+    }
+  }, [filtered, onExport, exportPrefix]);
 
   return (
     <div style={{
@@ -150,7 +154,12 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, filterDirectio
           onChange={(v) => setDirectionFilter(v === "all" ? null : v)}
         />
         {exportMsg && (
-          <span style={{ fontSize: "var(--fs-xs)", color: "var(--accent-text)" }}>{exportMsg}</span>
+          <span
+            role={exportMsg.failed ? "alert" : undefined}
+            style={{ fontSize: "var(--fs-xs)", color: exportMsg.failed ? "var(--danger)" : "var(--accent-text)" }}
+          >
+            {exportMsg.text}
+          </span>
         )}
         {entries.length > 0 && onClear && (
           <IconButton size="sm" label="Clear log" onClick={onClear}>

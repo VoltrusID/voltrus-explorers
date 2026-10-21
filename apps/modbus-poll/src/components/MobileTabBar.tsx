@@ -1,13 +1,15 @@
 import { useStore } from "../store";
 
 export function MobileTabBar() {
-  const { mobileTab, setMobileTab, mode, slaveRunning } = useStore();
+  const { mobileTab, setMobileTab, mode, slaveRunning, trendSeries } = useStore();
 
   const tabs = ([
     { id: "connect" as const, label: "Connect" },
     { id: "data" as const, label: "Data" },
     ...(mode === "master" ? [{ id: "blocks" as const, label: "Blocks" }] : [{ id: "template" as const, label: "Template" }]),
     { id: "log" as const, label: "Log" },
+    { id: "traffic" as const, label: "Traffic" },
+    { id: "trend" as const, label: trendSeries.size > 0 ? `Trend ${trendSeries.size}` : "Trend" },
   ] as const);
 
   return (

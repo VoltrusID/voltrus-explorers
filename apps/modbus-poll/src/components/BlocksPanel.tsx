@@ -1,6 +1,8 @@
 import { Button, EmptyState, Field, IconButton, Section } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { AREAS, TYPES } from "../constants";
+import { blockStep, isBitArea, validateBlock } from "../helpers";
+import type { ReadBlock } from "../types";
 import { displayAddr } from "../utils/format";
 import { useStore } from "../store";
 
@@ -15,14 +17,31 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     editingBlock, setEditingBlock,
     newName, setNewName, newAddr, setNewAddr, newQty, setNewQty,
     newType, setNewType, newArea, setNewArea,
-    useOneBased,
+    useOneBased, addLog,
   } = useStore();
 
+  /** The block described by the form, or null (with the reason logged) if it can not be polled. */
+  const blockFromForm = (): ReadBlock | null => {
+    const block: ReadBlock = {
+      name: newName.trim(),
+      address: newAddr.trim() === "" ? NaN : Number(newAddr),
+      quantity: newQty.trim() === "" ? NaN : Number(newQty),
+      // Coils and discrete inputs are single bits; they have no register type.
+      type: isBitArea(newArea) ? "uint16" : newType,
+      area: newArea,
+    };
+    const problem = validateBlock(block);
+    if (problem) {
+      addLog("error", `Block not saved: ${problem}`);
+      return null;
+    }
+    return block;
+  };
+
   const addBlock = () => {
-    const addr = Number(newAddr);
-    const qty = Number(newQty);
-    if (!newName || isNaN(addr) || isNaN(qty) || qty < 1) return;
-    setBlocks([...blocks, { name: newName, address: addr, quantity: qty, type: newType, area: newArea }]);
+    const block = blockFromForm();
+    if (!block) return;
+    setBlocks([...blocks, block]);
     setNewName("");
     setNewAddr("");
     setNewQty("");
@@ -40,10 +59,9 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
 
   const saveEditBlock = () => {
     if (editingBlock === null) return;
-    const addr = Number(newAddr);
-    const qty = Number(newQty);
-    if (!newName || isNaN(addr) || isNaN(qty) || qty < 1) return;
-    setBlocks(blocks.map((b, i) => i === editingBlock ? { name: newName, address: addr, quantity: qty, type: newType, area: newArea } : b));
+    const block = blockFromForm();
+    if (!block) return;
+    setBlocks(blocks.map((b, i) => i === editingBlock ? block : b));
     setEditingBlock(null);
     setNewName("");
     setNewAddr("");
@@ -79,7 +97,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {blocks.map((b, i) => {
-          const step = b.type === "float32" || b.type === "int32" || b.type === "float64" ? 2 : 1;
+          const step = blockStep(b);
           const endAddr = b.address + (b.quantity - 1) * step + step - 1;
           if (editingBlock === i) {
             return (
@@ -90,7 +108,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
                   <input className="vt-input" style={{ width: 50, flexShrink: 0 }} placeholder="Qty" value={newQty} onChange={(e) => setNewQty(e.target.value)} />
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <select className="vt-select" style={{ flex: 1 }} value={newType} onChange={(e) => setNewType(e.target.value)}>
+                  <select className="vt-select" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={(e) => setNewType(e.target.value)}>
                     {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                   <select className="vt-select" style={{ flex: 1 }} value={newArea} onChange={(e) => setNewArea(e.target.value)}>
@@ -155,7 +173,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              <select className="vt-select" style={{ flex: 1 }} value={newType} onChange={(e) => setNewType(e.target.value)} aria-label="Register type">
+              <select className="vt-select" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={(e) => setNewType(e.target.value)} aria-label="Register type">
                 {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               <select className="vt-select" style={{ flex: 1 }} value={newArea} onChange={(e) => setNewArea(e.target.value)} aria-label="Register area">

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Badge, Button, Dialog, Field, Segmented } from "../primitives";
+import { Badge, Button, Callout, Dialog, Field, Segmented } from "../primitives";
 
 const DATA_TYPES = [
   { value: "int16", label: "Int16" },
@@ -18,18 +18,33 @@ interface ValueEditorProps {
   currentDataType?: string;
   /** Override the type dropdown vocabulary (e.g. CIP vs Modbus names). */
   types?: { value: string; label: string }[];
-  onSubmit: (value: string, dataType: string) => void;
+  /** May be async; the dialog disables Write while it runs. The caller closes the dialog on success. */
+  onSubmit: (value: string, dataType: string) => void | Promise<void>;
+  /** Failure of the last write, shown in the dialog so the user can correct it and retry. */
+  error?: string | null;
   onCancel: () => void;
 }
 
-export function ValueEditor({ address, currentValue, currentDataType, types, onSubmit, onCancel }: ValueEditorProps) {
+export function ValueEditor({ address, currentValue, currentDataType, types, onSubmit, error, onCancel }: ValueEditorProps) {
   const typeOptions = types ?? DATA_TYPES;
   const [value, setValue] = useState(currentValue ?? "");
   const [dataType, setDataType] = useState<string>(currentDataType ?? typeOptions[0]?.value ?? "float64");
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  const changeType = (next: string) => {
+    setDataType(next);
+    // The boolean toggle only understands "true"/"false".
+    if (next === "bool" && value !== "true" && value !== "false") setValue("false");
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    onSubmit(value, dataType);
+    setBusy(true);
+    try {
+      await onSubmit(value, dataType);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -41,7 +56,7 @@ export function ValueEditor({ address, currentValue, currentDataType, types, onS
       footer={
         <>
           <Button onClick={onCancel}>Cancel</Button>
-          <Button type="submit" form="vt-value-editor-form" variant="primary" disabled={dataType !== "bool" && !value}>
+          <Button type="submit" form="vt-value-editor-form" variant="primary" loading={busy} disabled={busy || (dataType !== "bool" && !value)}>
             Write
           </Button>
         </>
@@ -57,7 +72,7 @@ export function ValueEditor({ address, currentValue, currentDataType, types, onS
           <select
             className="vt-select"
             value={dataType}
-            onChange={(e) => setDataType(e.target.value)}
+            onChange={(e) => changeType(e.target.value)}
           >
             {typeOptions.map((dt) => (
               <option key={dt.value} value={dt.value}>
@@ -89,6 +104,7 @@ export function ValueEditor({ address, currentValue, currentDataType, types, onS
             />
           )}
         </Field>
+        {error && <Callout tone="danger">{error}</Callout>}
       </form>
     </Dialog>
   );

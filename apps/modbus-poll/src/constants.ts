@@ -1,5 +1,7 @@
 export const AREAS = ["holding", "input", "coil", "discrete"];
-export const TYPES = ["uint16", "int16", "int32", "float32", "float64", "string"];
+export const TYPES = ["uint16", "int16", "int32", "float32", "float64"];
+/** Select value for the in-app virtual RTU slave (a PTY, not a path on disk). */
+export const VIRTUAL_PORT = "__virtual__";
 export const ENDIAN_OPTS: { value: string; label: string }[] = [
   { value: "big", label: "AB CD" },
   { value: "little", label: "CD AB" },

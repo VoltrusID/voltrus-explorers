@@ -4,7 +4,7 @@ use std::time::Duration;
 use if_addrs::get_if_addrs;
 use mt_protocol::ProtocolError;
 
-use bacnet_rs::app::{Apdu, MaxApduSize, MaxSegments};
+use crate::transport::{confirmed_request, REQUEST_TIMEOUT};
 use bacnet_rs::network::Npdu;
 use bacnet_rs::object::engineering_units::EngineeringUnits;
 use bacnet_rs::object::{ObjectIdentifier, PropertyIdentifier};
@@ -192,82 +192,6 @@ pub async fn browse_objects(
     .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
 }
 
-/// Send a confirmed BACnet request and return the service_data from the response APDU.
-fn send_confirmed_request(
-    socket: &std::net::UdpSocket,
-    target_addr: SocketAddr,
-    invoke_id: u8,
-    service_choice: ConfirmedServiceChoice,
-    service_data: Vec<u8>,
-) -> Result<Vec<u8>, ProtocolError> {
-    let apdu = Apdu::ConfirmedRequest {
-        segmented: false,
-        more_follows: false,
-        segmented_response_accepted: true,
-        max_segments: MaxSegments::Unspecified,
-        max_response_size: MaxApduSize::Up1476,
-        invoke_id,
-        sequence_number: None,
-        proposed_window_size: None,
-        service_choice,
-        service_data,
-    };
-
-    let apdu_data = apdu.encode();
-    let mut npdu = Npdu::new();
-    npdu.control.expecting_reply = true;
-    let npdu_data = npdu.encode();
-
-    let mut message = npdu_data;
-    message.extend_from_slice(&apdu_data);
-
-    // BVLC Original-Unicast-NPDU
-    let mut bvlc = vec![0x81, 0x0A, 0x00, 0x00];
-    bvlc.extend_from_slice(&message);
-    let len = bvlc.len() as u16;
-    bvlc[2] = (len >> 8) as u8;
-    bvlc[3] = (len & 0xFF) as u8;
-
-    socket
-        .send_to(&bvlc, target_addr)
-        .map_err(|e| ProtocolError::WriteFailed(format!("Send: {e}")))?;
-
-    let mut buf = [0u8; 1500];
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(6) {
-        match socket.recv_from(&mut buf) {
-            Ok((len, source)) if source == target_addr => {
-                if len < 4 || buf[0] != 0x81 {
-                    continue;
-                }
-                let bvlc_len = ((buf[2] as usize) << 8) | buf[3] as usize;
-                if len != bvlc_len {
-                    continue;
-                }
-                let npdu_start = 4;
-                if let Ok((_npdu, npdu_len)) = Npdu::decode(&buf[npdu_start..len]) {
-                    let apdu_start = npdu_start + npdu_len;
-                    if let Ok(Apdu::ComplexAck { invoke_id: resp_invoke_id, service_data, .. }) =
-                        Apdu::decode(&buf[apdu_start..len])
-                    {
-                        if resp_invoke_id != invoke_id {
-                            continue;
-                        }
-                        return Ok(service_data);
-                    }
-                }
-            }
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(ProtocolError::ReadFailed(format!("Recv: {e}"))),
-        }
-    }
-
-    Err(ProtocolError::Timeout(format!(
-        "BACnet confirmed request timeout for {target_addr}"
-    )))
-}
-
 /// Read standard properties for a single BACnet object.
 pub async fn read_object_properties(
     ip: &str,
@@ -313,12 +237,12 @@ pub async fn read_object_properties(
             .encode(&mut service_data)
             .map_err(|e| ProtocolError::ReadFailed(format!("RPM encode: {e}")))?;
 
-        let response_data = send_confirmed_request(
+        let response_data = confirmed_request(
             &socket,
             addr,
-            2,
             ConfirmedServiceChoice::ReadPropertyMultiple,
             service_data,
+            REQUEST_TIMEOUT,
         )?;
 
         // Parse response using bacnet-rs structured decoder
@@ -471,12 +395,12 @@ pub async fn inspect_device(
             .encode(&mut service_data)
             .map_err(|e| ProtocolError::ReadFailed(format!("RPM encode: {e}")))?;
 
-        let response_data = send_confirmed_request(
+        let response_data = confirmed_request(
             &socket,
             addr,
-            3,
             ConfirmedServiceChoice::ReadPropertyMultiple,
             service_data,
+            REQUEST_TIMEOUT,
         )?;
 
         let rpm_response = ReadPropertyMultipleResponse::decode(&response_data)
@@ -658,10 +582,10 @@ fn property_id_name(id: u32) -> String {
         103 => "reliability".into(),
         81 => "outOfService".into(),
         36 => "eventState".into(),
-        44 => "notificationClass".into(),
-        39 => "highLimit".into(),
-        40 => "lowLimit".into(),
-        34 => "covIncrement".into(),
+        17 => "notificationClass".into(),
+        45 => "highLimit".into(),
+        59 => "lowLimit".into(),
+        22 => "covIncrement".into(),
         _ => format!("property-{id}"),
     }
 }

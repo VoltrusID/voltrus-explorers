@@ -49,21 +49,59 @@ pub struct SimDeviceProfile {
     pub registers: Vec<SimRegisterDef>,
 }
 
+/// Per-register lock flags shared between a running [`Simulation`] and whoever
+/// toggles locks (the lock button). Locked registers keep their value on every tick.
+#[derive(Debug, Clone, Default)]
+pub struct SimLocks(Arc<std::sync::Mutex<Vec<bool>>>);
+
+impl SimLocks {
+    pub fn set(&self, index: usize, locked: bool) {
+        let mut flags = self.0.lock().unwrap();
+        if flags.len() <= index {
+            flags.resize(index + 1, false);
+        }
+        flags[index] = locked;
+    }
+
+    pub fn is_locked(&self, index: usize) -> bool {
+        self.0.lock().unwrap().get(index).copied().unwrap_or(false)
+    }
+
+    fn snapshot(&self) -> Vec<bool> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
 /// Running simulation state.
 pub struct Simulation {
     pub profile: SimDeviceProfile,
     pub values: Vec<f64>,
     pub load_factor: f32,
+    pub locks: SimLocks,
 }
 
 impl Simulation {
+    /// Build a simulation; registers flagged `locked` in the profile start locked.
     pub fn new(profile: SimDeviceProfile) -> Self {
         let values = profile.registers.iter().map(|r| r.initial).collect();
+        let locks = SimLocks::default();
+        for (i, def) in profile.registers.iter().enumerate() {
+            if def.locked {
+                locks.set(i, true);
+            }
+        }
         Self {
             profile,
             values,
             load_factor: 0.0,
+            locks,
         }
+    }
+
+    /// Use `locks` (shared with the lock controls) instead of the ones built from the profile.
+    pub fn with_locks(mut self, locks: SimLocks) -> Self {
+        self.locks = locks;
+        self
     }
 
     #[allow(dead_code)]
@@ -73,44 +111,31 @@ impl Simulation {
             .sum()
     }
 
+    /// Write the current values into the slave's register image, big-endian
+    /// (AB CD / AB CD EF GH): plain registers as 2 registers of IEEE 754
+    /// float32, counters as 4 registers of IEEE 754 float64 so fractional
+    /// increments stay visible on the wire and a master can read them with its
+    /// regular `float64` type.
     pub fn write_to_slave(&self, state: &Arc<std::sync::Mutex<SlaveState>>) {
         let mut data = state.lock().unwrap();
         let base = self.profile.base_address as usize;
         let mut offset = 0usize;
 
         for (i, def) in self.profile.registers.iter().enumerate() {
-            if def.is_counter {
-                let raw = self.values[i] as u64;
-                let hi32 = (raw >> 32) as u32;
-                let lo32 = (raw & 0xFFFFFFFF) as u32;
-                let regs = [
-                    (hi32 >> 16) as u16,
-                    (hi32 & 0xFFFF) as u16,
-                    (lo32 >> 16) as u16,
-                    (lo32 & 0xFFFF) as u16,
-                ];
-                for (j, &v) in regs.iter().enumerate() {
-                    let addr = base + offset + j;
-                    if addr < data.registers.len() {
-                        data.registers[addr] = v;
-                    }
-                }
-                offset += 4;
+            let regs: Vec<u16> = if def.is_counter {
+                let bits = self.values[i].to_bits();
+                (0..4).map(|w| (bits >> (48 - 16 * w)) as u16).collect()
             } else {
-                let f32_val = self.values[i] as f32;
-                let bits = f32_val.to_bits();
-                let regs = [
-                    (bits >> 16) as u16,
-                    (bits & 0xFFFF) as u16,
-                ];
-                for (j, &v) in regs.iter().enumerate() {
-                    let addr = base + offset + j;
-                    if addr < data.registers.len() {
-                        data.registers[addr] = v;
-                    }
+                let bits = (self.values[i] as f32).to_bits();
+                vec![(bits >> 16) as u16, bits as u16]
+            };
+            for (j, &v) in regs.iter().enumerate() {
+                let addr = base + offset + j;
+                if addr < data.registers.len() {
+                    data.registers[addr] = v;
                 }
-                offset += 2;
             }
+            offset += regs.len();
         }
     }
 }
@@ -128,8 +153,9 @@ pub fn tick_values(sim: &mut Simulation) {
         % (2.0 * std::f32::consts::PI);
     let load = 1.0 + 0.15 * sim.load_factor.sin();
 
+    let locked = sim.locks.snapshot();
     for (i, def) in sim.profile.registers.iter().enumerate() {
-        if def.locked { continue; }
+        if locked.get(i).copied().unwrap_or(false) { continue; }
         if def.is_counter {
             let variation = (xorshift32() as f64 / u32::MAX as f64 - 0.5) * def.counter_rate * 0.1;
             sim.values[i] += def.counter_rate + variation;
@@ -167,6 +193,9 @@ pub fn start_simulation(
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(interval_ms));
         while running_clone.load(Ordering::Relaxed) {
             interval.tick().await;
+            if !running_clone.load(Ordering::Relaxed) {
+                break;
+            }
             tick_values(&mut sim);
             sim.write_to_slave(&slave_state);
             if let Ok(mut v) = sv.lock() {
@@ -294,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_to_slave_counter() {
+    fn test_write_to_slave_counter_is_float64_big_endian() {
         let profile = make_profile(vec![
             counter_reg("energy", 0.0, 10.0),
         ]);
@@ -305,12 +334,48 @@ mod tests {
         }));
         sim.write_to_slave(&state);
         let data = state.lock().unwrap();
-        // 1000000 as u64 -> hi32 = 0, lo32 = 0x000F4240
-        // registers: hi16(hi32), lo16(hi32), hi16(lo32), lo16(lo32)
-        assert_eq!(data.registers[0], 0);        // hi16(hi32) = 0
-        assert_eq!(data.registers[1], 0);        // lo16(hi32) = 0
-        assert_eq!(data.registers[2], 0x000F);   // hi16(lo32) = 0x000F
-        assert_eq!(data.registers[3], 0x4240);   // lo16(lo32) = 0x4240
+        // 1000000.0 = 0x412E848000000000 as IEEE 754 binary64, AB CD EF GH:
+        // sign 0, exponent 0x412 (19 + 1023), mantissa 0xE848000000000.
+        assert_eq!(&data.registers[..4], &[0x412E, 0x8480, 0x0000, 0x0000]);
+    }
+
+    #[test]
+    fn test_counter_fraction_survives_on_the_wire() {
+        // 8452.3 MMSCF at 0.00035/s: the increment must not be truncated away.
+        let profile = make_profile(vec![counter_reg("volume", 8452.3, 0.00035)]);
+        let mut sim = Simulation::new(profile);
+        let state = Arc::new(std::sync::Mutex::new(SlaveState { registers: vec![0u16; 4] }));
+        sim.write_to_slave(&state);
+        let before = state.lock().unwrap().registers.clone();
+        sim.values[0] += 0.00035;
+        sim.write_to_slave(&state);
+        assert_ne!(before, state.lock().unwrap().registers);
+    }
+
+    #[test]
+    fn test_lock_toggled_while_running_takes_effect() {
+        let profile = make_profile(vec![float_reg("v", 50.0, 0.0, 100.0, 5.0)]);
+        let locks = SimLocks::default();
+        let mut sim = Simulation::new(profile).with_locks(locks.clone());
+        locks.set(0, true);
+        for _ in 0..20 {
+            tick_values(&mut sim);
+        }
+        assert_eq!(sim.values[0], 50.0, "locked register must not move");
+        locks.set(0, false);
+        for _ in 0..20 {
+            tick_values(&mut sim);
+        }
+        assert_ne!(sim.values[0], 50.0, "unlocked register drifts again");
+    }
+
+    #[test]
+    fn test_locks_for_unknown_index_default_to_unlocked() {
+        let locks = SimLocks::default();
+        assert!(!locks.is_locked(7));
+        locks.set(7, true);
+        assert!(locks.is_locked(7));
+        assert!(!locks.is_locked(3));
     }
 
     #[test]

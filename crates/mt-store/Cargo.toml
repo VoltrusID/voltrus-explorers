@@ -1,0 +1,15 @@
+[package]
+name = "mt-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# App Store builds: Pro is sold through StoreKit. Without it (source / GitHub builds) everything is unlocked.
+store = ["dep:tauri-plugin-iap"]
+
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri-plugin-iap = { version = "0.9.1", optional = true }

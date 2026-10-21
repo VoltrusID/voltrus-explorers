@@ -86,7 +86,7 @@ export function TemplatePanel({ applyProfile, toggleSimulation, saveCustomTempla
               <span style={{ color: "var(--text-dim)" }}>{r.name}</span>
               <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}>
                 {r.isCounter
-                  ? Math.floor(simValues[i]).toLocaleString()
+                  ? simValues[i].toLocaleString(undefined, { maximumFractionDigits: 3 })
                   : simValues[i].toFixed(r.drift < 0.01 ? 3 : r.drift < 0.1 ? 2 : 1)}
                 {r.unit ? ` ${r.unit}` : ""}
               </span>

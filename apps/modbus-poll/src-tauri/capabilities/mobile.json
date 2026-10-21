@@ -1,9 +1,13 @@
 {
   "identifier": "mobile",
-  "description": "Mobile capabilities for Modbus Poll (iOS/Android). Plugin permissions are desktop-only; custom app commands need no capability entries.",
+  "description": "Mobile capabilities for Modbus Poll (iOS/Android). Window permissions are desktop-only; custom app commands need no capability entries. File panels and the fs permissions are how CSV import/export reaches the sandbox.",
   "windows": ["main"],
   "platforms": ["iOS", "android"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
   ]
 }

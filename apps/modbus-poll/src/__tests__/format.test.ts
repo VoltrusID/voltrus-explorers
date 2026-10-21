@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatValue, displayAddr, extractRaw } from "../utils/format";
+import { formatValue, displayAddr, extractRaw, extractError } from "../utils/format";
 
 describe("formatValue", () => {
   it("returns '---' for NaN", () => {
@@ -42,10 +42,6 @@ describe("formatValue", () => {
   it("formats float32 binary with 32 chars", () => {
     const result = formatValue(220.5, "float32", "bin");
     expect(result).toHaveLength(32);
-  });
-
-  it("passes through string type", () => {
-    expect(formatValue(42, "string", "dec")).toBe("42");
   });
 
   it("formats integer float64 without decimal", () => {
@@ -145,5 +141,25 @@ describe("extractRaw", () => {
 
   it("returns NaN for empty object", () => {
     expect(extractRaw({})).toBeNaN();
+  });
+
+  it("returns NaN for a failed read (a message, not a number)", () => {
+    expect(extractRaw({ Failed: "Illegal Data Address (0x02) reading holding 64..64" })).toBeNaN();
+  });
+
+  it("returns NaN for a NaN float (serialized as null)", () => {
+    expect(extractRaw({ Float64: null })).toBeNaN();
+  });
+});
+
+describe("extractError", () => {
+  it("returns the message of a failed value", () => {
+    expect(extractError({ Failed: "Illegal Function (0x01) reading input 0..0" })).toBe("Illegal Function (0x01) reading input 0..0");
+  });
+
+  it("is undefined for numeric values", () => {
+    expect(extractError({ Float64: 1.5 })).toBeUndefined();
+    expect(extractError(3)).toBeUndefined();
+    expect(extractError(undefined)).toBeUndefined();
   });
 });

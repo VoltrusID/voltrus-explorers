@@ -6,10 +6,17 @@ import type { TrendSeries } from "./TrendPanel";
 import { loadCustomTemplates } from "./templates";
 import { loadConnProfiles } from "./helpers";
 
+export type AppMode = "master" | "slave";
+export type MobileTab = "connect" | "data" | "blocks" | "template" | "log" | "traffic" | "trend";
+
+/** Blocks exist only in master mode, templates only in slave mode. */
+const tabExistsIn = (mode: AppMode, tab: MobileTab) =>
+  !(tab === "blocks" && mode === "slave") && !(tab === "template" && mode === "master");
+
 interface AppState {
   // Mode & theme
-  mode: "master" | "slave";
-  setMode: (m: "master" | "slave") => void;
+  mode: AppMode;
+  setMode: (m: AppMode) => void;
   theme: "dark" | "light";
   setTheme: (t: "dark" | "light") => void;
 
@@ -22,8 +29,8 @@ interface AppState {
   setTableHeight: (h: number) => void;
   dragSide: "left" | "right" | "table" | null;
   setDragSide: (s: "left" | "right" | "table" | null) => void;
-  mobileTab: "connect" | "data" | "blocks" | "template" | "log";
-  setMobileTab: (t: "connect" | "data" | "blocks" | "template" | "log") => void;
+  mobileTab: MobileTab;
+  setMobileTab: (t: MobileTab) => void;
   isMobile: boolean;
   setIsMobile: (m: boolean) => void;
   platform: string;
@@ -184,10 +191,6 @@ interface AppState {
   bottomTab: "log" | "traffic" | "trend";
   setBottomTab: (t: "log" | "traffic" | "trend") => void;
 
-  // Auto-detect
-  autoDetecting: boolean;
-  setAutoDetecting: (a: boolean) => void;
-
   // Trending
   trendSeries: Map<string, TrendSeries>;
   setTrendSeries: (s: Map<string, TrendSeries> | ((prev: Map<string, TrendSeries>) => Map<string, TrendSeries>)) => void;
@@ -202,7 +205,8 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   // Mode & theme
   mode: "master",
-  setMode: (mode) => set({ mode }),
+  // A tab the new mode does not have would leave the content area empty.
+  setMode: (mode) => set((s) => ({ mode, mobileTab: tabExistsIn(mode, s.mobileTab) ? s.mobileTab : "connect" })),
   theme: (() => {
     const stored = typeof localStorage !== "undefined" ? localStorage.getItem("modbus-poll-theme") : null;
     if (stored === "light" || stored === "dark") return stored;
@@ -233,7 +237,8 @@ export const useStore = create<AppState>((set) => ({
     { name: "Power", address: 3011, quantity: 3, type: "float32", area: "holding" },
     { name: "Power Quality", address: 3017, quantity: 4, type: "float32", area: "holding" },
     { name: "Temperature", address: 3025, quantity: 1, type: "float32", area: "holding" },
-    { name: "Energy", address: 3027, quantity: 4, type: "float32", area: "holding" },
+    // PM5560 energy counters are 4-register float64 values at 3027 and 3031.
+    { name: "Energy", address: 3027, quantity: 2, type: "float64", area: "holding" },
   ],
   setBlocks: (blocks) => set((s) => ({ blocks: typeof blocks === "function" ? blocks(s.blocks) : blocks })),
   activeBlockTab: 0,
@@ -394,10 +399,6 @@ export const useStore = create<AppState>((set) => ({
   // Bottom panel
   bottomTab: "log",
   setBottomTab: (bottomTab) => set({ bottomTab }),
-
-  // Auto-detect
-  autoDetecting: false,
-  setAutoDetecting: (autoDetecting) => set({ autoDetecting }),
 
   // Trending
   trendSeries: new Map<string, TrendSeries>(),

@@ -45,7 +45,11 @@ identity_name() { # full name of that identity (productbuild wants a name, not a
 
 echo "==> $PRODUCT $VERSION ($BUILD_NUMBER), $MODE"
 rm -rf "$OUT" && mkdir -p "$OUT"
-( cd "$APP_DIR" && bun run tauri build --target universal-apple-darwin --bundles app --ci )
+# Only the App Store build sells Pro (StoreKit); source, DMG and CI builds have everything unlocked.
+FEATURES=()
+[[ "$MODE" == appstore ]] && FEATURES=(--features store)
+# ${a[@]+...}: macOS /bin/bash 3.2 treats an empty array as unbound under `set -u`.
+( cd "$APP_DIR" && bun run tauri build --target universal-apple-darwin --bundles app --ci ${FEATURES[@]+"${FEATURES[@]}"} )
 cp -R "$ROOT/target/universal-apple-darwin/release/bundle/macos/$PRODUCT.app" "$OUT/"
 BUNDLE="$OUT/$PRODUCT.app"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$BUNDLE/Contents/Info.plist"

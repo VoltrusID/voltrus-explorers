@@ -1,14 +1,17 @@
+import { useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
-import { Badge, EmptyState, IconButton } from "@mactools/ui";
+import { Badge, EmptyState, IconButton, ValueEditor } from "@mactools/ui";
 import type { BacnetPropertyEntry, BacnetValue } from "../types";
 import { bacnetValueToString, formatObjectType } from "../types";
+import { WRITE_KIND_TYPES, parseWriteValue, writeInitialText, writeKindFor } from "../writeValue";
 
 interface PropertyInspectorProps {
   objectType: string;
   objectInstance: number;
   properties: BacnetPropertyEntry[];
   loading: boolean;
-  onWrite?: (propertyName: string, value: string, dataType: string) => void;
+  /** Writes a typed value; must reject with the backend error so it can be shown. */
+  onWrite?: (propertyName: string, value: BacnetValue) => Promise<void>;
   unitName?: string | null;
   unitSymbol?: string | null;
 }
@@ -18,18 +21,6 @@ function formatPropertyName(name: string): string {
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/^./, (s) => s.toUpperCase());
-}
-
-function getDataType(v: BacnetValue): string {
-  if ("Real" in v) return "Real";
-  if ("Double" in v) return "Double";
-  if ("Unsigned" in v) return "Unsigned";
-  if ("Boolean" in v) return "Boolean";
-  if ("Enum" in v) return "Enum";
-  if ("Float64" in v) return "Float64";
-  if ("String" in v) return "String";
-  if ("Null" in v) return "Null";
-  return "Null";
 }
 
 function isWritable(
@@ -58,6 +49,26 @@ export function PropertyInspector({
   unitSymbol,
 }: PropertyInspectorProps) {
   const label = formatObjectType(objectType);
+  const writeKind = writeKindFor(objectType);
+  const [editing, setEditing] = useState<{ propertyName: string; currentText: string } | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
+
+  // A different object invalidates any open editor and its error.
+  useEffect(() => {
+    setEditing(null);
+    setWriteError(null);
+  }, [objectType, objectInstance]);
+
+  const submitWrite = async (propertyName: string, input: string) => {
+    setEditing(null);
+    if (!onWrite) return;
+    try {
+      await onWrite(propertyName, parseWriteValue(writeKind, input));
+      setWriteError(null);
+    } catch (e) {
+      setWriteError(`Write ${propertyName} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -69,6 +80,15 @@ export function PropertyInspector({
           {properties.length} propert{properties.length === 1 ? "y" : "ies"}
         </span>
       </div>
+
+      {writeError && (
+        <div
+          role="alert"
+          style={{ margin: "0 0 8px", padding: "6px 8px", fontSize: "var(--fs-xs)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }}
+        >
+          {writeError}
+        </div>
+      )}
 
       {loading && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 32, fontSize: "var(--fs-sm)", color: "var(--text-muted)" }}>
@@ -150,11 +170,10 @@ export function PropertyInspector({
                           className="property-inspector-edit"
                           style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)" }}
                           onClick={() =>
-                            onWrite(
-                              entry.property_name,
-                              bacnetValueToString(value),
-                              getDataType(value)
-                            )
+                            setEditing({
+                              propertyName: entry.property_name,
+                              currentText: writeInitialText(writeKind, value),
+                            })
                           }
                         >
                           <Pencil size={12} strokeWidth={1.75} />
@@ -167,6 +186,17 @@ export function PropertyInspector({
             </tbody>
           </table>
         </div>
+      )}
+
+      {editing && (
+        <ValueEditor
+          address={`${label} #${objectInstance} · ${formatPropertyName(editing.propertyName)}`}
+          currentValue={editing.currentText}
+          currentDataType={writeKind}
+          types={WRITE_KIND_TYPES[writeKind]}
+          onSubmit={(input) => submitWrite(editing.propertyName, input)}
+          onCancel={() => setEditing(null)}
+        />
       )}
     </div>
   );

@@ -31,13 +31,56 @@ always increase.
 - `scripts/asc-profile.py` gets (or creates) the provisioning profile `voltrus-ci <type> <bundle id> <cert id>` through
   the App Store Connect API, so profiles never need downloading by hand.
 - `scripts/build-macos.sh <app> appstore|dmg|unsigned` builds the universal `.app` with Tauri, then signs it:
-  - `appstore`: embeds the profile, signs with Apple Distribution and entitlements from `src-tauri/entitlements.plist`
-    plus the profile's application/team identifier, packs a `.pkg` signed with the Mac Installer identity,
-    uploads it with `altool`.
+  - `appstore`: builds with `--features store` (Pro sold through StoreKit, see below), embeds the profile, signs with
+    Apple Distribution and entitlements from `src-tauri/entitlements.plist` plus the profile's application/team
+    identifier, packs a `.pkg` signed with the Mac Installer identity, then validates it against App Store Connect
+    (or uploads it with `upload=true`).
   - `dmg`: signs with Developer ID (hardened runtime), packs and signs the DMG, notarizes it with `notarytool`
     (API key) and staples it.
-- iOS: `apps/modbus-poll/scripts/build-ios.sh` with Tauri's manual signing (`IOS_CERTIFICATE`,
-  `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`).
+- iOS: `apps/modbus-poll/scripts/build-ios.sh` (always `--features store`) with Tauri's manual signing
+  (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`).
+
+## File access in the sandbox
+
+The App Store builds run in the App Sandbox, where `<input type=file>` and `<a download>` blobs reach nothing. All CSV
+import/export (read blocks, comm log, traffic, BACnet trend logs) goes through `@mactools/ui`'s `saveTextFile` /
+`openTextFile`: a native save/open panel (`tauri-plugin-dialog`) grants access to exactly the path the user picks and
+`tauri-plugin-fs` reads or writes it. Both apps therefore carry
+`com.apple.security.files.user-selected.read-write` in `src-tauri/entitlements.plist`, register both plugins in their
+Rust builder, and allow `dialog:allow-open|save` and `fs:allow-read|write-text-file` in `src-tauri/capabilities/`
+(the fs permissions have no static scope: only dialog-picked paths are reachable). UI only reports "Saved" after the
+write succeeded.
+
+## Pro (in-app purchase)
+
+| App | Product id (non-consumable) | Price |
+| --- | --- | --- |
+| BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 14.99 (the app's paid price) |
+| Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
+
+- Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.
+  The logic is `crates/mt-store` (Rust) and `packages/mt-ui/src/pro.tsx` (`ProProvider`, `requirePro`).
+- Each app's `src-tauri/store.json` holds the product id and the free cut-over. While `free_since` is `null` the app is
+  still paid, so every store install counts as Pro and the store builds behave exactly as before.
+- Both products are `READY_TO_SUBMIT` (localization, price, all territories and a review screenshot of the Pro dialog
+  are set). Submit each together with the app version that turns the app free: while the app is still paid, every
+  store install is Pro, so a reviewer could not see or test the purchase.
+- App Review: store builds contain no license keys, no outside payment and no link to the GitHub builds (the About
+  window shows the GitHub link only in source builds). Keep it that way, and keep the App Store support/marketing
+  pages free of other ways to buy the same features.
+
+### Switching an app to free
+
+Do it with a new app version, never by changing the price alone (receipts carry the version first downloaded):
+
+1. In `store.json` set `free_since.macos_version` to the new version (e.g. `"1.4.0"`). For Modbus Poll also set
+   `free_since.ios_build` to the current Unix time (`date +%s`): iOS receipts carry the build number, our build
+   numbers are Unix times, so every earlier (paid) build is below it and every later build above it.
+2. Release that version (`upload=true`) with the Pro product attached, submit for review.
+3. When it is approved, set the app price to Free in App Store Connect and release the version at the same time.
+
+Anyone whose original download is older than `free_since` keeps Pro without paying again ("grandfathered", read from
+the App Store receipt on the device); everyone else gets the free tier plus the Pro purchase.
 
 ## Secrets (environment `release`)
 

@@ -1,23 +1,6 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { EmptyState } from "@mactools/ui";
-
-interface TrafficEntry {
-  timestamp: number;
-  direction: string;
-  function_code: number;
-  address: number;
-  data: string;
-  length: number;
-}
-
-interface TcpEvent {
-  timestamp: number;
-  event_type: string;
-  detail: string;
-}
-
-const MAX_ENTRIES = 500;
+import { EmptyState, saveTextFile } from "@mactools/ui";
+import { useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
 
 const FC_NAMES: Record<number, string> = {
   1: "Read Coils",
@@ -29,6 +12,12 @@ const FC_NAMES: Record<number, string> = {
   15: "Write Coils",
   16: "Write Multiple",
 };
+
+/** Exception responses carry the request's function code with the high bit set (Modbus spec §7). */
+function fcName(code: number): string {
+  if (code & 0x80) return `Exception: ${FC_NAMES[code & 0x7f] ?? `FC${code & 0x7f}`}`;
+  return FC_NAMES[code] || `FC${code}`;
+}
 
 const thStyle: React.CSSProperties = {
   textAlign: "left",
@@ -45,37 +34,19 @@ const thStyle: React.CSSProperties = {
 
 
 
-export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
-  const [entries, setEntries] = useState<TrafficEntry[]>([]);
-  const [tcpEvents, setTcpEvents] = useState<TcpEvent[]>([]);
+export default function TrafficPanel() {
+  const entries = useTrafficStore((s) => s.entries);
+  const tcpEvents = useTrafficStore((s) => s.tcpEvents);
+  const clearTraffic = useTrafficStore((s) => s.clear);
   const [filterDir, setFilterDir] = useState<string>("all");
   const [filterText, setFilterText] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [tab, setTab] = useState<"modbus" | "tcp">("modbus");
   const [showExport, setShowExport] = useState(false);
-  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportMsg, setExportMsg] = useState<{ text: string; failed?: boolean } | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    let unlistenTcp: UnlistenFn | null = null;
-    listen<TrafficEntry>("traffic-log", (event) => {
-      setEntries((prev) => {
-        const next = [...prev, event.payload];
-        return next.length > MAX_ENTRIES ? next.slice(-MAX_ENTRIES) : next;
-      });
-    }).then((fn) => { unlisten = fn; });
-    listen<TcpEvent>("tcp-event", (event) => {
-      setTcpEvents((prev) => {
-        const next = [...prev, event.payload];
-        return next.length > MAX_ENTRIES ? next.slice(-MAX_ENTRIES) : next;
-      });
-    }).then((fn) => { unlistenTcp = fn; });
-    return () => { unlisten?.(); unlistenTcp?.(); };
-  }, []);
-
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -97,7 +68,7 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
     if (filterDir !== "all" && e.direction !== filterDir) return false;
     if (filterText) {
       const t = filterText.toLowerCase();
-      const fc = FC_NAMES[e.function_code] || `FC${e.function_code}`;
+      const fc = fcName(e.function_code);
       return (
         fc.toLowerCase().includes(t) ||
         String(e.address).includes(t) ||
@@ -161,7 +132,7 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
     if (tab === "modbus") {
       text = data.map((e) => {
         const fe = e as TrafficEntry;
-        const fc = FC_NAMES[fe.function_code] || `FC${fe.function_code}`;
+        const fc = fcName(fe.function_code);
         return `${formatTime(fe.timestamp)} ${fe.direction} ${fc} addr=${formatAddr(fe.address, fe.length)} len=${fe.length} ${fe.data}`;
       }).join("\n");
     } else {
@@ -171,19 +142,20 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
       }).join("\n");
     }
     navigator.clipboard.writeText(text);
-    setExportMsg("Copied to clipboard");
+    setExportMsg({ text: "Copied to clipboard" });
     setTimeout(() => setExportMsg(null), 1500);
     setShowExport(false);
   }, [filtered, tcpEvents, tab, formatTime]);
 
-  const exportCsv = useCallback(() => {
+  const exportCsv = useCallback(async () => {
+    setShowExport(false);
     let csv: string;
     const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
     let filename: string;
     if (tab === "modbus") {
       const header = "Timestamp,Direction,FunctionCode,Function,Address,AddressRange,Length,Data";
       const rows = filtered.map((e) => {
-        const fc = FC_NAMES[e.function_code] || `FC${e.function_code}`;
+        const fc = fcName(e.function_code);
         return `${formatTimeFull(e.timestamp)},${e.direction},${e.function_code},"${fc}",${e.address},"${formatAddr(e.address, e.length)}",${e.length},"${e.data.replace(/"/g, '""')}"`;
       });
       csv = [header, ...rows].join("\n");
@@ -196,16 +168,15 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
       csv = [header, ...rows].join("\n");
       filename = `modbus-tcp-events-${ts}.csv`;
     }
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    setExportMsg(`Saved: ${filename}`);
-    setTimeout(() => setExportMsg(null), 3000);
-    setShowExport(false);
+    try {
+      const path = await saveTextFile(filename, csv);
+      if (!path) return; // panel cancelled
+      setExportMsg({ text: `Saved: ${path}` });
+      setTimeout(() => setExportMsg(null), 3000);
+    } catch (e) {
+      setExportMsg({ text: `Export failed: ${String(e)}`, failed: true });
+      setTimeout(() => setExportMsg(null), 8000);
+    }
   }, [filtered, tcpEvents, tab, formatTimeFull]);
 
   const renderDetail = (e: TrafficEntry) => (
@@ -215,7 +186,7 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
           <span style={{ color: "var(--text-muted)" }}>Direction:</span>
           <span style={{ color: e.direction === "TX" ? "var(--warn)" : "var(--accent)", fontWeight: 600 }}>{e.direction}</span>
           <span style={{ color: "var(--text-muted)" }}>Function:</span>
-          <span style={{ color: "var(--text)" }}>{`${FC_NAMES[e.function_code] || `FC${e.function_code}`} (FC${e.function_code.toString(16).toUpperCase().padStart(2, "0")})`}</span>
+          <span style={{ color: "var(--text)" }}>{`${fcName(e.function_code)} (FC${e.function_code.toString(16).toUpperCase().padStart(2, "0")})`}</span>
           <span style={{ color: "var(--text-muted)" }}>Address:</span>
           <span style={{ color: "var(--text)" }}>{formatAddr(e.address, e.length)} (0x{e.address.toString(16).toUpperCase().padStart(4, "0")})</span>
           <span style={{ color: "var(--text-muted)" }}>Registers:</span>
@@ -223,12 +194,16 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
           <span style={{ color: "var(--text-muted)" }}>Time:</span>
           <span style={{ color: "var(--text)" }}>{new Date(e.timestamp).toISOString()}</span>
         </div>
-        {e.data && parseRawData(e.data).length > 0 && (
-          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3, fontSize: 10, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
-            {parseRawData(e.data).map((hex, i) => (
-              <span key={i} style={{ padding: "1px 4px", borderRadius: 2, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}>0x{hex.toUpperCase()}</span>
-            ))}
-          </div>
+        {e.data.startsWith("[") ? (
+          parseRawData(e.data).length > 0 && (
+            <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3, fontSize: 10, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
+              {parseRawData(e.data).map((hex, i) => (
+                <span key={i} style={{ padding: "1px 4px", borderRadius: 2, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}>0x{hex.toUpperCase()}</span>
+              ))}
+            </div>
+          )
+        ) : (
+          e.data && <div style={{ marginTop: 4, fontSize: 10, color: e.function_code & 0x80 ? "var(--danger)" : "var(--text)", fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>{e.data}</div>
         )}
       </td>
     </tr>
@@ -268,7 +243,7 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
                   <td style={{ padding: "2px 6px", color: e.direction === "TX" ? "var(--warn)" : "var(--accent)", fontWeight: 600, fontSize: 10, width: 16 }}>
                     {e.direction === "TX" ? "\u2192" : "\u2190"}
                   </td>
-                  <td style={{ padding: "2px 8px", color: "var(--text-muted)", fontSize: 10 }}>{FC_NAMES[e.function_code] || `FC${e.function_code}`}</td>
+                  <td style={{ padding: "2px 8px", color: e.function_code & 0x80 ? "var(--danger)" : "var(--text-muted)", fontSize: 10 }}>{fcName(e.function_code)}</td>
                   <td style={{ padding: "2px 8px", color: "var(--text)", fontSize: 10 }}>{formatAddr(e.address, e.length)}</td>
                   <td style={{ padding: "2px 8px", color: "var(--text-dim)", fontSize: 10 }}>{e.length}</td>
                   <td style={{ padding: "2px 8px", color: "var(--text-dim)", fontSize: 10, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isExpanded ? "" : e.data}</td>
@@ -388,9 +363,9 @@ export default function TrafficPanel({ onClear }: { onClear?: () => void }) {
             </div>
           )}
           {exportMsg && (
-            <span style={{ fontSize: "var(--fs-xs)", color: "var(--accent-text)" }} role="status" aria-live="polite">{exportMsg}</span>
+            <span style={{ fontSize: "var(--fs-xs)", color: exportMsg.failed ? "var(--danger)" : "var(--accent-text)" }} role={exportMsg.failed ? "alert" : "status"} aria-live="polite">{exportMsg.text}</span>
           )}
-          <button onClick={() => { setEntries([]); setTcpEvents([]); setExpandedRows(new Set()); onClear?.(); }} aria-label="Clear all traffic" className="vt-btn vt-btn--sm vt-btn--ghost">
+          <button onClick={() => { clearTraffic(); setExpandedRows(new Set()); }} aria-label="Clear all traffic" className="vt-btn vt-btn--sm vt-btn--ghost">
             Clear
           </button>
         </div>

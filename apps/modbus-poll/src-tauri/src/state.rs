@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use tokio::sync::Mutex;
-use mt_modbus::{SlaveLogEntry, SlaveState, SimDeviceProfile};
+use tokio::sync::{Mutex, watch};
+use mt_modbus::{ModbusClient, SimLocks, SlaveLogEntry, SlaveState};
 use tauri::Emitter;
 
 #[derive(serde::Serialize, Clone)]
@@ -12,18 +12,41 @@ pub struct TcpEvent {
 }
 
 pub struct MasterState {
-    pub client: Arc<Mutex<Option<mt_modbus::ModbusClient>>>,
-    pub scan_cancel: Arc<AtomicBool>,
-    pub scan_cancel_notify: Arc<tokio::sync::Notify>,
+    /// The connected client. Commands clone the `Arc` and release the lock before
+    /// doing I/O; the client serialises its own requests.
+    pub client: Mutex<Option<Arc<ModbusClient>>>,
+    /// Stops a running bus scan only; never implies a disconnect.
+    #[cfg(target_os = "macos")]
+    pub scan_cancel: AtomicBool,
+    #[cfg(target_os = "macos")]
+    pub scan_cancel_notify: tokio::sync::Notify,
+    /// Bumped by `disconnect`; a `connect` still in flight that
+    /// sees it change gives up instead of installing its client.
+    pub connect_epoch: watch::Sender<u64>,
 }
 
+impl MasterState {
+    pub fn new() -> Self {
+        Self {
+            client: Mutex::new(None),
+            #[cfg(target_os = "macos")]
+            scan_cancel: AtomicBool::new(false),
+            #[cfg(target_os = "macos")]
+            scan_cancel_notify: tokio::sync::Notify::new(),
+            connect_epoch: watch::channel(0).0,
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct SlaveServerState {
     pub state: Option<Arc<std::sync::Mutex<SlaveState>>>,
-    pub shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub shutdown_tx: Option<watch::Sender<bool>>,
     pub log_rx: Option<tokio::sync::mpsc::UnboundedReceiver<SlaveLogEntry>>,
     pub sim_running: Option<Arc<AtomicBool>>,
     pub sim_values: Option<Arc<std::sync::Mutex<Vec<f64>>>>,
-    pub sim_profile: Option<Arc<std::sync::Mutex<SimDeviceProfile>>>,
+    /// Register lock flags, shared with the running simulation.
+    pub sim_locks: SimLocks,
     #[cfg(target_os = "macos")]
     pub virtual_slave_fd: Option<std::os::fd::RawFd>,
     #[cfg(target_os = "macos")]

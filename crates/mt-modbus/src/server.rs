@@ -1,9 +1,13 @@
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, watch};
 use tokio_modbus::prelude::*;
 use tokio_modbus::server::Service;
 use tokio_modbus::server::tcp::{Server, accept_tcp_connection};
@@ -19,75 +23,128 @@ pub struct SlaveState {
     pub registers: Vec<u16>,
 }
 
-struct SlaveService {
-    data: Arc<Mutex<SlaveState>>,
-    log_tx: tokio::sync::mpsc::UnboundedSender<SlaveLogEntry>,
+type LogSender = mpsc::UnboundedSender<SlaveLogEntry>;
+
+/// What [`start_slave_server`] and friends hand back to the caller.
+pub type SlaveHandles = (
+    Arc<Mutex<SlaveState>>,
+    mpsc::UnboundedReceiver<SlaveLogEntry>,
+    watch::Sender<bool>,
+);
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
-impl Service for SlaveService {
-    type Request = Request<'static>;
-    type Response = Response;
-    type Exception = ExceptionCode;
-    type Future = std::future::Ready<Result<Self::Response, Self::Exception>>;
+fn status_entry(message: String) -> SlaveLogEntry {
+    SlaveLogEntry { timestamp: now_ms(), function_code: 0, address: 0, quantity: 0, message }
+}
 
-    fn call(&self, req: Self::Request) -> Self::Future {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+/// How requests are addressed on the transport the service runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// `Rtu` is only constructed by the serial-feature start functions.
+#[cfg_attr(not(feature = "serial"), allow(dead_code))]
+enum Transport {
+    /// Multi-drop serial bus: only the configured unit answers, unit 0 is
+    /// broadcast (writes are applied, nothing is ever sent back).
+    Rtu,
+    /// TCP: the device is addressed by IP, so besides the configured unit the
+    /// "direct addressing" IDs 0xFF and 0x00 are accepted; any other unit ID
+    /// is answered with exception 0x0B (Gateway Target Device Failed to Respond).
+    Tcp,
+}
 
-        let response = match &req {
+enum Addressed {
+    Me,
+    Broadcast,
+    Other,
+}
+
+struct SlaveService {
+    data: Arc<Mutex<SlaveState>>,
+    log_tx: LogSender,
+    unit_id: u8,
+    transport: Transport,
+}
+
+impl SlaveService {
+    fn new(data: Arc<Mutex<SlaveState>>, log_tx: LogSender, unit_id: u8, transport: Transport) -> Self {
+        Self { data, log_tx, unit_id, transport }
+    }
+
+    fn addressed(&self, slave: SlaveId) -> Addressed {
+        if slave == self.unit_id {
+            return Addressed::Me;
+        }
+        match self.transport {
+            Transport::Rtu if slave == 0 => Addressed::Broadcast,
+            Transport::Tcp if slave == 0 || slave == 0xFF => Addressed::Me,
+            _ => Addressed::Other,
+        }
+    }
+
+    fn log(&self, function_code: u8, address: u16, quantity: u16, message: String) {
+        let _ = self.log_tx.send(SlaveLogEntry { timestamp: now_ms(), function_code, address, quantity, message });
+    }
+
+    fn dispatch(&self, slave: SlaveId, request: &Request<'_>) -> Result<Option<Response>, ExceptionCode> {
+        match self.addressed(slave) {
+            Addressed::Me => self.handle(request).map(Some),
+            Addressed::Broadcast => {
+                // Broadcast writes are executed by every slave; nobody answers a broadcast.
+                if matches!(request, Request::WriteSingleRegister(..) | Request::WriteMultipleRegisters(..)) {
+                    let _ = self.handle(request);
+                }
+                Ok(None)
+            }
+            Addressed::Other => match self.transport {
+                // Another device's traffic on a shared bus: stay silent.
+                Transport::Rtu => Ok(None),
+                Transport::Tcp => {
+                    self.log(0, 0, 0, format!("Request for unit {slave} rejected (this slave is unit {})", self.unit_id));
+                    Err(ExceptionCode::GatewayTargetDevice)
+                }
+            },
+        }
+    }
+
+    fn handle(&self, req: &Request<'_>) -> Result<Response, ExceptionCode> {
+        match req {
             Request::ReadHoldingRegisters(req_addr, qty) => {
                 let data = self.data.lock().unwrap();
                 let addr = *req_addr as usize;
                 let qty = *qty as usize;
                 if addr.saturating_add(qty) > data.registers.len() {
-                    let _ = self.log_tx.send(SlaveLogEntry {
-                        timestamp: now,
-                        function_code: 3,
-                        address: addr as u16,
-                        quantity: qty as u16,
-                        message: format!(
-                            "Read rejected: {}..{} out of range (max {})",
-                            addr,
-                            addr + qty,
-                            data.registers.len()
-                        ),
-                    });
-                    return std::future::ready(Err(ExceptionCode::IllegalDataAddress));
+                    self.log(
+                        3,
+                        *req_addr,
+                        qty as u16,
+                        format!("Read rejected: {}..{} out of range (max {})", addr, addr + qty, data.registers.len()),
+                    );
+                    return Err(ExceptionCode::IllegalDataAddress);
                 }
                 let regs = data.registers[addr..addr + qty].to_vec();
-                let _ = self.log_tx.send(SlaveLogEntry {
-                    timestamp: now,
-                    function_code: 3,
-                    address: addr as u16,
-                    quantity: qty as u16,
-                    message: format!("Read holding regs {}..{} ({} words)", addr, addr + regs.len(), regs.len()),
-                });
-                Response::ReadHoldingRegisters(regs)
+                self.log(
+                    3,
+                    *req_addr,
+                    qty as u16,
+                    format!("Read holding regs {}..{} ({} words)", addr, addr + regs.len(), regs.len()),
+                );
+                Ok(Response::ReadHoldingRegisters(regs))
             }
             Request::WriteSingleRegister(req_addr, word) => {
                 let mut data = self.data.lock().unwrap();
                 let addr = *req_addr as usize;
                 if addr < data.registers.len() {
                     data.registers[addr] = *word;
-                    let _ = self.log_tx.send(SlaveLogEntry {
-                        timestamp: now,
-                        function_code: 6,
-                        address: *req_addr,
-                        quantity: 1,
-                        message: format!("Write single reg {} = {}", addr, word),
-                    });
-                    Response::WriteSingleRegister(*req_addr, *word)
+                    self.log(6, *req_addr, 1, format!("Write single reg {} = {}", addr, word));
+                    Ok(Response::WriteSingleRegister(*req_addr, *word))
                 } else {
-                    let _ = self.log_tx.send(SlaveLogEntry {
-                        timestamp: now,
-                        function_code: 6,
-                        address: *req_addr,
-                        quantity: 1,
-                        message: format!("Write rejected: addr {} out of range", addr),
-                    });
-                    return std::future::ready(Err(ExceptionCode::IllegalDataAddress));
+                    self.log(6, *req_addr, 1, format!("Write rejected: addr {} out of range", addr));
+                    Err(ExceptionCode::IllegalDataAddress)
                 }
             }
             Request::WriteMultipleRegisters(req_addr, words) => {
@@ -96,62 +153,120 @@ impl Service for SlaveService {
                 let end = addr + words.len();
                 if end <= data.registers.len() {
                     data.registers[addr..end].copy_from_slice(words);
-                    let _ = self.log_tx.send(SlaveLogEntry {
-                        timestamp: now,
-                        function_code: 16,
-                        address: *req_addr,
-                        quantity: words.len() as u16,
-                        message: format!("Write {} regs at {}..{}", words.len(), addr, end),
-                    });
-                    Response::WriteMultipleRegisters(*req_addr, words.len() as u16)
+                    self.log(16, *req_addr, words.len() as u16, format!("Write {} regs at {}..{}", words.len(), addr, end));
+                    Ok(Response::WriteMultipleRegisters(*req_addr, words.len() as u16))
                 } else {
-                    let _ = self.log_tx.send(SlaveLogEntry {
-                        timestamp: now,
-                        function_code: 16,
-                        address: *req_addr,
-                        quantity: words.len() as u16,
-                        message: format!("Write rejected: {}..{} out of range (max {})", addr, end, data.registers.len()),
-                    });
-                    return std::future::ready(Err(ExceptionCode::IllegalDataAddress));
+                    self.log(
+                        16,
+                        *req_addr,
+                        words.len() as u16,
+                        format!("Write rejected: {}..{} out of range (max {})", addr, end, data.registers.len()),
+                    );
+                    Err(ExceptionCode::IllegalDataAddress)
                 }
             }
-            _ => {
-                return std::future::ready(Err(ExceptionCode::IllegalFunction));
-            }
-        };
-
-        std::future::ready(Ok(response))
+            _ => Err(ExceptionCode::IllegalFunction),
+        }
     }
 }
 
-/// Start the slave TCP server. Returns `(SlaveState handle, log receiver)`.
+impl Service for SlaveService {
+    type Request = SlaveRequest<'static>;
+    /// `None` = send no response (broadcast, or another unit's request on a serial bus).
+    type Response = Option<Response>;
+    type Exception = ExceptionCode;
+    type Future = std::future::Ready<Result<Self::Response, Self::Exception>>;
+
+    fn call(&self, req: Self::Request) -> Self::Future {
+        std::future::ready(self.dispatch(req.slave, &req.request))
+    }
+}
+
+/// Resolve once the shutdown flag is set (or its sender is gone).
+async fn wait_shutdown(mut rx: watch::Receiver<bool>) {
+    let _ = rx.wait_for(|stop| *stop).await;
+}
+
+/// A TCP connection that reads EOF and refuses writes once shutdown is signalled.
+///
+/// tokio-modbus spawns one task per accepted connection and only cancels the
+/// accept loop on shutdown, so without this, already connected masters would
+/// keep talking to the register image of a server the user stopped.
+struct StopOnShutdown<T> {
+    inner: T,
+    stop: Pin<Box<dyn Future<Output = ()> + Send>>,
+    stopped: bool,
+}
+
+impl<T> StopOnShutdown<T> {
+    fn new(inner: T, shutdown: watch::Receiver<bool>) -> Self {
+        Self { inner, stop: Box::pin(wait_shutdown(shutdown)), stopped: false }
+    }
+
+    fn poll_stopped(&mut self, cx: &mut Context<'_>) -> bool {
+        if !self.stopped {
+            self.stopped = self.stop.as_mut().poll(cx).is_ready();
+        }
+        self.stopped
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for StopOnShutdown<T> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if this.poll_stopped(cx) {
+            return Poll::Ready(Ok(())); // EOF ends the connection task
+        }
+        Pin::new(&mut this.inner).poll_read(cx, buf)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for StopOnShutdown<T> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.poll_stopped(cx) {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+        Pin::new(&mut this.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+fn new_state(register_count: u16) -> Arc<Mutex<SlaveState>> {
+    Arc::new(Mutex::new(SlaveState { registers: vec![0u16; register_count as usize] }))
+}
+
+/// Start the slave TCP server. Returns `(SlaveState handle, log receiver, shutdown sender)`.
+///
+/// The slave answers `unit_id` (and the direct-addressing IDs 0xFF/0x00); other
+/// unit IDs get exception 0x0B. Sending `true` on the shutdown sender stops the
+/// listener and closes every connected master.
 pub async fn start_slave_server(
     port: u16,
     bind_addr: &str,
     register_count: u16,
-) -> anyhow::Result<(
-    Arc<Mutex<SlaveState>>,
-    tokio::sync::mpsc::UnboundedReceiver<SlaveLogEntry>,
-    tokio::sync::watch::Sender<bool>,
-)> {
+    unit_id: u8,
+) -> anyhow::Result<SlaveHandles> {
     let addr: SocketAddr = format!("{bind_addr}:{port}").parse()?;
     let listener = TcpListener::bind(addr).await?;
 
-    let state = Arc::new(Mutex::new(SlaveState {
-        registers: vec![0u16; register_count as usize],
-    }));
-
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let state = new_state(register_count);
+    let (log_tx, log_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     let data = state.clone();
-    let log_tx_clone = log_tx.clone();
+    let service_log_tx = log_tx.clone();
+    let connection_shutdown = shutdown_rx.clone();
 
     let new_service = move |_socket_addr: SocketAddr| -> io::Result<Option<SlaveService>> {
-        Ok(Some(SlaveService {
-            data: data.clone(),
-            log_tx: log_tx_clone.clone(),
-        }))
+        Ok(Some(SlaveService::new(data.clone(), service_log_tx.clone(), unit_id, Transport::Tcp)))
     };
 
     tokio::spawn(async move {
@@ -159,49 +274,64 @@ pub async fn start_slave_server(
 
         let on_connected = |stream: TcpStream, socket_addr: SocketAddr| {
             let new_service = &new_service;
-            async move { accept_tcp_connection(stream, socket_addr, new_service) }
+            let shutdown = connection_shutdown.clone();
+            async move {
+                Ok::<_, io::Error>(
+                    accept_tcp_connection(stream, socket_addr, new_service)?
+                        .map(|(service, stream)| (service, StopOnShutdown::new(stream, shutdown))),
+                )
+            }
         };
 
         let on_process_error = |err: io::Error| {
             tracing::error!("Slave connection error: {err}");
         };
 
-        let shutdown_future = Box::pin(async move {
-            let mut rx = shutdown_rx;
-            loop {
-                if *rx.borrow_and_update() {
-                    break;
-                }
-                if rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        });
-
         tracing::info!("Modbus slave server listening on {addr}");
         if let Err(e) = server
-            .serve_until(&on_connected, on_process_error, shutdown_future)
+            .serve_until(&on_connected, on_process_error, Box::pin(wait_shutdown(shutdown_rx)))
             .await
         {
             tracing::error!("Slave server error: {e}");
         }
         tracing::info!("Slave server stopped");
-        let _ = log_tx.send(SlaveLogEntry {
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
-            function_code: 0,
-            address: 0,
-            quantity: 0,
-            message: "Server stopped".into(),
-        });
+        let _ = log_tx.send(status_entry("Server stopped".into()));
     });
 
     Ok((state, log_rx, shutdown_tx))
 }
 
-/// Start the slave RTU server on a serial port. Returns `(SlaveState handle, log receiver)`.
+/// RTU unit IDs are 1..=247 (0 is broadcast, 248..=255 are reserved).
+#[cfg(feature = "serial")]
+fn check_rtu_unit(unit_id: u8) -> anyhow::Result<()> {
+    if (1..=247).contains(&unit_id) {
+        Ok(())
+    } else {
+        anyhow::bail!("RTU unit ID must be 1-247, got {unit_id}")
+    }
+}
+
+#[cfg(feature = "serial")]
+fn spawn_rtu_server(
+    stream: SerialStream,
+    service: SlaveService,
+    shutdown_rx: watch::Receiver<bool>,
+    log_tx: LogSender,
+    started: String,
+    stopped: &'static str,
+) {
+    tokio::spawn(async move {
+        let _ = log_tx.send(status_entry(started.clone()));
+        let server = tokio_modbus::server::rtu::Server::new(stream);
+        tracing::info!("{started}");
+        let _ = server.serve_until(service, Box::pin(wait_shutdown(shutdown_rx))).await;
+        tracing::info!("{stopped}");
+        let _ = log_tx.send(status_entry(stopped.into()));
+    });
+}
+
+/// Start the slave RTU server on a serial port. Returns `(SlaveState handle, log receiver, shutdown sender)`.
+/// Only requests for `unit_id` are answered; broadcast (unit 0) writes are applied silently.
 #[cfg(feature = "serial")]
 pub async fn start_slave_server_rtu(
     port_name: &str,
@@ -210,13 +340,10 @@ pub async fn start_slave_server_rtu(
     stop_bits: u8,
     parity: RtuParity,
     register_count: u16,
-) -> anyhow::Result<(
-    Arc<Mutex<SlaveState>>,
-    tokio::sync::mpsc::UnboundedReceiver<SlaveLogEntry>,
-    tokio::sync::watch::Sender<bool>,
-)> {
-    let port_name = port_name.to_owned();
-    let builder = tokio_serial::new(&port_name, baud_rate)
+    unit_id: u8,
+) -> anyhow::Result<SlaveHandles> {
+    check_rtu_unit(unit_id)?;
+    let builder = tokio_serial::new(port_name, baud_rate)
         .data_bits(match data_bits {
             5 => serialport::DataBits::Five,
             6 => serialport::DataBits::Six,
@@ -235,55 +362,19 @@ pub async fn start_slave_server_rtu(
 
     let stream = SerialStream::open(&builder)?;
 
-    let state = Arc::new(Mutex::new(SlaveState {
-        registers: vec![0u16; register_count as usize],
-    }));
+    let state = new_state(register_count);
+    let (log_tx, log_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let service = SlaveService::new(state.clone(), log_tx.clone(), unit_id, Transport::Rtu);
 
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let data = state.clone();
-    let log_tx_clone = log_tx.clone();
-
-    let service = SlaveService {
-        data,
-        log_tx: log_tx_clone.clone(),
-    };
-
-    tokio::spawn(async move {
-        let _ = log_tx_clone.send(SlaveLogEntry {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-            function_code: 0,
-            address: 0,
-            quantity: 0,
-            message: format!("RTU slave started on {} @ {} baud", port_name, baud_rate),
-        });
-
-        let server = tokio_modbus::server::rtu::Server::new(stream);
-
-        let shutdown_future = Box::pin(async move {
-            let mut rx = shutdown_rx;
-            loop {
-                if *rx.borrow_and_update() {
-                    break;
-                }
-                if rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        tracing::info!("Modbus RTU slave server started on {}", port_name);
-        let _ = server.serve_until(service, shutdown_future).await;
-        tracing::info!("RTU slave server stopped");
-        let _ = log_tx_clone.send(SlaveLogEntry {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-            function_code: 0,
-            address: 0,
-            quantity: 0,
-            message: "RTU server stopped".into(),
-        });
-    });
+    spawn_rtu_server(
+        stream,
+        service,
+        shutdown_rx,
+        log_tx,
+        format!("RTU slave (unit {unit_id}) started on {port_name} @ {baud_rate} baud"),
+        "RTU server stopped",
+    );
 
     Ok((state, log_rx, shutdown_tx))
 }
@@ -294,15 +385,18 @@ pub async fn start_slave_server_rtu(
 #[cfg(all(feature = "serial", unix))]
 pub async fn start_slave_server_rtu_virtual(
     register_count: u16,
+    unit_id: u8,
 ) -> anyhow::Result<(
     Arc<Mutex<SlaveState>>,
-    tokio::sync::mpsc::UnboundedReceiver<SlaveLogEntry>,
-    tokio::sync::watch::Sender<bool>,
+    mpsc::UnboundedReceiver<SlaveLogEntry>,
+    watch::Sender<bool>,
     String,
     std::os::fd::RawFd,
 )> {
     use std::ffi::CStr;
     use std::os::unix::io::FromRawFd;
+
+    check_rtu_unit(unit_id)?;
 
     let mut master_fd: libc::c_int = -1;
     let mut slave_fd: libc::c_int = -1;
@@ -319,7 +413,7 @@ pub async fn start_slave_server_rtu_virtual(
     };
 
     if result == -1 {
-        return Err(std::io::Error::last_os_error().into());
+        return Err(io::Error::last_os_error().into());
     }
 
     let slave_path = unsafe { CStr::from_ptr(name_buf.as_ptr() as *const libc::c_char) }
@@ -332,56 +426,19 @@ pub async fn start_slave_server_rtu_virtual(
     let tty_port = unsafe { serialport::TTYPort::from_raw_fd(master_fd) };
     let stream = tokio_serial::SerialStream::try_from(tty_port)?;
 
-    let state = Arc::new(Mutex::new(SlaveState {
-        registers: vec![0u16; register_count as usize],
-    }));
+    let state = new_state(register_count);
+    let (log_tx, log_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let service = SlaveService::new(state.clone(), log_tx.clone(), unit_id, Transport::Rtu);
 
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let data = state.clone();
-    let log_tx_clone = log_tx.clone();
-
-    let service = SlaveService {
-        data,
-        log_tx: log_tx_clone.clone(),
-    };
-
-    let slave_path_display = slave_path.clone();
-    tokio::spawn(async move {
-        let _ = log_tx_clone.send(SlaveLogEntry {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-            function_code: 0,
-            address: 0,
-            quantity: 0,
-            message: format!("Virtual RTU slave started at {}", slave_path_display),
-        });
-
-        let server = tokio_modbus::server::rtu::Server::new(stream);
-
-        let shutdown_future = Box::pin(async move {
-            let mut rx = shutdown_rx;
-            loop {
-                if *rx.borrow_and_update() {
-                    break;
-                }
-                if rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        tracing::info!("Virtual RTU slave started at {}", slave_path_display);
-        let _ = server.serve_until(service, shutdown_future).await;
-        tracing::info!("Virtual RTU slave stopped");
-        let _ = log_tx_clone.send(SlaveLogEntry {
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-            function_code: 0,
-            address: 0,
-            quantity: 0,
-            message: "Virtual RTU server stopped".into(),
-        });
-    });
+    spawn_rtu_server(
+        stream,
+        service,
+        shutdown_rx,
+        log_tx,
+        format!("Virtual RTU slave (unit {unit_id}) started at {slave_path}"),
+        "Virtual RTU server stopped",
+    );
 
     Ok((state, log_rx, shutdown_tx, slave_path, slave_fd))
 }
@@ -389,53 +446,49 @@ pub async fn start_slave_server_rtu_virtual(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_modbus::server::Service;
     use std::borrow::Cow;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    fn make_service(register_count: usize) -> (Arc<Mutex<SlaveState>>, SlaveService) {
-        let state = Arc::new(Mutex::new(SlaveState {
-            registers: vec![0u16; register_count],
-        }));
-        let (log_tx, _log_rx) = tokio::sync::mpsc::unbounded_channel();
-        let service = SlaveService {
-            data: state.clone(),
-            log_tx,
-        };
+    const UNIT: u8 = 1;
+
+    fn make_service(register_count: usize, unit_id: u8, transport: Transport) -> (Arc<Mutex<SlaveState>>, SlaveService) {
+        let state = Arc::new(Mutex::new(SlaveState { registers: vec![0u16; register_count] }));
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let service = SlaveService::new(state.clone(), log_tx, unit_id, transport);
         (state, service)
     }
 
-    fn run<F: std::future::Future>(fut: F) -> F::Output {
-        // std::future::Ready completes immediately, so a minimal waker suffices
-        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-        fn dummy_raw() -> RawWaker {
-            RawWaker::new(std::ptr::null(), &VTABLE)
-        }
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(
-            |_| dummy_raw(),
-            |_| {},
-            |_| {},
-            |_| {},
-        );
-        let waker = unsafe { Waker::from_raw(dummy_raw()) };
-        let mut cx = Context::from_waker(&waker);
-        let mut pinned = std::pin::pin!(fut);
-        match pinned.as_mut().poll(&mut cx) {
-            Poll::Ready(val) => val,
-            Poll::Pending => panic!("Future did not complete immediately"),
-        }
+    fn make_tcp_service(register_count: usize) -> (Arc<Mutex<SlaveState>>, SlaveService) {
+        make_service(register_count, UNIT, Transport::Tcp)
+    }
+
+    /// `Service::call` returns an already-completed `Ready`.
+    fn call_slave(
+        service: &SlaveService,
+        slave: SlaveId,
+        request: Request<'static>,
+    ) -> Result<Option<Response>, ExceptionCode> {
+        service
+            .call(SlaveRequest { slave, request })
+            .into_inner()
+    }
+
+    /// Request addressed to the service's own unit; panics if no response is produced.
+    fn call(service: &SlaveService, request: Request<'static>) -> Result<Response, ExceptionCode> {
+        call_slave(service, UNIT, request).map(|r| r.expect("a response"))
     }
 
     #[test]
     fn test_read_holding_registers_basic() {
-        let (state, service) = make_service(10);
+        let (state, service) = make_tcp_service(10);
         {
             let mut data = state.lock().unwrap();
             data.registers[0] = 100;
             data.registers[1] = 200;
             data.registers[2] = 300;
         }
-        let result = run(service.call(Request::ReadHoldingRegisters(0, 3))).unwrap();
-        match result {
+        match call(&service, Request::ReadHoldingRegisters(0, 3)).unwrap() {
             Response::ReadHoldingRegisters(regs) => assert_eq!(regs, vec![100, 200, 300]),
             _ => panic!("Expected ReadHoldingRegisters response"),
         }
@@ -443,99 +496,76 @@ mod tests {
 
     #[test]
     fn test_write_single_register() {
-        let (state, service) = make_service(10);
-        let result = run(service.call(Request::WriteSingleRegister(5, 42))).unwrap();
-        match result {
+        let (state, service) = make_tcp_service(10);
+        match call(&service, Request::WriteSingleRegister(5, 42)).unwrap() {
             Response::WriteSingleRegister(addr, word) => {
                 assert_eq!(addr, 5);
                 assert_eq!(word, 42);
             }
             _ => panic!("Expected WriteSingleRegister response"),
         }
-        let data = state.lock().unwrap();
-        assert_eq!(data.registers[5], 42);
+        assert_eq!(state.lock().unwrap().registers[5], 42);
     }
 
     #[test]
     fn test_write_multiple_registers() {
-        let (state, service) = make_service(10);
-        let result = run(service.call(Request::WriteMultipleRegisters(0, Cow::Borrowed(&[10, 20, 30])))).unwrap();
-        match result {
+        let (state, service) = make_tcp_service(10);
+        match call(&service, Request::WriteMultipleRegisters(0, Cow::Borrowed(&[10, 20, 30]))).unwrap() {
             Response::WriteMultipleRegisters(addr, count) => {
                 assert_eq!(addr, 0);
                 assert_eq!(count, 3);
             }
             _ => panic!("Expected WriteMultipleRegisters response"),
         }
-        let data = state.lock().unwrap();
-        assert_eq!(data.registers[0], 10);
-        assert_eq!(data.registers[1], 20);
-        assert_eq!(data.registers[2], 30);
+        assert_eq!(&state.lock().unwrap().registers[..3], &[10, 20, 30]);
     }
 
     #[test]
     fn test_write_out_of_range_returns_illegal_address() {
-        let (_state, service) = make_service(100);
-        let result = run(service.call(Request::WriteSingleRegister(999, 42)));
-        assert_eq!(result, Err(ExceptionCode::IllegalDataAddress));
+        let (_state, service) = make_tcp_service(100);
+        assert_eq!(call(&service, Request::WriteSingleRegister(999, 42)), Err(ExceptionCode::IllegalDataAddress));
     }
 
     #[test]
     fn test_unsupported_function_returns_illegal_function() {
-        let (_state, service) = make_service(10);
-        let result = run(service.call(Request::ReadCoils(0, 1)));
-        assert_eq!(result, Err(ExceptionCode::IllegalFunction));
+        let (_state, service) = make_tcp_service(10);
+        assert_eq!(call(&service, Request::ReadCoils(0, 1)), Err(ExceptionCode::IllegalFunction));
     }
-
-    // ── Expanded coverage ──
 
     #[test]
     fn test_read_holding_registers_out_of_range_returns_illegal_address() {
-        let (_state, service) = make_service(5);
-        // Request registers starting at address 10, only 5 exist:
+        let (_state, service) = make_tcp_service(5);
         // Modbus requires an address exception, never an empty response.
-        let result = run(service.call(Request::ReadHoldingRegisters(10, 3)));
-        assert_eq!(result, Err(ExceptionCode::IllegalDataAddress));
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(10, 3)), Err(ExceptionCode::IllegalDataAddress));
     }
 
     #[test]
     fn test_read_holding_registers_partial_range() {
-        let (_state, service) = make_service(10);
-        // Request 5 registers starting at 7, but only 3 exist (7, 8, 9):
-        // a partial read must also be rejected as an address exception.
-        let result = run(service.call(Request::ReadHoldingRegisters(7, 5)));
-        assert_eq!(result, Err(ExceptionCode::IllegalDataAddress));
+        let (_state, service) = make_tcp_service(10);
+        // 7..12 with only 10 registers: a partial read must be rejected too.
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(7, 5)), Err(ExceptionCode::IllegalDataAddress));
     }
 
     #[test]
     fn test_write_multiple_registers_out_of_range() {
-        let (_state, service) = make_service(5);
-        let result = run(service.call(Request::WriteMultipleRegisters(
-            3, Cow::Borrowed(&[10, 20, 30]), // 3-6 exceeds 5 registers
-        )));
-        assert_eq!(result, Err(ExceptionCode::IllegalDataAddress));
+        let (_state, service) = make_tcp_service(5);
+        assert_eq!(
+            call(&service, Request::WriteMultipleRegisters(3, Cow::Borrowed(&[10, 20, 30]))),
+            Err(ExceptionCode::IllegalDataAddress)
+        );
     }
 
     #[test]
     fn test_write_single_at_last_register() {
-        let (state, service) = make_service(10);
-        let result = run(service.call(Request::WriteSingleRegister(9, 9999))).unwrap();
-        match result {
-            Response::WriteSingleRegister(addr, word) => {
-                assert_eq!(addr, 9);
-                assert_eq!(word, 9999);
-            }
-            _ => panic!("Expected WriteSingleRegister response"),
-        }
-        let data = state.lock().unwrap();
-        assert_eq!(data.registers[9], 9999);
+        let (state, service) = make_tcp_service(10);
+        call(&service, Request::WriteSingleRegister(9, 9999)).unwrap();
+        assert_eq!(state.lock().unwrap().registers[9], 9999);
     }
 
     #[test]
     fn test_read_holding_zero_quantity() {
-        let (_state, service) = make_service(10);
-        let result = run(service.call(Request::ReadHoldingRegisters(0, 0))).unwrap();
-        match result {
+        let (_state, service) = make_tcp_service(10);
+        match call(&service, Request::ReadHoldingRegisters(0, 0)).unwrap() {
             Response::ReadHoldingRegisters(regs) => assert!(regs.is_empty()),
             _ => panic!("Expected ReadHoldingRegisters response"),
         }
@@ -543,8 +573,141 @@ mod tests {
 
     #[test]
     fn test_read_input_registers_returns_illegal_function() {
-        let (_state, service) = make_service(10);
-        let result = run(service.call(Request::ReadInputRegisters(0, 1)));
-        assert_eq!(result, Err(ExceptionCode::IllegalFunction));
+        let (_state, service) = make_tcp_service(10);
+        assert_eq!(call(&service, Request::ReadInputRegisters(0, 1)), Err(ExceptionCode::IllegalFunction));
+    }
+
+    // ── unit-ID filtering ──
+
+    #[test]
+    fn rtu_answers_only_its_own_unit() {
+        let (state, service) = make_service(10, 5, Transport::Rtu);
+        state.lock().unwrap().registers[0] = 77;
+
+        let mine = call_slave(&service, 5, Request::ReadHoldingRegisters(0, 1)).unwrap();
+        assert!(matches!(&mine, Some(Response::ReadHoldingRegisters(r)) if r == &[77]));
+
+        // Another unit on the same multi-drop bus: stay silent (no response, no exception).
+        assert_eq!(call_slave(&service, 6, Request::ReadHoldingRegisters(0, 1)), Ok(None));
+        assert_eq!(call_slave(&service, 247, Request::ReadHoldingRegisters(0, 1)), Ok(None));
+        // Not even for requests that would be exceptions.
+        assert_eq!(call_slave(&service, 6, Request::ReadHoldingRegisters(500, 1)), Ok(None));
+        // and another unit's write must not touch our registers.
+        assert_eq!(call_slave(&service, 6, Request::WriteSingleRegister(1, 9)), Ok(None));
+        assert_eq!(state.lock().unwrap().registers[1], 0);
+    }
+
+    #[test]
+    fn rtu_broadcast_writes_apply_but_are_never_answered() {
+        let (state, service) = make_service(10, 5, Transport::Rtu);
+
+        assert_eq!(call_slave(&service, 0, Request::WriteSingleRegister(2, 1234)), Ok(None));
+        assert_eq!(state.lock().unwrap().registers[2], 1234);
+
+        assert_eq!(
+            call_slave(&service, 0, Request::WriteMultipleRegisters(3, Cow::Borrowed(&[1, 2]))),
+            Ok(None)
+        );
+        assert_eq!(&state.lock().unwrap().registers[3..5], &[1, 2]);
+
+        // A broadcast read makes no sense and gets no answer.
+        assert_eq!(call_slave(&service, 0, Request::ReadHoldingRegisters(0, 1)), Ok(None));
+        // An out-of-range broadcast write is dropped without any exception either.
+        assert_eq!(call_slave(&service, 0, Request::WriteSingleRegister(500, 1)), Ok(None));
+    }
+
+    #[test]
+    fn tcp_rejects_other_units_with_gateway_exception() {
+        let (state, service) = make_service(10, 3, Transport::Tcp);
+        assert_eq!(
+            call_slave(&service, 4, Request::ReadHoldingRegisters(0, 1)),
+            Err(ExceptionCode::GatewayTargetDevice)
+        );
+        assert_eq!(
+            call_slave(&service, 4, Request::WriteSingleRegister(0, 5)),
+            Err(ExceptionCode::GatewayTargetDevice)
+        );
+        assert_eq!(state.lock().unwrap().registers[0], 0);
+        // Configured unit and the direct-addressing IDs are served.
+        for unit in [3, 0xFF, 0x00] {
+            assert!(matches!(
+                call_slave(&service, unit, Request::ReadHoldingRegisters(0, 1)),
+                Ok(Some(Response::ReadHoldingRegisters(_)))
+            ));
+        }
+    }
+
+    // ── over a real TCP socket, with hand-assembled MBAP frames ──
+
+    async fn start_tcp(unit_id: u8) -> (u16, Arc<Mutex<SlaveState>>, watch::Sender<bool>) {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let (state, _log, shutdown) = start_slave_server(port, "127.0.0.1", 16, unit_id).await.unwrap();
+        (port, state, shutdown)
+    }
+
+    async fn exchange(stream: &mut TcpStream, request: &[u8], response_len: usize) -> Vec<u8> {
+        stream.write_all(request).await.unwrap();
+        let mut buf = vec![0u8; response_len];
+        tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut buf))
+            .await
+            .expect("response within 2s")
+            .unwrap();
+        buf
+    }
+
+    #[tokio::test]
+    async fn tcp_frames_for_configured_and_foreign_units() {
+        let (port, state, _shutdown) = start_tcp(7).await;
+        state.lock().unwrap().registers[..2].copy_from_slice(&[0xABCD, 0x0102]);
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+
+        // Read Holding Registers: transaction 0x0001, protocol 0, length 6, unit 7,
+        // FC 03, start address 0x0000, quantity 0x0002.
+        let req = [0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x07, 0x03, 0x00, 0x00, 0x00, 0x02];
+        // Response: same transaction, length 7, unit 7, FC 03, byte count 4, 0xABCD, 0x0102.
+        let want = [0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x07, 0x03, 0x04, 0xAB, 0xCD, 0x01, 0x02];
+        assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+
+        // Same request for unit 9: exception response = FC | 0x80 (0x83), code 0x0B.
+        let req = [0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x09, 0x03, 0x00, 0x00, 0x00, 0x02];
+        let want = [0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x09, 0x83, 0x0B];
+        assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+
+        // Out-of-range read for our unit: exception 0x02 (Illegal Data Address).
+        let req = [0x00, 0x03, 0x00, 0x00, 0x00, 0x06, 0x07, 0x03, 0x00, 0x10, 0x00, 0x01];
+        let want = [0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x07, 0x83, 0x02];
+        assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+
+        // Unit 0xFF (direct addressing) is served.
+        let req = [0x00, 0x04, 0x00, 0x00, 0x00, 0x06, 0xFF, 0x03, 0x00, 0x01, 0x00, 0x01];
+        let want = [0x00, 0x04, 0x00, 0x00, 0x00, 0x05, 0xFF, 0x03, 0x02, 0x01, 0x02];
+        assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+    }
+
+    #[tokio::test]
+    async fn stopping_the_server_closes_live_connections() {
+        let (port, state, shutdown) = start_tcp(1).await;
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+
+        // Write Single Register 3 = 0x00FF; the response echoes the request.
+        let req = [0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x06, 0x00, 0x03, 0x00, 0xFF];
+        assert_eq!(exchange(&mut s, &req, req.len()).await, req);
+        assert_eq!(state.lock().unwrap().registers[3], 0xFF);
+
+        shutdown.send(true).unwrap();
+
+        // The server side closes the socket: read() reports EOF (0 bytes) or a reset.
+        let mut buf = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(2), s.read(&mut buf))
+            .await
+            .expect("connection must be closed within 2s of stopping the server");
+        assert!(matches!(n, Ok(0) | Err(_)), "unexpected data after stop: {n:?}");
+
+        // ...and a request on a fresh connection is refused as well (listener gone).
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
     }
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   CalendarClock,
   ChevronDown,
   ChevronRight,
+  Eye,
   Gauge,
   LineChart,
   ListTree,
@@ -16,7 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Button, EmptyState, IconButton } from "@mactools/ui";
-import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry } from "../types";
+import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry, BacnetValue } from "../types";
 import { formatObjectType } from "../types";
 import { trendKey } from "../hooks/useBacnetTrend";
 import { PropertyInspector } from "./PropertyInspector";
@@ -45,6 +46,10 @@ interface ObjectBrowserProps {
   onObjectSelect?: (obj: BacnetObjectInfo) => void;
   trendKeys?: Set<string>;
   onToggleTrend?: (obj: { type: string; instance: number }, name: string) => void;
+  /** Open the trend log viewer for a trendLog / trendLogMultiple object. */
+  onOpenTrendLog?: (obj: { type: "trendLog" | "trendLogMultiple"; instance: number }, name: string) => void;
+  /** Open the schedule viewer for a schedule object. */
+  onOpenSchedule?: (instance: number, name: string) => void;
 }
 
 // ── Styles ──
@@ -149,7 +154,7 @@ function objectKey(obj: BacnetObjectInfo): string {
 // ── Component ──
 
 export function ObjectBrowser(props: ObjectBrowserProps) {
-  const { onObjectSelect, trendKeys, onToggleTrend } = props;
+  const { onObjectSelect, trendKeys, onToggleTrend, onOpenTrendLog, onOpenSchedule } = props;
 
   const [objects, setObjects] = useState<BacnetObjectInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -159,6 +164,8 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
   const [properties, setProperties] = useState<BacnetPropertyEntry[]>([]);
   const [detail, setDetail] = useState<BacnetObjectDetail | null>(null);
   const [propertiesLoading, setPropertiesLoading] = useState(false);
+  const [propertiesError, setPropertiesError] = useState<string | null>(null);
+  const propertiesRequest = useRef(0);
 
   // Browse objects
   const handleBrowse = useCallback(async () => {
@@ -168,6 +175,9 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
     setSelectedObject(null);
     setProperties([]);
     setDetail(null);
+    propertiesRequest.current += 1; // drop any in-flight property read
+    setPropertiesError(null);
+    setPropertiesLoading(false);
     try {
       const result = await invoke<BacnetObjectInfo[]>("browse_objects");
       setObjects(result);
@@ -191,59 +201,59 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
     });
   }, []);
 
+  // Read the selected object's properties. Responses for a superseded request
+  // (user clicked another object, or re-browsed) are dropped.
+  const loadProperties = useCallback(async (target: { type: string; instance: number }) => {
+    const requestId = ++propertiesRequest.current;
+    setPropertiesLoading(true);
+    setPropertiesError(null);
+    try {
+      const result = await invoke<BacnetObjectDetail | null>("read_object_properties", {
+        objectType: target.type,
+        objectInstance: target.instance,
+      });
+      if (requestId !== propertiesRequest.current) return;
+      setDetail(result);
+      setProperties(result?.properties ?? []);
+    } catch (e) {
+      if (requestId !== propertiesRequest.current) return;
+      setDetail(null);
+      setProperties([]);
+      setPropertiesError(`Reading ${formatObjectType(target.type)} ${target.instance} failed: ${String(e)}`);
+    } finally {
+      if (requestId === propertiesRequest.current) setPropertiesLoading(false);
+    }
+  }, []);
+
   // Select an object and load its properties
   const handleSelectObject = useCallback(
     async (obj: BacnetObjectInfo) => {
       setSelectedObject({ type: obj.object_type, instance: obj.object_instance });
-      setPropertiesLoading(true);
       setProperties([]);
       setDetail(null);
-      try {
-        const result = await invoke<BacnetObjectDetail | null>("read_object_properties", {
-          objectType: obj.object_type,
-          objectInstance: obj.object_instance,
-        });
-        setDetail(result);
-        setProperties(result?.properties ?? []);
-      } catch (e) {
-        setProperties([]);
-        setDetail(null);
-      } finally {
-        setPropertiesLoading(false);
-      }
+      await loadProperties({ type: obj.object_type, instance: obj.object_instance });
       onObjectSelect?.(obj);
     },
-    [onObjectSelect],
+    [onObjectSelect, loadProperties],
   );
 
-  // Write a property value
+  // Write a typed property value. Rejects with the device's error so the
+  // inspector can show it; on success the properties are re-read.
   const handleWrite = useCallback(
-    async (propertyName: string, value: string, dataType: string) => {
-      if (!selectedObject) return;
-      const numValue = dataType === "Boolean" ? (value === "Active" || value === "true" ? 1 : 0) : Number(value);
-      if (isNaN(numValue)) return;
-      try {
-        await invoke("write_tag", {
-          tag: {
-            name: propertyName,
-            object_type: selectedObject.type,
-            object_instance: selectedObject.instance,
-            property: propertyName,
-          },
-          value: { Float64: numValue },
-        });
-        // Re-read properties after write
-        const result = await invoke<BacnetObjectDetail | null>("read_object_properties", {
-          objectType: selectedObject.type,
-          objectInstance: selectedObject.instance,
-        });
-        setDetail(result);
-        setProperties(result?.properties ?? []);
-      } catch (e) {
-        setError(String(e));
-      }
+    async (propertyName: string, value: BacnetValue) => {
+      if (!selectedObject) throw new Error("No object selected");
+      await invoke("write_tag", {
+        tag: {
+          name: propertyName,
+          object_type: selectedObject.type,
+          object_instance: selectedObject.instance,
+          property: propertyName,
+        },
+        value,
+      });
+      await loadProperties(selectedObject);
     },
-    [selectedObject],
+    [selectedObject, loadProperties],
   );
 
   // Render
@@ -303,6 +313,10 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
                         const selected =
                           selectedObject?.type === obj.object_type &&
                           selectedObject?.instance === obj.object_instance;
+                        const logType =
+                          obj.object_type === "trendLog" || obj.object_type === "trendLogMultiple"
+                            ? obj.object_type
+                            : null;
                         return (
                           <div
                             key={objectKey(obj)}
@@ -335,6 +349,36 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
                                 </IconButton>
                               );
                             })()}
+                            {logType && onOpenTrendLog && (
+                              <IconButton
+                                size="sm"
+                                label="View trend log"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenTrendLog(
+                                    { type: logType, instance: obj.object_instance },
+                                    obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`,
+                                  );
+                                }}
+                              >
+                                <Eye size={12} strokeWidth={1.75} />
+                              </IconButton>
+                            )}
+                            {obj.object_type === "schedule" && onOpenSchedule && (
+                              <IconButton
+                                size="sm"
+                                label="View schedule"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenSchedule(
+                                    obj.object_instance,
+                                    obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`,
+                                  );
+                                }}
+                              >
+                                <Eye size={12} strokeWidth={1.75} />
+                              </IconButton>
+                            )}
                           </div>
                         );
                       })}
@@ -350,6 +394,15 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
       <div style={inspectorPanel}>
         {selectedObject && isDeviceSelected && (
           <DeviceInspector loading={propertiesLoading} />
+        )}
+
+        {selectedObject && !isDeviceSelected && propertiesError && (
+          <div
+            role="alert"
+            style={{ marginBottom: 8, padding: "6px 8px", fontSize: "var(--fs-xs)", color: "var(--danger)", background: "var(--danger-soft)", borderRadius: "var(--radius)" }}
+          >
+            {propertiesError}
+          </div>
         )}
 
         {selectedObject && !isDeviceSelected && (

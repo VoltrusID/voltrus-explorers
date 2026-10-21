@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import type { ConnProfile } from "../types";
-import { saveConnProfiles } from "../helpers";
+import { saveConnProfiles, validateBlock } from "../helpers";
 import { useStore } from "../store";
 
 export function useConnectionProfiles(masterFormRef: React.RefObject<Record<string, string | number> | null>) {
@@ -57,7 +57,12 @@ export function useConnectionProfiles(masterFormRef: React.RefObject<Record<stri
     useStore.getState().setRtuStopBits(p.rtu.stopBits);
     useStore.getState().setRtuParity(p.rtu.parity);
     useStore.getState().setRtuUnitId(p.rtu.unitId);
-    useStore.getState().setBlocks(p.blocks);
+    // Profiles saved by older versions may hold blocks that can no longer be polled (e.g. type "string").
+    const usable = p.blocks.filter((b) => validateBlock(b) === null);
+    if (usable.length < p.blocks.length) {
+      useStore.getState().addLog("error", `Profile '${p.name}': skipped ${p.blocks.length - usable.length} block(s) that can not be polled`);
+    }
+    useStore.getState().setBlocks(usable);
     setActiveConnProfile(p.name);
     setProfileDirty(false);
     setFormKey(formKey + 1);

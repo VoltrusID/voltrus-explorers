@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { Button } from "@mactools/ui";
+import { Button, ProAboutRow, useProStatus } from "@mactools/ui";
 import { useStore } from "../store";
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
 
 export function InfoDialog({ toggleTheme }: Props) {
   const { showInfo, setShowInfo, theme } = useStore();
+  const { status } = useProStatus();
   const [appVersion, setAppVersion] = useState("");
 
   useEffect(() => { getVersion().then(setAppVersion); }, []);
@@ -61,12 +62,20 @@ export function InfoDialog({ toggleTheme }: Props) {
             {theme === "dark" ? "Dark" : "Light"}
           </Button>
         </div>
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span className="vt-label">Source</span>
-          <Button size="sm" variant="ghost" onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>
-            GitHub
-          </Button>
-        </div>
+        {status?.store ? (
+          // App Store build: purchase/restore entry point. No outbound source link here, since store review
+          // treats links to builds that unlock paid features elsewhere as steering away from in-app purchase.
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
+            <ProAboutRow />
+          </div>
+        ) : (
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span className="vt-label">Source</span>
+            <Button size="sm" variant="ghost" onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>
+              GitHub
+            </Button>
+          </div>
+        )}
         <Button block onClick={() => setShowInfo(false)}>Close</Button>
       </div>
     </div>

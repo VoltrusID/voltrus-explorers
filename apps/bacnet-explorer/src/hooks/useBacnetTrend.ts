@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { BacnetObjectDetail, CovNotificationEvent } from "../types";
+import { bacnetValueToNumber } from "../types";
+import type {
+  BacnetObjectDetail,
+  CovListenerErrorEvent,
+  CovNotificationEvent,
+  CovSubscribeFailedEvent,
+} from "../types";
 
 export type TrendSource = "poll" | "cov";
 
@@ -16,14 +22,38 @@ export interface TrendEntry {
 
 const COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
 
+const POLL_ERROR_PREFIX = "Polling failed: ";
+
+/** SubscribeCOV lifetime in seconds; the backend renews each subscription at 80% of it. */
+const COV_LIFETIME_SEC = 3600;
+
 export function trendKey(type: string, instance: number) {
   return `${type}:${instance}`;
 }
 
-export function useBacnetTrend(connected: boolean) {
+export function useBacnetTrend(connected: boolean, onError?: (message: string) => void) {
   const [series, setSeries] = useState<Map<string, TrendEntry>>(new Map());
+  const [errors, setErrors] = useState<Map<string, string>>(new Map());
   const [pollMs, setPollMs] = useState(1000);
   const [windowSec, setWindowSec] = useState(60);
+
+  /** Record (or, with null, clear) the latest poll failure of a series without touching COV notices. */
+  const setPollError = useCallback((key: string, message: string | null) => {
+    setErrors((prev) => {
+      const current = prev.get(key);
+      if (message === null) {
+        if (current === undefined || !current.startsWith(POLL_ERROR_PREFIX)) return prev;
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      }
+      if (current === message) return prev;
+      return new Map(prev).set(key, message);
+    });
+  }, []);
+
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   const seriesRef = useRef(series);
   seriesRef.current = series;
@@ -75,6 +105,12 @@ export function useBacnetTrend(connected: boolean) {
   }, []);
 
   const setSource = useCallback((key: string, source: TrendSource) => {
+    setErrors((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
     setSeries((prev) => {
       const entry = prev.get(key);
       if (!entry || entry.source === source) return prev;
@@ -82,6 +118,20 @@ export function useBacnetTrend(connected: boolean) {
       next.set(key, { ...entry, source, points: [] });
       return next;
     });
+  }, []);
+
+  /** COV could not be used for `key`: record why and continue with polling. */
+  const fallBackToPoll = useCallback((key: string, reason: string) => {
+    const message = `COV subscription for ${key} failed (${reason}); using polling instead`;
+    setErrors((prev) => new Map(prev).set(key, message));
+    setSeries((prev) => {
+      const entry = prev.get(key);
+      if (!entry || entry.source !== "cov") return prev;
+      const next = new Map(prev);
+      next.set(key, { ...entry, source: "poll" });
+      return next;
+    });
+    onErrorRef.current?.(message);
   }, []);
 
   // ── Poll: read presentValue of each poll-source object (proven read_object_properties path) ──
@@ -102,9 +152,11 @@ export function useBacnetTrend(connected: boolean) {
             if (cancelled) return;
             const pvEntry = detail?.properties.find((p) => p.property_identifier === 85);
             const pv = detail?.present_value ?? pvEntry?.raw_value ?? null;
-            if (pv != null) appendPoint(e.key, parseFloat(pv));
-          } catch {
-            /* ignore */
+            if (pv == null) throw new Error("device returned no presentValue");
+            appendPoint(e.key, parseFloat(pv));
+            setPollError(e.key, null);
+          } catch (err) {
+            if (!cancelled) setPollError(e.key, `${POLL_ERROR_PREFIX}${err}`);
           }
         }),
       );
@@ -113,33 +165,54 @@ export function useBacnetTrend(connected: boolean) {
     tick();
     const id = setInterval(tick, Math.max(100, pollMs));
     return () => { cancelled = true; clearInterval(id); };
-  }, [connected, pollMs, appendPoint]);
+  }, [connected, pollMs, appendPoint, setPollError]);
 
-  // ── COV: listen for notifications ──
+  // ── COV: listen for notifications and for backend failures ──
   useEffect(() => {
     if (!connected) return;
-    let unlisten: UnlistenFn | null = null;
     let cancelled = false;
-    invoke("start_cov_listener").catch(() => {});
-    listen<CovNotificationEvent>("cov-notification", (event) => {
+    const unlisteners: UnlistenFn[] = [];
+    const track = (p: Promise<UnlistenFn>) =>
+      p.then((u) => { if (cancelled) u(); else unlisteners.push(u); });
+
+    invoke("start_cov_listener").catch((e) => {
+      onErrorRef.current?.(`COV listener could not start: ${e}`);
+    });
+
+    track(listen<CovNotificationEvent>("cov-notification", (event) => {
       const p = event.payload;
       const key = trendKey(p.monitored_object_type, p.monitored_object_instance);
       const entry = seriesRef.current.get(key);
       if (!entry || entry.source !== "cov") return;
-      const raw = p.values?.[0]?.value;
-      appendPoint(key, parseFloat(raw));
-    }).then((u) => { if (cancelled) u(); else unlisten = u; });
+      const pv = p.values?.find((v) => v.property_name === "presentValue");
+      if (!pv) return;
+      // `value` is a serialized BacnetValue ({ Real: 1.5 }); "Null" arrives as a bare string.
+      appendPoint(key, typeof pv.value === "object" ? bacnetValueToNumber(pv.value) : parseFloat(pv.raw_value));
+    }));
+
+    // A SubscribeCOV the device refused (or never answered): show why and fall back to polling.
+    track(listen<CovSubscribeFailedEvent>("cov-subscribe-failed", (event) => {
+      const p = event.payload;
+      fallBackToPoll(trendKey(p.object_type, p.object_instance), p.message);
+    }));
+
+    track(listen<CovListenerErrorEvent>("cov-listener-error", (event) => {
+      onErrorRef.current?.(event.payload.message);
+    }));
+
     return () => {
       cancelled = true;
-      if (unlisten) unlisten();
+      for (const u of unlisteners) u();
     };
-  }, [connected, appendPoint]);
+  }, [connected, appendPoint, fallBackToPoll]);
 
   // ── COV: subscribe/unsubscribe diff for cov-source objects ──
-  const subscribedRef = useRef<Set<string>>(new Set());
+  // The object each key was subscribed with is remembered here, because by the time a
+  // removed series is noticed it is already gone from `series`.
+  const subscribedRef = useRef<Map<string, { type: string; instance: number }>>(new Map());
   useEffect(() => {
     if (!connected) {
-      subscribedRef.current = new Set();
+      subscribedRef.current = new Map();
       return;
     }
     const want = new Set<string>();
@@ -148,41 +221,54 @@ export function useBacnetTrend(connected: boolean) {
     // Subscribe new cov entries.
     for (const e of series.values()) {
       if (e.source === "cov" && !subscribedRef.current.has(e.key)) {
+        subscribedRef.current.set(e.key, { type: e.obj.type, instance: e.obj.instance });
         invoke("subscribe_cov_cmd", {
           objectType: e.obj.type,
           objectInstance: e.obj.instance,
-          lifetime: 3600,
+          lifetime: COV_LIFETIME_SEC,
           confirmed: false,
-        }).catch(() => {});
-        subscribedRef.current.add(e.key);
+        }).catch((err) => fallBackToPoll(e.key, String(err)));
       }
     }
     // Unsubscribe entries no longer cov (removed or switched to poll).
-    for (const key of Array.from(subscribedRef.current)) {
+    for (const [key, obj] of Array.from(subscribedRef.current)) {
       if (!want.has(key)) {
-        const e = seriesRef.current.get(key);
-        if (e) {
-          invoke("unsubscribe_cov_cmd", {
-            objectType: e.obj.type,
-            objectInstance: e.obj.instance,
-          }).catch(() => {});
-        }
         subscribedRef.current.delete(key);
+        invoke("unsubscribe_cov_cmd", {
+          objectType: obj.type,
+          objectInstance: obj.instance,
+        }).catch((err) => {
+          onErrorRef.current?.(`COV unsubscribe for ${key} failed: ${err}`);
+        });
       }
     }
-  }, [connected, series]);
+  }, [connected, series, fallBackToPoll]);
+
+  // Errors only describe live series.
+  useEffect(() => {
+    setErrors((prev) => {
+      const stale = Array.from(prev.keys()).filter((k) => !series.has(k));
+      if (stale.length === 0) return prev;
+      const next = new Map(prev);
+      for (const k of stale) next.delete(k);
+      return next;
+    });
+  }, [series]);
 
   // Clear on disconnect.
   useEffect(() => {
     if (!connected) {
       setSeries(new Map());
-      subscribedRef.current = new Set();
+      setErrors(new Map());
+      subscribedRef.current = new Map();
     }
   }, [connected]);
 
   return {
     series: Array.from(series.values()),
     hasSeries: series.size > 0,
+    /** Per-series notice, keyed by series key: set when COV could not be used and the series fell back to polling. */
+    errors,
     pollMs,
     setPollMs,
     windowSec,

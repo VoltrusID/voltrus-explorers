@@ -1,7 +1,38 @@
+use std::sync::Arc;
+use std::time::Instant;
+
 use mt_modbus::{ModbusClient, ModbusConfig, ModbusTag, ModbusValue};
 use mt_protocol::ProtocolClient;
 use tauri::Emitter;
+
 use crate::state::*;
+
+/// Forward the client's frame log to the frontend as `traffic-log` events.
+/// The forwarder ends by itself when the client is dropped.
+fn forward_traffic(app: &tauri::AppHandle, client: &mut ModbusClient) {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<mt_modbus::TrafficLogEntry>();
+    client.set_traffic_channel(tx);
+    let app = app.clone();
+    tokio::spawn(async move {
+        while let Some(entry) = rx.recv().await {
+            app.emit("traffic-log", &entry).ok();
+        }
+    });
+}
+
+/// Close and forget the active connection, if any.
+async fn drop_client(state: &AppState) {
+    let old = state.master.client.lock().await.take();
+    if let Some(old) = old {
+        let _ = old.disconnect().await;
+    }
+}
+
+/// The active connection. The state lock is released before any I/O: the client
+/// serialises its own requests, so overlapping polls and writes queue instead of failing.
+async fn current_client(state: &AppState) -> Result<Arc<ModbusClient>, String> {
+    state.master.client.lock().await.clone().ok_or_else(|| "Not connected".to_string())
+}
 
 #[tauri::command]
 pub async fn connect(
@@ -9,92 +40,95 @@ pub async fn connect(
     state: tauri::State<'_, AppState>,
     config: ModbusConfig,
 ) -> Result<(), String> {
-    // Reset cancel flag — disconnect sets it to true, must clear before reconnecting
-    state.master.scan_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
-
     let addr = format!("{}:{}", config.ip, config.port);
-    let connect_start = std::time::Instant::now();
+    let mut cancelled = state.master.connect_epoch.subscribe();
+    let epoch = *cancelled.borrow_and_update();
 
-    emit_tcp(&app, "connecting", &format!("{}:{}", config.ip, config.port));
+    drop_client(&state).await;
+    emit_tcp(&app, "connecting", &addr);
+    let started = Instant::now();
 
-    let client_result = ModbusClient::connect(config).await;
-    let connect_ms = connect_start.elapsed().as_millis();
+    let outcome = tokio::select! {
+        result = ModbusClient::connect(config) => Some(result),
+        _ = cancelled.wait_for(|e| *e != epoch) => None,
+    };
+    let connect_ms = started.elapsed().as_millis();
 
-    match client_result {
-        Ok(mut client) => {
-            emit_tcp(&app, "connect", &format!("{} ({})", addr, format_duration(connect_ms)));
-
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<mt_modbus::TrafficLogEntry>();
-            client.set_traffic_channel(tx);
-            let app_clone = app.clone();
-            tokio::spawn(async move {
-                while let Some(entry) = rx.recv().await {
-                    app_clone.emit("traffic-log", &entry).ok();
-                }
-            });
-
-            *state.master.client.lock().await = Some(client);
-            Ok(())
+    let mut client = match outcome {
+        None => {
+            emit_tcp(&app, "info", &format!("Connection to {addr} cancelled"));
+            return Err("Connection cancelled".into());
         }
-        Err(e) => {
+        Some(Err(e)) => {
             let err_str = e.to_string();
-            if err_str.contains("timeout") || err_str.contains("Timeout") {
+            if err_str.contains("imed out") || err_str.contains("Timeout") {
                 emit_tcp(&app, "timeout", &format!("{} ({}ms)", addr, connect_ms));
-            } else if err_str.contains("refused") || err_str.contains("Connection refused") {
+            } else if err_str.contains("refused") {
                 emit_tcp(&app, "error", &format!("Connection refused: {}", addr));
             } else if err_str.contains("reset") {
                 emit_tcp(&app, "error", &format!("Connection reset: {}", addr));
             } else {
                 emit_tcp(&app, "error", &format!("{}: {}", addr, err_str));
             }
-            Err(err_str)
+            return Err(err_str);
         }
+        Some(Ok(client)) => client,
+    };
+
+    forward_traffic(&app, &mut client);
+    let mut slot = state.master.client.lock().await;
+    // A cancel or disconnect that landed after the connect finished still wins.
+    if *state.master.connect_epoch.borrow() != epoch {
+        drop(slot);
+        let _ = client.disconnect().await;
+        emit_tcp(&app, "info", &format!("Connection to {addr} cancelled"));
+        return Err("Connection cancelled".into());
     }
+    *slot = Some(Arc::new(client));
+    drop(slot);
+    emit_tcp(&app, "connect", &format!("{} ({})", addr, format_duration(connect_ms)));
+    Ok(())
+}
+
+/// The serial port may still be held by the previous connection's teardown.
+#[cfg(target_os = "macos")]
+fn is_port_busy(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("busy") || message.contains("lock")
 }
 
 #[tauri::command]
 #[cfg(target_os = "macos")]
 pub async fn connect_rtu(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     serial_config: mt_modbus::RtuSerialConfig,
     unit_id: u8,
+    endianness: mt_modbus::Endianness,
     timeout_ms: Option<u64>,
 ) -> Result<(), String> {
-    // Clean up any stale client first — await inline so port is freed before reconnecting
-    {
-        let result: Result<_, _> = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            state.master.client.lock(),
-        ).await;
-        if let Ok(mut guard) = result {
-            if let Some(old) = guard.take() {
-                let _ = old.disconnect().await;
-            }
-        }
-    }
-
-    // Reset cancel flag
-    state.master.scan_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+    // Free the port of any previous connection before reopening it.
+    drop_client(&state).await;
 
     let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(5000));
-    // Retry serial open — port may still be held by background disconnect cleanup
-    let mut client = None;
-    for attempt in 0..5 {
-        match ModbusClient::connect_rtu(serial_config.clone(), unit_id, Default::default(), timeout).await {
-            Ok(c) => { client = Some(c); break; }
-            Err(e) if attempt < 9 => {
-                let msg = e.to_string().to_lowercase();
-                if msg.contains("busy") || msg.contains("lock") || msg.contains("serial") {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    continue;
-                }
-                return Err(e.to_string());
+    let port = serial_config.port_name.clone();
+    let baud = serial_config.baud_rate;
+
+    let mut attempt = 0;
+    let mut client = loop {
+        match ModbusClient::connect_rtu(serial_config.clone(), unit_id, endianness, timeout).await {
+            Ok(client) => break client,
+            Err(e) if attempt < 4 && is_port_busy(&e.to_string()) => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
             Err(e) => return Err(e.to_string()),
         }
-    }
-    let client = client.unwrap();
-    *state.master.client.lock().await = Some(client);
+    };
+
+    forward_traffic(&app, &mut client);
+    *state.master.client.lock().await = Some(Arc::new(client));
+    emit_tcp(&app, "connect", &format!("{port} @ {baud} baud"));
     Ok(())
 }
 
@@ -104,8 +138,11 @@ pub async fn connect_rtu_virtual(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     unit_id: u8,
+    endianness: mt_modbus::Endianness,
 ) -> Result<(), String> {
     use std::os::fd::FromRawFd;
+
+    drop_client(&state).await;
 
     // Get the slave fd from virtual slave state and dup it
     let slave_fd = {
@@ -123,22 +160,13 @@ pub async fn connect_rtu_virtual(
         .map_err(|e| format!("SerialStream from fd failed: {}", e))?;
 
     let timeout = std::time::Duration::from_secs(5);
-    let mut client = ModbusClient::connect_rtu_from_stream(stream, unit_id, Default::default(), timeout)
+    let mut client = ModbusClient::connect_rtu_from_stream(stream, unit_id, endianness, timeout)
         .await
         .map_err(|e| format!("RTU virtual connect failed: {}", e))?;
 
+    forward_traffic(&app, &mut client);
+    *state.master.client.lock().await = Some(Arc::new(client));
     emit_tcp(&app, "connect", "virtual PTY");
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<mt_modbus::TrafficLogEntry>();
-    client.set_traffic_channel(tx);
-    let app_clone = app.clone();
-    tokio::spawn(async move {
-        while let Some(entry) = rx.recv().await {
-            app_clone.emit("traffic-log", &entry).ok();
-        }
-    });
-
-    *state.master.client.lock().await = Some(client);
     Ok(())
 }
 
@@ -155,23 +183,8 @@ pub async fn read_tags(
     state: tauri::State<'_, AppState>,
     tags: Vec<ModbusTag>,
 ) -> Result<Vec<ModbusValue>, String> {
-    // Take client out — don't hold outer lock during slow serial I/O
-    let client = {
-        let mut guard = state.master.client.lock().await;
-        guard.take().ok_or("Not connected")?
-    };
-
-    let result = client.read(&tags).await.map_err(|e| e.to_string());
-
-    // If disconnect was requested during read, discard client (port freed)
-    if state.master.scan_cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = client.disconnect().await;
-        return Err("Disconnected".into());
-    }
-
-    // Put client back for next read
-    *state.master.client.lock().await = Some(client);
-    result
+    let client = current_client(&state).await?;
+    client.read(&tags).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -180,48 +193,30 @@ pub async fn write_tag(
     tag: ModbusTag,
     value: f64,
 ) -> Result<(), String> {
-    let client = {
-        let mut guard = state.master.client.lock().await;
-        guard.take().ok_or("Not connected")?
-    };
+    let client = current_client(&state).await?;
+    client.write(&tag, ModbusValue::Float64(value)).await.map_err(|e| e.to_string())
+}
 
-    let result = client.write(&tag, ModbusValue::Float64(value)).await.map_err(|e| e.to_string());
-
-    if state.master.scan_cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = client.disconnect().await;
-        return Err("Disconnected".into());
-    }
-
-    *state.master.client.lock().await = Some(client);
-    result
+/// Address subsequent requests to another unit ID on the open connection.
+#[tauri::command]
+pub async fn set_unit_id(state: tauri::State<'_, AppState>, unit_id: u8) -> Result<(), String> {
+    current_client(&state).await?.set_unit_id(unit_id).await;
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn disconnect(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    // Signal everything to stop
-    state.master.scan_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-    state.master.scan_cancel_notify.notify_waiters();
-
-    // read_tags no longer holds the outer lock during I/O — it takes the client out.
-    // So we can acquire the lock instantly.
-    // If read_tags has the client out, we find None here — read_tags will see
-    // scan_cancel and discard the client itself.
-    let taken = {
-        let mut guard = state.master.client.lock().await;
-        guard.take()
-    };
-
-    if let Some(client) = taken {
-        let _ = client.disconnect().await;
-    }
-
+    // A connect still waiting for the device must not install its client afterwards.
+    state.master.connect_epoch.send_modify(|epoch| *epoch += 1);
+    // Closing the client aborts a request or bus scan in flight, so this does not wait for the bus.
+    drop_client(&state).await;
     emit_tcp(&app, "disconnect", "Client disconnected");
     Ok(())
 }
 
 /// Scan Modbus RTU bus for devices by reading a register from each unit ID.
 /// Reuses the existing connected client's serial port — no second connection opened.
-/// Takes client out of state during scan so disconnect can run concurrently.
+/// The client stays connected afterwards, back on its configured unit ID, also when the scan is stopped.
 #[tauri::command]
 #[cfg(target_os = "macos")]
 pub async fn scan_bus(
@@ -232,58 +227,41 @@ pub async fn scan_bus(
     start_id: u8,
     end_id: u8,
 ) -> Result<Vec<mt_modbus::BusScanResult>, String> {
-    let total = (end_id - start_id + 1) as usize;
-    let app_clone = app.clone();
+    if start_id > end_id {
+        return Err(format!("Start ID {start_id} is above end ID {end_id}"));
+    }
+    let total = (end_id - start_id) as usize + 1;
 
-    // Reset cancel flag before starting
+    let client = current_client(&state)
+        .await
+        .map_err(|_| "Not connected to a serial port".to_string())?;
+
     state.master.scan_cancel.store(false, std::sync::atomic::Ordering::Relaxed);
 
-    // Take client out of state — no lock held during scan, disconnect can run
-    let client = {
-        let mut guard = state.master.client.lock().await;
-        guard.take().ok_or("Not connected to a serial port")?
+    let results = client
+        .scan_bus(
+            register_address,
+            &register_area,
+            start_id,
+            end_id,
+            std::time::Duration::from_secs(1),
+            &state.master.scan_cancel,
+            &state.master.scan_cancel_notify,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let msg = if state.master.scan_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        format!("Bus scan stopped: {} device(s) found", results.len())
+    } else {
+        format!("Bus scan complete: {}/{} devices found", results.len(), total)
     };
-
-    let per_id_timeout = std::time::Duration::from_secs(1);
-
-    let scan_result = client.scan_bus(
-        register_address,
-        &register_area,
-        start_id,
-        end_id,
-        per_id_timeout,
-        &state.master.scan_cancel,
-        &state.master.scan_cancel_notify,
-    )
-    .await;
-
-    let cancelled = state.master.scan_cancel.load(std::sync::atomic::Ordering::Relaxed);
-
-    if cancelled {
-        // Disconnect was requested during scan — discard client
-        let _ = client.disconnect().await;
-        let results = scan_result.map_err(|e| e.to_string())?;
-        let msg = format!(
-            "Bus scan cancelled: {}/{} devices found (stopped at ID {})",
-            results.len(), total, results.last().map_or(start_id, |r| r.unit_id)
-        );
-        emit_tcp(&app_clone, "info", &msg);
-        return Ok(results);
-    }
-
-    // Put client back
-    *state.master.client.lock().await = Some(client);
-
-    let results = scan_result.map_err(|e| e.to_string())?;
-
-    // Emit summary
-    let msg = format!("Bus scan complete: {}/{} devices found", results.len(), total);
-    emit_tcp(&app_clone, "info", &msg);
+    emit_tcp(&app, "info", &msg);
 
     Ok(results)
 }
 
-/// Cancel an in-progress bus scan. Instant — wakes scan via Notify.
+/// Stop an in-progress bus scan. Instant — wakes the scan via Notify. The connection stays up.
 #[tauri::command]
 #[cfg(target_os = "macos")]
 pub async fn stop_scan_bus(state: tauri::State<'_, AppState>) -> Result<(), String> {

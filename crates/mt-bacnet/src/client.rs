@@ -1,83 +1,130 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mt_protocol::{ProtocolClient, ProtocolError};
 
-use bacnet_rs::network::Npdu;
 use bacnet_rs::object::{ObjectIdentifier, ObjectType, PropertyIdentifier};
+use bacnet_rs::property::{encode_property_value, PropertyValue};
 use bacnet_rs::service::{
-    ConfirmedServiceChoice, PropertyReference, ReadAccessSpecification, ReadPropertyMultipleRequest,
-    ReadPropertyRequest,
+    ConfirmedServiceChoice, PropertyReference, PropertyResultValue, ReadAccessSpecification,
+    ReadPropertyMultipleRequest, ReadPropertyMultipleResponse, ReadPropertyRequest,
+    WritePropertyRequest,
 };
 
 use crate::helpers::{object_type_from_str, property_id_from_str};
+use crate::transport::{confirmed_request, error_class_name, error_code_name};
 use crate::types::{BacnetConfig, BacnetObject, BacnetValue};
 
-/// Global monotonically-incrementing invoke ID counter (0-255 wrapping).
-static NEXT_INVOKE_ID: AtomicU8 = AtomicU8::new(0);
-
-fn next_invoke_id() -> u8 {
-    NEXT_INVOKE_ID.fetch_add(1, Ordering::Relaxed)
+/// Convert the first value of a ReadAccessResult property into a [`BacnetValue`].
+/// Numeric types become `Float64` (the gateway's normalised form); character
+/// strings stay strings; every other type is returned as its display string so
+/// no property is silently turned into NaN.
+fn property_value_to_bacnet(values: &[PropertyValue]) -> BacnetValue {
+    match values.first() {
+        None | Some(PropertyValue::Null) => BacnetValue::Null,
+        Some(PropertyValue::Real(v)) => BacnetValue::Float64(*v as f64),
+        Some(PropertyValue::Double(v)) => BacnetValue::Float64(*v),
+        Some(PropertyValue::Unsigned(v)) => BacnetValue::Float64(*v as f64),
+        Some(PropertyValue::Signed(v)) => BacnetValue::Float64(*v as f64),
+        Some(PropertyValue::Boolean(v)) => BacnetValue::Float64(if *v { 1.0 } else { 0.0 }),
+        Some(PropertyValue::Enumerated(v)) => BacnetValue::Float64(*v as f64),
+        Some(PropertyValue::CharacterString(s)) => BacnetValue::String(s.clone()),
+        Some(other) => BacnetValue::String(other.as_display_string()),
+    }
 }
 
-/// Decode the first application-tagged value at the start of `data` into f64,
-/// returning the value and the bytes consumed (tag header + value). Handles
-/// Real/Double/Unsigned/Signed/Boolean/Enumerated; `None` for types the gateway
-/// does not need (strings, dates, octet-strings) or truncated data.
-fn decode_app_value(data: &[u8]) -> Option<(f64, usize)> {
-    let tag = *data.first()?;
-    let tagnum = tag >> 4;
-    // Boolean — the value rides in the low nibble, no value bytes follow.
-    if tagnum == 1 {
-        return Some(((tag & 0x07 != 0) as u8 as f64, 1));
-    }
-    let mut len = (tag & 0x07) as usize;
-    let mut vs = 1usize;
-    if len == 5 {
-        // Extended length: the real length is the next byte.
-        len = *data.get(1)? as usize;
-        vs = 2;
-    }
-    if vs + len > data.len() {
-        return None;
-    }
-    let vb = &data[vs..vs + len];
-    let val = match tagnum {
-        4 if len == 4 => Some(f32::from_be_bytes(vb.try_into().ok()?) as f64),
-        5 if len == 8 => Some(f64::from_be_bytes(vb.try_into().ok()?)),
-        2 | 9 => {
-            let mut v = 0u64;
-            for &b in vb {
-                v = (v << 8) | b as u64;
-            }
-            Some(v as f64)
-        }
-        3 => {
-            let mut v = 0u64;
-            for &b in vb {
-                v = (v << 8) | b as u64;
-            }
-            if !vb.is_empty() && vb[0] & 0x80 != 0 {
-                v |= !0u64 << (vb.len() * 8);
-            }
-            Some(v as i64 as f64)
-        }
-        _ => None,
+/// Encode a [`BacnetValue`] as the application-tagged value of a WriteProperty
+/// request. The caller chooses the variant matching the property's data type
+/// (ASHRAE 135 clause 12): Real for analog objects, Enumerated for binary
+/// objects, Unsigned for multi-state objects, Null to relinquish a priority slot.
+/// `Float64` is the gateway's untyped number and is written as Real.
+fn encode_write_value(value: &BacnetValue) -> Result<Vec<u8>, ProtocolError> {
+    let pv = match value {
+        BacnetValue::Real(v) => PropertyValue::Real(*v),
+        BacnetValue::Double(v) => PropertyValue::Double(*v),
+        BacnetValue::Unsigned(v) => PropertyValue::Unsigned(*v as u64),
+        BacnetValue::Boolean(v) => PropertyValue::Boolean(*v),
+        BacnetValue::Enum(v) => PropertyValue::Enumerated(*v),
+        BacnetValue::Float64(v) => PropertyValue::Real(*v as f32),
+        BacnetValue::String(s) => PropertyValue::CharacterString(s.clone()),
+        BacnetValue::Null => PropertyValue::Null,
     };
-    val.map(|v| (v, vs + len))
+    let mut out = Vec::new();
+    encode_property_value(&pv, &mut out)
+        .map_err(|e| ProtocolError::WriteFailed(format!("Value encode: {e}")))?;
+    Ok(out)
 }
 
 /// Standalone BACnet/IP client implementing the [`ProtocolClient`] trait.
 ///
 /// Communication is performed over UDP using `bacnet-rs` encoding and raw
 /// socket I/O wrapped in `spawn_blocking` so the async trait methods remain
-/// non-blocking on the Tokio runtime.
+/// non-blocking on the Tokio runtime. Cloning is cheap (shared socket), which
+/// lets callers release their own locks before awaiting network I/O.
+#[derive(Clone)]
 pub struct BacnetClient {
     addr: SocketAddr,
     socket: Arc<Mutex<std::net::UdpSocket>>,
+}
+
+impl BacnetClient {
+    /// Write `value` to `tag`, optionally at a command priority (1-16).
+    /// Without a priority the device applies its default (16 for commandable
+    /// properties).
+    pub async fn write_with_priority(
+        &self,
+        tag: &BacnetObject,
+        value: BacnetValue,
+        priority: Option<u8>,
+    ) -> Result<(), ProtocolError> {
+        if let Some(p) = priority {
+            if !(1..=16).contains(&p) {
+                return Err(ProtocolError::InvalidConfig(format!(
+                    "BACnet write priority must be 1-16, got {p}"
+                )));
+            }
+        }
+        let ot = object_type_from_str(&tag.object_type).ok_or_else(|| {
+            ProtocolError::InvalidConfig(format!("Unknown object type: {}", tag.object_type))
+        })?;
+        let pid: u32 = property_id_from_str(&tag.property).into();
+        let obj_id = ObjectIdentifier::new(ot, tag.object_instance);
+        let encoded = encode_write_value(&value)?;
+
+        let mut write_req = WritePropertyRequest::new(obj_id, pid, encoded);
+        write_req.priority = priority;
+        let mut service_data = Vec::new();
+        write_req
+            .encode(&mut service_data)
+            .map_err(|e| ProtocolError::WriteFailed(format!("Encode: {e}")))?;
+
+        let addr = self.addr;
+        let socket = Arc::clone(&self.socket);
+        tokio::task::spawn_blocking(move || -> Result<(), ProtocolError> {
+            let sock = socket
+                .lock()
+                .map_err(|e| ProtocolError::Other(format!("Socket lock poisoned: {e}")))?;
+            sock.set_read_timeout(Some(Duration::from_secs(6)))
+                .map_err(|e| ProtocolError::Other(format!("Set timeout: {e}")))?;
+            // SimpleAck -> Ok; Error / Reject / Abort -> descriptive Err.
+            confirmed_request(
+                &sock,
+                addr,
+                ConfirmedServiceChoice::WriteProperty,
+                service_data,
+                Duration::from_secs(6),
+            )
+            .map(|_| ())
+            .map_err(|e| match e {
+                ProtocolError::Other(msg) => ProtocolError::WriteFailed(msg),
+                other => other,
+            })
+        })
+        .await
+        .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
+    }
 }
 
 impl ProtocolClient for BacnetClient {
@@ -119,7 +166,7 @@ impl ProtocolClient for BacnetClient {
             req.encode(&mut service_data)
                 .map_err(|e| ProtocolError::ConnectionFailed(format!("Probe encode: {e}")))?;
 
-            client_send_confirmed(
+            confirmed_request(
                 &sock,
                 probe_addr,
                 ConfirmedServiceChoice::ReadProperty,
@@ -132,7 +179,7 @@ impl ProtocolClient for BacnetClient {
         .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
         .map_err(|e| {
             ProtocolError::ConnectionFailed(format!(
-                "No BACnet response from {socket_addr} (device {device_id}) within 3s: {e}"
+                "BACnet probe of device {device_id} at {socket_addr} failed: {e}"
             ))
         })?;
 
@@ -143,37 +190,42 @@ impl ProtocolClient for BacnetClient {
     }
 
     async fn read(&self, tags: &[Self::Tag]) -> Result<Vec<Self::Value>, ProtocolError> {
-        // Resolve object types and properties.
-        let objects: Vec<(String, bacnet_rs::object::ObjectType, u32, PropertyIdentifier)> = tags
-            .iter()
-            .filter_map(|t| {
-                let ot = object_type_from_str(&t.object_type)?;
-                let pid = property_id_from_str(&t.property);
-                Some((t.name.clone(), ot, t.object_instance, pid))
-            })
-            .collect();
-
-        if objects.is_empty() {
+        if tags.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Build ReadPropertyMultiple request.
-        let mut read_specs = Vec::new();
-        for (_, ot, inst, pid) in &objects {
-            let obj_id = ObjectIdentifier::new(*ot, *inst);
-            let prop_ref = PropertyReference::new(*pid);
-            read_specs.push(ReadAccessSpecification::new(obj_id, vec![prop_ref]));
+        // Resolve every tag up front; a tag that cannot be resolved is an error,
+        // not a silently missing value.
+        let mut resolved: Vec<(ObjectIdentifier, u32)> = Vec::with_capacity(tags.len());
+        for t in tags {
+            let ot = object_type_from_str(&t.object_type).ok_or_else(|| {
+                ProtocolError::InvalidConfig(format!(
+                    "Tag '{}': unknown object type '{}'",
+                    t.name, t.object_type
+                ))
+            })?;
+            let pid: u32 = property_id_from_str(&t.property).into();
+            resolved.push((ObjectIdentifier::new(ot, t.object_instance), pid));
         }
 
+        let read_specs = tags
+            .iter()
+            .zip(&resolved)
+            .map(|(t, (obj_id, _))| {
+                ReadAccessSpecification::new(
+                    *obj_id,
+                    vec![PropertyReference::new(property_id_from_str(&t.property))],
+                )
+            })
+            .collect();
         let rpm_request = ReadPropertyMultipleRequest::new(read_specs);
         let addr = self.addr;
         let socket = Arc::clone(&self.socket);
 
-        let metrics = tokio::task::spawn_blocking(move || -> Result<HashMap<String, f64>, ProtocolError> {
-            let sock = socket.lock().map_err(|e| {
-                ProtocolError::Other(format!("Socket lock poisoned: {e}"))
-            })?;
-
+        let response = tokio::task::spawn_blocking(move || -> Result<ReadPropertyMultipleResponse, ProtocolError> {
+            let sock = socket
+                .lock()
+                .map_err(|e| ProtocolError::Other(format!("Socket lock poisoned: {e}")))?;
             sock.set_read_timeout(Some(Duration::from_secs(6)))
                 .map_err(|e| ProtocolError::Other(format!("Set timeout: {e}")))?;
 
@@ -182,260 +234,73 @@ impl ProtocolClient for BacnetClient {
                 .encode(&mut service_data)
                 .map_err(|e| ProtocolError::ReadFailed(format!("RPM encode: {e}")))?;
 
-            let response_data = client_send_confirmed(&sock, addr, ConfirmedServiceChoice::ReadPropertyMultiple, service_data, Duration::from_secs(6))?;
-
-            // Parse the ReadAccessResult list. Each entry is:
-            //   context-tag-0 objectIdentifier, open-ctx-1,
-            //   [ ctx-2 propertyIdentifier, (ctx-3 arrayIndex)?,
-            //     open-ctx-4, <application values…>, close-ctx-4 ]*,
-            //   close-ctx-1.
-            // The first application value of each entry maps to the corresponding
-            // requested object (one property per request tag). Walking the
-            // structure (rather than byte-scanning) avoids mistaking property-id
-            // bytes such as presentValue=85=0x55 for value tags.
-            let data = &response_data;
-            let mut pos = 0;
-            let mut obj_idx = 0;
-            let mut result: HashMap<String, f64> = HashMap::new();
-
-            while pos < data.len() && obj_idx < objects.len() {
-                // objectIdentifier — context tag 0.
-                let (_oid, c) = match bacnet_rs::encoding::decode_context_object_id(&data[pos..], 0) {
-                    Ok(v) => v,
-                    Err(_) => break,
-                };
-                pos += c;
-                // Opening tag 1 (list of access results).
-                let (tag, _, c) = match bacnet_rs::encoding::decode_context_tag(&data[pos..]) {
-                    Ok(v) => v,
-                    Err(_) => break,
-                };
-                if tag != 1 {
-                    break;
-                }
-                pos += c;
-                // Walk access-result entries until the matching close tag 1.
-                loop {
-                    let (t, _, c) = match bacnet_rs::encoding::decode_context_tag(&data[pos..]) {
-                        Ok(v) => v,
-                        Err(_) => break,
-                    };
-                    if t == 1 {
-                        pos += c; // close tag 1 → next object
-                        break;
-                    }
-                    // propertyIdentifier — context tag 2. decode_context_enumerated
-                    // consumes the tag header + value together, so do NOT pre-advance
-                    // pos (the peek above only checked the tag number).
-                    if let Ok((_, c)) =
-                        bacnet_rs::encoding::decode_context_enumerated(&data[pos..], 2)
-                    {
-                        pos += c;
-                    }
-                    // Optional array index — context tag 3.
-                    if let Ok((t3, _, _)) = bacnet_rs::encoding::decode_context_tag(&data[pos..]) {
-                        if t3 == 3 {
-                            if let Ok((_, c)) =
-                                bacnet_rs::encoding::decode_context_unsigned(&data[pos..], 3)
-                            {
-                                pos += c;
-                            }
-                        }
-                    }
-                    // Opening tag 4 wrapping the value(s).
-                    let (t4, _, c4) = match bacnet_rs::encoding::decode_context_tag(&data[pos..]) {
-                        Ok(v) => v,
-                        Err(_) => break,
-                    };
-                    if t4 != 4 {
-                        break;
-                    }
-                    pos += c4;
-                    // First application value → map to this requested object.
-                    if let Some((v, c)) = decode_app_value(&data[pos..]) {
-                        let (name, _, _, _) = &objects[obj_idx];
-                        result.insert(name.clone(), v);
-                        obj_idx += 1;
-                        pos += c;
-                    }
-                    // Skip any remaining value bytes up to close tag 4 (0x4F).
-                    while pos < data.len() {
-                        let (t, _, c) = match bacnet_rs::encoding::decode_context_tag(&data[pos..]) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                pos += 1;
-                                continue;
-                            }
-                        };
-                        pos += c;
-                        if t == 4 {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            Ok(result)
-        })
-        .await
-        .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))??;
-
-        // Map back to Vec<BacnetValue> in the same order as `tags`.
-        let values = tags
-            .iter()
-            .map(|t| {
-                metrics
-                    .get(&t.name)
-                    .map(|&v| BacnetValue::Float64(v))
-                    .unwrap_or(BacnetValue::Float64(f64::NAN))
-            })
-            .collect();
-
-        Ok(values)
-    }
-
-    async fn write(&self, tag: &Self::Tag, value: Self::Value) -> Result<(), ProtocolError> {
-        let ot = object_type_from_str(&tag.object_type)
-            .ok_or_else(|| ProtocolError::InvalidConfig(format!("Unknown object type: {}", tag.object_type)))?;
-        let pid = property_id_from_str(&tag.property);
-        let obj_id = ObjectIdentifier::new(ot, tag.object_instance);
-        let numeric_value = value.as_f64();
-
-        let addr = self.addr;
-        let socket = Arc::clone(&self.socket);
-
-        tokio::task::spawn_blocking(move || -> Result<(), ProtocolError> {
-            use bacnet_rs::service::WritePropertyRequest;
-
-            let sock = socket.lock().map_err(|e| {
-                ProtocolError::Other(format!("Socket lock poisoned: {e}"))
-            })?;
-
-            sock.set_read_timeout(Some(Duration::from_secs(6)))
-                .map_err(|e| ProtocolError::Other(format!("Set timeout: {e}")))?;
-
-            // Encode property value as BACnet Real (tag 0x44 + 4-byte float).
-            let mut property_value = vec![0x44];
-            property_value.extend_from_slice(&(numeric_value as f32).to_be_bytes());
-
-            let pid_u32: u32 = pid.into();
-            let write_req = WritePropertyRequest::new(obj_id, pid_u32, property_value);
-
-            let mut service_data = Vec::new();
-            write_req
-                .encode(&mut service_data)
-                .map_err(|e| ProtocolError::WriteFailed(format!("Encode: {e}")))?;
-
-            let response_data = client_send_confirmed(
+            let response_data = confirmed_request(
                 &sock,
                 addr,
-                ConfirmedServiceChoice::WriteProperty,
+                ConfirmedServiceChoice::ReadPropertyMultiple,
                 service_data,
                 Duration::from_secs(6),
             )?;
-
-            // For WriteProperty we expect a SimpleAck which is returned as empty data
-            // by our client_send_confirmed helper (it already checked the APDU type).
-            let _ = response_data;
-            Ok(())
+            ReadPropertyMultipleResponse::decode(&response_data)
+                .map_err(|e| ProtocolError::ReadFailed(format!("RPM response decode: {e}")))
         })
         .await
         .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))??;
 
-        Ok(())
+        // Attribute every returned value by the object identifier and property
+        // the device reported, never by position.
+        let mut by_key: HashMap<(u32, u32, u32), PropertyResultValue> = HashMap::new();
+        for access in &response.read_access_results {
+            let ot: u32 = access.object_identifier.object_type.into();
+            for prop in &access.results {
+                by_key.insert(
+                    (ot, access.object_identifier.instance, prop.property_identifier.into()),
+                    prop.value.clone(),
+                );
+            }
+        }
+
+        let mut values = Vec::with_capacity(tags.len());
+        let mut failures: Vec<String> = Vec::new();
+        for (tag, (obj_id, pid)) in tags.iter().zip(&resolved) {
+            let ot: u32 = obj_id.object_type.into();
+            match by_key.get(&(ot, obj_id.instance, *pid)) {
+                Some(PropertyResultValue::Value(vs)) => values.push(property_value_to_bacnet(vs)),
+                Some(PropertyResultValue::Error(class, code)) => {
+                    failures.push(format!(
+                        "{}: {} / {}",
+                        tag.name,
+                        error_class_name(*class),
+                        error_code_name(*code)
+                    ));
+                    values.push(BacnetValue::Null);
+                }
+                None => {
+                    failures.push(format!("{}: missing from device response", tag.name));
+                    values.push(BacnetValue::Null);
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(values)
+        } else {
+            Err(ProtocolError::ReadFailed(format!(
+                "ReadPropertyMultiple failed for {} tag(s): {}",
+                failures.len(),
+                failures.join("; ")
+            )))
+        }
+    }
+
+    async fn write(&self, tag: &Self::Tag, value: Self::Value) -> Result<(), ProtocolError> {
+        self.write_with_priority(tag, value, None).await
     }
 
     async fn disconnect(&self) -> Result<(), ProtocolError> {
         // UDP is connectionless -- nothing to do.
         Ok(())
     }
-}
-
-/// Send a confirmed BACnet request and return the service_data from the response APDU.
-fn client_send_confirmed(
-    socket: &std::net::UdpSocket,
-    target_addr: SocketAddr,
-    service_choice: ConfirmedServiceChoice,
-    service_data: Vec<u8>,
-    timeout: Duration,
-) -> Result<Vec<u8>, ProtocolError> {
-    use bacnet_rs::app::{Apdu, MaxApduSize, MaxSegments};
-
-    let invoke_id = next_invoke_id();
-
-    let apdu = Apdu::ConfirmedRequest {
-        segmented: false,
-        more_follows: false,
-        segmented_response_accepted: true,
-        max_segments: MaxSegments::Unspecified,
-        max_response_size: MaxApduSize::Up1476,
-        invoke_id,
-        sequence_number: None,
-        proposed_window_size: None,
-        service_choice,
-        service_data,
-    };
-
-    let apdu_data = apdu.encode();
-    let mut npdu = Npdu::new();
-    npdu.control.expecting_reply = true;
-    let npdu_data = npdu.encode();
-
-    let mut message = npdu_data;
-    message.extend_from_slice(&apdu_data);
-
-    // BVLC Original-Unicast-NPDU
-    let mut bvlc = vec![0x81, 0x0A, 0x00, 0x00];
-    bvlc.extend_from_slice(&message);
-    let len = bvlc.len() as u16;
-    bvlc[2] = (len >> 8) as u8;
-    bvlc[3] = (len & 0xFF) as u8;
-
-    socket
-        .send_to(&bvlc, target_addr)
-        .map_err(|e| ProtocolError::WriteFailed(format!("Send: {e}")))?;
-
-    let mut buf = [0u8; 1500];
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
-        match socket.recv_from(&mut buf) {
-            Ok((len, source)) if source == target_addr => {
-                if len < 4 || buf[0] != 0x81 {
-                    continue;
-                }
-                let bvlc_len = ((buf[2] as usize) << 8) | buf[3] as usize;
-                if len != bvlc_len {
-                    continue;
-                }
-                let npdu_start = 4;
-                if let Ok((_npdu, npdu_len)) = Npdu::decode(&buf[npdu_start..len]) {
-                    let apdu_start = npdu_start + npdu_len;
-                    if let Ok(Apdu::ComplexAck { invoke_id: resp_invoke_id, service_data, .. }) =
-                        Apdu::decode(&buf[apdu_start..len])
-                    {
-                        if resp_invoke_id != invoke_id {
-                            continue; // Not our response, keep waiting
-                        }
-                        return Ok(service_data);
-                    }
-                    // SimpleAck for WriteProperty
-                    if let Ok(Apdu::SimpleAck { invoke_id: resp_invoke_id, .. }) = Apdu::decode(&buf[apdu_start..len]) {
-                        if resp_invoke_id != invoke_id {
-                            continue; // Not our response, keep waiting
-                        }
-                        return Ok(Vec::new());
-                    }
-                }
-            }
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-            Err(e) => return Err(ProtocolError::ReadFailed(format!("Recv: {e}"))),
-        }
-    }
-
-    Err(ProtocolError::Timeout(format!(
-        "BACnet confirmed request timeout for {target_addr}"
-    )))
 }
 
 /// Perform a single read of multiple objects from a BACnet device without keeping
@@ -462,15 +327,144 @@ pub async fn write_object(
     Ok(())
 }
 
-/// Register as a foreign device with a BBMD (BACnet/IP Broadcast Management Device).
-pub fn register_bbmd(bbmd_ip: &str, bbmd_port: u16, ttl: u16) -> Result<(), ProtocolError> {
-    use bacnet_rs::datalink::bip::BacnetIpDataLink;
-    let mut datalink = BacnetIpDataLink::new("0.0.0.0:0")
-        .map_err(|e| ProtocolError::ConnectionFailed(format!("Datalink: {e}")))?;
-    let bbmd_addr: std::net::SocketAddr = format!("{}:{}", bbmd_ip, bbmd_port)
-        .parse()
-        .map_err(|e| ProtocolError::InvalidConfig(format!("Invalid BBMD addr: {e}")))?;
-    datalink.register_foreign_device(bbmd_addr, ttl)
-        .map_err(|e| ProtocolError::Other(format!("BBMD registration: {e}")))?;
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_values_use_the_application_tag_of_the_property_type() {
+        // Real 72.5: tag 0x44 (app 4, len 4) + IEEE-754 0x42910000.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Real(72.5)).unwrap(),
+            vec![0x44, 0x42, 0x91, 0x00, 0x00]
+        );
+        // Enumerated 1 (binary Active): tag 0x91 (app 9, len 1) + 0x01.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Enum(1)).unwrap(),
+            vec![0x91, 0x01]
+        );
+        // Unsigned 3 (multi-state): tag 0x21 (app 2, len 1) + 0x03.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Unsigned(3)).unwrap(),
+            vec![0x21, 0x03]
+        );
+        // Unsigned 300: tag 0x22 (len 2) + 0x012C.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Unsigned(300)).unwrap(),
+            vec![0x22, 0x01, 0x2C]
+        );
+        // Null (relinquish): tag 0x00.
+        assert_eq!(encode_write_value(&BacnetValue::Null).unwrap(), vec![0x00]);
+        // Boolean true carries its value in the tag byte: 0x11.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Boolean(true)).unwrap(),
+            vec![0x11]
+        );
+        // Untyped Float64 is written as Real.
+        assert_eq!(
+            encode_write_value(&BacnetValue::Float64(72.5)).unwrap(),
+            vec![0x44, 0x42, 0x91, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn write_property_request_bytes_with_priority() {
+        // WriteProperty, analogValue (type 2) instance 1, presentValue (85), Real 72.5, priority 8.
+        let obj = ObjectIdentifier::new(ObjectType::AnalogValue, 1);
+        let mut req = WritePropertyRequest::new(obj, 85, encode_write_value(&BacnetValue::Real(72.5)).unwrap());
+        req.priority = Some(8);
+        let mut out = Vec::new();
+        req.encode(&mut out).unwrap();
+        assert_eq!(
+            out,
+            vec![
+                0x0C, 0x00, 0x80, 0x00, 0x01, // [0] object id: type 2 << 22 | 1
+                0x19, 0x55, // [1] property 85
+                0x3E, 0x44, 0x42, 0x91, 0x00, 0x00, 0x3F, // [3] opening, Real 72.5, closing
+                0x49, 0x08, // [4] priority 8
+            ]
+        );
+    }
+
+    #[test]
+    fn read_values_keep_their_type() {
+        assert!(matches!(
+            property_value_to_bacnet(&[PropertyValue::Real(1.5)]),
+            BacnetValue::Float64(v) if v == 1.5
+        ));
+        assert!(matches!(
+            property_value_to_bacnet(&[PropertyValue::Enumerated(2)]),
+            BacnetValue::Float64(v) if v == 2.0
+        ));
+        assert!(matches!(
+            property_value_to_bacnet(&[PropertyValue::CharacterString("AHU".into())]),
+            BacnetValue::String(s) if s == "AHU"
+        ));
+        assert!(matches!(property_value_to_bacnet(&[]), BacnetValue::Null));
+    }
+
+    /// Hand-assembled ReadPropertyMultiple-ACK for two requested objects where
+    /// the FIRST object's property is a character string. The old positional
+    /// parser skipped the string and attributed the second object's value to the
+    /// first tag.
+    #[test]
+    fn rpm_ack_values_are_attributed_by_object_not_position() {
+        let ack: Vec<u8> = vec![
+            // --- ReadAccessResult 1: analogInput,1 ---
+            0x0C, 0x00, 0x00, 0x00, 0x01, // [0] object id AI:1
+            0x1E, // [1] opening: list of results
+            0x29, 0x1C, // [2] property 28 (description)
+            0x4E, // [4] opening: value
+            0x74, 0x00, b'a', b'b', b'c', // CharacterString, length 4: charset 0 + "abc"
+            0x4F, // [4] closing
+            0x1F, // [1] closing
+            // --- ReadAccessResult 2: analogInput,2 ---
+            0x0C, 0x00, 0x00, 0x00, 0x02, // [0] object id AI:2
+            0x1E, // [1] opening
+            0x29, 0x55, // [2] property 85 (presentValue)
+            0x4E, // [4] opening
+            0x44, 0x42, 0x91, 0x00, 0x00, // Real 72.5
+            0x4F, // [4] closing
+            0x1F, // [1] closing
+        ];
+        let resp = ReadPropertyMultipleResponse::decode(&ack).unwrap();
+        assert_eq!(resp.read_access_results.len(), 2);
+        let first = &resp.read_access_results[0];
+        assert_eq!(first.object_identifier.instance, 1);
+        match &first.results[0].value {
+            PropertyResultValue::Value(v) => {
+                assert!(matches!(property_value_to_bacnet(v), BacnetValue::String(s) if s == "abc"))
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        let second = &resp.read_access_results[1];
+        assert_eq!(second.object_identifier.instance, 2);
+        match &second.results[0].value {
+            PropertyResultValue::Value(v) => {
+                assert!(matches!(property_value_to_bacnet(v), BacnetValue::Float64(x) if x == 72.5))
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    /// A propertyAccessError ([5] opening, error class, error code, [5] closing)
+    /// is reported explicitly and does not corrupt later results.
+    #[test]
+    fn rpm_ack_property_error_is_reported() {
+        let ack: Vec<u8> = vec![
+            0x0C, 0x00, 0x00, 0x00, 0x01, // [0] object id AI:1
+            0x1E, // [1] opening
+            0x29, 0x55, // [2] property 85
+            0x5E, // [5] opening: propertyAccessError
+            0x91, 0x02, // error class: property (2)
+            0x91, 0x20, // error code: unknown-property (32)
+            0x5F, // [5] closing
+            0x1F, // [1] closing
+        ];
+        let resp = ReadPropertyMultipleResponse::decode(&ack).unwrap();
+        assert_eq!(
+            resp.read_access_results[0].results[0].value,
+            PropertyResultValue::Error(2, 32)
+        );
+    }
 }

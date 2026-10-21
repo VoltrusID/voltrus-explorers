@@ -2,7 +2,6 @@ import type { DisplayFormat } from "../types";
 
 export function formatValue(raw: number, type: string, displayFormat: DisplayFormat): string {
   if (isNaN(raw)) return "---";
-  if (type === "string") return String(raw);
   const is64 = type === "float64";
   switch (displayFormat) {
     case "hex": return "0x" + (is64 ? ((raw | 0) >>> 0).toString(16).toUpperCase().padStart(8, "0") : (type === "float32" || type === "int32" ? ((raw | 0) >>> 0).toString(16).toUpperCase().padStart(8, "0") : ((raw | 0) & 0xFFFF).toString(16).toUpperCase().padStart(4, "0")));
@@ -24,6 +23,7 @@ export function displayAddr(addr: number, area: string, useOneBased: boolean): s
   }
 }
 
+/** Numeric payload of a serialized `ModbusValue` (`{ Float64: 1.5 }`), or NaN if it has none. */
 export function extractRaw(v: unknown): number {
   if (typeof v === "number") return v;
   if (typeof v === "string") return Number(v) || 0;
@@ -34,4 +34,13 @@ export function extractRaw(v: unknown): number {
     }
   }
   return NaN;
+}
+
+/** Message of a serialized `ModbusValue::Failed` (`{ Failed: "Illegal Data Address (0x02) reading …" }`). */
+export function extractError(v: unknown): string | undefined {
+  if (typeof v === "object" && v !== null) {
+    const failed = (v as Record<string, unknown>).Failed;
+    if (typeof failed === "string") return failed;
+  }
+  return undefined;
 }

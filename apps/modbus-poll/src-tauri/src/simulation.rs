@@ -8,24 +8,24 @@ pub async fn sim_start(
     profile: SimDeviceProfile,
     interval_ms: u64,
 ) -> Result<(), String> {
-    let slave = state.slave.lock().await;
-    let slave_state = slave.state.as_ref().ok_or("Slave not running")?;
-    let sim = Simulation::new(profile);
-    let (running, shared_values) = start_simulation(sim, slave_state.clone(), interval_ms);
-    drop(slave);
-
     let mut slave = state.slave.lock().await;
+    let slave_state = slave.state.clone().ok_or("Slave not running")?;
+    if let Some(previous) = slave.sim_running.take() {
+        stop_simulation(&previous);
+    }
+    // Locks are shared with the lock button, so toggling one affects the running simulation.
+    let sim = Simulation::new(profile).with_locks(slave.sim_locks.clone());
+    let (running, shared_values) = start_simulation(sim, slave_state, interval_ms);
     slave.sim_running = Some(running);
     slave.sim_values = Some(shared_values);
-    slave.sim_profile = None;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn sim_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut slave = state.slave.lock().await;
-    if let Some(ref running) = slave.sim_running.take() {
-        stop_simulation(running);
+    if let Some(running) = slave.sim_running.take() {
+        stop_simulation(&running);
     }
     Ok(())
 }
@@ -44,14 +44,15 @@ pub async fn sim_load_profile(
     profile: SimDeviceProfile,
 ) -> Result<(), String> {
     let mut slave = state.slave.lock().await;
-    if let Some(ref running) = slave.sim_running.take() {
-        stop_simulation(running);
+    if let Some(running) = slave.sim_running.take() {
+        stop_simulation(&running);
     }
     let slave_state = slave.state.as_ref().ok_or("Slave not running")?;
-    let sim = Simulation::new(profile.clone());
+    let sim = Simulation::new(profile);
     sim.write_to_slave(slave_state);
+    // A new profile starts with its own locks.
+    slave.sim_locks = sim.locks.clone();
     slave.sim_values = Some(Arc::new(std::sync::Mutex::new(sim.values)));
-    slave.sim_profile = Some(Arc::new(std::sync::Mutex::new(profile)));
     Ok(())
 }
 
@@ -62,12 +63,15 @@ pub async fn sim_lock_register(
     locked: bool,
 ) -> Result<(), String> {
     let slave = state.slave.lock().await;
-    let profile = slave.sim_profile.as_ref().ok_or("No profile loaded")?;
-    let mut profile = profile.lock().unwrap();
-    if register_index < profile.registers.len() {
-        profile.registers[register_index].locked = locked;
-        Ok(())
-    } else {
-        Err(format!("Register index {} out of range", register_index))
+    if slave.state.is_none() {
+        return Err("Slave not running".into());
     }
+    if let Some(values) = &slave.sim_values {
+        let count = values.lock().unwrap().len();
+        if register_index >= count {
+            return Err(format!("Register index {register_index} out of range ({count} registers)"));
+        }
+    }
+    slave.sim_locks.set(register_index, locked);
+    Ok(())
 }
