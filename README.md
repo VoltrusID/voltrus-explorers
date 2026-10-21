@@ -7,6 +7,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **BACnet Explorer** | Discover BACnet/IP devices, browse objects, read/write properties, COV, trend logs, schedules, device simulator | [Mac App Store](https://apps.apple.com/app/id6789600440) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -14,13 +15,19 @@ GitHub Releases (notarized DMGs, no auto-update) have every feature unlocked.
 
 ## Free and Pro (App Store builds)
 
-The App Store builds of DNP3 Explorer are free to download; Pro is a one-time in-app purchase. People who bought the
-app while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub Releases have everything.
+The App Store builds of DNP3 Explorer and OPC UA Explorer are free to download; Pro is a one-time in-app purchase.
+People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub
+Releases have everything.
 
 | DNP3 Explorer | |
 | --- | --- |
 | Free | Connect to an outstation, poll points on an interval, read analog, binary and counter values, write point values, communication log with CSV export |
 | Pro | Outstation simulator with an event buffer, device templates with live simulated values, class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), live trends |
+
+| OPC UA Explorer | |
+| --- | --- |
+| Free | Connect (anonymous or username/password, security policies and modes), endpoint and server discovery, browse the address space, node attributes and references, namespaces, read values (and refresh them on demand), start and stop the built-in server |
+| Pro | Live subscriptions and monitored items, live trend charts, writing values (client and server), certificate management (trust, reject, regenerate), device templates for the built-in server, CSV export of the communication log |
 
 ## Build from source
 
@@ -28,7 +35,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:opcua
 ```
 
 Universal release build (unsigned):
@@ -38,7 +45,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-opcua -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
@@ -46,10 +53,12 @@ Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-sto
 apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
+apps/opcua-explorer    Tauri app (macOS)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-dnp3         DNP3 master, outstation server, simulation
+crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers

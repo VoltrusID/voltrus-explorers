@@ -6,9 +6,11 @@ members = [
     "crates/mt-bacnet",
     "crates/mt-dnp3",
     "crates/mt-store",
+    "crates/mt-opcua",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/dnp3-explorer/src-tauri",
+    "apps/opcua-explorer/src-tauri",
 ]
 
 [workspace.package]
