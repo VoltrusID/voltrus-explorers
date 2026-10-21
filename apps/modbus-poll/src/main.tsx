@@ -12,6 +12,8 @@ const PRO_FEATURES = [
   "Modbus RTU over serial, bus scan and auto-detect (macOS)",
   "Live trends",
   "Network scan",
+  "Several connections open at once, each in its own tab",
+  "Log polled values to a CSV file",
   "More than one saved connection profile",
   "Traffic log CSV export and copy",
   "CSV import and export of read blocks",

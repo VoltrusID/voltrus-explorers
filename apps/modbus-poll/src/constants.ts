@@ -38,3 +38,5 @@ export const thStyle: React.CSSProperties = {
 export const FREE_VALUES = 20;
 /** Free tier: saved connection profiles. */
 export const FREE_PROFILE_LIMIT = 1;
+/** Free tier: connections open at once (one tab). */
+export const FREE_CONNECTIONS = 1;

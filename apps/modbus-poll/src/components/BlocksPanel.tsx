@@ -1,9 +1,10 @@
-import { Button, EmptyState, Field, IconButton, Section, useProStatus } from "@mactools/ui";
+import { Button, Callout, EmptyState, Field, IconButton, Section, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { AREAS, FREE_VALUES, TYPES } from "../constants";
 import { blockStep, isBitArea, validateBlock } from "../helpers";
 import type { ReadBlock } from "../types";
 import { displayAddr } from "../utils/format";
+import { valueCapNotice } from "../limits";
 import { useStore } from "../store";
 
 interface Props {
@@ -19,7 +20,8 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     newType, setNewType, newArea, setNewArea,
     useOneBased, addLog,
   } = useStore();
-  const { pro, requirePro } = useProStatus();
+  const { pro, requirePro, openUpsell } = useProStatus();
+  const capNotice = valueCapNotice(blocks, pro);
   const totalValues = (list: ReadBlock[]) => list.reduce((n, b) => n + b.quantity, 0);
   const overFreeCap = (list: ReadBlock[]) => !pro && totalValues(list) > FREE_VALUES && !requirePro(`More than ${FREE_VALUES} polled values`);
 
@@ -95,6 +97,14 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
 
   return (
     <Section title="Read blocks" meta={blocks.length > 0 ? `${blocks.length}` : undefined}>
+      {capNotice && (
+        <div style={{ marginBottom: 8 }}>
+          <Callout tone="warn">
+            {capNotice}{" "}
+            <button type="button" className="vt-btn vt-btn--sm vt-btn--ghost" onClick={() => openUpsell(`More than ${FREE_VALUES} polled values`)}>Unlock Pro</button>
+          </Callout>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
         <Button size="sm" variant="ghost" onClick={onImportCsv} icon={<Upload size={14} strokeWidth={1.75} />}>Import CSV</Button>
         {blocks.length > 0 && (

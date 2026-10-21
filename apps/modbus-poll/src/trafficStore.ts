@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface TrafficEntry {
+  /** Id of the connection the frame belongs to. */
+  conn: string;
   timestamp: number;
   direction: string;
   function_code: number;
@@ -11,6 +13,7 @@ export interface TrafficEntry {
 }
 
 export interface TcpEvent {
+  conn: string;
   timestamp: number;
   event_type: string;
   detail: string;
@@ -18,18 +21,34 @@ export interface TcpEvent {
 
 const MAX_ENTRIES = 500;
 
-interface TrafficState {
+/** Frames and connection events of one connection. */
+export interface ConnTraffic {
   entries: TrafficEntry[];
   tcpEvents: TcpEvent[];
-  clear: () => void;
 }
 
-/** Frame and connection history. Lives for the whole session, whether or not the Traffic panel is shown. */
+export const NO_TRAFFIC: ConnTraffic = { entries: [], tcpEvents: [] };
+
+interface TrafficState {
+  byConn: Record<string, ConnTraffic>;
+  /** Empty one connection's history. */
+  clear: (conn: string) => void;
+}
+
+/** Frame and connection history per connection. Lives for the whole session, whether or not the Traffic panel is shown. */
 export const useTrafficStore = create<TrafficState>((set) => ({
-  entries: [],
-  tcpEvents: [],
-  clear: () => set({ entries: [], tcpEvents: [] }),
+  byConn: {},
+  clear: (conn) => set((s) => ({ byConn: { ...s.byConn, [conn]: NO_TRAFFIC } })),
 }));
+
+/** Forget a closed connection's history. */
+export function dropTraffic(conn: string) {
+  useTrafficStore.setState((s) => {
+    const byConn = { ...s.byConn };
+    delete byConn[conn];
+    return { byConn };
+  });
+}
 
 const capped = <T>(list: T[], item: T): T[] => {
   const next = [...list, item];
@@ -47,10 +66,18 @@ export function startTrafficFeed(): () => void {
     });
   };
   track(listen<TrafficEntry>("traffic-log", (event) => {
-    useTrafficStore.setState((s) => ({ entries: capped(s.entries, event.payload) }));
+    const conn = event.payload.conn;
+    useTrafficStore.setState((s) => {
+      const t = s.byConn[conn] ?? NO_TRAFFIC;
+      return { byConn: { ...s.byConn, [conn]: { ...t, entries: capped(t.entries, event.payload) } } };
+    });
   }));
   track(listen<TcpEvent>("tcp-event", (event) => {
-    useTrafficStore.setState((s) => ({ tcpEvents: capped(s.tcpEvents, event.payload) }));
+    const conn = event.payload.conn;
+    useTrafficStore.setState((s) => {
+      const t = s.byConn[conn] ?? NO_TRAFFIC;
+      return { byConn: { ...s.byConn, [conn]: { ...t, tcpEvents: capped(t.tcpEvents, event.payload) } } };
+    });
   }));
   return () => {
     stopped = true;

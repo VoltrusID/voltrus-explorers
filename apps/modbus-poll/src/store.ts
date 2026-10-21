@@ -5,6 +5,7 @@ import type { ReadBlock, DisplayFormat, ConnProfile } from "./types";
 import type { TrendSeries } from "./TrendPanel";
 import { loadCustomTemplates } from "./templates";
 import { loadConnProfiles } from "./helpers";
+import { newSessionFields, pickSessionFields, type Session, type SessionFields } from "./sessions";
 
 export type AppMode = "master" | "slave";
 export type MobileTab = "connect" | "data" | "blocks" | "template" | "log" | "traffic" | "trend";
@@ -13,7 +14,7 @@ export type MobileTab = "connect" | "data" | "blocks" | "template" | "log" | "tr
 const tabExistsIn = (mode: AppMode, tab: MobileTab) =>
   !(tab === "blocks" && mode === "slave") && !(tab === "template" && mode === "master");
 
-interface AppState {
+export interface AppState {
   // Mode & theme
   mode: AppMode;
   setMode: (m: AppMode) => void;
@@ -200,9 +201,29 @@ interface AppState {
   // Slave table
   slavePage: number;
   setSlavePage: (p: number) => void;
+
+  // Master connections (tabs). The active one lives in the fields above; see sessions.ts.
+  sessions: Session[];
+  activeSessionId: string;
+  nextSessionSeq: number;
+  /** Open a new empty connection and make it active. Returns its id. */
+  addSession: () => string;
+  switchSession: (id: string) => void;
+  /** Forget a connection's state (the last one can not be closed). Disconnect it first. */
+  closeSession: (id: string) => void;
+  /** Change connection `id`'s state, whether or not it is the active one. */
+  patchSession: (id: string, change: (fields: SessionFields) => Partial<SessionFields>) => void;
+  /** `addLog` for a specific connection: poll results and background events do not belong to the tab in front. */
+  addLogFor: (id: string, direction: LogEntry["direction"], message: string) => void;
 }
 
-export const useStore = create<AppState>((set) => ({
+const MAX_LOG = 5000;
+const appendLog = (log: LogEntry[], direction: LogEntry["direction"], message: string): LogEntry[] => {
+  const next = [...log, { timestamp: Date.now(), direction, message }];
+  return next.length > MAX_LOG ? next.slice(-MAX_LOG) : next;
+};
+
+export const useStore = create<AppState>((set, get) => ({
   // Mode & theme
   mode: "master",
   // A tab the new mode does not have would leave the content area empty.
@@ -247,11 +268,7 @@ export const useStore = create<AppState>((set) => ({
   // Log
   log: [],
   addLog: (direction, message) =>
-    set((s) => {
-      const entry = { timestamp: Date.now(), direction, message };
-      const log = [...s.log, entry];
-      return { log: log.length > 5000 ? log.slice(-5000) : log };
-    }),
+    set((s) => ({ log: appendLog(s.log, direction, message) })),
   setLog: (log) => set({ log }),
 
   // Write dialog
@@ -409,4 +426,56 @@ export const useStore = create<AppState>((set) => ({
   // Slave table
   slavePage: 0,
   setSlavePage: (slavePage) => set({ slavePage }),
+
+  // Master connections
+  sessions: [{ id: "c1", fields: null }],
+  activeSessionId: "c1",
+  nextSessionSeq: 2,
+  addSession: () => {
+    const id = `c${get().nextSessionSeq}`;
+    set((s) => ({
+      sessions: [...s.sessions.map((x) => (x.id === s.activeSessionId ? { ...x, fields: pickSessionFields(s) } : x)), { id, fields: null }],
+      activeSessionId: id,
+      nextSessionSeq: s.nextSessionSeq + 1,
+      formKey: s.formKey + 1,
+      ...newSessionFields(),
+    }));
+    return id;
+  },
+  switchSession: (id) =>
+    set((s) => {
+      const target = s.sessions.find((x) => x.id === id);
+      if (id === s.activeSessionId || !target?.fields) return s;
+      return {
+        sessions: s.sessions.map((x) => (x.id === s.activeSessionId ? { ...x, fields: pickSessionFields(s) } : x.id === id ? { ...x, fields: null } : x)),
+        activeSessionId: id,
+        formKey: s.formKey + 1,
+        ...target.fields,
+      };
+    }),
+  closeSession: (id) =>
+    set((s) => {
+      if (s.sessions.length <= 1) return s;
+      const index = s.sessions.findIndex((x) => x.id === id);
+      if (index < 0) return s;
+      const remaining = s.sessions.filter((x) => x.id !== id);
+      if (id !== s.activeSessionId) return { sessions: remaining };
+      // The neighbour to the right takes over, else the one to the left.
+      const next = remaining[Math.min(index, remaining.length - 1)];
+      return {
+        sessions: remaining.map((x) => (x.id === next.id ? { ...x, fields: null } : x)),
+        activeSessionId: next.id,
+        formKey: s.formKey + 1,
+        ...next.fields!,
+      };
+    }),
+  patchSession: (id, change) =>
+    set((s) => {
+      if (id === s.activeSessionId) return change(pickSessionFields(s));
+      const target = s.sessions.find((x) => x.id === id);
+      if (!target?.fields) return s;
+      const patch = change(target.fields);
+      return { sessions: s.sessions.map((x) => (x.id === id ? { ...x, fields: { ...x.fields!, ...patch } } : x)) };
+    }),
+  addLogFor: (id, direction, message) => get().patchSession(id, (f) => ({ log: appendLog(f.log, direction, message) })),
 }));

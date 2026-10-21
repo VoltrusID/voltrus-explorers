@@ -130,7 +130,7 @@ function installMock() {
     return groups;
   }
 
-  async function readTags(tags) {
+  async function readTags(tags, conn) {
     if (!master.connected) throw "Not connected";
     const groups = planGroups(tags);
     const results = [];
@@ -141,11 +141,11 @@ function installMock() {
       const total = g.end - g.start;
       const fc = FC[g.area];
       const bit = g.area === "coil" || g.area === "discrete";
-      frames.push({ timestamp: clock, direction: "TX", function_code: fc, address: g.start, data: `count=${total}`, length: total });
+      frames.push({ conn, timestamp: clock, direction: "TX", function_code: fc, address: g.start, data: `count=${total}`, length: total });
       clock += Math.round(wireMs(total, bit));
       const words = readWords(g.area, g.start, total);
       frames.push({
-        timestamp: clock, direction: "RX", function_code: fc, address: g.start,
+        conn, timestamp: clock, direction: "RX", function_code: fc, address: g.start,
         data: JSON.stringify(words.slice(0, 8).map(hex4)).replace(/,/g, ", "), length: words.length,
       });
       clock += 1;
@@ -213,24 +213,24 @@ function installMock() {
     platform: () => cfg().platform || "macos",
     open_url: () => null,
     list_serial_ports: () => cfg().serialPorts || [],
-    connect: ({ config }) => {
+    connect: ({ connId, config }) => {
       master.connected = true; master.rtu = null; master.unit = config.unit_id;
-      emit("tcp-event", { timestamp: Date.now(), event_type: "connecting", detail: `${config.host}:${config.port}` });
-      emit("tcp-event", { timestamp: Date.now(), event_type: "connect", detail: `${config.host}:${config.port} (${12 + Math.floor(Math.random() * 8)}ms)` });
+      emit("tcp-event", { conn: connId, timestamp: Date.now(), event_type: "connecting", detail: `${config.host}:${config.port}` });
+      emit("tcp-event", { conn: connId, timestamp: Date.now(), event_type: "connect", detail: `${config.host}:${config.port} (${12 + Math.floor(Math.random() * 8)}ms)` });
       return null;
     },
-    connect_rtu: ({ serialConfig, unitId }) => {
+    connect_rtu: ({ connId, serialConfig, unitId }) => {
       master.connected = true; master.rtu = { baud: serialConfig.baud_rate }; master.unit = unitId;
-      emit("tcp-event", { timestamp: Date.now(), event_type: "connect", detail: `${serialConfig.port_name} @ ${serialConfig.baud_rate} baud` });
+      emit("tcp-event", { conn: connId, timestamp: Date.now(), event_type: "connect", detail: `${serialConfig.port_name} @ ${serialConfig.baud_rate} baud` });
       return new Promise((r) => setTimeout(() => r(null), 250));
     },
-    disconnect: () => { master.connected = false; emit("tcp-event", { timestamp: Date.now(), event_type: "disconnect", detail: "Client disconnected" }); return null; },
+    disconnect: ({ connId }) => { master.connected = false; emit("tcp-event", { conn: connId, timestamp: Date.now(), event_type: "disconnect", detail: "Client disconnected" }); return null; },
     set_unit_id: ({ unitId }) => { master.unit = unitId; return null; },
-    read_tags: ({ tags }) => readTags(tags),
+    read_tags: ({ connId, tags }) => readTags(tags, connId),
     write_tag: () => null,
-    scan_bus: ({ startId, endId }) => {
+    scan_bus: ({ connId, startId, endId }) => {
       const found = (cfg().scanResults || []).filter((r) => r.unit_id >= startId && r.unit_id <= endId);
-      emit("tcp-event", { timestamp: Date.now(), event_type: "info", detail: `Bus scan complete: ${found.length}/${endId - startId + 1} devices found` });
+      emit("tcp-event", { conn: connId, timestamp: Date.now(), event_type: "info", detail: `Bus scan complete: ${found.length}/${endId - startId + 1} devices found` });
       return new Promise((r) => setTimeout(() => r(found), 900));
     },
     stop_scan_bus: () => null,

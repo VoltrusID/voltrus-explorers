@@ -16,6 +16,8 @@ export type TableRow = {
   value: string;
   /** The polled number itself (never a formatted string); null if nothing usable was read. */
   rawValue: number | null;
+  /** Beyond the free polling cap: not polled, shown as "Pro". */
+  limited?: true;
   /** The device answered the request covering this row with an exception. */
   error?: string;
   _blockIdx: number;
@@ -29,17 +31,33 @@ interface RowOptions {
 /**
  * One row per value of every block. `values` is what `read_tags` returned for `plan.tags`:
  * one entry per *tag* (a float32 is one entry spanning two registers), so a row's value is
- * `values[plan.firstTag[blockIdx] + i]` — not a register offset.
+ * `values[plan.firstTag[blockIdx] + i]` — not a register offset. A plan cut short by the free cap
+ * (see `limitReadPlan`) leaves the rows past its end marked `limited` and unread.
  */
 export function buildTableRows(blocks: ReadBlock[], plan: ReadPlan, values: unknown[], options: RowOptions): TableRow[] {
   return blocks.flatMap((b, blockIdx) => {
     const step = blockStep(b);
     const bit = isBitArea(b.area);
     return Array.from({ length: b.quantity }, (_, i): TableRow => {
-      const value = values[plan.firstTag[blockIdx] + i];
+      const index = plan.firstTag[blockIdx] + i;
+      const address = b.address + i * step;
+      if (index >= plan.tags.length) {
+        return {
+          name: valueName(b, i),
+          address: displayAddr(address, b.area, options.useOneBased),
+          rawAddress: address,
+          hex: "---",
+          type: bit ? "bit" : blockType(b),
+          area: b.area,
+          value: "Pro",
+          rawValue: null,
+          limited: true,
+          _blockIdx: blockIdx,
+        };
+      }
+      const value = values[index];
       const raw = extractRaw(value);
       const error = extractError(value);
-      const address = b.address + i * step;
       const text = error || isNaN(raw) ? "—" : bit ? (raw !== 0 ? "ON" : "OFF") : formatValue(raw, b.type, options.displayFormat);
       return {
         name: valueName(b, i),

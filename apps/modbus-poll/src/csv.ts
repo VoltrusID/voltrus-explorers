@@ -3,7 +3,7 @@ import { validateBlock } from "./helpers";
 
 const HEADER = "name,address,quantity,type,area";
 
-function quote(field: string): string {
+export function quote(field: string): string {
   return /[",\r\n]/.test(field) ? `"${field.replace(/"/g, '""')}"` : field;
 }
 

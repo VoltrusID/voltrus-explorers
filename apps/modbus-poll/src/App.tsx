@@ -10,7 +10,6 @@ import {
   EmptyState,
   IconButton,
   Tabs,
-  useProtocol,
   useProStatus,
   saveTextFile,
   openTextFile,
@@ -21,10 +20,16 @@ import TrafficPanel from "./TrafficPanel";
 import TrendPanel from "./TrendPanel";
 import type { ModbusConfig } from "./types";
 import { FREE_PROFILE_LIMIT, VIRTUAL_PORT, sidebarStyle } from "./constants";
-import { buildReadPlan, isBitArea, isWritableArea, readPlanKey, type ReadTag } from "./helpers";
+import { isBitArea, isWritableArea, readPlanKey } from "./helpers";
 import { blocksToCsv, parseBlocksCsv } from "./csv";
 import { startTrafficFeed } from "./trafficStore";
 import { useStore } from "./store";
+import { fieldsOf } from "./sessions";
+import { effectivePlan, mayOpenConnection, valueCapNotice } from "./limits";
+import {
+  IDLE, useConnRuntime, runtimeOf, startPolling, pausePolling, readNow, connectTcp, cancelConnect,
+  disconnect, closeConnection, markConnected, writeTag, startCsvLog, stopCsvLog, connectionLabel,
+} from "./connections";
 
 // Hooks
 import { useSlave } from "./hooks/useSlave";
@@ -42,6 +47,7 @@ import { BlocksPanel } from "./components/BlocksPanel";
 import { TemplatePanel } from "./components/TemplatePanel";
 import { SlaveTable } from "./components/SlaveTable";
 import { MobileTabBar } from "./components/MobileTabBar";
+import { ConnectionTabs } from "./components/ConnectionTabs";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
 
@@ -57,9 +63,13 @@ const NUMERIC_WRITE_TYPES = [
 const COIL_WRITE_TYPES = [{ value: "bool", label: "Bool" }];
 
 function App() {
-  const protocol = useProtocol<ModbusConfig, ReadTag, unknown>("modbus");
-  const { startPolling, stopPolling } = protocol;
-  const { requirePro } = useProStatus();
+  const { requirePro, openUpsell, pro } = useProStatus();
+  // Async handlers run after the render that created them; they read Pro status from here.
+  const proRef = useRef(pro);
+  proRef.current = pro;
+  const activeId = useStore((s) => s.activeSessionId);
+  const sessionCount = useStore((s) => s.sessions.length);
+  const rt = useConnRuntime((s) => s.byId[activeId] ?? IDLE);
   const connProfiles = useStore((s) => s.connProfiles);
   const {
     mode, setMode, leftWidth, rightWidth, tableHeight,
@@ -67,7 +77,7 @@ function App() {
     blocks, setBlocks, activeBlockTab, setActiveBlockTab,
     addLog, setLog, editingTag, setEditingTag,
     theme, setTheme,
-    transport, tcpFormValues, formKey,
+    transport, formKey,
     setSerialPorts,
     rtuPort, rtuBaud, rtuDataBits, rtuStopBits,
     rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval,
@@ -157,9 +167,6 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ── Protocol error logging ──
-  useEffect(() => { if (protocol.error) addLog("error", protocol.error); }, [protocol.error, addLog]);
-
   // ── Load serial ports ──
   useEffect(() => {
     if ((mode === "master" && transport === "rtu") || (mode === "slave" && slaveTransport === "rtu")) {
@@ -177,143 +184,173 @@ function App() {
 
   // ── Polling ──
   // One tag per displayed value; `read_tags` returns one value per tag, so rows index values by tag.
-  const plan = useMemo(() => buildReadPlan(blocks), [blocks]);
+  // Without Pro the plan stops at the first FREE_VALUES values; the rows past it show "Pro".
+  const plan = useMemo(() => effectivePlan(blocks, pro), [blocks, pro]);
   const planKey = useMemo(() => readPlanKey(plan), [plan]);
-  /** Poll interval of the live session; null while not connected. */
-  const pollIntervalRef = useRef<number | null>(null);
-  /** The plan the running poll was started with: values only line up with rows while it matches the current one. */
-  const [polledKey, setPolledKey] = useState<string | null>(null);
 
-  const beginPolling = useCallback((intervalMs: number) => {
-    pollIntervalRef.current = intervalMs;
-    startPolling(plan.tags, intervalMs);
-    setPolledKey(planKey);
-  }, [startPolling, plan, planKey]);
+  /** (Re)start connection `id`'s poll on its current blocks. */
+  const beginPolling = useCallback((id: string, intervalMs: number) => {
+    const blocksNow = fieldsOf(useStore.getState(), id)?.blocks ?? [];
+    startPolling(id, blocksNow, intervalMs, proRef.current);
+  }, []);
 
   // Editing, adding, removing or reordering blocks while connected re-targets the running poll.
   useEffect(() => {
-    if (pollIntervalRef.current === null || busScanning || polledKey === planKey) return;
-    beginPolling(pollIntervalRef.current);
-  }, [planKey, polledKey, busScanning, beginPolling]);
-
-  const endSession = useCallback(() => {
-    pollIntervalRef.current = null;
-    setPolledKey(null);
-    stopPolling();
-  }, [stopPolling]);
+    if (rt.pollIntervalMs === null || busScanning || rt.polledKey === planKey) return;
+    beginPolling(activeId, rt.pollIntervalMs);
+  }, [planKey, rt.polledKey, rt.pollIntervalMs, busScanning, activeId, beginPolling]);
 
   // ── Table data ──
-  const liveValues = protocol.connected && polledKey === planKey && !protocol.stale ? protocol.values : NO_VALUES;
+  const liveValues = rt.connected && rt.polledKey === planKey && !rt.stale ? rt.values : NO_VALUES;
   const tableData = useMemo(
     () => buildTableRows(blocks, plan, liveValues, { useOneBased, displayFormat }),
     [blocks, plan, liveValues, useOneBased, displayFormat],
   );
 
-  // Exception responses: say which request the device rejected (once per distinct set, not every poll).
-  const failureSig = useMemo(
-    () => Array.from(new Set(tableData.flatMap((r) => (r.error ? [r.error] : [])))).join("\n"),
-    [tableData],
-  );
-  useEffect(() => {
-    if (failureSig) failureSig.split("\n").forEach((m) => addLog("error", m));
-  }, [failureSig, addLog]);
-
-  // ── Poll logging ──
-  useEffect(() => {
-    if (mode !== "master" || !protocol.connected || protocol.pollCount <= 0) return;
-    const n = tableData.length;
-    const first = tableData[0];
-    const last = tableData[n - 1];
-    if (!first || !last) return;
-    const range = n === 1 ? `${first.name}=${first.value}` : `${first.name}…${last.name} (${n} values)`;
-    addLog("rx", `Poll #${protocol.pollCount}: ${range} (${protocol.latency}ms)`);
-  }, [protocol.pollCount]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Connection handlers ──
+  // Each handler works on the connection that was active when it started: the user may switch
+  // tabs while a connect or a scan is still running.
+  const logFor = useStore.getState().addLogFor;
+
+  /** "Polling N values (M blocks) every …", with the free cap spelled out when it applies. */
+  const pollingSummary = (id: string, via: string, extra: string) => {
+    const blocksNow = fieldsOf(useStore.getState(), id)?.blocks ?? [];
+    const count = effectivePlan(blocksNow, proRef.current).tags.length;
+    const cap = valueCapNotice(blocksNow, proRef.current);
+    return `Polling ${count} values${via} (${blocksNow.length} blocks) every ${extra}${cap ? `. ${cap}` : ""}`;
+  };
+
   const handleConnect = useCallback(async (values: Record<string, string | number>) => {
+    const id = useStore.getState().activeSessionId;
     const config: ModbusConfig = {
       host: String(values.host), port: Number(values.port),
       unit_id: Number(values.unitId), timeout_ms: 5000,
-      poll_interval_ms: Number(values.pollInterval || 1000), endianness,
+      poll_interval_ms: Number(values.pollInterval || 1000), endianness: useStore.getState().endianness,
     };
-    addLog("info", `Connecting to ${config.host}:${config.port}…`);
-    const ok = await protocol.connect(config);
+    logFor(id, "info", `Connecting to ${config.host}:${config.port}…`);
+    const ok = await connectTcp(id, config);
     if (ok) {
-      addLog("rx", "Connected");
-      beginPolling(config.poll_interval_ms);
-      addLog("info", `Polling ${plan.tags.length} values (${blocks.length} blocks) every ${config.poll_interval_ms}ms`);
+      logFor(id, "rx", "Connected");
+      beginPolling(id, config.poll_interval_ms);
+      logFor(id, "info", pollingSummary(id, "", `${config.poll_interval_ms}ms`));
     }
-  }, [protocol.connect, addLog, blocks.length, endianness, beginPolling, plan]);
+  }, [beginPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCancelConnect = useCallback(async () => {
-    protocol.cancel();
-    // `disconnect` also aborts a connect still waiting for the device, and drops the
-    // client if the connect finished just before the cancel arrived.
+    const id = useStore.getState().activeSessionId;
     try {
-      await invoke("disconnect");
-    } catch (e) { addLog("error", `Cancel failed: ${String(e)}`); }
-    addLog("info", "Connection cancelled");
-  }, [protocol.cancel, addLog]);
+      await cancelConnect(id);
+    } catch (e) { logFor(id, "error", `Cancel failed: ${String(e)}`); }
+    logFor(id, "info", "Connection cancelled");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDisconnect = useCallback(async () => {
-    endSession();
-    await protocol.disconnect();
-    addLog("info", "Disconnected");
-  }, [endSession, protocol.disconnect, addLog]);
+    const id = useStore.getState().activeSessionId;
+    await stopCsvLogAndReport(id);
+    await disconnect(id);
+    logFor(id, "info", "Disconnected");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRtuConnect = useCallback(async () => {
-    if (!rtuPort) { addLog("error", "No serial port selected"); return; }
+    const state = useStore.getState();
+    const id = state.activeSessionId;
+    const { rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval, endianness } = state;
+    if (!rtuPort) { logFor(id, "error", "No serial port selected"); return; }
     try {
       if (rtuPort === VIRTUAL_PORT) {
-        addLog("info", "Connecting to the in-app virtual slave…");
-        await invoke("connect_rtu_virtual", { unitId: rtuUnitId, endianness });
+        logFor(id, "info", "Connecting to the in-app virtual slave…");
+        await invoke("connect_rtu_virtual", { connId: id, unitId: rtuUnitId, endianness });
       } else {
-        if (!(rtuBaud > 0)) { addLog("error", "Enter a baud rate"); return; }
-        addLog("info", `Connecting RTU ${rtuPort} @ ${rtuBaud} baud…`);
+        if (!(rtuBaud > 0)) { logFor(id, "error", "Enter a baud rate"); return; }
+        logFor(id, "info", `Connecting RTU ${rtuPort} @ ${rtuBaud} baud…`);
         await invoke("connect_rtu", {
+          connId: id,
           serialConfig: { port_name: rtuPort, baud_rate: rtuBaud, data_bits: rtuDataBits, stop_bits: rtuStopBits, parity: rtuParity },
           unitId: rtuUnitId, endianness, timeoutMs: rtuTimeout,
         });
       }
-      addLog("rx", "RTU connected");
-      protocol.setConnected(true);
-      beginPolling(rtuPollInterval);
-      addLog("info", `Polling ${plan.tags.length} values via RTU every ${rtuPollInterval}ms (timeout ${rtuTimeout}ms)`);
-    } catch (e) { addLog("error", `RTU connect failed: ${String(e)}`); }
-  }, [rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval, endianness, beginPolling, plan, protocol.setConnected, addLog]);
+      logFor(id, "rx", "RTU connected");
+      markConnected(id, true);
+      beginPolling(id, rtuPollInterval);
+      logFor(id, "info", pollingSummary(id, " via RTU", `${rtuPollInterval}ms (timeout ${rtuTimeout}ms)`));
+    } catch (e) { logFor(id, "error", `RTU connect failed: ${String(e)}`); }
+  }, [beginPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleScanBus = useCallback(async () => {
-    if (!protocol.connected) { addLog("error", "Not connected. Connect to a serial port first."); return; }
-    const { setBusScanning, setBusScanResults, busScanAddr, busScanArea, busScanStart, busScanEnd } = useStore.getState();
-    setBusScanning(true);
-    setBusScanResults([]);
-    addLog("info", `Scanning bus IDs ${busScanStart}–${busScanEnd} (reg ${busScanAddr}, ${busScanArea})…`);
-    stopPolling();
+    const state = useStore.getState();
+    const id = state.activeSessionId;
+    if (!runtimeOf(id).connected) { logFor(id, "error", "Not connected. Connect to a serial port first."); return; }
+    const { busScanAddr, busScanArea, busScanStart, busScanEnd } = state;
+    const scanState = (patch: { busScanning?: boolean; busScanResults?: { unit_id: number; value: number }[] }) =>
+      useStore.getState().patchSession(id, () => patch);
+    scanState({ busScanning: true, busScanResults: [] });
+    logFor(id, "info", `Scanning bus IDs ${busScanStart}–${busScanEnd} (reg ${busScanAddr}, ${busScanArea})…`);
+    pausePolling(id);
     try {
       const results = await invoke<{ unit_id: number; value: number }[]>("scan_bus", {
-        registerAddress: busScanAddr, registerArea: busScanArea, startId: busScanStart, endId: busScanEnd,
+        connId: id, registerAddress: busScanAddr, registerArea: busScanArea, startId: busScanStart, endId: busScanEnd,
       });
-      setBusScanResults(results);
-      addLog("rx", `Bus scan finished: ${results.length} device(s) found`);
+      scanState({ busScanResults: results });
+      logFor(id, "rx", `Bus scan finished: ${results.length} device(s) found`);
     } catch (e) {
       // Disconnecting during a scan closes the connection under it; that is not a scan failure.
-      if (pollIntervalRef.current === null) addLog("info", "Bus scan aborted: disconnected");
-      else addLog("error", `Bus scan failed: ${String(e)}`);
+      if (runtimeOf(id).pollIntervalMs === null) logFor(id, "info", "Bus scan aborted: disconnected");
+      else logFor(id, "error", `Bus scan failed: ${String(e)}`);
     } finally {
-      setBusScanning(false);
+      scanState({ busScanning: false });
       // The scan (also when stopped) leaves the connection up and back on its unit ID; resume
       // polling unless the user disconnected meanwhile.
-      if (pollIntervalRef.current !== null) beginPolling(pollIntervalRef.current);
+      const interval = runtimeOf(id).pollIntervalMs;
+      if (interval !== null) beginPolling(id, interval);
     }
-  }, [protocol.connected, stopPolling, beginPolling, addLog]);
+  }, [beginPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectScanUnit = useCallback(async (unitId: number) => {
+    const id = useStore.getState().activeSessionId;
     try {
-      await invoke("set_unit_id", { unitId });
+      await invoke("set_unit_id", { connId: id, unitId });
       useStore.getState().setRtuUnitId(unitId);
-      addLog("info", `Now polling unit ID ${unitId}`);
-    } catch (e) { addLog("error", `Could not switch to unit ID ${unitId}: ${String(e)}`); }
-  }, [addLog]);
+      logFor(id, "info", `Now polling unit ID ${unitId}`);
+    } catch (e) { logFor(id, "error", `Could not switch to unit ID ${unitId}: ${String(e)}`); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── CSV logging of polled values (Pro) ──
+  /** Stop the connection's CSV log, if one runs, and say where it went. */
+  const stopCsvLogAndReport = async (id: string) => {
+    const stopped = await stopCsvLog(id);
+    if (stopped) logFor(id, "info", `Stopped logging: ${stopped.rows} values written to ${stopped.path}`);
+  };
+
+  const handleStartCsvLog = useCallback(async () => {
+    if (!requirePro("Logging polled values to CSV")) return;
+    const id = useStore.getState().activeSessionId;
+    try {
+      const path = await startCsvLog(id, connectionLabel(id));
+      if (path) logFor(id, "info", `Logging every polled value to ${path}`);
+    } catch (e) { logFor(id, "error", `Could not start logging: ${String(e)}`); }
+  }, [requirePro]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleStopCsvLog = useCallback(() => stopCsvLogAndReport(useStore.getState().activeSessionId), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Several connections (Pro) ──
+  const handleAddConnection = useCallback(() => {
+    if (!mayOpenConnection(useStore.getState().sessions.length, proRef.current)) {
+      openUpsell("Several connections at once");
+      return;
+    }
+    useStore.getState().addSession();
+  }, [openUpsell]);
+
+  const handleCloseConnection = useCallback(async (id: string) => {
+    await closeConnection(id);
+    useStore.getState().closeSession(id);
+  }, []);
+
+  // The connect form keeps its values in a ref; point it at the connection that came to the front.
+  useEffect(() => {
+    masterFormRef.current = { ...useStore.getState().tcpFormValues };
+    setWriteError(null);
+  }, [activeId]);
 
   // ── CSV export/import ──
   const exportBlocksCsv = useCallback(async () => {
@@ -385,8 +422,10 @@ function App() {
       setWriteError(`"${value}" is not a number`);
       return;
     }
-    addLog("tx", `Write ${value} (${dataType}) to ${editingTag.name}`);
-    const result = await protocol.writeTag(
+    const id = activeId;
+    logFor(id, "tx", `Write ${value} (${dataType}) to ${editingTag.name}`);
+    const result = await writeTag(
+      id,
       { name: editingTag.name, address: editingTag.address, quantity: 1, area: editingTag.area, register_area: editingTag.area, type: isBool ? "uint16" : dataType, scale: 1.0 },
       numValue,
     );
@@ -394,9 +433,10 @@ function App() {
       setWriteError(result.error ?? "Write failed");
       return;
     }
-    addLog("rx", `Wrote ${editingTag.name}`);
-    closeEditor();
-    await protocol.readTags(plan.tags);
+    logFor(id, "rx", `Wrote ${editingTag.name}`);
+    useStore.getState().patchSession(id, () => ({ editingTag: null }));
+    setWriteError(null);
+    await readNow(id);
   };
 
   // ── Data table section ──
@@ -453,10 +493,11 @@ function App() {
   // ── Sidebar content ──
   const sidebarContent = mode === "master" ? (
     <MasterSidebar
-      protocol={protocol} masterFormRef={masterFormRef} formKey={formKey}
+      protocol={rt} masterFormRef={masterFormRef} formKey={formKey}
       onConnect={handleConnect} onCancelConnect={handleCancelConnect} onDisconnect={handleDisconnect}
       onRtuConnect={handleRtuConnect} onScanBus={handleScanBus} onSelectScanUnit={handleSelectScanUnit}
       onAutoDetect={handleAutoDetect} autoDetecting={autoDetecting}
+      csvLog={{ path: rt.csvLogPath, rows: rt.csvLogRows }} onStartCsvLog={handleStartCsvLog} onStopCsvLog={handleStopCsvLog}
       saveProfileAs={(name) => {
         const isNew = !connProfiles.some((p) => p.name === name.trim());
         if (isNew && connProfiles.length >= FREE_PROFILE_LIMIT && !requirePro("More than one saved connection profile")) return;
@@ -474,7 +515,7 @@ function App() {
       <Toolbar
         title="Modbus Poll"
         icon={appIcon}
-        connected={mode === "master" ? protocol.connected : slaveRunning}
+        connected={mode === "master" ? rt.connected : slaveRunning}
         onDisconnect={mode === "master" ? handleDisconnect : handleSlaveStop}
         onInfo={() => useStore.getState().setShowInfo(true)}
         actions={
@@ -487,6 +528,10 @@ function App() {
           </IconButton>
         }
       />
+
+      {mode === "master" && (
+        <ConnectionTabs sessionCount={sessionCount} onAdd={handleAddConnection} onClose={handleCloseConnection} />
+      )}
 
       {isMobile ? (
         /* ── Mobile layout ── */
@@ -501,7 +546,7 @@ function App() {
             {mobileTab === "trend" && <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 280 }}>{trendPanel}</div>}
           </div>
           <MobileTabBar />
-          <StatusBar connected={mode === "master" ? protocol.connected : slaveRunning} latency={protocol.latency} pollCount={protocol.pollCount} error={protocol.error} />
+          <StatusBar connected={mode === "master" ? rt.connected : slaveRunning} latency={rt.latency} pollCount={rt.pollCount} error={rt.error} />
         </div>
       ) : (
         /* ── Desktop layout ── */
@@ -562,7 +607,7 @@ function App() {
         </div>
       )}
 
-      {!isMobile && <StatusBar connected={mode === "master" ? protocol.connected : slaveRunning} latency={protocol.latency} pollCount={protocol.pollCount} error={protocol.error} />}
+      {!isMobile && <StatusBar connected={mode === "master" ? rt.connected : slaveRunning} latency={rt.latency} pollCount={rt.pollCount} error={rt.error} />}
 
       {editingTag && (
         <ValueEditor

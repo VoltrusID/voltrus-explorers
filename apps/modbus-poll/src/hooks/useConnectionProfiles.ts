@@ -1,5 +1,7 @@
 import { useCallback, useEffect } from "react";
+import { useProStatus } from "@mactools/ui";
 import type { ConnProfile } from "../types";
+import { profileLoadNotice } from "../limits";
 import { saveConnProfiles, validateBlock } from "../helpers";
 import { useStore } from "../store";
 
@@ -11,6 +13,8 @@ export function useConnectionProfiles(masterFormRef: React.RefObject<Record<stri
     activeConnProfile, setActiveConnProfile,
     profileDirty, setProfileDirty, formKey, setFormKey,
   } = useStore();
+
+  const { pro } = useProStatus();
 
   const buildCurrentProfile = useCallback((): ConnProfile => ({
     name: "",
@@ -63,10 +67,13 @@ export function useConnectionProfiles(masterFormRef: React.RefObject<Record<stri
       useStore.getState().addLog("error", `Profile '${p.name}': skipped ${p.blocks.length - usable.length} block(s) that can not be polled`);
     }
     useStore.getState().setBlocks(usable);
+    // A profile saved with Pro can hold more values than the free version polls.
+    const capNotice = profileLoadNotice(p.name, usable, pro);
+    if (capNotice) useStore.getState().addLog("error", capNotice);
     setActiveConnProfile(p.name);
     setProfileDirty(false);
     setFormKey(formKey + 1);
-  }, [connProfiles]);
+  }, [connProfiles, pro]);
 
   const deleteProfile = useCallback((name: string) => {
     setConnProfiles((prev) => {

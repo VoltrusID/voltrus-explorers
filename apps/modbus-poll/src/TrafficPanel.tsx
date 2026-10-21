@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import { EmptyState, saveTextFile, useProStatus } from "@mactools/ui";
-import { useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
+import { NO_TRAFFIC, useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
+import { useStore } from "./store";
 
 const FC_NAMES: Record<number, string> = {
   1: "Read Coils",
@@ -35,8 +36,9 @@ const thStyle: React.CSSProperties = {
 
 
 export default function TrafficPanel() {
-  const entries = useTrafficStore((s) => s.entries);
-  const tcpEvents = useTrafficStore((s) => s.tcpEvents);
+  // The frames of the connection whose tab is in front.
+  const activeId = useStore((s) => s.activeSessionId);
+  const { entries, tcpEvents } = useTrafficStore((s) => s.byConn[activeId] ?? NO_TRAFFIC);
   const clearTraffic = useTrafficStore((s) => s.clear);
   const { requirePro } = useProStatus();
   const [filterDir, setFilterDir] = useState<string>("all");
@@ -368,7 +370,7 @@ export default function TrafficPanel() {
           {exportMsg && (
             <span style={{ fontSize: "var(--fs-xs)", color: exportMsg.failed ? "var(--danger)" : "var(--accent-text)" }} role={exportMsg.failed ? "alert" : "status"} aria-live="polite">{exportMsg.text}</span>
           )}
-          <button onClick={() => { clearTraffic(); setExpandedRows(new Set()); }} aria-label="Clear all traffic" className="vt-btn vt-btn--sm vt-btn--ghost">
+          <button onClick={() => { clearTraffic(activeId); setExpandedRows(new Set()); }} aria-label="Clear all traffic" className="vt-btn vt-btn--sm vt-btn--ghost">
             Clear
           </button>
         </div>

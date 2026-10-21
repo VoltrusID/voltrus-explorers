@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { ConnectionForm, Badge, Button, Field, IconButton, ProBadge, Section, Segmented, useProStatus } from "@mactools/ui";
-import { ChevronDown, ChevronUp, Pencil, Radar, RefreshCw, ScanSearch, X } from "lucide-react";
+import { ChevronDown, ChevronUp, FileDown, Pencil, Radar, RefreshCw, ScanSearch, Square, X } from "lucide-react";
 import { SaveProfileAsInput } from "../SaveProfileAsInput";
 import { ENDIAN_OPTS, VIRTUAL_PORT } from "../constants";
 import { useStore } from "../store";
@@ -22,6 +22,10 @@ interface Props {
   onSelectScanUnit: (unitId: number) => void;
   onAutoDetect: () => void;
   autoDetecting: boolean;
+  /** CSV log of the polled values: the file being written, or null. */
+  csvLog: { path: string | null; rows: number };
+  onStartCsvLog: () => void;
+  onStopCsvLog: () => void;
   saveProfileAs: (name: string) => void;
   saveProfileChanges: () => void;
   loadProfile: (name: string) => void;
@@ -31,6 +35,7 @@ interface Props {
 export function MasterSidebar({
   protocol, masterFormRef, formKey,
   onConnect, onCancelConnect, onDisconnect, onRtuConnect, onScanBus, onSelectScanUnit, onAutoDetect, autoDetecting,
+  csvLog, onStartCsvLog, onStopCsvLog,
   saveProfileAs, saveProfileChanges, loadProfile, deleteProfile,
 }: Props) {
   const {
@@ -230,6 +235,31 @@ export function MasterSidebar({
         )}
       </Section>
 
+      {/* Logging */}
+      <Section title="Log to CSV" meta={<ProBadge />}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {csvLog.path ? (
+            <>
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)" }}>
+                Logging to <span className="mono" title={csvLog.path}>{csvLog.path.split(/[\\/]/).pop()}</span>
+                <br />
+                {csvLog.rows.toLocaleString()} values written
+              </div>
+              <Button size="sm" variant="danger" onClick={onStopCsvLog} icon={<Square size={14} strokeWidth={1.75} />}>Stop logging</Button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+                Writes every polled value of this connection to a CSV file you choose.
+              </div>
+              <Button size="sm" onClick={onStartCsvLog} disabled={!protocol.connected} title={protocol.connected ? undefined : "Connect first"} icon={<FileDown size={14} strokeWidth={1.75} />}>
+                Start logging…
+              </Button>
+            </>
+          )}
+        </div>
+      </Section>
+
       {/* Connection profiles */}
       <Section title="Profiles">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -421,7 +451,7 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
             </Field></div>
           </div>
           {busScanning ? (
-            <Button variant="danger" size="sm" onClick={async () => { try { await invoke("stop_scan_bus"); } catch (e) { addLog("error", `Could not stop the scan: ${String(e)}`); } }}>
+            <Button variant="danger" size="sm" onClick={async () => { try { await invoke("stop_scan_bus", { connId: useStore.getState().activeSessionId }); } catch (e) { addLog("error", `Could not stop the scan: ${String(e)}`); } }}>
               Stop scan
             </Button>
           ) : (
