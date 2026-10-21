@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, currentMonitor, LogicalSize } from "@tauri-apps/api/window";
 import {
   DataTable,
+  ConnectButton,
   StatusBar,
   Toolbar,
   LogPanel,
@@ -34,6 +35,7 @@ import {
 // Hooks
 import { useSlave } from "./hooks/useSlave";
 import { useConnectionProfiles } from "./hooks/useConnectionProfiles";
+import { useConnectSync } from "./hooks/useConnectSync";
 import { useTrend } from "./hooks/useTrend";
 import { usePanelResize } from "./hooks/usePanelResize";
 
@@ -124,6 +126,7 @@ function App() {
   const {
     saveProfileAs, saveProfileChanges, loadProfile, deleteProfile,
   } = useConnectionProfiles(masterFormRef);
+  useConnectSync(loadProfile);
   const { handleDragStart } = usePanelResize();
 
   // ── Platform (serial ports are desktop-only) ──
@@ -519,13 +522,16 @@ function App() {
         onDisconnect={mode === "master" ? handleDisconnect : handleSlaveStop}
         onInfo={() => useStore.getState().setShowInfo(true)}
         actions={
-          <IconButton
-            label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            size="sm"
-            onClick={toggleTheme}
-          >
-            {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
-          </IconButton>
+          <>
+            <ConnectButton />
+            <IconButton
+              label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              size="sm"
+              onClick={toggleTheme}
+            >
+              {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
+            </IconButton>
+          </>
         }
       />
 

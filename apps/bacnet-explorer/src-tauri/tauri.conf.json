@@ -32,6 +32,12 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["voltrus-bacnet-explorer"] },
+      "mobile": [{ "scheme": ["voltrus-bacnet-explorer"] }]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

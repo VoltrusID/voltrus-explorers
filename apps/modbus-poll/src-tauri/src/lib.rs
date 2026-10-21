@@ -9,7 +9,10 @@ use state::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
+    let builder = mt_connect::setup(
+        mt_store::setup(tauri::Builder::default(), include_str!("../store.json")),
+        include_str!("../connect.json"),
+    )
         // Native open/save panels + writes to the paths the user picked (the only
         // file access the sandboxed App Store build has).
         .plugin(tauri_plugin_dialog::init())
@@ -31,6 +34,12 @@ pub fn run() {
         network::scan_network,
         simulation::sim_lock_register, network::auto_detect_rtu, system::platform, system::open_url,
         mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+        mt_connect::connect_info, mt_connect::connect_signed_in, mt_connect::connect_sign_in, mt_connect::connect_sign_out,
+        mt_connect::connect_me, mt_connect::connect_sync, mt_connect::connect_profile_save, mt_connect::connect_new_id,
+        mt_connect::connect_open_url, mt_connect::connect_teams, mt_connect::connect_team_create, mt_connect::connect_team_invite,
+        mt_connect::connect_invite_accept, mt_connect::connect_team_remove_member, mt_connect::connect_remote_sites,
+        mt_connect::connect_remote_join, mt_connect::connect_store_products, mt_connect::connect_subscribe,
+        mt_connect::connect_link_purchases,
     ]);
 
     #[cfg(not(target_os = "macos"))]
@@ -44,6 +53,12 @@ pub fn run() {
         network::scan_network,
         simulation::sim_lock_register, system::open_url, system::platform,
         mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+        mt_connect::connect_info, mt_connect::connect_signed_in, mt_connect::connect_sign_in, mt_connect::connect_sign_out,
+        mt_connect::connect_me, mt_connect::connect_sync, mt_connect::connect_profile_save, mt_connect::connect_new_id,
+        mt_connect::connect_open_url, mt_connect::connect_teams, mt_connect::connect_team_create, mt_connect::connect_team_invite,
+        mt_connect::connect_invite_accept, mt_connect::connect_team_remove_member, mt_connect::connect_remote_sites,
+        mt_connect::connect_remote_join, mt_connect::connect_store_products, mt_connect::connect_subscribe,
+        mt_connect::connect_link_purchases,
     ]);
 
     builder

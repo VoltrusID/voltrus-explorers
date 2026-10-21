@@ -18,6 +18,7 @@ import {
   Toolbar,
   ProBadge,
   ProAboutRow,
+  ConnectButton,
   useProStatus,
   LogPanel,
   ValueEditor,
@@ -33,6 +34,7 @@ import { MobileTabBar, type PhoneTab, type PhoneTabItem } from "./components/Mob
 import { AlarmPanel } from "./components/AlarmPanel";
 import TrendPanel from "./components/TrendPanel";
 import { trendKey, useBacnetTrend } from "./hooks/useBacnetTrend";
+import { useConnectSync } from "./hooks/useConnectSync";
 import { TrendLogDialog } from "./components/TrendLogDialog";
 import { ScheduleDialog } from "./components/ScheduleDialog";
 import { WatchPanel, type WatchItem } from "./components/WatchPanel";
@@ -314,6 +316,14 @@ function App() {
     if (!activeKey) return;
     setWatchLists((prev) => ({ ...prev, [activeKey]: [] }));
   };
+
+  useConnectSync({
+    device: connectedDevice,
+    series: trend.series,
+    connect: handleConnect,
+    addSeries: toggleTrend,
+    setSource: trend.setSource,
+  });
 
   const handleDiscover = useCallback(async () => {
     addLog("info", "Broadcasting Who-Is…");
@@ -947,6 +957,7 @@ function App() {
       <Toolbar
         title="BACnet Explorer"
         icon={appIcon}
+        actions={<ConnectButton />}
         context={connected && connectedDevice ? `${connectedDevice.ip}:${connectedDevice.port}` : undefined}
         connected={connected}
         onDisconnect={handleDisconnect}
