@@ -40,6 +40,7 @@
 //! ```
 
 pub mod client;
+mod link;
 pub mod server;
 pub mod simulator;
 pub mod types;

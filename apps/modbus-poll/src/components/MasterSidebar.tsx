@@ -190,7 +190,7 @@ export function MasterSidebar({
               </Field></div>
             </div>
             <Field label="Unit ID">
-              <input className="vt-input" type="number" value={rtuUnitId} onChange={(e) => setRtuUnitId(Number(e.target.value))} disabled={protocol.connected} />
+              <input className="vt-input" type="number" min={0} max={247} value={rtuUnitId} onChange={(e) => setRtuUnitId(Number(e.target.value))} disabled={protocol.connected} />
             </Field>
             <div style={{ display: "flex", gap: 4 }}>
               <div style={{ flex: 1 }}><Field label="Timeout (ms)">

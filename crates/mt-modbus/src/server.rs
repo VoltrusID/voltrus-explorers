@@ -23,6 +23,11 @@ pub struct SlaveState {
     pub registers: Vec<u16>,
 }
 
+/// Most registers one Read Holding Registers request may ask for (§6.3).
+const MAX_READ_REGISTERS: u16 = 125;
+/// Most registers one Write Multiple Registers request may carry (§6.12).
+const MAX_WRITE_REGISTERS: u16 = 123;
+
 type LogSender = mpsc::UnboundedSender<SlaveLogEntry>;
 
 /// What [`start_slave_server`] and friends hand back to the caller.
@@ -114,6 +119,12 @@ impl SlaveService {
     fn handle(&self, req: &Request<'_>) -> Result<Response, ExceptionCode> {
         match req {
             Request::ReadHoldingRegisters(req_addr, qty) => {
+                // Quantity is checked before the address (Modbus Application Protocol v1.1b3, §6.3):
+                // a count outside 1..=125 is Illegal Data Value (0x03), whatever the address.
+                if !(1..=MAX_READ_REGISTERS).contains(qty) {
+                    self.log(3, *req_addr, *qty, format!("Read rejected: quantity {qty} outside 1..={MAX_READ_REGISTERS}"));
+                    return Err(ExceptionCode::IllegalDataValue);
+                }
                 let data = self.data.lock().unwrap();
                 let addr = *req_addr as usize;
                 let qty = *qty as usize;
@@ -148,6 +159,16 @@ impl SlaveService {
                 }
             }
             Request::WriteMultipleRegisters(req_addr, words) => {
+                // §6.12: 1..=123 registers; checked before the address.
+                if !(1..=MAX_WRITE_REGISTERS as usize).contains(&words.len()) {
+                    self.log(
+                        16,
+                        *req_addr,
+                        words.len().min(u16::MAX as usize) as u16,
+                        format!("Write rejected: quantity {} outside 1..={MAX_WRITE_REGISTERS}", words.len()),
+                    );
+                    return Err(ExceptionCode::IllegalDataValue);
+                }
                 let mut data = self.data.lock().unwrap();
                 let addr = *req_addr as usize;
                 let end = addr + words.len();
@@ -379,6 +400,21 @@ pub async fn start_slave_server_rtu(
     Ok((state, log_rx, shutdown_tx))
 }
 
+/// Put a terminal fd into raw mode (8 bits, no translation, no echo, no line editing).
+#[cfg(all(feature = "serial", unix))]
+fn set_raw(fd: std::os::fd::RawFd) -> io::Result<()> {
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut termios = unsafe { termios.assume_init() };
+    unsafe { libc::cfmakeraw(&mut termios) };
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Start the slave RTU server on a virtual serial port (PTY pair).
 /// Returns `(SlaveState handle, log receiver, shutdown sender, slave PTY path, slave fd)`.
 /// The slave fd must be kept open and used by the in-app master via `dup()`.
@@ -414,6 +450,19 @@ pub async fn start_slave_server_rtu_virtual(
 
     if result == -1 {
         return Err(io::Error::last_os_error().into());
+    }
+
+    // openpty leaves the default cooked line discipline: ICRNL turns a 0x0D data byte into 0x0A,
+    // ONLCR inserts a 0x0D before every 0x0A, ICANON withholds input until a newline and
+    // 0x03/0x11/0x13 act as control characters. RTU frames are binary, so both ends must be raw.
+    for fd in [master_fd, slave_fd] {
+        if let Err(e) = set_raw(fd) {
+            unsafe {
+                libc::close(master_fd);
+                libc::close(slave_fd);
+            }
+            return Err(e.into());
+        }
     }
 
     let slave_path = unsafe { CStr::from_ptr(name_buf.as_ptr() as *const libc::c_char) }
@@ -563,12 +612,37 @@ mod tests {
     }
 
     #[test]
-    fn test_read_holding_zero_quantity() {
-        let (_state, service) = make_tcp_service(10);
-        match call(&service, Request::ReadHoldingRegisters(0, 0)).unwrap() {
-            Response::ReadHoldingRegisters(regs) => assert!(regs.is_empty()),
+    fn read_quantity_outside_1_to_125_is_illegal_data_value() {
+        let (_state, service) = make_tcp_service(300);
+        // Modbus Application Protocol v1.1b3 §6.3: quantity of registers 1..=125 (0x7D), else exception 03.
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(0, 0)), Err(ExceptionCode::IllegalDataValue));
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(0, 126)), Err(ExceptionCode::IllegalDataValue));
+        // The quantity check wins over the address check.
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(1000, 126)), Err(ExceptionCode::IllegalDataValue));
+        assert_eq!(call(&service, Request::ReadHoldingRegisters(1000, 0)), Err(ExceptionCode::IllegalDataValue));
+        match call(&service, Request::ReadHoldingRegisters(0, 125)).unwrap() {
+            Response::ReadHoldingRegisters(regs) => assert_eq!(regs.len(), 125),
             _ => panic!("Expected ReadHoldingRegisters response"),
         }
+    }
+
+    #[test]
+    fn write_multiple_quantity_outside_1_to_123_is_illegal_data_value() {
+        let (state, service) = make_tcp_service(300);
+        // §6.12: quantity of registers 1..=123 (0x7B), else exception 03.
+        let too_many = vec![7u16; 124];
+        assert_eq!(
+            call(&service, Request::WriteMultipleRegisters(0, Cow::Owned(too_many))),
+            Err(ExceptionCode::IllegalDataValue)
+        );
+        assert_eq!(
+            call(&service, Request::WriteMultipleRegisters(0, Cow::Owned(Vec::new()))),
+            Err(ExceptionCode::IllegalDataValue)
+        );
+        assert_eq!(state.lock().unwrap().registers[0], 0, "a rejected write must not touch the image");
+        let max = vec![7u16; 123];
+        assert!(call(&service, Request::WriteMultipleRegisters(0, Cow::Owned(max))).is_ok());
+        assert_eq!(state.lock().unwrap().registers[122], 7);
     }
 
     #[test]
@@ -709,5 +783,125 @@ mod tests {
         // ...and a request on a fresh connection is refused as well (listener gone).
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
+    }
+    /// Request/response pairs printed in Modbus Application Protocol Specification V1.1b3
+    /// (§6.3 Read Holding Registers, §6.6 Write Single Register, §6.12 Write Multiple Registers,
+    /// §7 exceptions), wrapped in the MBAP header of Modbus Messaging on TCP/IP v1.0b
+    /// (transaction 0x1234, protocol 0, unit 0x11 = 17 as in the spec's examples).
+    #[tokio::test]
+    async fn application_protocol_spec_examples_over_tcp() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let (state, _log, _shutdown) = start_slave_server(port, "127.0.0.1", 200, 0x11).await.unwrap();
+        // The §6.3 example reads "registers 108-110" with starting address 0x006B = 107 (the spec
+        // numbers registers from 1): they hold 555, 0, 100 = 0x022B, 0x0000, 0x0064.
+        state.lock().unwrap().registers[107..110].copy_from_slice(&[0x022B, 0x0000, 0x0064]);
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+
+        let frame = |pdu: &[u8]| {
+            let mut f = vec![0x12, 0x34, 0x00, 0x00, 0x00, pdu.len() as u8 + 1, 0x11];
+            f.extend_from_slice(pdu);
+            f
+        };
+
+        // §6.3: read registers 108..110 -> `03 06 02 2B 00 00 00 64`.
+        let want = frame(&[0x03, 0x06, 0x02, 0x2B, 0x00, 0x00, 0x00, 0x64]);
+        assert_eq!(exchange(&mut s, &frame(&[0x03, 0x00, 0x6B, 0x00, 0x03]), want.len()).await, want);
+
+        // §6.6: write register 2 = 0x0003; the response echoes the request.
+        let echo = frame(&[0x06, 0x00, 0x01, 0x00, 0x03]);
+        assert_eq!(exchange(&mut s, &echo, echo.len()).await, echo);
+        assert_eq!(state.lock().unwrap().registers[1], 3);
+
+        // §6.12: write registers 2..3 = 0x000A, 0x0102 -> `10 00 01 00 02`.
+        let want = frame(&[0x10, 0x00, 0x01, 0x00, 0x02]);
+        let req = frame(&[0x10, 0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x0A, 0x01, 0x02]);
+        assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+        assert_eq!(&state.lock().unwrap().registers[1..3], &[0x000A, 0x0102]);
+
+        // §7: an exception response carries the function code with the high bit set and one code byte.
+        // Quantity 0 and quantity 126 (> 125) of FC03 are Illegal Data Value (0x03), also when the
+        // address is out of range as well.
+        for (start, qty) in [([0x00, 0x00], [0x00, 0x00]), ([0x00, 0x00], [0x00, 0x7E]), ([0x27, 0x10], [0x00, 0x7E])] {
+            let req = frame(&[0x03, start[0], start[1], qty[0], qty[1]]);
+            let want = frame(&[0x83, 0x03]);
+            assert_eq!(exchange(&mut s, &req, want.len()).await, want);
+        }
+        // Address past the image: Illegal Data Address (0x02).
+        let want = frame(&[0x83, 0x02]);
+        assert_eq!(exchange(&mut s, &frame(&[0x03, 0x27, 0x10, 0x00, 0x01]), want.len()).await, want);
+        // A function the device does not implement: Illegal Function (0x01).
+        let want = frame(&[0x84, 0x01]);
+        assert_eq!(exchange(&mut s, &frame(&[0x04, 0x00, 0x08, 0x00, 0x01]), want.len()).await, want);
+    }
+
+    /// Modbus RTU frames (unit, PDU, CRC-16 low byte first) pushed through a pseudo-terminal.
+    /// CRCs come from the reference algorithm of Modbus over Serial Line v1.02 Appendix B
+    /// (poly 0xA001, init 0xFFFF); `01 03 00 00 00 0A C5 CD` is the classic published example.
+    #[cfg(all(feature = "serial", unix))]
+    mod rtu_wire {
+        use super::*;
+
+        /// Write `request` to the slave end of the PTY and collect whatever comes back within `wait`.
+        fn exchange_raw(fd: std::os::fd::RawFd, request: &[u8], wait: Duration) -> Vec<u8> {
+            assert_eq!(unsafe { libc::write(fd, request.as_ptr().cast(), request.len()) }, request.len() as isize);
+            let deadline = std::time::Instant::now() + wait;
+            let mut got = Vec::new();
+            loop {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    return got;
+                }
+                let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+                if unsafe { libc::poll(&mut p, 1, left.as_millis() as libc::c_int) } <= 0 {
+                    return got;
+                }
+                let mut buf = [0u8; 64];
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+                if n <= 0 {
+                    return got;
+                }
+                got.extend_from_slice(&buf[..n as usize]);
+                // A short grace period collects the rest of a frame; replies are written in one go.
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn frames_crc_broadcast_and_foreign_units() {
+            let (state, _log, _shutdown, _path, fd) = start_slave_server_rtu_virtual(64, 5).await.unwrap();
+            state.lock().unwrap().registers[..2].copy_from_slice(&[0x0102, 0x0304]);
+            let quick = Duration::from_millis(150);
+            let slow = Duration::from_millis(1500);
+
+            tokio::task::spawn_blocking(move || {
+                // Read 2 registers from unit 5 -> `05 03 04 01 02 03 04`.
+                let ok = exchange_raw(fd, &[0x05, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC5, 0x8F], slow);
+                assert_eq!(ok, [0x05, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04, 0x1E, 0xFC]);
+
+                // Wrong CRC: a slave never answers a corrupted frame.
+                assert!(exchange_raw(fd, &[0x05, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC5, 0x8E], quick).is_empty());
+                // ... and is back in step for the next valid frame.
+                let ok = exchange_raw(fd, &[0x05, 0x03, 0x00, 0x00, 0x00, 0x02, 0xC5, 0x8F], slow);
+                assert_eq!(ok.len(), 9, "slave must resynchronise after a corrupted frame: {ok:02X?}");
+
+                // Another unit's request (the classic `01 03 00 00 00 0A C5 CD`): silence.
+                assert!(exchange_raw(fd, &[0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD], quick).is_empty());
+
+                // Broadcast (unit 0) write register 9 = 0x0D0A: executed, never answered.
+                assert!(exchange_raw(fd, &[0x00, 0x06, 0x00, 0x09, 0x0D, 0x0A, 0xDC, 0x8E], quick).is_empty());
+
+                // Exceptions: address past the image -> 02, quantity 0 -> 03.
+                let e = exchange_raw(fd, &[0x05, 0x03, 0x00, 0x40, 0x00, 0x01, 0x84, 0x5A], slow);
+                assert_eq!(e, [0x05, 0x83, 0x02, 0x81, 0x30]);
+                let e = exchange_raw(fd, &[0x05, 0x03, 0x00, 0x00, 0x00, 0x00, 0x44, 0x4E], slow);
+                assert_eq!(e, [0x05, 0x83, 0x03, 0x40, 0xF0]);
+            })
+            .await
+            .unwrap();
+            assert_eq!(state.lock().unwrap().registers[9], 0x0D0A);
+        }
     }
 }
