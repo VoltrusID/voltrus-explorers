@@ -1,0 +1,13 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for S7 Explorer",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
+  ]
+}
