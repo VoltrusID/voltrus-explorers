@@ -210,7 +210,7 @@ function installMock() {
 
   const commands = {
     store_status: () => ({ store: false, pro: true, reason: "build", price: null }),
-    platform: () => "macos",
+    platform: () => cfg().platform || "macos",
     open_url: () => null,
     list_serial_ports: () => cfg().serialPorts || [],
     connect: ({ config }) => {
@@ -627,6 +627,153 @@ export const scenes = [
         const label = [...aside.querySelectorAll("label,span,div")].find((e) => e.children.length === 0 && e.textContent.trim() === "Port");
         aside.scrollTop = label.getBoundingClientRect().top - aside.getBoundingClientRect().top + aside.scrollTop - 8;
       });
+    },
+  },
+];
+
+// ── iPhone / iPad scenes (render.mjs --device=iphone|ipad) ──────────────────────────────────────
+// iPhone (390 CSS px wide) uses the app's mobile layout (isMobile); iPad (834 px) is above the 768 px breakpoint and
+// uses the desktop layout. iOS has no serial ports, so only the TCP profiles are seeded and nothing shows RTU.
+
+const iosInit =
+  initCommon.replace(
+    JSON.stringify(JSON.stringify(profiles)),
+    JSON.stringify(JSON.stringify(profiles.filter((p) => p.transport === "tcp"))),
+  ) + `window.__MOCK_CFG.platform = "ios";`;
+
+const iosCss = `*::-webkit-scrollbar { display: none; } * { scrollbar-width: none; }`;
+
+async function iosPrepare(page) {
+  await page.addStyleTag({ content: iosCss });
+}
+
+async function mobileTab(page, label) {
+  const ok = await page.evaluate((t) => {
+    const b = [...document.querySelectorAll("nav button")].find((el) => el.textContent.trim().startsWith(t));
+    if (!b) return false;
+    b.click();
+    return true;
+  }, label);
+  if (!ok) throw new Error(`tab "${label}" not found`);
+  await sleep(500);
+}
+
+export const iosScenes = [
+  {
+    id: "live-polling",
+    headline: "See meter values <em>live</em>",
+    sub: "Read float32 and float64 registers over Modbus TCP, right from your iPhone or iPad.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page, device) {
+      await iosPrepare(page);
+      if (device === "iphone") {
+        await connectTcp(page, "MCC-1 incomer", 70);
+        await mobileTab(page, "Data");
+      } else {
+        await setStore(page, `({ leftWidth: 236, rightWidth: 200, tableHeight: 560 })`);
+        await connectTcp(page, "MCC-1 incomer", 70);
+      }
+      await waitLatency(page, 14);
+    },
+  },
+  {
+    id: "connect",
+    headline: "Connect to a PLC or meter <em>in seconds</em>",
+    sub: "Save a profile with host, port and unit ID, then reconnect with one tap.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page, device) {
+      await iosPrepare(page);
+      if (device === "iphone") {
+        await chooseProfile(page, "MCC-1 incomer");
+        await sleep(1200);
+      } else {
+        await setStore(page, `({ leftWidth: 300, rightWidth: 230, tableHeight: 420 })`);
+        await connectTcp(page, "Chiller 1", 30);
+      }
+    },
+  },
+  {
+    id: "slave-simulator",
+    headline: "Simulate a device <em>without hardware</em>",
+    sub: "Run a Modbus TCP slave from a PM5560 template. Values drift and energy counts up.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page, device) {
+      await iosPrepare(page);
+      await setStore(page, device === "iphone" ? `({ mode: "slave", slavePollMs: 500 })` : `({ mode: "slave", leftWidth: 230, rightWidth: 250, tableHeight: 560, slavePollMs: 500 })`);
+      await sleep(300);
+      await clickButton(page, "Start server");
+      await sleep(400);
+      if (device === "iphone") await mobileTab(page, "Template");
+      await page.evaluate(() => {
+        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "Select device…"));
+        s.setAttribute("data-template-select", "1");
+      });
+      await page.select("[data-template-select]", "pm5560");
+      await sleep(600);
+      await clickButton(page, "Simulate");
+      await sleep(1500);
+      if (device === "iphone") await mobileTab(page, "Data");
+      await sleep(3500);
+    },
+  },
+  {
+    id: "log",
+    devices: ["iphone"],
+    headline: "Follow every poll <em>as it happens</em>",
+    sub: "The comm log shows each read with its round-trip time.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page) {
+      await iosPrepare(page);
+      await chooseProfile(page, "MCC-1 incomer");
+      await clickButton(page, "Connect");
+      await waitPolls(page, 12);
+      await mobileTab(page, "Log");
+      await sleep(2500);
+    },
+  },
+  {
+    id: "traffic",
+    devices: ["ipad"],
+    headline: "Every request and response, <em>decoded</em>",
+    sub: "Each frame shows its function code, address range and register words in hex.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page, device) {
+      await iosPrepare(page);
+      if (device === "ipad") await setStore(page, `({ leftWidth: 220, rightWidth: 200, tableHeight: 300, bottomTab: "traffic" })`);
+      await chooseProfile(page, "MCC-1 incomer");
+      await clickButton(page, "Connect");
+      await waitPolls(page, 8);
+      if (device === "iphone") await mobileTab(page, "Traffic");
+      await page.click('button[aria-label="Clear all traffic"]');
+      await sleep(3500);
+      await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('tr[title="Click to expand frame details"]')];
+        rows.find((r, k) => k >= 3 && r.textContent.includes("RX"))?.click();
+      });
+      await sleep(400);
+    },
+  },
+  {
+    id: "trend",
+    headline: "Catch load changes <em>on a trend</em>",
+    sub: "Plot any register live with 30 second, 1 minute and 5 minute windows.",
+    init: iosInit,
+    settleMs: 400,
+    async setup(page, device) {
+      await iosPrepare(page);
+      if (device === "ipad") await setStore(page, `({ leftWidth: 220, rightWidth: 200, tableHeight: 300, trendWindow: 300 })`);
+      else await setStore(page, `({ trendWindow: 300 })`);
+      await chooseProfile(page, "MCC-1 incomer");
+      await clickButton(page, "Connect");
+      await waitPolls(page, 12);
+      await seedTrend(page, ["PM5560_3005", "PM5560_3007", "PM5560_3009"], ["i1", "i2", "i3"], 150);
+      await setStore(page, device === "iphone" ? `({ mobileTab: "trend" })` : `({ bottomTab: "trend" })`);
+      await sleep(4000);
     },
   },
 ];
