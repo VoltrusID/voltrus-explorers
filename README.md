@@ -36,6 +36,16 @@ Version 1.4.0 is the first free release.
 S7 Explorer is an independent tool. Siemens, SIMATIC, S7-300, S7-400, S7-1200, S7-1500 and TIA Portal are trademarks of
 Siemens AG; it is not affiliated with or endorsed by Siemens.
 
+### NATS Explorer
+
+Free to download on the App Store; Pro is a one-time in-app purchase. People who bought the app while it was paid
+(before 1.2.0) keep every feature. NATS Explorer was never released as paid, so this applies to nobody yet.
+
+| | |
+| --- | --- |
+| Free | Embedded NATS server, connect with user/password, token, NKey, JWT, credentials file or TLS, subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export |
+| Pro | JetStream stream and consumer management, KV store browser with live watch, object store browser with upload and download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
+
 ## Build from source
 
 Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh).
@@ -72,12 +82,6 @@ crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, 
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers
 ```
-
-### Free and Pro in the App Store build
-
-| App | Free | Pro (one-time purchase) |
-| --- | --- | --- |
-| NATS Explorer | Embedded NATS server, connect with any auth mode (user/password, token, NKey, JWT, credentials file, TLS), subscribe with wildcards and queue groups, publish with headers, request/reply, payload viewer (JSON, MessagePack, hex), communication log export | JetStream streams and consumers, KV store browser with live watch, object store browser with upload/download, `$SYS` server monitor, protobuf schema decoding, message CSV export |
 
 Maintainers: signed releases run in GitHub Actions, see [docs/release.md](docs/release.md).
 
