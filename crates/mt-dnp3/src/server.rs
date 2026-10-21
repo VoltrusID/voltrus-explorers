@@ -1,14 +1,20 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::application::{AsduHeader, FunctionCode, Iin, QualifierCode};
+use crate::application::{
+    AsduHeader, ControlObject, ControlRequest, ControlStatus, FunctionCode, Iin, QualifierCode,
+    build_control_response, parse_control_objects,
+};
 use crate::datalink::{ControlByte, Dnp3Frame};
 use crate::transport::{TransportHeader, TransportReassembler, TransportSegment, segment_asdu};
 use crate::types::{OutstationConfig, OutstationEvent, OutstationLogEntry};
+
+/// How long the simulated outstation keeps a SELECT valid before the OPERATE.
+const DEFAULT_SELECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Shared state backing the outstation server.
 pub struct OutstationState {
@@ -32,6 +38,8 @@ pub struct OutstationState {
     prev_counter: Vec<f64>,
     /// Whether a cold/warm restart was issued since last integrity poll.
     pub device_restart: bool,
+    /// How long a SELECT stays valid for the matching OPERATE.
+    pub select_timeout: Duration,
 }
 
 impl OutstationState {
@@ -127,6 +135,7 @@ pub async fn start_outstation_server(
         prev_binary: vec![false; config.binary_count as usize],
         prev_counter: vec![0.0; config.counter_count as usize],
         device_restart: false,
+        select_timeout: DEFAULT_SELECT_TIMEOUT,
     }));
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -190,6 +199,7 @@ async fn handle_master_connection(
 ) {
     let mut stream = stream;
     let mut reassembler = TransportReassembler::new();
+    let mut pending_select: Option<PendingSelect> = None;
 
     loop {
         match read_frame(&mut stream).await {
@@ -297,12 +307,32 @@ async fn handle_master_connection(
                                 Some(build_ack_response(request_seq))
                             }
                         }
-                        0x05 => {
-                            // DIRECT_OPERATE (binary CROB or analog output)
+                        0x03 | 0x04 | 0x05 => {
+                            // SELECT / OPERATE / DIRECT OPERATE (binary CROB or analog output)
+                            let function = FunctionCode::from_u8(func).unwrap_or(FunctionCode::DirectOperate);
                             let mut st = state.lock().unwrap();
-                            st.detect_events();
+                            if func != 0x03 {
+                                st.detect_events();
+                            }
+                            let reply = handle_control(
+                                &mut st,
+                                &mut pending_select,
+                                function,
+                                &asdu,
+                                request_seq,
+                                Instant::now(),
+                            );
                             drop(st);
-                            handle_direct_operate(&state, &asdu, request_seq)
+                            let status = parse_control_objects(&reply).ok().flatten().map(|e| e.status);
+                            let _ = log_tx.send(OutstationLogEntry {
+                                timestamp: now_ms(),
+                                function_code: func,
+                                message: match status {
+                                    Some(s) => format!("Control 0x{func:02X} -> {s}"),
+                                    None => format!("Control 0x{func:02X} -> no usable object"),
+                                },
+                            });
+                            Some(reply)
                         }
                         0x07 | 0x08 => {
                             // FREEZE / FREEZE_CLEAR on counters
@@ -555,56 +585,95 @@ fn build_restart_response(request_seq: u8, cold: bool) -> Vec<u8> {
     asdu
 }
 
-fn handle_direct_operate(
-    state: &Arc<std::sync::Mutex<OutstationState>>,
-    data: &[u8],
+/// A SELECT the outstation accepted and is waiting to see operated.
+struct PendingSelect {
+    sequence: u8,
+    request: ControlRequest,
+    at: Instant,
+}
+
+/// Handle SELECT (0x03), OPERATE (0x04) and DIRECT OPERATE (0x05) for one control object.
+///
+/// The response echoes the request object with a control status. An OPERATE succeeds only when it
+/// repeats the pending SELECT exactly, carries the next application sequence number and arrives
+/// within `state.select_timeout`; otherwise the status is NO_SELECT or TIMEOUT. Every OPERATE
+/// consumes the pending select.
+fn handle_control(
+    st: &mut OutstationState,
+    pending: &mut Option<PendingSelect>,
+    function: FunctionCode,
+    asdu: &[u8],
     request_seq: u8,
-) -> Option<Vec<u8>> {
-    // Parse Group 12 Var 1 (binary CROB) or Group 41 (analog output)
-    if data.len() < 8 {
-        return Some(build_ack_response(request_seq));
-    }
+    now: Instant,
+) -> Vec<u8> {
+    let request = match parse_control_objects(asdu) {
+        Ok(Some(echo)) => echo.request,
+        // Nothing usable to echo: plain response, which a master does not take as confirmation.
+        _ => return build_ack_response(request_seq),
+    };
 
-    let group = data[4];
-    let _variation = data[5];
-    let _qualifier = data[6];
-    let count = data.get(7).copied().unwrap_or(0);
+    let in_range = match request.object {
+        ControlObject::Crob(c) => {
+            (request.index as usize) < st.binary_values.len() && matches!(c.code & 0x0F, 1..=4)
+        }
+        ControlObject::AnalogOutput(_) => (request.index as usize) < st.analog_values.len(),
+    };
 
-    if count == 0 {
-        return Some(build_ack_response(request_seq));
-    }
-
-    let mut st = state.lock().unwrap();
-
-    if group == 12 {
-        // Binary CROB
-        let index = data.get(8).copied().unwrap_or(0) as usize;
-        let code = data.get(9).copied().unwrap_or(0);
-        if index < st.binary_values.len() {
-            let new_val = (code & 0x03) == 0x01; // NUL = trip, bit 0 = close
-            if st.binary_values[index] != new_val {
-                st.binary_values[index] = new_val;
-                let now = now_ms();
-                st.push_event(3, 1, index as u16, if new_val { 1.0 } else { 0.0 }, now);
+    let status = match function {
+        FunctionCode::Select => {
+            *pending = None;
+            if in_range {
+                *pending = Some(PendingSelect { sequence: request_seq, request, at: now });
+                ControlStatus::Success
+            } else {
+                ControlStatus::NotSupported
             }
         }
-    } else if group == 41 {
-        // Analog output (Group 41 Var 3: index prefix + float32 + status byte)
-        let index = data.get(8).copied().unwrap_or(0) as usize;
-        if index < st.analog_values.len() {
-            let value = if data.len() >= 13 {
-                let raw = u32::from_le_bytes([data[9], data[10], data[11], data[12]]);
-                f32::from_bits(raw) as f64
+        FunctionCode::Operate => match pending.take() {
+            None => ControlStatus::NoSelect,
+            Some(sel) => {
+                if sel.request != request || (sel.sequence + 1) & 0x0F != request_seq {
+                    ControlStatus::NoSelect
+                } else if now.duration_since(sel.at) > st.select_timeout {
+                    ControlStatus::Timeout
+                } else if !in_range {
+                    ControlStatus::NotSupported
+                } else {
+                    apply_control(st, &request);
+                    ControlStatus::Success
+                }
+            }
+        },
+        _ => {
+            if in_range {
+                apply_control(st, &request);
+                ControlStatus::Success
             } else {
-                st.analog_values[index]
-            };
+                ControlStatus::NotSupported
+            }
+        }
+    };
+    build_control_response(request_seq, &request, status)
+}
+
+/// Apply a validated control object to the simulated point and buffer the resulting event.
+fn apply_control(st: &mut OutstationState, request: &ControlRequest) {
+    let index = request.index as usize;
+    let now = now_ms();
+    match request.object {
+        ControlObject::Crob(c) => {
+            let new_val = c.drives_on();
+            if st.binary_values[index] != new_val {
+                st.binary_values[index] = new_val;
+                st.push_event(3, 1, request.index, if new_val { 1.0 } else { 0.0 }, now);
+            }
+        }
+        ControlObject::AnalogOutput(v) => {
+            let value = v as f64;
             st.analog_values[index] = value;
-            let now = now_ms();
-            st.push_event(1, 30, index as u16, value, now);
+            st.push_event(1, 30, request.index, value, now);
         }
     }
-
-    Some(build_ack_response(request_seq))
 }
 
 fn build_ack_response(request_seq: u8) -> Vec<u8> {
@@ -621,4 +690,130 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::{Crob, build_control_request, crob_code};
+
+    fn state() -> OutstationState {
+        OutstationState {
+            analog_values: vec![0.0; 4],
+            binary_values: vec![false; 4],
+            counter_values: vec![0.0; 2],
+            events: VecDeque::new(),
+            time_synced: false,
+            event_seq: 0,
+            prev_analog: vec![0.0; 4],
+            prev_binary: vec![false; 4],
+            prev_counter: vec![0.0; 2],
+            device_restart: false,
+            select_timeout: Duration::from_millis(100),
+        }
+    }
+
+    fn latch(index: u16, on: bool) -> ControlRequest {
+        ControlRequest {
+            index,
+            object: ControlObject::Crob(Crob {
+                code: if on { crob_code::LATCH_ON } else { crob_code::LATCH_OFF },
+                count: 1,
+                on_time_ms: 0,
+                off_time_ms: 0,
+            }),
+        }
+    }
+
+    /// Run one control request and return the status the outstation answered with.
+    fn run(
+        st: &mut OutstationState,
+        pending: &mut Option<PendingSelect>,
+        function: FunctionCode,
+        seq: u8,
+        req: &ControlRequest,
+        now: Instant,
+    ) -> ControlStatus {
+        let asdu = build_control_request(function, seq, req).unwrap();
+        let reply = handle_control(st, pending, function, &asdu, seq, now);
+        parse_control_objects(&reply).unwrap().unwrap().status
+    }
+
+    #[test]
+    fn select_then_operate_applies_the_command() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        let req = latch(1, true);
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::Select, 4, &req, t0), ControlStatus::Success);
+        assert!(!st.binary_values[1], "SELECT must not change the point");
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::Operate, 5, &req, t0), ControlStatus::Success);
+        assert!(st.binary_values[1]);
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn operate_without_select_is_refused() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        let status = run(&mut st, &mut pending, FunctionCode::Operate, 1, &latch(0, true), t0);
+        assert_eq!(status, ControlStatus::NoSelect);
+        assert!(!st.binary_values[0]);
+    }
+
+    #[test]
+    fn operate_that_differs_from_the_select_is_refused() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        run(&mut st, &mut pending, FunctionCode::Select, 0, &latch(0, true), t0);
+        let status = run(&mut st, &mut pending, FunctionCode::Operate, 1, &latch(0, false), t0);
+        assert_eq!(status, ControlStatus::NoSelect);
+        assert!(pending.is_none(), "a failed OPERATE still consumes the select");
+    }
+
+    #[test]
+    fn operate_with_wrong_sequence_is_refused() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        let req = latch(0, true);
+        run(&mut st, &mut pending, FunctionCode::Select, 3, &req, t0);
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::Operate, 5, &req, t0), ControlStatus::NoSelect);
+        assert!(!st.binary_values[0]);
+    }
+
+    #[test]
+    fn operate_after_select_timeout_reports_timeout() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        let req = ControlRequest { index: 2, object: ControlObject::AnalogOutput(12.5) };
+        run(&mut st, &mut pending, FunctionCode::Select, 15, &req, t0);
+        let late = t0 + Duration::from_millis(500);
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::Operate, 0, &req, late), ControlStatus::Timeout);
+        assert_eq!(st.analog_values[2], 0.0);
+    }
+
+    #[test]
+    fn operate_within_timeout_sets_analog_and_buffers_event() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        let req = ControlRequest { index: 2, object: ControlObject::AnalogOutput(12.5) };
+        run(&mut st, &mut pending, FunctionCode::Select, 15, &req, t0);
+        let status = run(&mut st, &mut pending, FunctionCode::Operate, 0, &req, t0 + Duration::from_millis(50));
+        assert_eq!(status, ControlStatus::Success);
+        assert_eq!(st.analog_values[2], 12.5);
+        assert!(st.events.iter().any(|e| e.group == 30 && e.index == 2));
+    }
+
+    #[test]
+    fn out_of_range_point_is_not_selected() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::Select, 0, &latch(9, true), t0), ControlStatus::NotSupported);
+        assert!(pending.is_none());
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 1, &latch(9, true), t0), ControlStatus::NotSupported);
+    }
+
+    #[test]
+    fn direct_operate_latch_and_pulse_codes() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 0, &latch(0, true), t0), ControlStatus::Success);
+        assert!(st.binary_values[0]);
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 1, &latch(0, false), t0), ControlStatus::Success);
+        assert!(!st.binary_values[0]);
+        let pulse_on = ControlRequest { index: 0, object: ControlObject::Crob(Crob::pulse(true)) };
+        run(&mut st, &mut pending, FunctionCode::DirectOperate, 2, &pulse_on, t0);
+        assert!(st.binary_values[0]);
+    }
 }

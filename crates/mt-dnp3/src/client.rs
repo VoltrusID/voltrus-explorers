@@ -6,10 +6,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::application::{
-    FunctionCode, build_analog_output_direct_operate, build_cold_restart_request,
-    build_direct_operate_binary, build_event_scan_request, build_freeze_request,
+    ControlObject, ControlRequest, ControlStatus, Crob, FunctionCode, build_cold_restart_request,
+    build_control_request, build_event_scan_request, build_freeze_request,
     build_integrity_poll_request, build_time_sync_request, build_warm_restart_request,
-    parse_response_asdu,
+    parse_control_objects, parse_response_asdu,
 };
 use crate::datalink::{ControlByte, Dnp3Frame};
 use crate::objects::{self, Dnp3PointValue};
@@ -59,7 +59,10 @@ struct Dnp3Inner {
     master_addr: u16,
     outstation_addr: u16,
     seq: SequenceTracker,
+    response_timeout: std::time::Duration,
 }
+
+const DEFAULT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl ProtocolClient for Dnp3Client {
     type Config = Dnp3Config;
@@ -85,6 +88,7 @@ impl ProtocolClient for Dnp3Client {
             master_addr: config.master_address,
             outstation_addr: config.outstation_address,
             seq: SequenceTracker::new(),
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
         };
 
         // Send link reset and wait for the outstation's link ACK
@@ -133,23 +137,11 @@ impl ProtocolClient for Dnp3Client {
     }
 
     async fn write(&self, tag: &Self::Tag, value: Self::Value) -> Result<(), ProtocolError> {
-        let mut inner = self.inner.lock().await;
-
-        let on = value.value != 0.0;
-        let seq = inner.seq.next();
-        let asdu = build_direct_operate_binary(seq, tag.index, on);
-        inner.send_asdu(&asdu).await?;
-
-        // Wait for response with timeout.
-        match tokio::time::timeout(std::time::Duration::from_secs(5), inner.receive_asdu()).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => Err(ProtocolError::WriteFailed(format!(
-                "DNP3 direct operate failed: {e}"
-            ))),
-            Err(_) => Err(ProtocolError::Timeout(
-                "DNP3 direct operate timeout (5s)".into(),
-            )),
-        }
+        self.direct_operate(&ControlRequest {
+            index: tag.index,
+            object: ControlObject::Crob(Crob::pulse(value.value != 0.0)),
+        })
+        .await
     }
 
     async fn disconnect(&self) -> Result<(), ProtocolError> {
@@ -274,29 +266,102 @@ impl Dnp3Client {
     }
 
     /// Write an analog output value (Group 41 Var 3 Direct Operate).
-    pub async fn write_analog(
-        &self,
-        index: u16,
-        value: f64,
-    ) -> Result<(), ProtocolError> {
-        let mut inner = self.inner.lock().await;
-        let seq = inner.seq.next();
-        let asdu = build_analog_output_direct_operate(seq, index, value);
-        inner.send_asdu(&asdu).await?;
+    pub async fn write_analog(&self, index: u16, value: f64) -> Result<(), ProtocolError> {
+        self.direct_operate(&ControlRequest {
+            index,
+            object: ControlObject::AnalogOutput(value as f32),
+        })
+        .await
+    }
 
-        match tokio::time::timeout(std::time::Duration::from_secs(5), inner.receive_asdu()).await {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(e)) => Err(ProtocolError::WriteFailed(format!(
-                "DNP3 analog direct operate failed: {e}"
-            ))),
-            Err(_) => Err(ProtocolError::Timeout(
-                "DNP3 analog direct operate timeout (5s)".into(),
-            )),
-        }
+    /// DIRECT OPERATE (0x05): act on the point in a single request.
+    pub async fn direct_operate(&self, request: &ControlRequest) -> Result<(), ProtocolError> {
+        let mut inner = self.inner.lock().await;
+        inner
+            .control_exchange(FunctionCode::DirectOperate, request)
+            .await
+    }
+
+    /// SELECT (0x03) followed by OPERATE (0x04) with the same object.
+    ///
+    /// The connection stays locked for both requests, so no poll can slip between them and the
+    /// OPERATE carries the application sequence number right after the SELECT's, as the outstation
+    /// requires. If the SELECT is refused or unanswered, OPERATE is never sent. If the OPERATE is
+    /// unanswered the result is a timeout and the outcome on the outstation is unknown.
+    pub async fn select_before_operate(&self, request: &ControlRequest) -> Result<(), ProtocolError> {
+        let mut inner = self.inner.lock().await;
+        inner.control_exchange(FunctionCode::Select, request).await?;
+        inner.control_exchange(FunctionCode::Operate, request).await
+    }
+
+    /// How long to wait for the outstation's answer to a control request (default 5 s).
+    pub async fn set_response_timeout(&self, timeout: std::time::Duration) {
+        self.inner.lock().await.response_timeout = timeout;
     }
 }
 
 impl Dnp3Inner {
+    /// Send one control request (SELECT, OPERATE or DIRECT OPERATE) and check the outstation's
+    /// echo of the control object. A missing echo, a different object or a status other than
+    /// SUCCESS is an error, so a command is never reported as done unless the outstation said so.
+    async fn control_exchange(
+        &mut self,
+        function: FunctionCode,
+        request: &ControlRequest,
+    ) -> Result<(), ProtocolError> {
+        let name = match function {
+            FunctionCode::Select => "select",
+            FunctionCode::Operate => "operate",
+            _ => "direct operate",
+        };
+        let seq = self.seq.next();
+        let asdu = build_control_request(function, seq, request)
+            .map_err(|e| ProtocolError::InvalidConfig(e.to_string()))?;
+        self.send_asdu(&asdu).await?;
+
+        let wait = self.response_timeout;
+        let response = tokio::time::timeout(wait, async {
+            loop {
+                let asdu = self.receive_asdu().await?;
+                let (header, _) = parse_response_asdu(&asdu)
+                    .map_err(|e| ProtocolError::ReadFailed(format!("ASDU parse error: {e}")))?;
+                // Skip unsolicited reports and late answers to earlier requests.
+                if header.function == FunctionCode::Response && header.sequence == seq {
+                    return Ok::<_, ProtocolError>(asdu);
+                }
+            }
+        })
+        .await
+        .map_err(|_| {
+            ProtocolError::Timeout(format!(
+                "DNP3 {name} timeout ({}s): no response from the outstation",
+                wait.as_secs_f32()
+            ))
+        })?
+        .map_err(|e| ProtocolError::WriteFailed(format!("DNP3 {name} failed: {e}")))?;
+
+        let echo = parse_control_objects(&response)
+            .map_err(|e| ProtocolError::WriteFailed(format!("DNP3 {name} response: {e}")))?
+            .ok_or_else(|| {
+                ProtocolError::WriteFailed(format!(
+                    "DNP3 {name} not confirmed: the outstation did not echo the control object"
+                ))
+            })?;
+        if echo.request != *request {
+            return Err(ProtocolError::WriteFailed(format!(
+                "DNP3 {name} response does not match the request (point {})",
+                request.index
+            )));
+        }
+        if echo.status != ControlStatus::Success {
+            return Err(ProtocolError::WriteFailed(format!(
+                "DNP3 {name} rejected by the outstation: {}",
+                echo.status
+            )));
+        }
+        Ok(())
+    }
+
     async fn send_link_reset(&mut self) -> Result<(), ProtocolError> {
         let frame = build_link_reset_frame(self.master_addr, self.outstation_addr);
         let bytes = frame.encode();
@@ -493,5 +558,254 @@ mod tests {
         assert!(frame.data.is_empty());
         // Encodes to exactly 10 octets: header + header CRC, no user data.
         assert_eq!(frame.encode().len(), 10);
+    }
+
+    // ── Select-before-operate against a scripted outstation ──
+
+    use crate::application::{build_control_response, crob_code};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+
+    type Received = Arc<Mutex<Vec<Vec<u8>>>>;
+
+    async fn read_asdu(sock: &mut TcpStream) -> Option<Vec<u8>> {
+        let mut header = [0u8; 3];
+        sock.read_exact(&mut header).await.ok()?;
+        let user_len = header[2] as usize - 5;
+        let total = 10 + user_len + 2 * user_len.div_ceil(16);
+        let mut buf = vec![0u8; total];
+        buf[..3].copy_from_slice(&header);
+        sock.read_exact(&mut buf[3..]).await.ok()?;
+        let frame = Dnp3Frame::decode(&buf).ok()?;
+        Some(frame.data)
+    }
+
+    async fn write_asdu(sock: &mut TcpStream, asdu: &[u8]) {
+        for seg in segment_asdu(asdu) {
+            let th = TransportHeader { fir: seg.fir, fin: seg.fin, sequence: seg.sequence };
+            let mut data = vec![th.to_byte()];
+            data.extend_from_slice(&seg.data);
+            let frame = Dnp3Frame {
+                link_control: ControlByte::outstation_data(),
+                destination: 1,
+                source: 10,
+                data,
+            };
+            sock.write_all(&frame.encode()).await.unwrap();
+        }
+    }
+
+    /// Start an outstation that ACKs the link reset, records every ASDU it receives and answers
+    /// each with whatever `handler` returns (nothing = stay silent).
+    async fn scripted_outstation<F>(mut handler: F) -> (Dnp3Client, Received)
+    where
+        F: FnMut(&[u8]) -> Vec<Vec<u8>> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let received: Received = Arc::new(Mutex::new(Vec::new()));
+        let log = received.clone();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            // Link reset: answer with a secondary ACK.
+            let mut reset = [0u8; 10];
+            sock.read_exact(&mut reset).await.unwrap();
+            let ack = Dnp3Frame {
+                link_control: ControlByte::outstation_link(ControlByte::ACK),
+                destination: 1,
+                source: 10,
+                data: vec![],
+            };
+            sock.write_all(&ack.encode()).await.unwrap();
+            while let Some(data) = read_asdu(&mut sock).await {
+                let asdu = data[1..].to_vec(); // strip the transport header
+                log.lock().push(asdu.clone());
+                for reply in handler(&asdu) {
+                    write_asdu(&mut sock, &reply).await;
+                }
+            }
+        });
+        let client = Dnp3Client::connect(Dnp3Config {
+            id: "t".into(),
+            host: "127.0.0.1".into(),
+            port,
+            master_address: 1,
+            outstation_address: 10,
+            poll_interval_ms: 1000,
+        })
+        .await
+        .unwrap();
+        client.set_response_timeout(std::time::Duration::from_millis(300)).await;
+        (client, received)
+    }
+
+    /// Echo the control object of a request back with `status`.
+    fn echo(asdu: &[u8], status: ControlStatus) -> Vec<Vec<u8>> {
+        let req = parse_control_objects(asdu).unwrap().unwrap().request;
+        vec![build_control_response(asdu[1] & 0x0F, &req, status)]
+    }
+
+    fn latch_on(index: u16) -> ControlRequest {
+        ControlRequest {
+            index,
+            object: ControlObject::Crob(Crob {
+                code: crob_code::LATCH_ON,
+                count: 1,
+                on_time_ms: 500,
+                off_time_ms: 250,
+            }),
+        }
+    }
+
+    fn analog(index: u16, value: f32) -> ControlRequest {
+        ControlRequest { index, object: ControlObject::AnalogOutput(value) }
+    }
+
+    #[tokio::test]
+    async fn sbo_sends_select_then_operate_with_same_object() {
+        let (client, received) = scripted_outstation(|asdu| echo(asdu, ControlStatus::Success)).await;
+        client.select_before_operate(&latch_on(3)).await.unwrap();
+        client.select_before_operate(&analog(2, 41.5)).await.unwrap();
+
+        let got = received.lock();
+        let functions: Vec<u8> = got.iter().map(|a| a[0]).collect();
+        assert_eq!(functions, vec![0x03, 0x04, 0x03, 0x04]);
+        // OPERATE repeats the SELECT object byte for byte.
+        assert_eq!(got[0][4..], got[1][4..]);
+        assert_eq!(got[2][4..], got[3][4..]);
+        // CROB: g12v1, qualifier 0x17, count 1, index 3, latch on.
+        assert_eq!(&got[0][4..10], &[12, 1, 0x17, 1, 3, crob_code::LATCH_ON]);
+        // Analog output: g41v3 index 2.
+        assert_eq!(&got[2][4..9], &[41, 3, 0x17, 1, 2]);
+        assert_eq!(&got[2][9..13], &41.5f32.to_le_bytes());
+    }
+
+    #[tokio::test]
+    async fn operate_sequence_follows_select_sequence_across_wrap() {
+        let (client, received) = scripted_outstation(|asdu| echo(asdu, ControlStatus::Success)).await;
+        for _ in 0..9 {
+            client.select_before_operate(&latch_on(0)).await.unwrap();
+        }
+        let got = received.lock();
+        assert_eq!(got.len(), 18);
+        for pair in got.chunks(2) {
+            let select_seq = pair[0][1] & 0x0F;
+            let operate_seq = pair[1][1] & 0x0F;
+            assert_eq!(operate_seq, (select_seq + 1) & 0x0F);
+        }
+        // 18 requests wrap the 4-bit counter.
+        assert!(got.iter().any(|a| a[1] & 0x0F == 0) && got.iter().any(|a| a[1] & 0x0F == 15));
+    }
+
+    #[tokio::test]
+    async fn refused_select_never_sends_operate() {
+        let (client, received) =
+            scripted_outstation(|asdu| echo(asdu, ControlStatus::NotSupported)).await;
+        let err = client.select_before_operate(&latch_on(1)).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::WriteFailed(_)), "{err:?}");
+        assert!(err.to_string().contains("select rejected"), "{err}");
+        assert!(err.to_string().contains("NOT_SUPPORTED"), "{err}");
+        assert_eq!(received.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unanswered_select_times_out_without_operate() {
+        let (client, received) = scripted_outstation(|_| Vec::new()).await;
+        let started = std::time::Instant::now();
+        let err = client.select_before_operate(&latch_on(1)).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::Timeout(_)), "{err:?}");
+        assert!(err.to_string().contains("select"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(received.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unanswered_operate_times_out_after_select_succeeds() {
+        let (client, received) = scripted_outstation(|asdu| {
+            if asdu[0] == 0x03 { echo(asdu, ControlStatus::Success) } else { Vec::new() }
+        })
+        .await;
+        let err = client.select_before_operate(&analog(0, 1.0)).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::Timeout(_)), "{err:?}");
+        assert!(err.to_string().contains("operate"), "{err}");
+        assert_eq!(received.lock().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn operate_reports_expired_select_status() {
+        let (client, _) = scripted_outstation(|asdu| {
+            let status = if asdu[0] == 0x03 { ControlStatus::Success } else { ControlStatus::Timeout };
+            echo(asdu, status)
+        })
+        .await;
+        let err = client.select_before_operate(&latch_on(0)).await.unwrap_err();
+        assert!(err.to_string().contains("operate rejected"), "{err}");
+        assert!(err.to_string().contains("TIMEOUT"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn echo_of_a_different_object_is_rejected() {
+        let (client, received) = scripted_outstation(|asdu| {
+            let mut other = parse_control_objects(asdu).unwrap().unwrap().request;
+            other.index += 1;
+            vec![build_control_response(asdu[1] & 0x0F, &other, ControlStatus::Success)]
+        })
+        .await;
+        let err = client.select_before_operate(&latch_on(4)).await.unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+        assert_eq!(received.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn response_without_echo_is_not_a_confirmation() {
+        let (client, received) = scripted_outstation(|asdu| {
+            let header = crate::application::AsduHeader {
+                function: FunctionCode::Response,
+                sequence: asdu[1] & 0x0F,
+                iin: crate::application::Iin::default(),
+            };
+            vec![header.encode().to_vec()]
+        })
+        .await;
+        let err = client.select_before_operate(&latch_on(0)).await.unwrap_err();
+        assert!(err.to_string().contains("did not echo"), "{err}");
+        assert_eq!(received.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn stale_and_unsolicited_responses_are_skipped() {
+        let (client, _) = scripted_outstation(|asdu| {
+            let req = parse_control_objects(asdu).unwrap().unwrap().request;
+            let seq = asdu[1] & 0x0F;
+            // A late answer to some earlier request, then the real one.
+            vec![
+                build_control_response((seq + 7) & 0x0F, &req, ControlStatus::HardwareError),
+                build_control_response(seq, &req, ControlStatus::Success),
+            ]
+        })
+        .await;
+        client.select_before_operate(&latch_on(0)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn indices_above_255_and_bad_crob_are_rejected_before_sending() {
+        let (client, received) = scripted_outstation(|asdu| echo(asdu, ControlStatus::Success)).await;
+        let err = client.select_before_operate(&latch_on(300)).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::InvalidConfig(_)), "{err:?}");
+        let mut bad = latch_on(0);
+        bad.object = ControlObject::Crob(Crob { code: 0x09, count: 1, on_time_ms: 0, off_time_ms: 0 });
+        let err = client.select_before_operate(&bad).await.unwrap_err();
+        assert!(matches!(err, ProtocolError::InvalidConfig(_)), "{err:?}");
+        assert!(received.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn direct_operate_checks_status_too() {
+        let (client, received) =
+            scripted_outstation(|asdu| echo(asdu, ControlStatus::Local)).await;
+        let err = client.direct_operate(&latch_on(0)).await.unwrap_err();
+        assert!(err.to_string().contains("LOCAL"), "{err}");
+        assert_eq!(received.lock()[0][0], 0x05);
     }
 }

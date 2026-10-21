@@ -47,6 +47,7 @@ pub mod transport;
 pub mod types;
 
 // Re-export the primary public API at the crate root.
+pub use application::{ControlEcho, ControlObject, ControlRequest, ControlStatus, Crob, crob_code};
 pub use client::{Dnp3Client, SequenceTracker, build_link_reset_frame, event_scan, read_points, write_point};
 pub use datalink::{ControlByte, Dnp3Frame, crc16, describe_frame};
 pub use objects::{Dnp3PointValue, common_group_variations, group_variation_name, parse_objects};

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use mt_dnp3::{
-    Dnp3Client, Dnp3Config, Dnp3Point, Dnp3Value, OutstationConfig, OutstationState,
-    start_outstation_server,
+    ControlObject, ControlRequest, Crob, Dnp3Client, Dnp3Config, Dnp3Point, Dnp3Value,
+    OutstationConfig, OutstationState, crob_code, start_outstation_server,
 };
 use mt_protocol::ProtocolClient;
 
@@ -182,5 +182,79 @@ async fn binary_read_survives_variation_mismatch() {
     let vals = client.read(mismatched.as_slice()).await.unwrap();
     assert_eq!(vals[0].value, 1.0, "binary via var mismatch: {}", vals[0].value);
     assert!((vals[1].value - 55.5).abs() < 0.01, "analog via var mismatch: {}", vals[1].value);
+    client.disconnect().await.unwrap();
+}
+
+fn crob_request(index: u16, code: u8) -> ControlRequest {
+    ControlRequest {
+        index,
+        object: ControlObject::Crob(Crob { code, count: 1, on_time_ms: 1000, off_time_ms: 0 }),
+    }
+}
+
+#[tokio::test]
+async fn select_before_operate_crob_round_trip() {
+    let state = setup(20020).await;
+    let client = Dnp3Client::connect(config(20020)).await.unwrap();
+
+    client
+        .select_before_operate(&crob_request(2, crob_code::LATCH_ON))
+        .await
+        .unwrap();
+    {
+        let st = state.lock().unwrap();
+        assert!(st.binary_values[2]);
+        assert!(st.events.iter().any(|e| e.group == 1 && e.index == 2 && e.class == 3));
+    }
+    client
+        .select_before_operate(&crob_request(2, crob_code::LATCH_OFF))
+        .await
+        .unwrap();
+    assert!(!state.lock().unwrap().binary_values[2]);
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn select_before_operate_analog_round_trip() {
+    let state = setup(20021).await;
+    let client = Dnp3Client::connect(config(20021)).await.unwrap();
+
+    let req = ControlRequest { index: 1, object: ControlObject::AnalogOutput(73.25) };
+    client.select_before_operate(&req).await.unwrap();
+    assert!((state.lock().unwrap().analog_values[1] - 73.25).abs() < 0.001);
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn select_before_operate_rejects_unknown_point_and_leaves_state() {
+    let state = setup(20022).await;
+    let client = Dnp3Client::connect(config(20022)).await.unwrap();
+
+    // The outstation has 4 binary points; index 9 is out of range.
+    let err = client
+        .select_before_operate(&crob_request(9, crob_code::LATCH_ON))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("NOT_SUPPORTED"), "{err}");
+    assert!(state.lock().unwrap().binary_values.iter().all(|b| !b));
+    // The session keeps working afterwards.
+    client.direct_operate(&crob_request(0, crob_code::LATCH_ON)).await.unwrap();
+    assert!(state.lock().unwrap().binary_values[0]);
+    client.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn poll_after_select_before_operate_sees_new_value() {
+    let state = setup(20023).await;
+    let client = Dnp3Client::connect(config(20023)).await.unwrap();
+
+    client.read(&points()).await.unwrap();
+    client
+        .select_before_operate(&crob_request(0, crob_code::PULSE_ON))
+        .await
+        .unwrap();
+    let vals = client.read(&points()).await.unwrap();
+    assert_eq!(vals[1].value, 1.0, "binary 0 after the operate");
+    assert!(state.lock().unwrap().binary_values[0]);
     client.disconnect().await.unwrap();
 }

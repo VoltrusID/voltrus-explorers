@@ -41,7 +41,7 @@ takes effect when `free_since` is set in their `store.json`).
 | DNP3 Explorer | |
 | --- | --- |
 | Free | Connect to one outstation, integrity poll of an editable point list (up to 10 points), read analog, binary and counter values, 1 saved connection profile, communication log with CSV export |
-| Pro | Unlimited points in the poll list, controls (CROB and analog output), class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), outstation simulator with an event buffer, device templates with live simulated values, live trends, unlimited saved profiles |
+| Pro | Unlimited points in the poll list, point list CSV import and export, controls (CROB and analog output, as direct operate or select before operate), class 1, 2 and 3 event scans, device controls (time sync, cold and warm restart, freeze counters), outstation simulator with an event buffer, device templates with live simulated values, live trends, unlimited saved profiles |
 
 ### S7 Explorer
 

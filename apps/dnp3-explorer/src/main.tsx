@@ -6,7 +6,8 @@ import "./styles.css";
 
 const PRO_FEATURES = [
   "Unlimited points in the poll list",
-  "Controls: CROB and analog output",
+  "Point list CSV import and export",
+  "Controls: CROB and analog output, direct or select before operate",
   "Unlimited saved connection profiles",
   "Outstation simulator with an event buffer",
   "Device templates with live simulated values",

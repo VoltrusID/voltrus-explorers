@@ -19,13 +19,15 @@ import {
   StatusDot,
   Tabs,
   Toolbar,
-  ValueEditor,
+  saveTextFile,
+  openTextFile,
   useProStatus,
   useProtocol,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import {
   Clock,
+  Download,
   Pause,
   Play,
   Plus,
@@ -34,10 +36,13 @@ import {
   Snowflake,
   Square,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { BUILTIN_TEMPLATES, loadCustomTemplates, saveCustomTemplates, type DeviceTemplate } from "./templates";
+import { ControlDialog } from "./ControlDialog";
+import { POINT_TYPES, parsePointsCsv, pointsToCsv, type Dnp3Point } from "./points";
 import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
 
@@ -47,13 +52,6 @@ interface Dnp3Config {
   port: number;
   master_address: number;
   outstation_address: number;
-}
-
-interface Dnp3Point {
-  name: string;
-  group: number;
-  variation: number;
-  index: number;
 }
 
 interface OutstationLogEvent {
@@ -117,14 +115,6 @@ const liveValuesStyle: React.CSSProperties = {
 const FREE_POINT_LIMIT = 10;
 const FREE_PROFILE_LIMIT = 1;
 const POINTS_KEY = "dnp3-explorer-points";
-const POINT_TYPES: { value: string; label: string }[] = [
-  { value: "30:4", label: "Analog input (float32)" },
-  { value: "30:1", label: "Analog input (int32)" },
-  { value: "1:2", label: "Binary input" },
-  { value: "10:2", label: "Binary output status" },
-  { value: "20:1", label: "Counter (uint32)" },
-  { value: "32:1", label: "Analog output status (int32)" },
-];
 const DEFAULT_POINTS: Dnp3Point[] = [
   { name: "Voltage", group: 30, variation: 4, index: 0 },
   { name: "Current", group: 30, variation: 4, index: 1 },
@@ -401,6 +391,27 @@ function App() {
     setPoints((prev) => prev.filter((_, j) => j !== i));
   }, []);
 
+  const exportPointsCsv = useCallback(async () => {
+    if (!requirePro("Point list CSV export")) return;
+    try {
+      const path = await saveTextFile("dnp3-points.csv", pointsToCsv(points));
+      if (path) addLog("info", `Exported ${points.length} points to ${path}`);
+    } catch (e) { addLog("error", `CSV export failed: ${String(e)}`); }
+  }, [points, addLog, requirePro]);
+
+  const importPointsCsv = useCallback(async () => {
+    if (!requirePro("Point list CSV import")) return;
+    try {
+      const file = await openTextFile();
+      if (!file) return;
+      const { points: imported, errors } = parsePointsCsv(file.text);
+      errors.forEach((message) => addLog("error", `${file.path}: ${message}`));
+      if (imported.length === 0) { addLog("error", `No valid points in ${file.path}`); return; }
+      setPoints(imported);
+      addLog("info", `Imported ${imported.length} points from ${file.path}${errors.length > 0 ? ` (${errors.length} line(s) skipped)` : ""}`);
+    } catch (e) { addLog("error", `CSV import failed: ${String(e)}`); }
+  }, [addLog, requirePro]);
+
   // ── Handlers ──
   const handleConnect = useCallback(
     (values: Record<string, string | number>) => {
@@ -666,6 +677,11 @@ function App() {
                 onChange={(e) => setNewPoint((n) => ({ ...n, index: e.target.value }))} />
             </div>
             <Button size="sm" block icon={<Plus size={14} strokeWidth={1.75} />} disabled={protocol.connected || !newPoint.name.trim()} onClick={addPoint}>Add point</Button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <Button size="sm" block icon={<Upload size={14} strokeWidth={1.75} />} disabled={protocol.connected} onClick={importPointsCsv}>Import CSV</Button>
+              <Button size="sm" block icon={<Download size={14} strokeWidth={1.75} />} disabled={points.length === 0} onClick={exportPointsCsv}>Export CSV</Button>
+            </div>
+            {!pro && <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>CSV import and export <ProBadge /></span>}
             {protocol.connected && <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>Disconnect to edit the list.</span>}
           </Section>
 
@@ -984,26 +1000,35 @@ function App() {
 
       {editingPoint && (() => {
         const matchPt = points.find((p) => p.name === editingPoint);
+        if (!matchPt) return null;
         return (
-          <ValueEditor
+          <ControlDialog
             address={editingPoint}
+            binary={matchPt.group === 1 || matchPt.group === 10 || matchPt.group === 12}
             currentValue={editingValue || undefined}
-            onSubmit={async (value, dataType) => {
-              addLog("tx", `Write ${value} (${dataType}) to ${editingPoint}`);
-              if (matchPt) {
-                try {
-                  const numeric = Number(value);
-                  const isBinary = matchPt.group === 1 || matchPt.group === 10 || matchPt.group === 12 || dataType === "bool";
-                  if (isBinary) {
-                    await protocol.writeTag(matchPt, { point: matchPt, value: numeric });
-                  } else {
-                    await invoke("write_analog", { index: matchPt.index, value: numeric });
-                  }
-                  addLog("rx", `Write confirmed for ${editingPoint}`);
-                } catch (e) {
-                  addLog("error", `Write failed: ${String(e)}`);
+            onSubmit={async (cmd) => {
+              const method = cmd.mode === "select" ? "Select before operate" : "Direct operate";
+              const selectBeforeOperate = cmd.mode === "select";
+              try {
+                if (cmd.kind === "crob") {
+                  addLog("tx", `${method}: CROB code ${cmd.code} on ${editingPoint} (index ${matchPt.index})`);
+                  await invoke("control_crob", {
+                    index: matchPt.index,
+                    code: cmd.code,
+                    count: cmd.count,
+                    onTimeMs: cmd.onTimeMs,
+                    offTimeMs: cmd.offTimeMs,
+                    selectBeforeOperate,
+                  });
+                } else {
+                  addLog("tx", `${method}: analog output ${cmd.value} on ${editingPoint} (index ${matchPt.index})`);
+                  await invoke("control_analog", { index: matchPt.index, value: cmd.value, selectBeforeOperate });
                 }
+              } catch (e) {
+                addLog("error", `${method} failed: ${String(e)}`);
+                throw e;
               }
+              addLog("rx", `${method} confirmed for ${editingPoint}`);
               setEditingPoint(null);
             }}
             onCancel={() => setEditingPoint(null)}
@@ -1026,7 +1051,7 @@ function App() {
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
           <p style={{ margin: "0 0 12px" }}>Connect to DNP3 outstations in SCADA networks.</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Master mode</p>
-          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor an editable list of points. Pro: click rows to operate controls (CROB and analog output).</p>
+          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor an editable list of points. Pro: click rows to operate controls (CROB and analog output, direct operate or select before operate) and import or export the point list as CSV.</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Outstation mode</p>
           <p style={{ margin: "0 0 12px" }}>Run a DNP3 outstation server to simulate a device. Load device templates, auto-simulate live data.</p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>

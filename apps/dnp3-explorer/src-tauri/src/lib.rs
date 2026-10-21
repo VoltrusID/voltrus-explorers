@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
 
 use mt_dnp3::{
-    Dnp3Client, Dnp3Config, Dnp3Point, Dnp3Value,
+    Dnp3Client, Dnp3Config, Dnp3Point, Dnp3Value, ControlObject, ControlRequest, Crob,
     OutstationConfig, OutstationEvent, OutstationLogEntry, OutstationState,
     Dnp3Simulation,
     start_outstation_server, start_simulation, stop_simulation,
@@ -90,18 +90,53 @@ async fn freeze_counters(state: tauri::State<'_, AppState>) -> Result<(), String
     client.freeze_counters().await.map_err(|e| e.to_string())
 }
 
+/// Operate a control relay output block (Group 12 Var 1) on the connected outstation, either as a
+/// DIRECT OPERATE or as SELECT followed by OPERATE.
 #[tauri::command]
-async fn write_analog(
+async fn control_crob(
+    state: tauri::State<'_, AppState>,
+    index: u16,
+    code: u8,
+    count: u8,
+    on_time_ms: u32,
+    off_time_ms: u32,
+    select_before_operate: bool,
+) -> Result<(), String> {
+    let request = ControlRequest {
+        index,
+        object: ControlObject::Crob(Crob { code, count, on_time_ms, off_time_ms }),
+    };
+    run_control(&state, &request, select_before_operate).await
+}
+
+/// Operate an analog output (Group 41 Var 3, float32), as DIRECT OPERATE or SELECT then OPERATE.
+#[tauri::command]
+async fn control_analog(
     state: tauri::State<'_, AppState>,
     index: u16,
     value: f64,
+    select_before_operate: bool,
+) -> Result<(), String> {
+    let request = ControlRequest {
+        index,
+        object: ControlObject::AnalogOutput(value as f32),
+    };
+    run_control(&state, &request, select_before_operate).await
+}
+
+async fn run_control(
+    state: &tauri::State<'_, AppState>,
+    request: &ControlRequest,
+    select_before_operate: bool,
 ) -> Result<(), String> {
     let guard = state.master.client.lock().await;
     let client = guard.as_ref().ok_or("Not connected")?;
-    client
-        .write_analog(index, value)
-        .await
-        .map_err(|e| e.to_string())
+    let result = if select_before_operate {
+        client.select_before_operate(request).await
+    } else {
+        client.direct_operate(request).await
+    };
+    result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -331,7 +366,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             connect, read_tags, event_scan, time_sync, cold_restart, warm_restart,
-            freeze_counters, write_tag, write_analog, disconnect,
+            freeze_counters, write_tag, control_crob, control_analog, disconnect,
             outstation_start, outstation_stop, outstation_read_points, outstation_read_events,
             outstation_write_analog, outstation_write_binary,
             sim_start, sim_stop, sim_load_profile, sim_read_values,
