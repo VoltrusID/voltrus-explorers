@@ -94,7 +94,7 @@ Free to download on the App Store; Pro is a one-time in-app purchase. Version 1.
 | | |
 | --- | --- |
 | Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw, JSON, Hex and Base64 payload views, one saved connection profile, communication log with CSV export |
-| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, message history export to CSV |
+| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, message history export to CSV, Sparkplug B decoding (metric names resolved from BIRTH aliases) and protobuf decoding from your own .proto schema, charts of numeric topic values (plain numbers, JSON fields, Sparkplug metrics), several simultaneous client connections, bulk-clear retained messages |
 
 Version 1.2.0 is the first release, and it is free.
 | OPC UA Explorer | |
@@ -152,7 +152,7 @@ crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
-crates/mt-mqtt         MQTT client (rumqttc) and embedded broker (rumqttd)
+crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
 packages/mt-ui         shared React components and design tokens

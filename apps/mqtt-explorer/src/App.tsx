@@ -30,11 +30,38 @@ import {
   ChevronDown,
   ChevronRight,
   RadioTower,
+  Braces,
 } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { TopicTree, type TreeEntry } from "./TopicTree";
 import { loadProfiles, upsertProfile, deleteProfile, FREE_PROFILE_LIMIT, type ConnProfile } from "./profiles";
 import { messagesToCsv } from "./csv";
+import { ChartPanel } from "./ChartPanel";
+import { SeriesStore } from "./charts";
+import { DecoderDialog } from "./DecoderDialog";
+import { ClearRetainedDialog, PayloadInspector } from "./Dialogs";
+import {
+  formatPayload,
+  payloadBytes,
+  payloadInfoFromEvent,
+  type Decoded,
+  type PayloadFormat,
+  type PayloadInfo,
+} from "./payload";
+import { EMPTY_PROTO, loadProto, saveProto, type ProtoSettings } from "./protoStore";
+import {
+  applyMessage,
+  clearData,
+  markRetainedCleared,
+  newSession,
+  nextSessionId,
+  retainedTopics,
+  DEFAULT_FORM,
+  type ClientMsg,
+  type FormSnapshot,
+  type Redecoded,
+  type Session,
+} from "./sessions";
 
 interface MqttConfig {
   host: string;
@@ -57,17 +84,40 @@ interface MqttConfig {
   };
 }
 
-interface TopicInfo {
+interface TopicInfo extends PayloadInfo {
   topic: string;
   last_payload: string;
+  raw_hex?: string;
   last_update: number;
   message_count: number;
   retain: boolean;
 }
 
-interface Subscription {
+/** Backend `client-message` event. */
+interface ClientMessageEvent {
+  conn: string;
   topic: string;
-  qos: string;
+  payload: string;
+  raw_hex?: string;
+  decoded?: Decoded;
+  qos: number;
+  retain: boolean;
+}
+
+/** Backend `broker-message` event. */
+interface BrokerMessageEvent {
+  topic: string;
+  payload: string;
+  raw_hex?: string;
+  decoded?: Decoded;
+  timestamp: number;
+  retain: boolean;
+}
+
+interface BrokerMsg extends PayloadInfo {
+  topic: string;
+  retain: boolean;
+  ts: number;
 }
 
 const monoFont: React.CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -95,38 +145,6 @@ const payloadCellStyle: React.CSSProperties = {
   fontSize: "var(--fs-xs)",
 };
 
-/** Proper MQTT topic matching with wildcard support. */
-function mqttTopicMatch(subscription: string, topic: string): boolean {
-  const subLevels = subscription.split("/");
-  const topicLevels = topic.split("/");
-
-  for (let i = 0; i < subLevels.length; i++) {
-    const subLevel = subLevels[i];
-
-    // Multi-level wildcard: matches all remaining levels
-    if (subLevel === "#") {
-      return true;
-    }
-
-    // Topic has fewer levels than subscription (and no wildcard)
-    if (i >= topicLevels.length) {
-      return false;
-    }
-
-    // Single-level wildcard: matches exactly one level
-    if (subLevel === "+") {
-      continue;
-    }
-
-    // Literal comparison
-    if (subLevel !== topicLevels[i]) {
-      return false;
-    }
-  }
-
-  // All subscription levels matched; topic must have the same number of levels
-  return subLevels.length === topicLevels.length;
-}
 
 function App() {
   const { requirePro, pro, status: proStatus } = useProStatus();
@@ -135,35 +153,47 @@ function App() {
   const [editingTopic, setEditingTopic] = useState<string | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
-  // Client state
-  const [clientConnected, setClientConnected] = useState(false);
-  const [clientLoading, setClientLoading] = useState(false);
-  const [clientError, setClientError] = useState<string | null>(null);
+  // Client connections: several can be open at once (Pro), one is shown at a time.
+  const [sessions, setSessions] = useState<Session[]>(() => [newSession("c1")]);
+  const [activeId, setActiveId] = useState("c1");
+  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
+  const clientConnected = active.status === "connected";
+  const clientLoading = active.status === "connecting";
+  const clientError = active.error;
+  const subscriptions = active.subscriptions;
+  const clientMessages = active.messages;
+  const clientTopicValues = active.topicValues;
+  const blinkingClientTopics = active.blinking;
+  const clientEndpoint = active.endpoint;
+  const clientRtt = active.rtt;
   const [subscribeTopic, setSubscribeTopic] = useState("");
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [publishTopic, setPublishTopic] = useState("");
   const [publishPayload, setPublishPayload] = useState("");
-  const [clientMessages, setClientMessages] = useState<any[]>([]);
-  // Latest value per topic for the client-mode table (parity with broker mode).
-  const [clientTopicValues, setClientTopicValues] = useState<
-    Record<string, { payload: string; ts: number; retain: boolean; count: number }>
-  >({});
-  const [blinkingClientTopics, setBlinkingClientTopics] = useState<Set<string>>(new Set());
+
+  // Numeric charts (Pro), Sparkplug B / protobuf decoding (Pro), retained clearing (Pro).
+  const [chartStore] = useState(() => new SeriesStore());
+  const proRef = useRef(pro);
+  proRef.current = pro;
+  const [chartSelected, setChartSelected] = useState<Record<string, string[]>>({});
+  const [protoSettings, setProtoSettings] = useState<ProtoSettings>(EMPTY_PROTO);
+  const [decoderOpen, setDecoderOpen] = useState(false);
+  const [inspecting, setInspecting] = useState<{
+    topic: string;
+    info: PayloadInfo & { decoded: Decoded };
+  } | null>(null);
+  const [retainedOpen, setRetainedOpen] = useState(false);
   const [subscribeQos, setSubscribeQos] = useState<string>("atmostonce");
   const [publishQos, setPublishQos] = useState<string>("atmostonce");
   const [publishRetained, setPublishRetained] = useState(false);
 
   // Data panel view + payload rendering.
-  const [dataView, setDataView] = useState<"topics" | "tree" | "history">("topics");
-  const [payloadFormat, setPayloadFormat] = useState<"raw" | "json" | "hex" | "base64">("raw");
+  const [dataView, setDataView] = useState<"topics" | "tree" | "history" | "charts">("topics");
+  const [payloadFormat, setPayloadFormat] = useState<PayloadFormat>("raw");
 
   // Connection-URL paste + endpoint shown in the status bar.
   const [connUrl, setConnUrl] = useState("");
   const [formKey, setFormKey] = useState(0);
   const [parsedInit, setParsedInit] = useState<Record<string, string | number> | undefined>(undefined);
-  const [clientEndpoint, setClientEndpoint] = useState<{ ip: string; port: number } | null>(null);
-  // Live PING round-trip latency (ms) reported by the backend, client mode.
-  const [clientRtt, setClientRtt] = useState<number | null>(null);
 
   // Saved connection profiles (persisted) + the live form-field snapshot.
   const [profiles, setProfiles] = useState<ConnProfile[]>([]);
@@ -171,7 +201,7 @@ function App() {
   const [formValues, setFormValues] = useState<Record<string, string | number>>({});
 
   // Broker message history (broker mode already had per-topic; this adds a stream).
-  const [brokerMessages, setBrokerMessages] = useState<any[]>([]);
+  const [brokerMessages, setBrokerMessages] = useState<BrokerMsg[]>([]);
 
   // Client advanced (TLS / keep-alive / LWT)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -268,39 +298,45 @@ function App() {
     if (clientError) addLog("error", clientError);
   }, [clientError, addLog]);
 
+  const updateSession = useCallback((id: string, fn: (s: Session) => Session) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? fn(s) : s)));
+  }, []);
+
   // Blink a client topic briefly when its value changes.
-  const blinkClientTopic = useCallback((topic: string) => {
-    setBlinkingClientTopics((cur) => {
-      if (cur.has(topic)) return cur;
-      const next = new Set(cur); next.add(topic); return next;
-    });
+  const blinkClientTopic = useCallback((conn: string, topic: string) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id !== conn || s.blinking.has(topic) ? s : { ...s, blinking: new Set(s.blinking).add(topic) },
+      ),
+    );
     window.setTimeout(() => {
-      setBlinkingClientTopics((cur) => {
-        if (!cur.has(topic)) return cur;
-        const next = new Set(cur); next.delete(topic); return next;
-      });
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== conn || !s.blinking.has(topic)) return s;
+          const blinking = new Set(s.blinking);
+          blinking.delete(topic);
+          return { ...s, blinking };
+        }),
+      );
     }, 600);
   }, []);
 
   // Single ingest path for every received client message: append to history,
-  // update latest-value-per-topic with a per-topic count, and blink on change.
+  // update latest-value-per-topic with a per-topic count, feed the charts, and blink.
   const ingestClientMessage = useCallback(
-    (m: { topic?: string; payload?: string; retain?: boolean; qos?: number; _ts?: number; timestamp?: number }) => {
-      const topic = String(m.topic ?? "");
-      if (!topic) return;
-      const ts = m._ts ?? m.timestamp ?? Date.now();
-      const payload = String(m.payload ?? "");
-      const retain = !!m.retain;
-      setClientMessages((prev) => [...prev.slice(-499), { ...m, topic, payload, retain, qos: m.qos ?? 0, _ts: ts }]);
-      setClientTopicValues((prev) => {
-        const ex = prev[topic];
-        const isNewValue = !ex || ts > ex.ts;
-        const next = { ...prev, [topic]: { payload, ts, retain, count: (ex?.count ?? 0) + 1 } };
-        if (isNewValue) blinkClientTopic(topic);
-        return next;
-      });
+    (m: ClientMessageEvent) => {
+      if (!m.topic) return;
+      const info = payloadInfoFromEvent(m);
+      const ts = Date.now();
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === m.conn ? applyMessage(s, { topic: m.topic, qos: m.qos ?? 0, retain: !!m.retain, ts, ...info }) : s,
+        ),
+      );
+      blinkClientTopic(m.conn, m.topic);
+      if (proRef.current) chartStore.ingest(m.conn, m.topic, info.payload, info.decoded, ts);
     },
-    [blinkClientTopic],
+    [blinkClientTopic, chartStore],
   );
 
   // Event: listen for client messages and disconnects.
@@ -309,20 +345,24 @@ function App() {
     let unlistenDisconnect: UnlistenFn | null = null;
     let unlistenRtt: UnlistenFn | null = null;
 
-    listen<{ topic: string; payload: string; qos: number; retain: boolean }>("client-message", (event) => {
-      ingestClientMessage({ ...event.payload, _ts: Date.now() });
+    listen<ClientMessageEvent>("client-message", (event) => {
+      ingestClientMessage(event.payload);
     }).then((fn) => { unlistenClient = fn; });
 
-    listen<{ rtt: number }>("client-rtt", (event) => {
-      setClientRtt(event.payload.rtt);
+    listen<{ conn: string; rtt: number }>("client-rtt", (event) => {
+      updateSession(event.payload.conn, (s) => ({ ...s, rtt: event.payload.rtt }));
     }).then((fn) => { unlistenRtt = fn; });
 
-    listen<{ reason: string; detail?: string }>("client-disconnected", (event) => {
-      setClientConnected(false);
-      setClientRtt(null);
-      setClientEndpoint(null);
-      setSubscriptions([]);
-      setClientError(`Connection lost: ${event.payload.detail ?? event.payload.reason}`);
+    listen<{ conn: string; reason: string; detail?: string }>("client-disconnected", (event) => {
+      const { conn, detail, reason } = event.payload;
+      updateSession(conn, (s) => ({
+        ...s,
+        status: "idle",
+        rtt: null,
+        endpoint: null,
+        subscriptions: [],
+        error: `Connection lost: ${detail ?? reason}`,
+      }));
     }).then((fn) => { unlistenDisconnect = fn; });
 
     return () => {
@@ -330,7 +370,7 @@ function App() {
       unlistenDisconnect?.();
       unlistenRtt?.();
     };
-  }, [ingestClientMessage]);
+  }, [ingestClientMessage, updateSession]);
 
   // Poll topics list periodically (less critical, backed by command)
   useEffect(() => {
@@ -407,18 +447,116 @@ function App() {
   // Broker message stream — feeds the History view (broker mode).
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
-    listen<{ topic: string; payload: string; timestamp: number; retain: boolean }>("broker-message", (event) => {
+    listen<BrokerMessageEvent>("broker-message", (event) => {
       const ts = event.payload.timestamp ?? Date.now();
-      setBrokerMessages((prev) => [...prev.slice(-499), { ...event.payload, _ts: ts }]);
+      const info = payloadInfoFromEvent(event.payload);
+      setBrokerMessages((prev) => [
+        ...prev.slice(-499),
+        { ...info, topic: String(event.payload.topic), retain: !!event.payload.retain, ts },
+      ]);
+      if (proRef.current) chartStore.ingest("broker", event.payload.topic, info.payload, info.decoded, ts);
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, []);
+  }, [chartStore]);
+
+  // Apply the saved protobuf schema once Pro is known to be active.
+  useEffect(() => {
+    if (!pro) return;
+    const saved = loadProto();
+    if (!saved.source.trim()) return;
+    invoke("proto_configure", { source: saved.source, rules: saved.rules })
+      .then(() => setProtoSettings(saved))
+      .catch((e) => addLog("error", `Saved protobuf schema was not applied: ${String(e)}`));
+  }, [pro, addLog]);
 
 
 
   // ── Client handlers ──
+  const captureForm = useCallback(
+    (): FormSnapshot => ({
+      // The form reports values only after an edit; until then the session still holds them.
+      values: Object.keys(formValues).length ? formValues : active.form.values,
+      tls: clientTlsEnabled,
+      ca: clientCa,
+      cert: clientCert,
+      key: clientKey,
+      keepAlive,
+      lwtTopic,
+      lwtPayload,
+      lwtQos,
+      lwtRetain,
+    }),
+    [formValues, active.form.values, clientTlsEnabled, clientCa, clientCert, clientKey, keepAlive, lwtTopic, lwtPayload, lwtQos, lwtRetain],
+  );
+
+  const applyForm = useCallback((f: FormSnapshot) => {
+    setParsedInit(f.values);
+    setFormValues(f.values);
+    setFormKey((k) => k + 1);
+    setClientTlsEnabled(f.tls);
+    setClientCa(f.ca);
+    setClientCert(f.cert);
+    setClientKey(f.key);
+    setKeepAlive(f.keepAlive);
+    setLwtTopic(f.lwtTopic);
+    setLwtPayload(f.lwtPayload);
+    setLwtQos(f.lwtQos);
+    setLwtRetain(f.lwtRetain);
+    setSelectedProfile("");
+  }, []);
+
+  const selectSession = useCallback(
+    (id: string) => {
+      if (id === activeId) return;
+      const next = sessions.find((s) => s.id === id);
+      if (!next) return;
+      const leaving = captureForm();
+      updateSession(activeId, (s) => ({ ...s, form: leaving }));
+      applyForm(next.form);
+      setActiveId(id);
+    },
+    [activeId, sessions, captureForm, applyForm, updateSession],
+  );
+
+  const addSession = useCallback(() => {
+    if (!requirePro("Several simultaneous connections")) return;
+    const id = nextSessionId(sessions);
+    const fresh = newSession(id);
+    // Two connections to one broker need different client ids or the broker drops the older one.
+    fresh.form = { ...DEFAULT_FORM, values: { ...DEFAULT_FORM.values, clientId: `mactools-explorer-${id}` } };
+    const leaving = captureForm();
+    setSessions((prev) => [...prev.map((s) => (s.id === activeId ? { ...s, form: leaving } : s)), fresh]);
+    applyForm(fresh.form);
+    setActiveId(id);
+  }, [requirePro, sessions, activeId, captureForm, applyForm]);
+
+  const closeSession = useCallback(
+    async (id: string) => {
+      if (!sessions.some((s) => s.id === id)) return;
+      try {
+        await invoke("client_disconnect", { conn: id });
+      } catch { /* not connected */ }
+      chartStore.clear(id);
+      const rest = sessions.filter((s) => s.id !== id);
+      if (rest.length === 0) {
+        const fresh = newSession("c1");
+        setSessions([fresh]);
+        setActiveId("c1");
+        applyForm(fresh.form);
+        return;
+      }
+      setSessions(rest);
+      if (id === activeId) {
+        applyForm(rest[0].form);
+        setActiveId(rest[0].id);
+      }
+    },
+    [sessions, activeId, chartStore, applyForm],
+  );
+
   const handleClientConnect = useCallback(
     async (values: Record<string, string | number>) => {
+      const conn = active.id;
       const config: MqttConfig = {
         host: String(values.host),
         port: Number(values.port),
@@ -437,90 +575,193 @@ function App() {
           ? { topic: lwtTopic.trim(), payload: lwtPayload, qos: lwtQos, retain: lwtRetain }
           : undefined,
       };
-      setClientLoading(true);
-      setClientError(null);
-      // Fresh session — clear any data from a previous connection.
-      setClientMessages([]);
-      setClientTopicValues({});
-      setBlinkingClientTopics(new Set());
+      const clash = sessions.some(
+        (s) =>
+          s.id !== conn &&
+          s.status !== "idle" &&
+          s.clientId === config.client_id &&
+          s.endpoint?.ip === config.host &&
+          s.endpoint.port === config.port,
+      );
+      if (clash) {
+        updateSession(conn, (s) => ({
+          ...s,
+          error: "Another open connection to this broker already uses this Client ID. The broker would drop it. Change the Client ID.",
+        }));
+        return;
+      }
+      const form = captureForm();
+      // Fresh session: clear any data from a previous connection.
+      chartStore.clear(conn);
+      updateSession(conn, (s) => ({
+        ...clearData(s),
+        form,
+        status: "connecting",
+        error: null,
+        clientId: config.client_id,
+        endpoint: { ip: config.host, port: config.port },
+      }));
       try {
-        await invoke("client_connect", { config });
-        setClientConnected(true);
-        setClientEndpoint({ ip: config.host, port: config.port });
+        await invoke("client_connect", { conn, config });
+        updateSession(conn, (s) => ({
+          ...s,
+          status: "connected",
+          label: selectedProfile || `${config.host}:${config.port}`,
+        }));
         addLog("info", `Connected to ${config.host}:${config.port}`);
       } catch (e) {
-        setClientError(String(e));
-        setClientConnected(false);
+        updateSession(conn, (s) => ({ ...s, status: "idle", error: String(e), endpoint: null, clientId: null }));
         addLog("error", `Connection failed: ${String(e)}`);
-      } finally {
-        setClientLoading(false);
       }
     },
-    [addLog, pro, clientTlsEnabled, clientCa, clientCert, clientKey, keepAlive, lwtTopic, lwtPayload, lwtQos, lwtRetain],
+    [addLog, pro, active.id, sessions, selectedProfile, captureForm, chartStore, updateSession, clientTlsEnabled, clientCa, clientCert, clientKey, keepAlive, lwtTopic, lwtPayload, lwtQos, lwtRetain],
   );
 
   const handleClientDisconnect = useCallback(async () => {
+    const conn = active.id;
     try {
-      await invoke("client_disconnect");
+      await invoke("client_disconnect", { conn });
     } catch { /* ignore */ }
-    setClientConnected(false);
-    setClientEndpoint(null);
-    setSubscriptions([]);
+    updateSession(conn, (s) => ({ ...s, status: "idle", endpoint: null, clientId: null, rtt: null, subscriptions: [] }));
     addLog("info", "Disconnected");
-  }, [addLog]);
+  }, [active.id, addLog, updateSession]);
 
   const handleSubscribe = useCallback(async () => {
     if (!subscribeTopic || !clientConnected) return;
     if (subscriptions.some((s) => s.topic === subscribeTopic)) return;
+    const conn = active.id;
     try {
       // Backend now awaits the broker's SUBACK and returns the granted QoS
       // (the broker may downgrade it).
       const reqQos = subscribeQos === "atleastonce" ? 1 : subscribeQos === "exactlyonce" ? 2 : 0;
-      const granted = await invoke<number>("client_subscribe", { topic: subscribeTopic, qos: subscribeQos });
+      const granted = await invoke<number>("client_subscribe", { conn, topic: subscribeTopic, qos: subscribeQos });
       const qosNum = String(granted);
       const note = granted < reqQos ? " (downgraded by broker)" : "";
-      setSubscriptions((prev) => [...prev, { topic: subscribeTopic, qos: qosNum }]);
+      updateSession(conn, (s) => ({ ...s, subscriptions: [...s.subscriptions, { topic: subscribeTopic, qos: qosNum }] }));
       addLog("tx", `Subscribed: ${subscribeTopic} (QoS ${qosNum}${note})`);
       setSubscribeTopic("");
     } catch (e) {
       addLog("error", `Subscribe failed: ${String(e)}`);
     }
-  }, [subscribeTopic, clientConnected, subscriptions, subscribeQos, addLog]);
+  }, [subscribeTopic, clientConnected, subscriptions, subscribeQos, active.id, addLog, updateSession]);
 
   const handleUnsubscribe = useCallback(async (topic: string) => {
+    const conn = active.id;
     try {
-      await invoke("client_unsubscribe", { topic });
-      setSubscriptions((prev) => prev.filter((s) => s.topic !== topic));
+      await invoke("client_unsubscribe", { conn, topic });
+      updateSession(conn, (s) => ({ ...s, subscriptions: s.subscriptions.filter((x) => x.topic !== topic) }));
       addLog("tx", `Unsubscribed: ${topic}`);
     } catch (e) {
       addLog("error", `Unsubscribe failed: ${String(e)}`);
     }
-  }, [addLog]);
+  }, [active.id, addLog, updateSession]);
 
   const handlePublish = useCallback(async () => {
     if (!publishTopic || !publishPayload) return;
     try {
       await invoke("client_publish", {
+        conn: active.id,
         message: { topic: publishTopic, payload: publishPayload, qos: publishQos, retained: publishRetained },
       });
       addLog("tx", `Publish to ${publishTopic}: ${publishPayload}`);
     } catch (e) {
       addLog("error", `Publish failed: ${String(e)}`);
     }
-  }, [publishTopic, publishPayload, publishQos, publishRetained, addLog]);
+  }, [publishTopic, publishPayload, publishQos, publishRetained, active.id, addLog]);
 
   // Publish to an explicit topic+value (used by the row editor in client mode).
   const handlePublishTo = useCallback(async (topic: string, payload: string) => {
     if (!topic || !clientConnected) return;
     try {
       await invoke("client_publish", {
+        conn: active.id,
         message: { topic, payload, qos: publishQos, retained: publishRetained },
       });
       addLog("tx", `Publish to ${topic}: ${payload}`);
     } catch (e) {
       addLog("error", `Publish failed: ${String(e)}`);
     }
-  }, [publishQos, publishRetained, clientConnected, addLog]);
+  }, [publishQos, publishRetained, clientConnected, active.id, addLog]);
+
+  // Delete the broker's retained message on each topic by publishing an empty retained one.
+  const handleClearRetained = useCallback(
+    async (topics: string[]): Promise<number> => {
+      const conn = active.id;
+      const cleared: string[] = [];
+      for (const topic of topics) {
+        try {
+          await invoke("client_publish", {
+            conn,
+            message: { topic, payload: "", qos: "atleastonce", retained: true },
+          });
+          cleared.push(topic);
+        } catch (e) {
+          addLog("error", `Clearing retained message on ${topic} failed: ${String(e)}`);
+        }
+      }
+      updateSession(conn, (s) => markRetainedCleared(s, cleared));
+      addLog("tx", `Cleared ${cleared.length} retained message${cleared.length === 1 ? "" : "s"}`);
+      return cleared.length;
+    },
+    [active.id, addLog, updateSession],
+  );
+
+  const openClearRetained = useCallback(() => {
+    if (!requirePro("Clearing retained messages")) return;
+    setRetainedOpen(true);
+  }, [requirePro]);
+
+  // Install a protobuf schema, remember it, and decode what is already on screen again.
+  const applyProto = useCallback(
+    async (next: ProtoSettings) => {
+      await invoke("proto_configure", { source: next.source, rules: next.rules });
+      saveProto(next);
+      setProtoSettings(next);
+      addLog("info", next.source.trim() ? "Protobuf schema applied" : "Protobuf schema removed");
+
+      // Decode stored messages again, oldest first. Results are matched back by object identity so
+      // messages that arrive while the backend works are left alone.
+      const redecode = async (topics: string[], infos: PayloadInfo[]): Promise<(Decoded | undefined)[]> => {
+        const res = await invoke<Redecoded[]>("decode_payloads", {
+          items: infos.map((info, id) => ({
+            id,
+            topic: topics[id],
+            hex: Array.from(payloadBytes(info), (b) => b.toString(16).padStart(2, "0")).join(""),
+          })),
+        });
+        const byId = new Map(res.map((r) => [r.id, r.decoded ?? undefined]));
+        return infos.map((_, i) => byId.get(i));
+      };
+      for (const s of sessions) {
+        const msgs = s.messages;
+        const vals = Object.entries(s.topicValues);
+        const out = await redecode(
+          [...msgs.map((m) => m.topic), ...vals.map(([t]) => t)],
+          [...msgs, ...vals.map(([, v]) => v)],
+        );
+        const byMsg = new Map(msgs.map((m, i) => [m, out[i]]));
+        const byVal = new Map(vals.map(([, v], i) => [v, out[msgs.length + i]]));
+        updateSession(s.id, (cur) => ({
+          ...cur,
+          messages: cur.messages.map((m) => (byMsg.has(m) ? { ...m, decoded: byMsg.get(m) } : m)),
+          topicValues: Object.fromEntries(
+            Object.entries(cur.topicValues).map(([t, v]) => [t, byVal.has(v) ? { ...v, decoded: byVal.get(v) } : v]),
+          ),
+        }));
+      }
+      if (brokerMessages.length > 0) {
+        const out = await redecode(brokerMessages.map((m) => m.topic), brokerMessages);
+        const byMsg = new Map(brokerMessages.map((m, i) => [m, out[i]]));
+        setBrokerMessages((cur) => cur.map((m) => (byMsg.has(m) ? { ...m, decoded: byMsg.get(m) } : m)));
+      }
+    },
+    [sessions, brokerMessages, addLog, updateSession],
+  );
+
+  const openDecoders = useCallback(() => {
+    if (!requirePro("Sparkplug B and protobuf decoding")) return;
+    setDecoderOpen(true);
+  }, [requirePro]);
 
 
   // Parse an mqtt:// or mqtts:// URL into the connection form fields.
@@ -652,6 +893,7 @@ function App() {
   }, [addLog]);
 
   const isConnected = mode === "client" ? clientConnected : brokerRunning;
+  const chartConn = mode === "broker" ? "broker" : active.id;
 
   const fmtTs = (ts: number) =>
     new Date(ts).toLocaleTimeString("en-US", {
@@ -665,44 +907,45 @@ function App() {
       setBlinkingTopics(new Set());
       lastTopicUpdateRef.current.clear();
     } else {
-      setClientMessages([]);
-      setClientTopicValues({});
-      setBlinkingClientTopics(new Set());
+      updateSession(active.id, clearData);
     }
   };
 
-  // Decode a payload string according to the selected format.
-  const decodePayload = useCallback((payload: string): string => {
-    const p = String(payload ?? "");
-    switch (payloadFormat) {
-      case "json": {
-        try { return JSON.stringify(JSON.parse(p), null, 2); } catch { return p; }
-      }
-      case "hex": {
-        const bytes = new TextEncoder().encode(p);
-        return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join(" ");
-      }
-      case "base64": {
-        const bytes = new TextEncoder().encode(p);
-        let bin = "";
-        for (const b of bytes) bin += String.fromCharCode(b);
-        return btoa(bin);
-      }
-      default:
-        return p;
-    }
-  }, [payloadFormat]);
+  // Text a cell or tree leaf shows in the selected payload format.
+  const fmt = useCallback((info: PayloadInfo) => formatPayload(info, payloadFormat), [payloadFormat]);
 
-  // Decode the payload cell, badge the retain flag, pass every other cell through unchanged.
+  // Pro-only parts of a payload are dropped before rendering for free users.
+  const visible = (info: PayloadInfo): PayloadInfo => (pro ? info : { payload: info.payload, rawHex: info.rawHex });
+
+  // Payload cell: formatted text, plus an inspect button when the message was decoded.
   const renderCell = useCallback((key: string, row: Record<string, unknown>) => {
     if (key === "payload") {
-      return <span style={payloadCellStyle}>{decodePayload(String(row.payload ?? ""))}</span>;
+      const info = row._info as PayloadInfo; // every row below carries the info it was built from
+      const decoded = info.decoded;
+      return (
+        <span style={payloadCellStyle}>
+          {decoded && (
+            <IconButton
+              label="Inspect decoded payload"
+              size="sm"
+              style={{ height: 16, width: 16, marginRight: 4, verticalAlign: "middle" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setInspecting({ topic: String(row.topic), info: { ...info, decoded } });
+              }}
+            >
+              <Braces size={12} strokeWidth={1.75} />
+            </IconButton>
+          )}
+          {String(row.payload ?? "")}
+        </span>
+      );
     }
     if (key === "retain") {
       return row.retain === "Yes" ? <Badge tone="info" mono>Yes</Badge> : "No";
     }
     return String(row[key] ?? "");
-  }, [decodePayload]);
+  }, []);
 
   const topicsColumns = [
     { key: "topic", label: "Topic", width: "230px" },
@@ -726,24 +969,32 @@ function App() {
         { key: "retain", label: "Retain", width: "60px" },
       ];
 
-  const brokerTableData = brokerTopics.map((t) => ({
-    topic: t.topic,
-    payload: t.last_payload,
-    count: t.message_count,
-    time: fmtTs(t.last_update),
-    retain: t.retain ? "Yes" : "No",
-  }));
+  const brokerTableData = brokerTopics.map((t) => {
+    const info = visible(payloadInfoFromEvent(t));
+    return {
+      topic: t.topic,
+      payload: fmt(info),
+      _info: info,
+      count: t.message_count,
+      time: fmtTs(t.last_update),
+      retain: t.retain ? "Yes" : "No",
+    };
+  });
   const brokerRowStyle = (row: Record<string, unknown>) =>
     blinkingTopics.has(String(row.topic)) ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined;
 
   // Client-mode table: latest value per subscribed topic (parity with broker).
-  const clientTopicEntries = Object.entries(clientTopicValues).map(([topic, v]) => ({
-    topic,
-    payload: v.payload,
-    count: v.count,
-    time: fmtTs(v.ts),
-    retain: v.retain ? "Yes" : "No",
-  }));
+  const clientTopicEntries = Object.entries(clientTopicValues).map(([topic, v]) => {
+    const info = visible(v);
+    return {
+      topic,
+      payload: fmt(info),
+      _info: info,
+      count: v.count,
+      time: fmtTs(v.ts),
+      retain: v.retain ? "Yes" : "No",
+    };
+  });
   const clientRowStyle = (row: Record<string, unknown>) =>
     blinkingClientTopics.has(String(row.topic)) ? { background: "var(--accent)", color: "var(--accent-fg)" } : undefined;
 
@@ -751,37 +1002,50 @@ function App() {
   const treeEntries: TreeEntry[] =
     mode === "broker"
       ? brokerTopics.map((t) => ({
-          topic: t.topic, payload: t.last_payload, count: t.message_count,
+          ...visible(payloadInfoFromEvent(t)), topic: t.topic, count: t.message_count,
           ts: t.last_update, retain: t.retain,
         }))
       : Object.entries(clientTopicValues).map(([topic, v]) => ({
-          topic, payload: v.payload, count: v.count, ts: v.ts, retain: v.retain,
+          ...visible(v), topic, count: v.count, ts: v.ts, retain: v.retain,
         }));
   const treeBlinking = mode === "broker" ? blinkingTopics : blinkingClientTopics;
 
-  const historyRows = (mode === "broker" ? brokerMessages : clientMessages).map((m) => ({
-    topic: String(m.topic ?? ""),
-    payload: String(m.payload ?? ""),
-    qos: (m.qos as number) ?? 0,
-    time: fmtTs((m._ts as number) ?? m.timestamp ?? Date.now()),
-    retain: m.retain ? "Yes" : "No",
-  }));
+  const historyRows = (mode === "broker" ? brokerMessages : clientMessages).map((m) => {
+    const info = visible(m);
+    return {
+      topic: m.topic,
+      payload: fmt(info),
+      _info: info,
+      qos: "qos" in m ? m.qos : 0,
+      time: fmtTs(m.ts),
+      retain: m.retain ? "Yes" : "No",
+    };
+  });
 
   const dataCount = mode === "broker" ? brokerTopics.length : clientTopicEntries.length;
   const historyCount = mode === "broker" ? brokerMessages.length : clientMessages.length;
   const showClear =
     (dataView === "topics" && dataCount > 0) || (dataView === "history" && historyCount > 0);
+  const hasDecoded =
+    mode === "broker"
+      ? brokerTopics.some((t) => t.decoded)
+      : Object.values(clientTopicValues).some((v) => v.decoded);
+
+  const retainedCandidates = retainedTopics(active, () => true);
 
   const handleExportHistory = async () => {
     if (!requirePro("Message history export")) return;
+    const toRow = (m: BrokerMsg | ClientMsg, qos: number | null) => ({
+      timestamp: m.ts,
+      topic: m.topic,
+      payload: m.rawHex ?? m.payload,
+      encoding: m.rawHex ? ("hex" as const) : ("utf8" as const),
+      qos,
+      retain: m.retain,
+      decoded: m.decoded ? JSON.stringify(m.decoded.error !== undefined ? { error: m.decoded.error } : m.decoded.value) : "",
+    });
     const csv = messagesToCsv(
-      (mode === "broker" ? brokerMessages : clientMessages).map((m) => ({
-        timestamp: (m._ts as number) ?? m.timestamp ?? Date.now(),
-        topic: String(m.topic ?? ""),
-        payload: String(m.payload ?? ""),
-        qos: mode === "broker" ? null : ((m.qos as number) ?? 0),
-        retain: !!m.retain,
-      })),
+      mode === "broker" ? brokerMessages.map((m) => toRow(m, null)) : clientMessages.map((m) => toRow(m, m.qos)),
     );
     try {
       const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
@@ -797,20 +1061,25 @@ function App() {
       <Tabs
         label="Data view"
         value={dataView}
-        onChange={setDataView}
+        onChange={(v) => {
+          if (v === "charts" && !requirePro("Numeric topic charts")) return;
+          setDataView(v);
+        }}
         items={[
           { value: "topics", label: "Topics", count: dataCount },
           { value: "tree", label: "Tree", count: dataCount },
           { value: "history", label: "History", count: historyCount },
+          { value: "charts", label: <>Charts {!pro && <ProBadge />}</> },
         ]}
         trailing={
           <>
             <select
               className="vt-select vt-select--sm"
-              style={{ width: 96 }}
+              style={{ width: 110 }}
               value={payloadFormat}
               onChange={(e) => {
-                const v = e.target.value as "raw" | "json" | "hex" | "base64";
+                const v = e.target.value as PayloadFormat; // option values below are exactly PayloadFormat
+                if (v === "decoded" && !requirePro("Sparkplug B and protobuf decoding")) return;
                 setPayloadFormat(v);
               }}
               aria-label="Payload format"
@@ -820,7 +1089,11 @@ function App() {
               <option value="json">JSON</option>
               <option value="hex">Hex</option>
               <option value="base64">Base64</option>
+              <option value="decoded">{pro ? "Decoded" : "Decoded (Pro)"}</option>
             </select>
+            <Button size="sm" variant="ghost" onClick={openDecoders} title="Sparkplug B and protobuf decoders">
+              Decoders {!pro && <ProBadge />}
+            </Button>
             {dataView === "history" && historyCount > 0 && (
               <Button size="sm" variant="ghost" onClick={handleExportHistory}>
                 Export {!pro && <ProBadge />}
@@ -840,10 +1113,23 @@ function App() {
           ? `Latest value per topic, ${dataCount} topic${dataCount !== 1 ? "s" : ""}`
           : dataView === "tree"
             ? `Hierarchical topic tree, ${dataCount} topic${dataCount !== 1 ? "s" : ""}`
-            : `Message stream, ${historyCount} message${historyCount !== 1 ? "s" : ""}`}
+            : dataView === "history"
+              ? `Message stream, ${historyCount} message${historyCount !== 1 ? "s" : ""}`
+              : "Numeric values over time"}
+        {hasDecoded && dataView !== "charts" && payloadFormat !== "decoded" &&
+          (pro
+            ? ". Sparkplug B or protobuf payloads found, choose Decoded to read them"
+            : ". Sparkplug B or protobuf payloads found, decoding is a Pro feature")}
       </span>
 
-      {dataView === "tree" ? (
+      {dataView === "charts" ? (
+        <ChartPanel
+          store={chartStore}
+          conn={chartConn}
+          selected={chartSelected[chartConn] ?? []}
+          onSelectedChange={(keys) => setChartSelected((prev) => ({ ...prev, [chartConn]: keys }))}
+        />
+      ) : dataView === "tree" ? (
         treeEntries.length === 0 ? (
           <EmptyState
             compact
@@ -858,7 +1144,7 @@ function App() {
         ) : (
           <TopicTree
             entries={treeEntries}
-            formatPayload={decodePayload}
+            formatPayload={fmt}
             onLeafClick={(t) => setEditingTopic(t)}
             blinkingTopics={treeBlinking}
           />
@@ -916,6 +1202,56 @@ function App() {
       {mode === "client" ? (
         <>
         <Section title="Connection">
+          <div
+            role="tablist"
+            aria-label="Connections"
+            style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, marginBottom: 8 }}
+          >
+            {sessions.map((s) => {
+              const isActive = s.id === active.id;
+              const v = isActive && Object.keys(formValues).length ? formValues : s.form.values;
+              const label = s.status === "idle" ? `${v.host}:${v.port}` : s.label;
+              const dot =
+                s.status === "connected" ? "var(--success, #22c55e)"
+                : s.status === "connecting" ? "var(--warning, #f59e0b)"
+                : "var(--text-muted)";
+              return (
+                <span
+                  key={s.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  tabIndex={0}
+                  className="vt-badge vt-badge--mono"
+                  style={{
+                    gap: 4,
+                    cursor: "pointer",
+                    outline: isActive ? "1px solid var(--accent)" : undefined,
+                    maxWidth: "100%",
+                  }}
+                  title={`${label}, ${s.status}`}
+                  onClick={() => selectSession(s.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") selectSession(s.id); }}
+                >
+                  <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                  {sessions.length > 1 && (
+                    <IconButton
+                      label={`Close connection ${label}`}
+                      size="sm"
+                      onClick={(e) => { e.stopPropagation(); void closeSession(s.id); }}
+                      style={{ height: 14, width: 14 }}
+                    >
+                      <X size={10} strokeWidth={1.75} />
+                    </IconButton>
+                  )}
+                </span>
+              );
+            })}
+            <IconButton label="Add another connection" size="sm" outline onClick={addSession}>
+              <Plus size={14} strokeWidth={1.75} />
+            </IconButton>
+            {!pro && <ProBadge />}
+          </div>
           <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
             <select
               className="vt-select vt-select--sm"
@@ -1306,6 +1642,9 @@ function App() {
               ))}
             </div>
           )}
+          <Button size="sm" variant="ghost" block disabled={!clientConnected} onClick={openClearRetained}>
+            Clear retained messages… {!pro && <ProBadge />}
+          </Button>
         </div>
       </Section>
 
@@ -1559,7 +1898,8 @@ function App() {
           <p style={{ margin: "0 0 10px" }}>MQTT client, topic inspector, and local test broker in one app.</p>
           <p style={{ margin: "0 0 10px" }}>
             Connect to any MQTT broker to subscribe, publish, and watch live message streams. Pro adds an embedded
-            broker to test against.
+            broker to test against, several connections at once, Sparkplug B and protobuf decoding, and charts of
+            numeric values.
           </p>
           <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
             Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama
@@ -1567,6 +1907,22 @@ function App() {
           <ProAboutRow />
         </div>
       </Dialog>
+      {inspecting && (
+        <PayloadInspector topic={inspecting.topic} info={inspecting.info} onClose={() => setInspecting(null)} />
+      )}
+      <ClearRetainedDialog
+        open={retainedOpen}
+        onClose={() => setRetainedOpen(false)}
+        candidates={retainedCandidates}
+        defaultFilter={subscriptions.length === 1 ? subscriptions[0].topic : "#"}
+        onClear={handleClearRetained}
+      />
+      <DecoderDialog
+        open={decoderOpen}
+        onClose={() => setDecoderOpen(false)}
+        settings={protoSettings}
+        onApply={applyProto}
+      />
     </div>
   );
 }

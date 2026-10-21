@@ -5,6 +5,8 @@
 //! - A **topic tracker** ([`TopicTracker`]) for monitoring broker traffic
 //! - An **MQTT client** ([`MqttPubClient`]) for publish/subscribe operations
 //! - Auth helpers ([`validate_credentials`])
+//! - Payload decoding: Sparkplug B ([`sparkplug`]) and user-schema protobuf ([`protodec`]),
+//!   dispatched per topic by [`PayloadDecoder`]
 //!
 //! # Broker example
 //!
@@ -46,6 +48,9 @@
 
 pub mod broker;
 pub mod client_pub;
+pub mod decode;
+pub mod protodec;
+pub mod sparkplug;
 pub mod types;
 
 // Re-export the primary public API at the crate root.
@@ -54,6 +59,7 @@ pub use broker::{
     start_broker, stop_broker, validate_credentials,
 };
 pub use client_pub::{MqttClientEvent, MqttPubClient, SubscribeOutcome};
+pub use decode::{DecodeKind, Decoded, PayloadDecoder, ProtoConfig, ProtoRule, SharedProtoConfig, topic_matches};
 pub use types::{
     BrokerStatus, ConnectedClient, MqttAuthConfig, MqttBrokerConfig, MqttClientConfig, MqttLastWill,
     MqttMessage, MqttQos, MqttServerTlsConfig, MqttTlsConfig, MqttUser, RecentMessage, TopicInfo,

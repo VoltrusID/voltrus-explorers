@@ -127,6 +127,7 @@
       "dependencies": {
         "@mactools/ui": "workspace:*",
         "@tauri-apps/api": "^2",
+        "lightweight-charts": "5.2.0",
         "lucide-react": "1.21.0",
         "react": "19.2.6",
         "react-dom": "19.2.6",
@@ -140,6 +141,7 @@
         "tailwindcss": "4.2.4",
         "typescript": "5.9.3",
         "vite": "6.4.2",
+        "vitest": "4.1.8",
       },
     },
     "apps/nats-explorer": {

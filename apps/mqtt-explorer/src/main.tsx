@@ -9,6 +9,10 @@ const PRO_FEATURES = [
   "More than one saved connection profile",
   "Custom CA, client certificates and Last Will",
   "Message history export to CSV",
+  "Sparkplug B and protobuf payload decoding",
+  "Charts of numeric topic values",
+  "Several simultaneous connections",
+  "Bulk-clear retained messages",
 ];
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

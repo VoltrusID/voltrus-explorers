@@ -1,69 +1,90 @@
 mod system;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
 use mt_mqtt::{
-    MqttPubClient, MqttBrokerState, MqttBrokerConfig, MqttClientConfig, MqttClientEvent, MqttMessage,
-    MqttQos, BrokerStatus, TopicInfo, RecentMessage,
-    start_broker, stop_broker,
+    BrokerStatus, DecodeKind, MqttBrokerConfig, MqttBrokerState, MqttClientConfig, MqttClientEvent,
+    MqttMessage, MqttPubClient, MqttQos, PayloadDecoder, ProtoConfig, ProtoRule, RecentMessage,
+    SharedProtoConfig, TopicInfo, start_broker, stop_broker,
 };
-use tokio::sync::Mutex;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 use tauri::Emitter;
+use tokio::sync::Mutex;
 
-// ── Client: use channels to communicate with a background task ──
+// ── Payload views ──
 
-struct ClientMessage {
-    topic: String,
-    payload: String,
-    timestamp: i64,
-    retain: bool,
-    qos: u8,
+/// Fields every message event and topic row carries for its payload:
+///
+/// - `payload`: lossy UTF-8 text, what the Raw and JSON views show.
+/// - `raw_hex`: the exact bytes, only when the payload is not valid UTF-8
+///   (valid UTF-8 round-trips through `payload` unchanged).
+/// - `decoded`: Sparkplug B / user-protobuf result, when the topic calls for it.
+fn payload_fields(decoder: &mut PayloadDecoder, topic: &str, bytes: &[u8]) -> Map<String, Value> {
+    let mut m = Map::new();
+    match std::str::from_utf8(bytes) {
+        Ok(s) => {
+            m.insert("payload".into(), json!(s));
+        }
+        Err(_) => {
+            m.insert("payload".into(), json!(String::from_utf8_lossy(bytes)));
+            m.insert("raw_hex".into(), json!(hex_encode(bytes)));
+        }
+    }
+    if let Some(d) = decoder.decode(topic, bytes) {
+        m.insert("decoded".into(), d.to_json());
+    }
+    m
 }
 
-/// Push a received message into the recent buffer and emit it to the UI.
-/// Shared by the live event path and the SUBACK-wait replay path.
-async fn store_and_emit(
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.is_ascii() {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+// ── Client: one background task per connection ──
+
+/// Emit a received message to the UI, tagged with its connection id.
+fn emit_message(
     app: &tauri::AppHandle,
-    recent: &Arc<Mutex<Vec<ClientMessage>>>,
+    conn: &str,
+    decoder: &mut PayloadDecoder,
     topic: &str,
-    payload: &str,
+    payload: &[u8],
     qos: u8,
     retain: bool,
 ) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-    {
-        let mut msgs = recent.lock().await;
-        msgs.push(ClientMessage {
-            topic: topic.to_string(),
-            payload: payload.to_string(),
-            timestamp: ts,
-            retain,
-            qos,
-        });
-        if msgs.len() > 500 {
-            let excess = msgs.len() - 500;
-            msgs.drain(0..excess);
-        }
-    }
-    if let Err(e) = app.emit(
-        "client-message",
-        serde_json::json!({
-            "topic": topic,
-            "payload": payload,
-            "qos": qos,
-            "retain": retain,
-            "timestamp": ts,
-        }),
-    ) {
+    let mut ev = payload_fields(decoder, topic, payload);
+    ev.insert("conn".into(), json!(conn));
+    ev.insert("topic".into(), json!(topic));
+    ev.insert("qos".into(), json!(qos));
+    ev.insert("retain".into(), json!(retain));
+    ev.insert("timestamp".into(), json!(now_ms()));
+    if let Err(e) = app.emit("client-message", Value::Object(ev)) {
         eprintln!("[mqtt-client] emit client-message failed: {}", e);
     }
-}
-
-struct ClientState {
-    publish_tx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<ClientAction>>>>,
-    recent_messages: Arc<Mutex<Vec<ClientMessage>>>,
 }
 
 enum ClientAction {
@@ -77,16 +98,17 @@ enum ClientAction {
 /// event-loop thread panics or the tokio runtime crashes.
 struct DisconnectGuard {
     app: tauri::AppHandle,
+    conn: String,
     did_disconnect: bool,
 }
 
 impl Drop for DisconnectGuard {
     fn drop(&mut self) {
         if !self.did_disconnect {
-            eprintln!("[mqtt-client] Thread exited unexpectedly, emitting client-disconnected");
+            eprintln!("[mqtt-client] Thread for {} exited unexpectedly, emitting client-disconnected", self.conn);
             let _ = self.app.emit(
                 "client-disconnected",
-                serde_json::json!({"reason": "connection_lost"}),
+                json!({ "conn": self.conn, "reason": "connection_lost" }),
             );
         }
     }
@@ -96,9 +118,33 @@ struct BrokerStateHolder {
     state: MqttBrokerState,
 }
 
+/// Latest decoded payload per topic seen by the embedded broker, so the topic
+/// poll can return it alongside the payload.
+type BrokerDecoded = Arc<parking_lot::Mutex<HashMap<String, Value>>>;
+
 struct AppState {
-    client: ClientState,
+    /// Command channel of every live client connection, by connection id.
+    clients: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<ClientAction>>>>,
     broker: Arc<Mutex<Option<BrokerStateHolder>>>,
+    broker_decoded: BrokerDecoded,
+    /// User protobuf schema and topic rules, shared by every decoder.
+    proto: SharedProtoConfig,
+}
+
+impl AppState {
+    async fn client_tx(
+        &self,
+        conn: &str,
+    ) -> Result<tokio::sync::mpsc::UnboundedSender<ClientAction>, String> {
+        // Clone the sender and drop the lock before awaiting so concurrent
+        // commands aren't serialized (and we never hold the mutex across `.await`).
+        self.clients
+            .lock()
+            .await
+            .get(conn)
+            .cloned()
+            .ok_or_else(|| "Not connected".to_string())
+    }
 }
 
 // ── Client commands ──
@@ -107,28 +153,24 @@ struct AppState {
 async fn client_connect(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    conn: String,
     config: MqttClientConfig,
 ) -> Result<(), String> {
-    // Gracefully stop any existing client task first. Sending Disconnect (and
-    // awaiting the reply) marks its guard as a clean disconnect so it does not
-    // emit a stale `client-disconnected` that would race our new connection.
-    {
-        let mut tx_guard = state.client.publish_tx.lock().await;
-        if let Some(old_tx) = tx_guard.take() {
-            let (r_tx, r_rx) = tokio::sync::oneshot::channel();
-            let _ = old_tx.send(ClientAction::Disconnect { reply: r_tx });
-            let _ = r_rx.await;
-        }
+    // Gracefully stop any existing client task with this id first. Sending
+    // Disconnect (and awaiting the reply) marks its guard as a clean
+    // disconnect so it does not emit a stale `client-disconnected` that would
+    // race our new connection.
+    let old = state.clients.lock().await.remove(&conn);
+    if let Some(old_tx) = old {
+        let (r_tx, r_rx) = tokio::sync::oneshot::channel();
+        let _ = old_tx.send(ClientAction::Disconnect { reply: r_tx });
+        let _ = r_rx.await;
     }
 
-    // Clear previous client messages.
-    state.client.recent_messages.lock().await.clear();
-
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ClientAction>();
-    *state.client.publish_tx.lock().await = Some(tx);
-
-    let recent = state.client.recent_messages.clone();
+    let mut decoder = PayloadDecoder::new(state.proto.clone());
     let app_clone = app.clone();
+    let conn_id = conn.clone();
     // Signal the connect result back to this command so it can return a proper
     // error if the broker refuses / is unreachable.
     let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
@@ -159,6 +201,7 @@ async fn client_connect(
 
             let mut guard = DisconnectGuard {
                 app: app_clone.clone(),
+                conn: conn_id.clone(),
                 did_disconnect: false,
             };
 
@@ -179,12 +222,10 @@ async fn client_connect(
                                 // the SUBACK so they are not lost.
                                 for ev in outcome.buffered {
                                     if let MqttClientEvent::Message(m) = ev {
-                                        let payload_str = String::from_utf8_lossy(&m.payload).to_string();
-                                        store_and_emit(
-                                            &app_clone, &recent, &m.topic, &payload_str,
+                                        emit_message(
+                                            &app_clone, &conn_id, &mut decoder, &m.topic, &m.payload,
                                             m.qos as u8, m.retained,
-                                        )
-                                        .await;
+                                        );
                                     }
                                 }
                                 let r = match outcome.error {
@@ -213,15 +254,13 @@ async fn client_connect(
                     // reconnects, and re-establishes subscriptions internally.
                     event = client.next_event() => match event {
                         Some(MqttClientEvent::Message(m)) => {
-                            let payload_str = String::from_utf8_lossy(&m.payload).to_string();
-                            store_and_emit(
-                                &app_clone, &recent, &m.topic, &payload_str,
+                            emit_message(
+                                &app_clone, &conn_id, &mut decoder, &m.topic, &m.payload,
                                 m.qos as u8, m.retained,
-                            )
-                            .await;
+                            );
                         }
                         Some(MqttClientEvent::Rtt(ms)) => {
-                            let _ = app_clone.emit("client-rtt", serde_json::json!({ "rtt": ms }));
+                            let _ = app_clone.emit("client-rtt", json!({ "conn": conn_id, "rtt": ms }));
                         }
                         None => break,
                     }
@@ -233,7 +272,10 @@ async fn client_connect(
 
     // Wait for the connect attempt so we can surface broker errors to the UI.
     match connect_rx.await {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            state.clients.lock().await.insert(conn, tx);
+            Ok(())
+        }
         Ok(Err(e)) => Err(e),
         Err(_) => Err("Client task died during connect".to_string()),
     }
@@ -242,15 +284,11 @@ async fn client_connect(
 #[tauri::command]
 async fn client_subscribe(
     state: tauri::State<'_, AppState>,
+    conn: String,
     topic: String,
     qos: MqttQos,
 ) -> Result<u8, String> {
-    // Clone the sender and drop the lock before awaiting so concurrent
-    // commands aren't serialized (and we never hold the mutex across `.await`).
-    let tx = {
-        let guard = state.client.publish_tx.lock().await;
-        guard.as_ref().ok_or("Not connected")?.clone()
-    };
+    let tx = state.client_tx(&conn).await?;
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     tx.send(ClientAction::Subscribe { topic, qos, reply: reply_tx })
         .map_err(|_| "Client disconnected")?;
@@ -260,12 +298,10 @@ async fn client_subscribe(
 #[tauri::command]
 async fn client_unsubscribe(
     state: tauri::State<'_, AppState>,
+    conn: String,
     topic: String,
 ) -> Result<(), String> {
-    let tx = {
-        let guard = state.client.publish_tx.lock().await;
-        guard.as_ref().ok_or("Not connected")?.clone()
-    };
+    let tx = state.client_tx(&conn).await?;
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     tx.send(ClientAction::Unsubscribe { topic, reply: reply_tx })
         .map_err(|_| "Client disconnected")?;
@@ -275,12 +311,10 @@ async fn client_unsubscribe(
 #[tauri::command]
 async fn client_publish(
     state: tauri::State<'_, AppState>,
+    conn: String,
     message: MqttMessage,
 ) -> Result<(), String> {
-    let tx = {
-        let guard = state.client.publish_tx.lock().await;
-        guard.as_ref().ok_or("Not connected")?.clone()
-    };
+    let tx = state.client_tx(&conn).await?;
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     tx.send(ClientAction::Publish { message, reply: reply_tx })
         .map_err(|_| "Client disconnected")?;
@@ -288,24 +322,10 @@ async fn client_publish(
 }
 
 #[tauri::command]
-async fn client_get_recent(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let msgs = state.client.recent_messages.lock().await;
-    Ok(msgs.iter().map(|m| serde_json::json!({
-        "topic": m.topic,
-        "payload": m.payload,
-        "timestamp": m.timestamp,
-        "retain": m.retain,
-        "qos": m.qos,
-    })).collect())
-}
-
-#[tauri::command]
-async fn client_disconnect(state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn client_disconnect(state: tauri::State<'_, AppState>, conn: String) -> Result<(), String> {
     // Take the sender (releases the lock immediately) so the client task sees
     // all senders gone and exits without holding the mutex across `.await`.
-    let tx = state.client.publish_tx.lock().await.take();
+    let tx = state.clients.lock().await.remove(&conn);
     if let Some(tx) = tx {
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(ClientAction::Disconnect { reply: reply_tx })
@@ -313,6 +333,60 @@ async fn client_disconnect(state: tauri::State<'_, AppState>) -> Result<(), Stri
         reply_rx.await.map_err(|_| "Client task died")??;
     }
     Ok(())
+}
+
+// ── Payload decoding commands ──
+
+/// Install the user's `.proto` schema and the topic filters that use it.
+/// A blank `source` clears both. Returns the message names the schema defines.
+#[tauri::command]
+fn proto_configure(
+    state: tauri::State<'_, AppState>,
+    source: String,
+    rules: Vec<ProtoRule>,
+) -> Result<Vec<String>, String> {
+    state.proto.write().set(&source, rules)
+}
+
+/// Compile a schema without installing it, to list its message types.
+#[tauri::command]
+fn proto_inspect(source: String) -> Result<Vec<String>, String> {
+    if source.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut scratch = ProtoConfig::default();
+    scratch.set(&source, Vec::new())
+}
+
+#[derive(Deserialize)]
+struct DecodeItem {
+    id: u32,
+    topic: String,
+    /// Exact payload bytes, hex encoded.
+    hex: String,
+}
+
+#[derive(Serialize)]
+struct DecodeResult {
+    id: u32,
+    decoded: Option<Value>,
+}
+
+/// Decode already received messages again, for example after the schema
+/// changed. Items are decoded in the order given with one fresh decoder, so
+/// pass them oldest first (Sparkplug aliases come from earlier BIRTH messages).
+#[tauri::command]
+fn decode_payloads(state: tauri::State<'_, AppState>, items: Vec<DecodeItem>) -> Vec<DecodeResult> {
+    let mut decoder = PayloadDecoder::new(state.proto.clone());
+    items
+        .into_iter()
+        .map(|it| {
+            let decoded = hex_decode(&it.hex)
+                .and_then(|bytes| decoder.decode(&it.topic, &bytes))
+                .map(|d| d.to_json());
+            DecodeResult { id: it.id, decoded }
+        })
+        .collect()
 }
 
 // ── Broker commands ──
@@ -324,19 +398,30 @@ async fn broker_start(
     config: MqttBrokerConfig,
 ) -> Result<(), String> {
     let broker_state = MqttBrokerState::new();
+    state.broker_decoded.lock().clear();
 
     // Wire the local-link notification handler to emit Tauri events directly.
     // This is more reliable than a separate TCP client because the local link
     // receives ALL messages (including those published via LinkTx::publish).
     let app_emit = app.clone();
-    let on_message: Arc<dyn Fn(String, String, i64, bool) + Send + Sync + 'static> =
+    let decoded_by_topic = state.broker_decoded.clone();
+    let decoder = parking_lot::Mutex::new(PayloadDecoder::new(state.proto.clone()));
+    let on_message: Arc<dyn Fn(String, Vec<u8>, i64, bool) + Send + Sync + 'static> =
         Arc::new(move |topic, payload, ts, retain| {
-            if let Err(e) = app_emit.emit("broker-message", serde_json::json!({
-                "topic": topic,
-                "payload": payload,
-                "timestamp": ts,
-                "retain": retain,
-            })) {
+            let mut ev = payload_fields(&mut decoder.lock(), &topic, &payload);
+            match ev.get("decoded") {
+                Some(d) => {
+                    decoded_by_topic.lock().insert(topic.clone(), d.clone());
+                }
+                // A later plain message on the topic replaces an older decode.
+                None => {
+                    decoded_by_topic.lock().remove(&topic);
+                }
+            }
+            ev.insert("topic".into(), json!(topic));
+            ev.insert("timestamp".into(), json!(ts));
+            ev.insert("retain".into(), json!(retain));
+            if let Err(e) = app_emit.emit("broker-message", Value::Object(ev)) {
                 eprintln!("[broker-message] emit failed: {}", e);
             }
         });
@@ -372,12 +457,38 @@ async fn broker_get_status(state: tauri::State<'_, AppState>) -> Result<BrokerSt
 }
 
 #[tauri::command]
-async fn broker_get_topics(state: tauri::State<'_, AppState>) -> Result<Vec<TopicInfo>, String> {
-    let broker = state.broker.lock().await;
-    match broker.as_ref() {
-        Some(holder) => Ok(holder.state.topic_tracker.get_topics().await),
-        None => Ok(vec![]),
-    }
+async fn broker_get_topics(state: tauri::State<'_, AppState>) -> Result<Vec<Value>, String> {
+    let topics: Vec<TopicInfo> = {
+        let broker = state.broker.lock().await;
+        match broker.as_ref() {
+            Some(holder) => holder.state.topic_tracker.get_topics().await,
+            None => return Ok(vec![]),
+        }
+    };
+    let decoded = state.broker_decoded.lock();
+    Ok(topics
+        .into_iter()
+        .map(|t| {
+            let mut m = Map::new();
+            match std::str::from_utf8(&t.last_payload) {
+                Ok(s) => {
+                    m.insert("last_payload".into(), json!(s));
+                }
+                Err(_) => {
+                    m.insert("last_payload".into(), json!(String::from_utf8_lossy(&t.last_payload)));
+                    m.insert("raw_hex".into(), json!(hex_encode(&t.last_payload)));
+                }
+            }
+            if let Some(d) = decoded.get(&t.topic) {
+                m.insert("decoded".into(), d.clone());
+            }
+            m.insert("topic".into(), json!(t.topic));
+            m.insert("last_update".into(), json!(t.last_update));
+            m.insert("message_count".into(), json!(t.message_count));
+            m.insert("retain".into(), json!(t.retain));
+            Value::Object(m)
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -415,15 +526,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
-            client: ClientState {
-                publish_tx: Arc::new(Mutex::new(None)),
-                recent_messages: Arc::new(Mutex::new(Vec::new())),
-            },
+            clients: Arc::new(Mutex::new(HashMap::new())),
             broker: Arc::new(Mutex::new(None)),
+            broker_decoded: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            proto: SharedProtoConfig::default(),
         })
         .invoke_handler(tauri::generate_handler![
             client_connect, client_subscribe, client_unsubscribe, client_publish, client_disconnect,
-            client_get_recent,
+            proto_configure, proto_inspect, decode_payloads,
             broker_start, broker_stop, broker_get_status, broker_get_topics, broker_get_recent, broker_publish,
             system::open_url,
             mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
@@ -434,4 +544,50 @@ pub fn run() {
 
 fn main() {
     run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decoder() -> PayloadDecoder {
+        PayloadDecoder::new(SharedProtoConfig::default())
+    }
+
+    #[test]
+    fn utf8_payload_has_no_raw_hex() {
+        let f = payload_fields(&mut decoder(), "a/b", "héllo".as_bytes());
+        assert_eq!(f["payload"], "héllo");
+        assert!(!f.contains_key("raw_hex"));
+        assert!(!f.contains_key("decoded"));
+    }
+
+    #[test]
+    fn binary_payload_keeps_exact_bytes() {
+        let f = payload_fields(&mut decoder(), "a/b", &[0x00, 0xff, 0xfe, 0x41]);
+        assert_eq!(f["raw_hex"], "00fffe41");
+        assert_eq!(hex_decode("00fffe41").unwrap(), vec![0x00, 0xff, 0xfe, 0x41]);
+    }
+
+    #[test]
+    fn sparkplug_topic_is_decoded() {
+        // Payload { seq: 5 }
+        let f = payload_fields(&mut decoder(), "spBv1.0/g/NDATA/e", &[0x18, 0x05]);
+        assert_eq!(f["decoded"]["kind"], "sparkplug");
+        assert_eq!(f["decoded"]["value"]["seq"], 5);
+    }
+
+    #[test]
+    fn hex_decode_rejects_bad_input() {
+        assert!(hex_decode("abc").is_none());
+        assert!(hex_decode("zz").is_none());
+        assert!(hex_decode("é1").is_none());
+        assert_eq!(hex_decode("").unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn decode_kind_names_are_stable() {
+        assert_eq!(DecodeKind::Sparkplug.as_str(), "sparkplug");
+        assert_eq!(DecodeKind::Protobuf.as_str(), "protobuf");
+    }
 }

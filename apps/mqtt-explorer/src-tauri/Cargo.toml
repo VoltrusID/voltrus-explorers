@@ -20,3 +20,4 @@ tauri-plugin-fs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+parking_lot = "0.12"

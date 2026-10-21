@@ -1,10 +1,15 @@
 export interface MessageRow {
   timestamp: number;
   topic: string;
+  /** Text for UTF-8 payloads, hex for binary ones (see `encoding`). */
   payload: string;
+  /** `hex` when the payload is not valid UTF-8 and `payload` holds its bytes as hex. */
+  encoding: "utf8" | "hex";
   /** `null` when the source has no per-message QoS (broker stream). */
   qos: number | null;
   retain: boolean;
+  /** Sparkplug B / protobuf result as compact JSON, empty when the message was not decoded. */
+  decoded: string;
 }
 
 function field(v: string): string {
@@ -15,7 +20,7 @@ function field(v: string): string {
 }
 
 export function messagesToCsv(rows: MessageRow[]): string {
-  const lines = ["timestamp,topic,payload,qos,retain"];
+  const lines = ["timestamp,topic,payload,qos,retain,encoding,decoded"];
   for (const r of rows) {
     lines.push(
       [
@@ -24,6 +29,8 @@ export function messagesToCsv(rows: MessageRow[]): string {
         field(r.payload),
         r.qos === null ? "" : String(r.qos),
         r.retain ? "true" : "false",
+        r.encoding,
+        field(r.decoded),
       ].join(","),
     );
   }

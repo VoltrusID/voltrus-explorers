@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@mactools/ui";
+import type { PayloadInfo } from "./payload";
 
 // A single latest-value-per-topic entry the tree is built from.
-export interface TreeEntry {
+export interface TreeEntry extends PayloadInfo {
   topic: string;
-  payload: string;
   count: number;
   ts: number;
   retain: boolean;
@@ -13,7 +13,7 @@ export interface TreeEntry {
 
 interface TopicTreeProps {
   entries: TreeEntry[];
-  formatPayload: (p: string) => string;
+  formatPayload: (p: PayloadInfo) => string;
   onLeafClick?: (topic: string) => void;
   blinkingTopics?: Set<string>;
 }
@@ -24,7 +24,7 @@ interface TreeNode {
   count: number; // aggregate messages routed through this node
   children: Map<string, TreeNode>;
   // Leaf-only (set when `path` is a real published topic):
-  payload?: string;
+  info?: PayloadInfo;
   ts?: number;
   retain?: boolean;
 }
@@ -49,7 +49,7 @@ function buildTree(entries: TreeEntry[]): TreeNode | null {
     }
     // Keep the newest payload seen at this exact topic.
     if (cur.ts === undefined || e.ts > cur.ts) {
-      cur.payload = e.payload;
+      cur.info = { payload: e.payload, rawHex: e.rawHex, decoded: e.decoded };
       cur.ts = e.ts;
       cur.retain = e.retain;
     }
@@ -70,14 +70,14 @@ function NodeRow({
 }: {
   node: TreeNode;
   depth: number;
-  formatPayload: (p: string) => string;
+  formatPayload: (p: PayloadInfo) => string;
   onLeafClick?: (t: string) => void;
   blinkingTopics?: Set<string>;
 }) {
   const [open, setOpen] = useState(true);
   const children = useMemo(() => sortNodes(Array.from(node.children.values())), [node]);
   const hasChildren = children.length > 0;
-  const isLeaf = node.payload !== undefined;
+  const isLeaf = node.info !== undefined;
   const blink = blinkingTopics?.has(node.path);
 
   return (
@@ -140,7 +140,7 @@ function NodeRow({
               textOverflow: "ellipsis",
             }}
           >
-            {formatPayload(node.payload ?? "")}
+            {node.info ? formatPayload(node.info) : ""}
           </span>
         )}
         <span

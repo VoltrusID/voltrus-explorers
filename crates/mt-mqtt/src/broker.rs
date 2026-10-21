@@ -387,11 +387,11 @@ fn check_ports_free(config: &MqttBrokerConfig) -> Result<(), String> {
 /// Start the embedded MQTT broker as a background task.
 ///
 /// If `on_message` is provided, it will be called for every message passing through
-/// the broker (topic, payload as string, timestamp millis, retain).
+/// the broker (topic, raw payload bytes, timestamp millis, retain).
 pub async fn start_broker(
     state: MqttBrokerState,
     config: MqttBrokerConfig,
-    on_message: Option<Arc<dyn Fn(String, String, i64, bool) + Send + Sync + 'static>>,
+    on_message: Option<Arc<dyn Fn(String, Vec<u8>, i64, bool) + Send + Sync + 'static>>,
 ) -> Result<(), String> {
     if state.current_status().await == BrokerStatus::Running {
         return Err("Broker is already running".to_string());
@@ -492,7 +492,6 @@ pub async fn start_broker(
 
                             eprintln!("[mqtt-tracker] Forward: topic={}", topic);
 
-                            let payload_str = String::from_utf8_lossy(&payload).to_string();
                             let ts = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
@@ -500,7 +499,7 @@ pub async fn start_broker(
 
                             if let Some(ref cb) = on_msg {
                                 eprintln!("[mqtt-tracker] Calling on_message callback");
-                                cb(topic.clone(), payload_str, ts, retain);
+                                cb(topic.clone(), payload.clone(), ts, retain);
                             } else {
                                 eprintln!("[mqtt-tracker] on_message is None, no callback");
                             }
@@ -806,7 +805,7 @@ mod tests {
             let state = MqttBrokerState::new();
             let config = MqttBrokerConfig { enabled: true, port, max_connections: 10, ..Default::default() };
             let tx = std::sync::Mutex::new(tx);
-            let cb: Arc<dyn Fn(String, String, i64, bool) + Send + Sync + 'static> =
+            let cb: Arc<dyn Fn(String, Vec<u8>, i64, bool) + Send + Sync + 'static> =
                 Arc::new(move |topic, _payload, _ts, _retain| {
                     let _ = tx.lock().unwrap().send(topic);
                 });
