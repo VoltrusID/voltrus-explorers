@@ -39,3 +39,15 @@ export {
   type Tone,
 } from "./primitives";
 export { ProProvider, ProBadge, ProAboutRow, useProStatus, type ProProviderProps, type StoreStatus } from "./pro";
+export {
+  ConnectProvider,
+  ConnectButton,
+  useConnect,
+  useConnectApp,
+  type ConnectAppHooks,
+  type ConnectInfo,
+  type ConnectMe,
+  type ConnectStorage,
+  type LocalProfile,
+  type ProfileData,
+} from "./connect";

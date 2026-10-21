@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { ProProvider } from "@mactools/ui";
+import { ConnectProvider, ProProvider } from "@mactools/ui";
 import { DevicePanel } from "./components/DevicePanel";
 import "./styles.css";
 
@@ -26,7 +26,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <DevicePanel />
     ) : (
       <ProProvider appName="BACnet Explorer" features={PRO_FEATURES}>
-        <App />
+        <ConnectProvider>
+          <App />
+        </ConnectProvider>
       </ProProvider>
     )}
   </React.StrictMode>,

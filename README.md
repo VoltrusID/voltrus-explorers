@@ -118,7 +118,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store -p mt-connect` and `bun run --cwd apps/modbus-poll test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
@@ -155,6 +155,7 @@ crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
 crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
+crates/mt-connect      Voltrus Connect client (sign-in with PKCE, Keychain tokens, profile sync, App Store subscription linking)
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers
 ```

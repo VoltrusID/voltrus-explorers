@@ -13,6 +13,7 @@ members = [
     "crates/mt-serial",
     "crates/mt-mqtt",
     "crates/mt-opcua",
+    "crates/mt-connect",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/ble-inspector/src-tauri",

@@ -899,7 +899,10 @@ async fn stop_cov_listener(state: tauri::State<'_, AppState>) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
+    mt_connect::setup(
+        mt_store::setup(tauri::Builder::default(), include_str!("../store.json")),
+        include_str!("../connect.json"),
+    )
         // Native open/save panels + writes to the paths the user picked (the only
         // file access the sandboxed App Store build has).
         .plugin(tauri_plugin_dialog::init())
@@ -922,7 +925,13 @@ pub fn run() {
             start_cov_listener, stop_cov_listener,
             sim_start, sim_stop, sim_set_value, sim_set_bool, sim_status, open_device_panel,
             system::open_url, system::platform,
-            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore
+            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_connect::connect_info, mt_connect::connect_signed_in, mt_connect::connect_sign_in, mt_connect::connect_sign_out,
+            mt_connect::connect_me, mt_connect::connect_sync, mt_connect::connect_profile_save, mt_connect::connect_new_id,
+            mt_connect::connect_open_url, mt_connect::connect_teams, mt_connect::connect_team_create, mt_connect::connect_team_invite,
+            mt_connect::connect_invite_accept, mt_connect::connect_team_remove_member, mt_connect::connect_remote_sites,
+            mt_connect::connect_remote_join, mt_connect::connect_store_products, mt_connect::connect_subscribe,
+            mt_connect::connect_link_purchases
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,7 @@
+{
+  "app_slug": "modbus-poll",
+  "subscription_products": [
+    "com.joyodigitama.modbuspoll.connect.monthly",
+    "com.joyodigitama.modbuspoll.connect.yearly"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "app_slug": "bacnet-explorer",
+  "subscription_products": [
+    "com.joyodigitama.bacnetexplorer.connect.monthly",
+    "com.joyodigitama.bacnetexplorer.connect.yearly"
+  ]
+}
