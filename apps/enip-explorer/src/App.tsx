@@ -12,7 +12,11 @@ import {
   Plug,
   Radar,
   Square,
+  Star,
+  Trash2,
   TrendingUp,
+  Upload,
+  Download,
 } from "lucide-react";
 import {
   ConnectionForm,
@@ -35,6 +39,8 @@ import {
   ProAboutRow,
   ProBadge,
   useProStatus,
+  saveTextFile,
+  openTextFile,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
@@ -47,6 +53,17 @@ import { EdsPanel } from "./EdsPanel";
 import { IoPump } from "./IoPump";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
 import { buildEdsMap, loadEds, type Eds } from "./eds";
+import {
+  FREE_WATCHLIST_LIMIT,
+  deleteWatchList,
+  loadWatchLists,
+  mergeWatchLists,
+  parseWatchListCsv,
+  sameTags,
+  upsertWatchLists,
+  watchListsToCsv,
+  type WatchList,
+} from "./watchlists";
 
 function cipTypeOf(v: any): string {
   if (v && typeof v === "object") {
@@ -220,7 +237,26 @@ function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [tags, setTags] = useState<CipTag[]>([]);
   const [onDemand, setOnDemand] = useState<Record<string, unknown>>({});
-  const polledTags = useMemo(() => (pro ? tags : tags.slice(0, FREE_POLL_TAGS)), [pro, tags]);
+  // Watch list: the working set of tag names to poll first. `name` is the saved list it came from, if any.
+  const [watchLists, setWatchLists] = useState<WatchList[]>(() => loadWatchLists());
+  const [watch, setWatch] = useState<{ name: string | null; tags: string[] } | null>(null);
+  const [watchName, setWatchName] = useState("");
+  const watchedTags = useMemo(() => {
+    if (!watch) return null;
+    const byName = new Map(tags.map((t) => [t.name, t]));
+    const found = watch.tags.flatMap((n) => byName.get(n) ?? []);
+    return found.length > 0 ? found : null;
+  }, [watch, tags]);
+  // Watched tags first, then the rest. Poll results line up with the front of this array.
+  const orderedTags = useMemo(() => {
+    if (!watchedTags) return tags;
+    const watchedNames = new Set(watchedTags.map((t) => t.name));
+    return [...watchedTags, ...tags.filter((t) => !watchedNames.has(t.name))];
+  }, [watchedTags, tags]);
+  const polledTags = useMemo(() => {
+    const wanted = watchedTags ?? tags;
+    return pro ? wanted : orderedTags.slice(0, FREE_POLL_TAGS);
+  }, [pro, watchedTags, tags, orderedTags]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [editingTag, setEditingTag] = useState<{ name: string; currentValue: string; type?: string } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
@@ -404,6 +440,80 @@ function App() {
     } catch (e) { addLog("error", `Simulator stop failed: ${String(e)}`); }
   }, [addLog]);
 
+  const watchSaved = watch?.name ? watchLists.find((l) => l.name === watch.name) : undefined;
+  const watchDirty = !!watch && (!watchSaved || !sameTags(watchSaved.tags, watch.tags));
+  const watchFound = watchedTags?.length ?? 0;
+
+  const applyWatch = useCallback((list: WatchList) => {
+    setWatch({ name: list.name, tags: list.tags });
+    setWatchName(list.name);
+    if (tags.length > 0) {
+      const names = new Set(tags.map((t) => t.name));
+      const found = list.tags.filter((n) => names.has(n)).length;
+      addLog("info", `Watch list "${list.name}": ${found} of ${list.tags.length} tags found on this PLC`);
+    }
+  }, [tags, addLog]);
+
+  const selectWatch = (name: string) => {
+    const list = watchLists.find((l) => l.name === name);
+    if (list) applyWatch(list);
+    else { setWatch(null); setWatchName(""); }
+  };
+
+  const toggleWatch = (name: string) => {
+    setWatch((prev) => {
+      const cur = prev?.tags ?? [];
+      const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
+      return next.length > 0 ? { name: prev?.name ?? null, tags: next } : null;
+    });
+  };
+
+  const saveWatch = () => {
+    const name = watchName.trim();
+    if (!watch || !name) return;
+    const isNew = !watchLists.some((l) => l.name === name);
+    if (isNew && watchLists.length >= FREE_WATCHLIST_LIMIT && !requirePro("More than one saved watch list")) return;
+    setWatchLists(upsertWatchLists([{ name, tags: watch.tags }]));
+    setWatch({ name, tags: watch.tags });
+    setWatchName(name);
+    addLog("info", `Saved watch list "${name}" (${watch.tags.length} tags)`);
+  };
+
+  const deleteWatch = () => {
+    if (!watch?.name) return;
+    setWatchLists(deleteWatchList(watch.name));
+    addLog("info", `Deleted watch list "${watch.name}"`);
+    setWatch({ name: null, tags: watch.tags });
+  };
+
+  const exportWatch = (all: boolean) => {
+    const lists = all ? watchLists : watch ? [{ name: watchName.trim() || watch.name || "Watch list", tags: watch.tags }] : [];
+    if (lists.length === 0) return;
+    const label = all ? "all" : lists[0].name.replace(/[^\w.-]+/g, "-");
+    saveTextFile(`enip-watchlist-${label}.csv`, watchListsToCsv(lists))
+      .then((p) => { if (p) addLog("info", `Exported ${lists.length} watch list${lists.length === 1 ? "" : "s"} to ${p}`); })
+      .catch((e) => addLog("error", `Watch list export failed: ${String(e)}`));
+  };
+
+  const importWatch = () => {
+    openTextFile()
+      .then((file) => {
+        if (!file) return;
+        const base = (file.path.split(/[\\/]/).pop() ?? "Imported").replace(/\.[^.]*$/, "") || "Imported";
+        const parsed = parseWatchListCsv(file.text, base);
+        if (parsed.length === 0) {
+          addLog("error", "Watch list import: no tag names found. Use a CSV with a list,tag header or one tag name per row.");
+          return;
+        }
+        const merged = mergeWatchLists(watchLists, parsed);
+        if (merged.length > watchLists.length && merged.length > FREE_WATCHLIST_LIMIT && !requirePro("More than one saved watch list")) return;
+        setWatchLists(upsertWatchLists(parsed));
+        addLog("info", `Imported ${parsed.length} watch list${parsed.length === 1 ? "" : "s"} from ${file.path}`);
+        applyWatch(parsed[0]);
+      })
+      .catch((e) => addLog("error", `Watch list import failed: ${String(e)}`));
+  };
+
   const columns = [
     { key: "name", label: "Tag Name", width: "200px" },
     { key: "type", label: "CIP Type", width: "100px" },
@@ -414,7 +524,7 @@ function App() {
 
   const scannerTableData = !protocol.connected
     ? []
-    : tags.map((t, i) => {
+    : orderedTags.map((t, i) => {
         const v = i < protocol.values.length ? protocol.values[i] : onDemand[t.name];
         const hasValue = v !== undefined;
         return {
@@ -426,9 +536,9 @@ function App() {
       });
   const handleScannerRowClick = (row: Record<string, unknown>) => {
     const name = String(row.name);
-    const idx = tags.findIndex((t) => t.name === name);
+    const idx = orderedTags.findIndex((t) => t.name === name);
     if (idx >= polledTags.length) {
-      invoke<unknown[]>("read_tags", { tags: [tags[idx]] })
+      invoke<unknown[]>("read_tags", { tags: [orderedTags[idx]] })
         .then((vals) => setOnDemand((prev) => ({ ...prev, [name]: vals[0] })))
         .catch((e) => addLog("error", `Read ${name} failed: ${String(e)}`));
       return;
@@ -440,10 +550,10 @@ function App() {
   // Numeric tag values for the trend (PLC poll).
   const trendRows = useMemo(() => {
     if (protocol.connected && protocol.values.length > 0) {
-      return tags.map((t, i) => ({ name: t.name, v: cipToNum(protocol.values[i]) }));
+      return orderedTags.map((t, i) => ({ name: t.name, v: cipToNum(protocol.values[i]) }));
     }
     return [];
-  }, [protocol.connected, protocol.values, tags]);
+  }, [protocol.connected, protocol.values, orderedTags]);
 
   const trendRowsRef = useRef(trendRows);
   trendRowsRef.current = trendRows;
@@ -568,28 +678,87 @@ function App() {
             </Section>
           )}
 
+          <Section title="Watch lists" meta={watchLists.length > 0 ? watchLists.length : undefined}>
+            <select
+              className="vt-select"
+              aria-label="Watch list"
+              value={watch?.name && watchLists.some((l) => l.name === watch.name) ? watch.name : ""}
+              onChange={(e) => selectWatch(e.target.value)}
+            >
+              <option value="">{watch && !watch.name ? `Unsaved selection (${watch.tags.length})` : "All tags"}</option>
+              {watchLists.map((l) => (<option key={l.name} value={l.name}>{l.name} ({l.tags.length})</option>))}
+            </select>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
+              {!watch
+                ? "Star tags in the list below to poll only those, or import a list from CSV."
+                : tags.length === 0
+                  ? `${watch.tags.length} tags in this list. Connect and browse to apply it.`
+                  : `${watchFound} of ${watch.tags.length} listed tags found on this PLC.`}
+              {watch && watchDirty ? " Unsaved changes." : ""}
+            </div>
+            {watch && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  className="vt-input"
+                  placeholder="List name"
+                  aria-label="Watch list name"
+                  maxLength={60}
+                  value={watchName}
+                  onChange={(e) => setWatchName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveWatch(); }}
+                />
+                <Button size="sm" variant="primary" disabled={!watchName.trim()} onClick={saveWatch}>
+                  Save{!pro && watchLists.length >= FREE_WATCHLIST_LIMIT && !watchLists.some((l) => l.name === watchName.trim()) ? <> <ProBadge /></> : null}
+                </Button>
+              </div>
+            )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <Button size="sm" variant="ghost" icon={<Download size={14} />} disabled={!watch} onClick={() => exportWatch(false)}>Export</Button>
+              {watchLists.length > 1 && (
+                <Button size="sm" variant="ghost" icon={<Download size={14} />} onClick={() => exportWatch(true)}>Export all</Button>
+              )}
+              <Button size="sm" variant="ghost" icon={<Upload size={14} />} onClick={importWatch}>Import</Button>
+              {watchSaved && (
+                <Button size="sm" variant="ghost" icon={<Trash2 size={14} />} onClick={deleteWatch}>Delete</Button>
+              )}
+            </div>
+          </Section>
+
           <Section
             title="Tags"
             meta={tags.length}
             actions={protocol.connected ? <Button variant="ghost" size="sm" onClick={handleBrowseTags}>Browse</Button> : undefined}
           >
-            {!pro && tags.length > FREE_POLL_TAGS && (
+            {!pro && (watchedTags ?? tags).length > FREE_POLL_TAGS && (
               <button
                 type="button"
                 onClick={() => openUpsell("Live polling of every tag")}
                 style={{ all: "unset", cursor: "pointer", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5, paddingBottom: 6 }}
               >
-                Polling {FREE_POLL_TAGS} of {tags.length} tags. Click a tag to read it once. Pro polls them all.
+                Polling {FREE_POLL_TAGS} of {(watchedTags ?? tags).length} tags. Click a tag to read it once. Pro polls them all.
               </button>
             )}
             {tags.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                {tags.map((t) => (
-                  <div key={t.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
-                    <span className="mono" style={{ fontSize: 12 }}>{t.name}</span>
-                    <Badge>{t.data_type}</Badge>
-                  </div>
-                ))}
+                {tags.map((t) => {
+                  const watched = !!watch?.tags.includes(t.name);
+                  return (
+                    <div key={t.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+                        <IconButton
+                          size="sm"
+                          label={watched ? `Remove ${t.name} from watch list` : `Add ${t.name} to watch list`}
+                          pressed={watched}
+                          onClick={() => toggleWatch(t.name)}
+                        >
+                          <Star size={12} fill={watched ? "currentColor" : "none"} />
+                        </IconButton>
+                        <span className="mono" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
+                      </span>
+                      <Badge>{t.data_type}</Badge>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <EmptyState

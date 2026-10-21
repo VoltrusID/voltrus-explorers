@@ -14,6 +14,7 @@ const PRO_FEATURES = [
   "Implicit I/O (ForwardOpen and cyclic data)",
   "Built-in EtherNet/IP adapter and PLC simulator",
   "Packet log export to CSV",
+  "More than one saved tag watch list",
   "Custom response decoders",
 ];
 

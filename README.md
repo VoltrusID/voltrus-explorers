@@ -56,8 +56,8 @@ S7 Explorer is an independent tool. Siemens, SIMATIC, S7-300, S7-400, S7-1200, S
 Siemens AG; it is not affiliated with or endorsed by Siemens.
 | EtherNet/IP Explorer | |
 | --- | --- |
-| Free | Discover devices and read their identity, connect, browse the full tag list, live polling of 10 tags (any other tag can be read once on demand), hex view, CIP object tree and browser (Get Attribute Single and All, list instances), EDS import, packet log viewer, communication log with CSV export |
-| Pro | Unlimited live tags, write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), custom response decoders, packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
+| Free | Discover devices and read their identity, connect, browse the full tag list, live polling of 10 tags (any other tag can be read once on demand), hex view, CIP object tree and browser (Get Attribute Single and All, list instances), EDS import, packet log viewer, communication log with CSV export, 1 saved tag watch list with CSV export and import |
+| Pro | Unlimited live tags, more than one saved tag watch list, write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), custom response decoders, packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
 
 EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
 The App Store build of Serial Monitor is free to download too; Pro is a one-time in-app purchase. Builds from source
