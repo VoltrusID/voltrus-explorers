@@ -5,12 +5,11 @@ import { ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
-  "Live subscriptions and monitored items",
+  "Unlimited live monitored items and the subscriptions panel",
   "Live trend charts",
   "Write values to nodes",
   "Certificate management",
   "Device templates for the built-in server",
-  "CSV export of the communication log",
 ];
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
