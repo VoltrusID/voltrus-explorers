@@ -44,9 +44,11 @@ async function fetchObjectEvents(objectType: string, objectInstance: number): Pr
 
 interface AlarmPanelProps {
   connected: boolean;
+  /** Phone layout: one card per alarm instead of a five-column table. */
+  compact?: boolean;
 }
 
-export function AlarmPanel({ connected }: AlarmPanelProps) {
+export function AlarmPanel({ connected, compact = false }: AlarmPanelProps) {
   const [alarms, setAlarms] = useState<AlarmSummaryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +146,59 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
     }
   };
 
+  /** Events / Ack buttons and the inline acknowledge form for one alarm row. */
+  const alarmActions = (alarm: AlarmSummaryEntry, key: string) => (
+    <>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <Button
+          size="sm"
+          variant="ghost"
+          icon={<ClipboardList size={14} strokeWidth={1.75} />}
+          loading={eventInfoKey === key && eventInfoLoading}
+          disabled={eventInfoLoading}
+          onClick={() => handleGetEventInfo(alarm.object_type, alarm.object_instance)}
+        >
+          Events
+        </Button>
+        <Button
+          size="sm"
+          icon={ackRow === key ? <X size={14} strokeWidth={1.75} /> : <Check size={14} strokeWidth={1.75} />}
+          onClick={() => {
+            setAckRow(ackRow === key ? null : key);
+            setAckText("");
+          }}
+        >
+          {ackRow === key ? "Cancel" : "Ack"}
+        </Button>
+      </div>
+      {ackRow === key && (
+        <div style={{ display: "flex", gap: 4, marginTop: 4, alignItems: "center" }}>
+          <input
+            className="vt-input vt-input--sm"
+            type="text"
+            placeholder="Acknowledged by…"
+            value={ackText}
+            onChange={(e) => setAckText(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAck(alarm);
+              if (e.key === "Escape") setAckRow(null);
+            }}
+          />
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!ackText.trim()}
+            loading={ackBusy}
+            onClick={() => handleAck(alarm)}
+          >
+            Send
+          </Button>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
       {/* Header */}
@@ -189,7 +244,30 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
           />
         )}
 
-        {alarms.length > 0 && (
+        {alarms.length > 0 && compact && (
+          <div>
+            {alarms.map((alarm) => {
+              const key = `${alarm.object_type}-${alarm.object_instance}`;
+              const isNormal = alarm.alarm_state.toLowerCase() === "normal";
+              return (
+                <div key={key} style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, color: "var(--text)" }}>
+                      {formatObjectType(alarm.object_type)} #{alarm.object_instance}
+                    </span>
+                    <Badge tone={isNormal ? "success" : "danger"}>{alarm.alarm_state}</Badge>
+                  </div>
+                  <div className="mono" style={{ margin: "4px 0 10px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+                    Acked: {alarm.acked_transitions || "—"}
+                  </div>
+                  {alarmActions(alarm, key)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {alarms.length > 0 && !compact && (
           <table className="vt-table">
             <thead>
               <tr>
@@ -215,53 +293,7 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
                       {alarm.acked_transitions}
                     </td>
                     <td>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          icon={<ClipboardList size={14} strokeWidth={1.75} />}
-                          loading={eventInfoKey === key && eventInfoLoading}
-                          disabled={eventInfoLoading}
-                          onClick={() => handleGetEventInfo(alarm.object_type, alarm.object_instance)}
-                        >
-                          Events
-                        </Button>
-                        <Button
-                          size="sm"
-                          icon={ackRow === key ? <X size={14} strokeWidth={1.75} /> : <Check size={14} strokeWidth={1.75} />}
-                          onClick={() => {
-                            setAckRow(ackRow === key ? null : key);
-                            setAckText("");
-                          }}
-                        >
-                          {ackRow === key ? "Cancel" : "Ack"}
-                        </Button>
-                      </div>
-                      {ackRow === key && (
-                        <div style={{ display: "flex", gap: 4, marginTop: 4, alignItems: "center" }}>
-                          <input
-                            className="vt-input vt-input--sm"
-                            type="text"
-                            placeholder="Acknowledged by…"
-                            value={ackText}
-                            onChange={(e) => setAckText(e.target.value)}
-                            autoFocus
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleAck(alarm);
-                              if (e.key === "Escape") setAckRow(null);
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={!ackText.trim()}
-                            loading={ackBusy}
-                            onClick={() => handleAck(alarm)}
-                          >
-                            Send
-                          </Button>
-                        </div>
-                      )}
+                      {alarmActions(alarm, key)}
                     </td>
                   </tr>
                 );
@@ -302,7 +334,29 @@ export function AlarmPanel({ connected }: AlarmPanelProps) {
               description="The device reports no event information for this object."
             />
           )}
-          {!eventInfoLoading && eventInfo && eventInfo.length > 0 && (
+          {!eventInfoLoading && eventInfo && eventInfo.length > 0 && compact && (
+            <div>
+              {eventInfo.map((ev) => (
+                <div key={ev.object_identifier} style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 12, rowGap: 6, fontSize: "var(--fs-sm)" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Event state</span>
+                  <span><Badge tone={ev.event_state === "normal" ? "success" : "danger"}>{ev.event_state}</Badge></span>
+                  <span style={{ color: "var(--text-muted)" }}>Notify type</span>
+                  <span className="mono">{ev.notify_type}</span>
+                  <span style={{ color: "var(--text-muted)" }}>Acked</span>
+                  <span className="mono" style={{ overflowWrap: "anywhere" }}>{ev.acknowledged_transitions || "—"}</span>
+                  <span style={{ color: "var(--text-muted)" }}>Enabled</span>
+                  <span className="mono" style={{ overflowWrap: "anywhere" }}>{ev.event_enable || "—"}</span>
+                  <span style={{ color: "var(--text-muted)" }}>To offnormal</span>
+                  <span className="mono">{ev.event_time_stamps[0] ?? "—"}</span>
+                  <span style={{ color: "var(--text-muted)" }}>To fault</span>
+                  <span className="mono">{ev.event_time_stamps[1] ?? "—"}</span>
+                  <span style={{ color: "var(--text-muted)" }}>To normal</span>
+                  <span className="mono">{ev.event_time_stamps[2] ?? "—"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!eventInfoLoading && eventInfo && eventInfo.length > 0 && !compact && (
             <table className="vt-table">
               <thead>
                 <tr>

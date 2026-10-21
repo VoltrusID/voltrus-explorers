@@ -159,7 +159,7 @@ export function PropertyInspector({
                       {formatPropertyName(entry.property_name)}
                     </td>
                     <td
-                      className="is-mono"
+                      className="is-mono property-inspector-value"
                       style={{ position: "relative", verticalAlign: "middle", paddingRight: writable && onWrite && hasValue ? 36 : undefined }}
                     >
                       {isBool ? <Badge tone={tone}>{displayValue}</Badge> : <span>{displayValue}</span>}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into gen/apple/<app>_iOS/Info.plist by Tauri (Info.ios.plist next to
+	     tauri.conf.json is picked up automatically). Connecting to BACnet/IP devices,
+	     device discovery (Who-Is broadcast), the COV listener and the device simulator
+	     all use the local network. BACnet does not use Bonjour, so no NSBonjourServices. -->
+	<!-- productName must stay space-free for the Xcode 26 archive step, so the
+	     home-screen name comes from CFBundleDisplayName instead. -->
+	<key>CFBundleDisplayName</key>
+	<string>BACnet Explorer</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>BACnet Explorer talks to BACnet/IP controllers on your local network: it finds them with a Who-Is broadcast, reads and writes their objects, and can run a virtual BACnet device that other BACnet tools can connect to.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

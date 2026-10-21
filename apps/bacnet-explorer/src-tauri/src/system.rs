@@ -1,3 +1,9 @@
+/// Host OS name ("macos" | "ios" | "windows" | "linux") for frontend capability gating.
+#[tauri::command]
+pub fn platform() -> String {
+    std::env::consts::OS.to_string()
+}
+
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]

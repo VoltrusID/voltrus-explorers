@@ -5,7 +5,7 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 | Workflow | Trigger | Secrets | Does |
 | --- | --- | --- | --- |
 | `ci.yml` | push to `main`, pull requests, manual | none | crate tests, frontend typecheck/build/tests (Linux); unsigned universal build of both apps (macOS) |
-| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, Modbus Poll iOS IPA; optional App Store Connect upload and GitHub Release |
+| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of either app (iPhone and iPad); optional App Store Connect upload and GitHub Release |
 
 ## Running a release
 
@@ -14,7 +14,7 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 
    ```bash
    gh workflow run release.yml -R VoltrusID/voltrus-explorers -f app=bacnet-explorer \
-     -f appstore=true -f dmg=true -f upload=true -f github_release=true
+     -f appstore=true -f dmg=true -f ios=true -f upload=true -f github_release=true
    gh workflow run release.yml -R VoltrusID/voltrus-explorers -f app=modbus-poll \
      -f appstore=true -f dmg=true -f ios=true -f upload=true -f github_release=true
    ```
@@ -37,8 +37,11 @@ always increase.
     (or uploads it with `upload=true`).
   - `dmg`: signs with Developer ID (hardened runtime), packs and signs the DMG, notarizes it with `notarytool`
     (API key) and staples it.
-- iOS: `apps/modbus-poll/scripts/build-ios.sh` (always `--features store`) with Tauri's manual signing
-  (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`).
+- iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
+  (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
+  app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for both apps.
+- BACnet Explorer on iOS needs Apple's multicast entitlement for Who-Is scanning: see [ios-multicast.md](ios-multicast.md).
+  Until it is granted the build simply leaves it out; connecting by IP address works either way.
 
 ## File access in the sandbox
 
@@ -69,6 +72,10 @@ write succeeded.
 - App Review: store builds contain no license keys, no outside payment and no link to the GitHub builds (the About
   window shows the GitHub link only in source builds). Keep it that way, and keep the App Store support/marketing
   pages free of other ways to buy the same features.
+
+For BACnet Explorer `free_since.ios_build` stays `null` for now: the iOS app has never been paid, and `null` means "every
+store install is Pro". Set it together with `macos_version` when the Mac app goes free, using the Unix time of the first
+iOS build that should be free (see below).
 
 ### Switching an app to free
 

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ExternalLink, Play, Radar, Square } from "lucide-react";
+import { Bell, ExternalLink, LineChart, ListTree, Play, Plug, Radar, ScrollText, Square } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import {
   Button,
@@ -26,6 +26,8 @@ import type { BacnetConfig, BacnetObject, BacnetValue, BacnetDiscoveredDevice, S
 import { bacnetValueToNumber } from "./types";
 import { WRITE_KIND_TYPES, parseWriteValue, writeKindFor, type WriteKind } from "./writeValue";
 import { ObjectBrowser } from "./components/ObjectBrowser";
+import { DevicePanel } from "./components/DevicePanel";
+import { MobileTabBar, type PhoneTab, type PhoneTabItem } from "./components/MobileTabBar";
 import { AlarmPanel } from "./components/AlarmPanel";
 import TrendPanel from "./components/TrendPanel";
 import { trendKey, useBacnetTrend } from "./hooks/useBacnetTrend";
@@ -170,9 +172,17 @@ function App() {
   const [trendHeight, setTrendHeight] = useState(220);
   const [dragSide, setDragSide] = useState<"left" | "table" | "trend" | null>(null);
 
-  // Mobile
-  const [mobileTab, setMobileTab] = useState<"connect" | "data" | "log">("connect");
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  // Phone layout (< 768px): bottom tabs. Wider touch screens (iPad) keep the two-pane layout with touch-size controls.
+  const [phoneTab, setPhoneTab] = useState<PhoneTab>("devices");
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const isMobile = viewportWidth < 768;
+  const isTouch = useRef(window.matchMedia("(pointer: coarse)").matches).current;
+  const [alarmsOpened, setAlarmsOpened] = useState(false);
+  const [platform, setPlatform] = useState("");
+  // iOS has a single window: the simulator control panel opens as a full-screen sheet instead.
+  const inlinePanel = platform === "ios" || isMobile;
+  const [showSimPanel, setShowSimPanel] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   // Simulation (real BACnet device simulator on the backend)
   const [simTemplate, setSimTemplate] = useState<string | null>(null);
@@ -192,12 +202,13 @@ function App() {
         addLog("info", "Connected. Use Browse Objects to explore the device.");
         setViewMode("browse");
         setConnectedDevice({ ip: config.ip, port: config.port, device_id: config.device_id });
+        if (isMobile) setPhoneTab("objects");
       } else {
         addLog("error", protocol.error ? `Connection failed: ${protocol.error}` : "Connection failed (no BACnet response within 3s).");
       }
       return ok;
     },
-    [protocol, addLog],
+    [protocol, addLog, isMobile],
   );
 
   const handleDisconnect = useCallback(() => {
@@ -205,6 +216,8 @@ function App() {
     protocol.stopPolling();
     setViewMode("browse");
     setConnectedDevice(null);
+    setAlarmsOpened(false);
+    setPhoneTab("devices");
     addLog("info", "Disconnected");
   }, [protocol, addLog]);
 
@@ -212,12 +225,14 @@ function App() {
     addLog("info", "Broadcasting Who-Is…");
     setDiscovering(true);
     setDiscoveredDevices([]);
+    setDiscoveryError(null);
     setShowDiscovery(true);
     try {
       const devices = await invoke<BacnetDiscoveredDevice[]>("discover", { timeoutSecs: 5 });
       setDiscoveredDevices(devices);
       addLog("info", `Discovered ${devices.length} device(s)`);
     } catch (e) {
+      setDiscoveryError(String(e));
       addLog("error", `Discovery failed: ${e}`);
     } finally {
       setDiscovering(false);
@@ -262,11 +277,15 @@ function App() {
     };
   }, [dragSide]);
 
-  // ── Mobile detection ──
+  // ── Viewport width (phone vs. wider layouts) and host platform ──
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
+    const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    invoke<string>("platform").then(setPlatform).catch(() => {});
   }, []);
 
   // ── Error logging ──
@@ -293,6 +312,7 @@ function App() {
     setSimRunning(false);
     setSimValues({});
     setSimBoundPort(null);
+    setShowSimPanel(false);
     addLog("info", "Simulation stopped");
   }, [addLog]);
 
@@ -304,12 +324,16 @@ function App() {
   }, [markSimStopped]);
 
   const openDevicePanel = useCallback(async () => {
+    if (inlinePanel) {
+      setShowSimPanel(true);
+      return;
+    }
     try {
       await invoke("open_device_panel");
     } catch (e) {
       addLog("error", `Failed to open control panel: ${e}`);
     }
-  }, [addLog]);
+  }, [addLog, inlinePanel]);
 
   const handleSimStart = useCallback(async () => {
     if (!simTemplate || !requirePro("Device simulator")) return;
@@ -323,11 +347,12 @@ function App() {
       setSimBoundPort(info.port);
       setSimRunning(true);
       addLog("info", `Simulation started: ${TEMPLATES[simTemplate].name} (device ${info.device_id}, UDP ${info.port})`);
-      await invoke("open_device_panel");
+      if (inlinePanel) setShowSimPanel(true);
+      else await invoke("open_device_panel");
     } catch (e) {
       addLog("error", `Simulation start failed: ${e}`);
     }
-  }, [simTemplate, simDeviceId, simPort, addLog, requirePro]);
+  }, [simTemplate, simDeviceId, simPort, addLog, requirePro, inlinePanel]);
 
   // sim_stop emits "sim-stopped" (also when the control-panel window stops the
   // simulator), which resets this window's state in the listener above.
@@ -461,7 +486,7 @@ function App() {
               : undefined
           }
         />
-        {protocol.connected && (
+        {protocol.connected && !isMobile && (
           <Tabs
             label="View"
             value={viewMode}
@@ -480,7 +505,7 @@ function App() {
       </Section>
       <Section title="Simulation" meta={<ProBadge />}>
         <span className="vt-hint">
-          Runs a virtual BACnet device on this machine so you can test browsing, reads and writes without hardware.
+          Runs a virtual BACnet device on this {inlinePanel ? "device" : "machine"} so you can test browsing, reads and writes without hardware.
         </span>
         <Field
           label="Template"
@@ -525,6 +550,16 @@ function App() {
               </Button>
             ) : (
               <>
+                {inlinePanel && !protocol.connected && simBoundPort != null && (
+                  <Button
+                    variant="primary"
+                    block
+                    icon={<Plug size={14} strokeWidth={1.75} />}
+                    onClick={() => handleConnect({ ip: "127.0.0.1", port: simBoundPort, deviceId: simDeviceId })}
+                  >
+                    Connect to simulator
+                  </Button>
+                )}
                 <Button block icon={<ExternalLink size={14} strokeWidth={1.75} />} onClick={openDevicePanel}>
                   Open control panel
                 </Button>
@@ -556,10 +591,12 @@ function App() {
           onToggleTrend={toggleTrend}
           onOpenTrendLog={openTrendLog}
           onOpenSchedule={openSchedule}
+          treeWidth={isTouch ? 208 : undefined}
         />
       </div>
-      {/* Horizontal drag handle — resize the trend panel */}
+      {/* Horizontal drag handle — resize the trend panel (mouse only) */}
       <div
+        hidden={isTouch}
         onMouseDown={(e) => handleDragStart("trend", e)}
         style={{
           height: 4,
@@ -605,6 +642,7 @@ function App() {
         />
       </div>
       <div
+        hidden={isTouch}
         onMouseDown={(e) => handleDragStart("table", e)}
         style={{
           height: 4,
@@ -626,43 +664,110 @@ function App() {
     </>
   );
 
-  // ── Mobile tab bar ──
-  const mobileTabBar = (
-    <nav style={{
-      display: "flex",
-      borderTop: "1px solid var(--border)",
-      background: "var(--card)",
-      flexShrink: 0,
-      paddingBottom: "env(safe-area-inset-bottom, 0px)",
-    }}>
-      {([
-        { id: "connect" as const, label: "Connect" },
-        { id: "data" as const, label: "Data" },
-        { id: "log" as const, label: "Log" },
-      ]).map((tab) => (
-        <button
-          key={tab.id}
-          onClick={() => setMobileTab(tab.id)}
-          style={{
-            flex: 1,
-            padding: "10px 0 8px",
-            fontSize: 11,
-            fontWeight: 600,
-            background: "none",
-            border: "none",
-            color: mobileTab === tab.id ? "var(--accent)" : "var(--text-muted)",
-            borderTop: mobileTab === tab.id ? "2px solid var(--accent)" : "2px solid transparent",
-            cursor: "pointer",
-          }}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </nav>
+  // ── Phone pages (bottom tabs) ──
+  const phoneTabs: PhoneTabItem[] = [
+    { id: "devices", label: "Devices", icon: <Radar size={20} strokeWidth={1.75} /> },
+    { id: "objects", label: "Objects", icon: <ListTree size={20} strokeWidth={1.75} /> },
+    { id: "trend", label: "Trend", icon: <LineChart size={20} strokeWidth={1.75} />, badge: trend.series.length },
+    { id: "alarms", label: "Alarms", icon: <Bell size={20} strokeWidth={1.75} /> },
+    { id: "log", label: "Log", icon: <ScrollText size={20} strokeWidth={1.75} /> },
+  ];
+
+  const selectPhoneTab = (tab: PhoneTab) => {
+    if (tab === "alarms") {
+      if (!requirePro("Alarms and events")) return;
+      setAlarmsOpened(true);
+    }
+    setPhoneTab(tab);
+  };
+
+  const needsConnection = (what: string) => (
+    <EmptyState
+      icon={<Radar size={20} strokeWidth={1.75} />}
+      title="Not connected"
+      description={`Connect to a BACnet device to ${what}.`}
+      action={
+        <Button variant="primary" onClick={() => setPhoneTab("devices")}>
+          Go to Devices
+        </Button>
+      }
+    />
+  );
+
+  // Every page stays mounted (hidden when inactive) so a browsed object list, loaded alarms and the trend survive tab switches.
+  const phonePage = (tab: PhoneTab, children: React.ReactNode, className = "bx-page") => (
+    <div className={className} style={phoneTab === tab ? undefined : { display: "none" }}>
+      {children}
+    </div>
+  );
+
+  const phoneLayout = (
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      {phonePage("devices", sidebarContent, "bx-page vt-sidebar")}
+      {phonePage(
+        "objects",
+        protocol.connected ? (
+          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column" }}>
+            <ObjectBrowser
+              layout="stacked"
+              onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
+              trendKeys={trendKeys}
+              onToggleTrend={toggleTrend}
+              onOpenTrendLog={openTrendLog}
+              onOpenSchedule={openSchedule}
+            />
+          </div>
+        ) : (
+          needsConnection("browse its objects")
+        ),
+      )}
+      {phonePage(
+        "trend",
+        !protocol.connected ? (
+          needsConnection("trend its points")
+        ) : trend.hasSeries ? (
+          <TrendPanel
+            series={trend.series.map((s) => ({ id: s.key, name: s.name, color: s.color, source: s.source, points: s.points }))}
+            onRemove={trend.remove}
+            windowSec={trend.windowSec}
+            onWindowChange={trend.setWindowSec}
+            pollMs={trend.pollMs}
+            onPollMsChange={trend.setPollMs}
+            onSourceChange={trend.setSource}
+            notices={Object.fromEntries(trend.errors)}
+            theme="dark"
+          />
+        ) : (
+          <EmptyState
+            icon={<LineChart size={20} strokeWidth={1.75} />}
+            title="No trend series"
+            description="On the Objects tab, tap the chart icon next to an object to add it here."
+          />
+        ),
+      )}
+      {phonePage(
+        "alarms",
+        protocol.connected && alarmsOpened ? (
+          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column" }}>
+            <AlarmPanel connected={protocol.connected} compact />
+          </div>
+        ) : (
+          needsConnection("read its alarms")
+        ),
+      )}
+      {phonePage(
+        "log",
+        <div style={{ flex: 1, minHeight: 0, padding: 8, display: "flex", flexDirection: "column" }}>
+          <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+        </div>,
+      )}
+      <StatusBar connected={protocol.connected} error={protocol.error} device={connectedDevice} />
+      <MobileTabBar tabs={phoneTabs} active={phoneTab} onChange={selectPhoneTab} />
+    </div>
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+    <div className={isMobile ? "bx-root bx-phone" : "bx-root"} style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       <Toolbar
         title="BACnet Explorer"
         icon={appIcon}
@@ -673,48 +778,19 @@ function App() {
       />
 
       {isMobile ? (
-        /* ── Mobile layout ── */
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-            {mobileTab === "connect" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {sidebarContent}
-              </div>
-            )}
-            {mobileTab === "data" && (
-              viewMode === "alarms" && protocol.connected ? (
-                <AlarmPanel connected={protocol.connected} />
-              ) : viewMode === "browse" && protocol.connected ? (
-                <ObjectBrowser trendKeys={trendKeys} onToggleTrend={toggleTrend} onOpenTrendLog={openTrendLog} onOpenSchedule={openSchedule} />
-              ) : (
-                <DataTable columns={columns} data={tableData} selectable onRowClick={(row) => openRowEditor(String(row.name))} />
-              )
-            )}
-            {mobileTab === "log" && (
-              <LogPanel
-                entries={log}
-                onExport={(f) => addLog("info", `Log exported to ${f}`)}
-              />
-            )}
-          </div>
-          {mobileTabBar}
-          <StatusBar
-            connected={protocol.connected}
-            error={protocol.error}
-            device={connectedDevice}
-          />
-        </div>
+        phoneLayout
       ) : (
         /* ── Desktop layout ── */
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <aside
             className="vt-sidebar"
-            style={{ width: leftWidth, flexShrink: 0, borderRight: "1px solid var(--border)", cursor: dragSide ? "col-resize" : undefined }}
+            style={{ width: isTouch ? (viewportWidth < 900 ? 248 : 296) : leftWidth, flexShrink: 0, borderRight: "1px solid var(--border)", cursor: dragSide ? "col-resize" : undefined }}
           >
             {sidebarContent}
           </aside>
-          {/* Left drag handle */}
+          {/* Left drag handle (mouse only) */}
           <div
+            hidden={isTouch}
             onMouseDown={(e) => handleDragStart("left", e)}
             style={{
               width: 4,
@@ -799,11 +875,20 @@ function App() {
             Broadcasting Who-Is…
           </div>
         )}
+        {!discovering && discoveryError && (
+          <div className="vt-callout vt-callout--danger" role="alert" style={{ marginBottom: 12 }}>
+            {discoveryError}
+          </div>
+        )}
         {!discovering && discoveredDevices.length === 0 && (
           <EmptyState
             icon={<Radar size={20} strokeWidth={1.75} />}
             title="No devices found"
-            description="No BACnet/IP devices answered the Who-Is broadcast. Check that devices are powered, on the same subnet, and not blocking UDP 47808, then scan again."
+            description={
+              platform === "ios"
+                ? "Scanning sends a network broadcast, and iOS only allows that for apps that hold Apple's multicast networking permission. If this build does not have it yet, scanning finds nothing even when devices are online. Connect by typing the controller's IP address on the Devices tab instead, and make sure Local Network is on for BACnet Explorer in Settings > Privacy & Security > Local Network."
+                : "No BACnet/IP devices answered the Who-Is broadcast. Check that devices are powered, on the same subnet, and not blocking UDP 47808, then scan again."
+            }
             action={
               <Button icon={<Radar size={14} strokeWidth={1.75} />} onClick={handleDiscover}>
                 Scan again
@@ -811,7 +896,37 @@ function App() {
             }
           />
         )}
-        {discoveredDevices.length > 0 && (
+        {discoveredDevices.length > 0 && isMobile && (
+          <div style={{ overflowY: "auto", margin: "0 -18px", maxHeight: "52vh" }}>
+            {discoveredDevices.map((d) => (
+              <div
+                key={d.device_instance}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderTop: "1px solid var(--border)" }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>Device {d.device_instance}</div>
+                  <div className="mono" style={{ fontSize: "var(--fs-sm)" }}>{d.ip}:{d.port}</div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {d.vendor_name ?? "—"}
+                  </div>
+                </div>
+                <Button
+                  variant="primary"
+                  loading={connectingDevice === d.device_instance}
+                  onClick={async () => {
+                    setConnectingDevice(d.device_instance);
+                    const ok = await handleConnect({ ip: d.ip, port: d.port, deviceId: d.device_instance });
+                    setConnectingDevice(null);
+                    if (ok) setShowDiscovery(false);
+                  }}
+                >
+                  {connectingDevice === d.device_instance ? "Connecting…" : "Connect"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {discoveredDevices.length > 0 && !isMobile && (
           <div style={{ overflowY: "auto", margin: "0 -18px", padding: "0 18px", maxHeight: "52vh" }}>
             <table className="vt-table">
               <thead>
@@ -850,6 +965,13 @@ function App() {
           </div>
         )}
       </Dialog>
+
+      {/* Simulator control panel as a full-screen sheet (iOS has no second window) */}
+      {showSimPanel && simRunning && (
+        <div className="bx-sheet">
+          <DevicePanel onClose={() => setShowSimPanel(false)} />
+        </div>
+      )}
 
       {/* Trend Log dialog */}
       {trendLogObject !== null && (

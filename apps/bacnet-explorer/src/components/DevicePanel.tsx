@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ChevronLeft } from "lucide-react";
 import { Badge, Button, EmptyState, StatusDot } from "@mactools/ui";
 
 interface SimSnapPoint {
@@ -61,7 +62,11 @@ const sectionLabel: React.CSSProperties = {
   margin: "14px 0 8px",
 };
 
-export function DevicePanel() {
+/**
+ * Simulator control panel. Desktop opens it in its own window; where there is only one window (iOS) the app
+ * renders it inline and passes `onClose`, which returns to the app (the simulator keeps running).
+ */
+export function DevicePanel({ onClose }: { onClose?: () => void } = {}) {
   const [snap, setSnap] = useState<SimSnapshot | null>(null);
   const [history, setHistory] = useState<Record<string, number[]>>({});
   const [flash, setFlash] = useState<string | null>(null);
@@ -119,13 +124,19 @@ export function DevicePanel() {
     try {
       await invoke("sim_stop");
     } catch {}
-    await getCurrentWindow().close();
+    if (onClose) onClose();
+    else await getCurrentWindow().close();
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: onClose ? "100%" : "100vh", background: "var(--bg)", color: "var(--text)" }}>
       {/* Header */}
-      <header style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
+      <header style={{ padding: onClose ? "calc(12px + env(safe-area-inset-top)) 14px 12px 8px" : "12px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
+        {onClose && (
+          <Button variant="ghost" icon={<ChevronLeft size={16} strokeWidth={1.75} />} onClick={onClose} aria-label="Back to BACnet Explorer">
+            Back
+          </Button>
+        )}
         <StatusDot tone={snap?.running ? "success" : "neutral"} />
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: "var(--fs-lg)", fontWeight: 600 }}>Sim device {snap?.device_id ?? "…"}</div>
@@ -226,7 +237,7 @@ export function DevicePanel() {
         )}
       </div>
 
-      <footer style={{ padding: "8px 14px", borderTop: "1px solid var(--border)", fontSize: "var(--fs-xs)", color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
+      <footer style={{ padding: "8px 14px calc(8px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--border)", fontSize: "var(--fs-xs)", color: "var(--text-muted)", display: "flex", justifyContent: "space-between" }}>
         <span>Connect from YABE{snap ? ` on UDP :${snap.port}` : ""}</span>
         <span>{snap ? `${snap.points.length} points` : ""}</span>
       </footer>

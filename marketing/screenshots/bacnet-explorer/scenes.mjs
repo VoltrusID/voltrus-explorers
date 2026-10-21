@@ -197,7 +197,11 @@ function mockMain(D) {
     disconnect: () => null,
     read_tags: () => [],
     write_tag: () => null,
-    discover: () => D.devices,
+    discover: () => {
+      if (window.__discoverFail) throw window.__discoverFail;
+      return window.__discoverEmpty ? [] : D.devices;
+    },
+    platform: () => window.__platform ?? "macos",
     browse_objects: () => objects.map((o) => ({ object_type: o.type, object_instance: o.instance, object_name: o.name })),
     read_object_properties: ({ objectType, objectInstance }) => readProps(objectType, objectInstance),
     inspect_device_cmd: () => ({

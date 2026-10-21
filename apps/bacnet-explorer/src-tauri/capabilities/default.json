@@ -1,9 +1,14 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for BACnet Explorer",
+  "description": "Default capabilities for BACnet Explorer (desktop)",
   "windows": [
     "main",
     "device-panel"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
   ],
   "permissions": [
     "core:default",

@@ -7,6 +7,7 @@ import {
   Calendar,
   CalendarClock,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Eye,
   Gauge,
@@ -50,6 +51,13 @@ interface ObjectBrowserProps {
   onOpenTrendLog?: (obj: { type: "trendLog" | "trendLogMultiple"; instance: number }, name: string) => void;
   /** Open the schedule viewer for a schedule object. */
   onOpenSchedule?: (instance: number, name: string) => void;
+  /**
+   * "split" shows the object tree and the inspector side by side (desktop, iPad).
+   * "stacked" shows one at a time: the tree, then the selected object's properties with a back button (phone).
+   */
+  layout?: "split" | "stacked";
+  /** Width of the tree pane in the split layout. */
+  treeWidth?: number;
 }
 
 // ── Styles ──
@@ -154,7 +162,8 @@ function objectKey(obj: BacnetObjectInfo): string {
 // ── Component ──
 
 export function ObjectBrowser(props: ObjectBrowserProps) {
-  const { onObjectSelect, trendKeys, onToggleTrend, onOpenTrendLog, onOpenSchedule } = props;
+  const { onObjectSelect, trendKeys, onToggleTrend, onOpenTrendLog, onOpenSchedule, layout = "split", treeWidth } = props;
+  const stacked = layout === "stacked";
 
   const [objects, setObjects] = useState<BacnetObjectInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -186,6 +195,16 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Back from the properties page to the object list (stacked layout).
+  const handleBack = useCallback(() => {
+    propertiesRequest.current += 1; // drop any in-flight property read
+    setSelectedObject(null);
+    setProperties([]);
+    setDetail(null);
+    setPropertiesError(null);
+    setPropertiesLoading(false);
   }, []);
 
   // Toggle group expand/collapse
@@ -259,11 +278,24 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
   // Render
   const groups = groupObjectsByType(objects);
   const isDeviceSelected = selectedObject?.type === "device";
+  const detailOpen = stacked && selectedObject !== null;
+  const selectedName = selectedObject
+    ? objects.find((o) => o.object_type === selectedObject.type && o.object_instance === selectedObject.instance)?.object_name ||
+      `${formatObjectType(selectedObject.type)} ${selectedObject.instance}`
+    : "";
 
   return (
-    <div style={container}>
-      {/* Left panel — object tree */}
-      <div style={treePanel}>
+    <div style={stacked ? { ...container, flexDirection: "column", border: "none", borderRadius: 0, background: "transparent" } : container}>
+      {/* Left panel — object tree. Hidden (not unmounted) behind the properties page so scroll position survives. */}
+      <div
+        style={
+          stacked
+            ? { ...treePanel, width: "100%", flex: 1, minHeight: 0, borderRight: "none", display: detailOpen ? "none" : "flex" }
+            : treeWidth
+              ? { ...treePanel, width: treeWidth }
+              : treePanel
+        }
+      >
         <div style={treeHeader}>
           <span className="vt-panel__title">Objects</span>
         </div>
@@ -325,7 +357,7 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
                             onClick={() => handleSelectObject(obj)}
                           >
                             <ObjectTypeIcon type={obj.object_type} size={12} />
-                            <span style={{ fontSize: "var(--fs-sm)" }}>
+                            <span style={stacked ? { fontSize: "var(--fs-md)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : { fontSize: "var(--fs-sm)" }}>
                               {obj.object_name || `${formatObjectType(obj.object_type)} ${obj.object_instance}`}
                             </span>
                             <span style={instanceLabel}>{obj.object_instance}</span>
@@ -391,7 +423,19 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
       </div>
 
       {/* Right panel — inspector */}
-      <div style={inspectorPanel}>
+      <div style={stacked ? { ...inspectorPanel, display: detailOpen ? "block" : "none", padding: 0 } : inspectorPanel}>
+        {stacked && selectedObject && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 8, minHeight: "var(--control-h)" }}>
+            <Button variant="ghost" icon={<ChevronLeft size={16} strokeWidth={1.75} />} onClick={handleBack}>
+              Objects
+            </Button>
+            <span
+              style={{ flex: 1, minWidth: 0, textAlign: "right", fontSize: "var(--fs-sm)", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {selectedName}
+            </span>
+          </div>
+        )}
         {selectedObject && isDeviceSelected && (
           <DeviceInspector loading={propertiesLoading} />
         )}

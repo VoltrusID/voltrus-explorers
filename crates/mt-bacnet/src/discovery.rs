@@ -88,9 +88,24 @@ pub async fn discover_devices(
         }
 
         tracing::info!("BACnet Who-Is targets: {:?}", broadcasts);
+        let mut sent = 0usize;
+        let mut last_error = None;
         for bcast in &broadcasts {
-            if let Err(e) = socket.send_to(&frame, SocketAddr::from((*bcast, BACNET_IP_PORT))) {
-                tracing::warn!("Who-Is send to {bcast} failed: {e}");
+            match socket.send_to(&frame, SocketAddr::from((*bcast, BACNET_IP_PORT))) {
+                Ok(_) => sent += 1,
+                Err(e) => {
+                    tracing::warn!("Who-Is send to {bcast} failed: {e}");
+                    last_error = Some(e);
+                }
+            }
+        }
+        // iOS refuses broadcast sends unless the app holds Apple's multicast networking
+        // entitlement; report that instead of waiting out the timeout for replies that cannot come.
+        if sent == 0 {
+            if let Some(e) = last_error {
+                return Err(ProtocolError::ConnectionFailed(format!(
+                    "Who-Is broadcast could not be sent: {e}"
+                )));
             }
         }
 
