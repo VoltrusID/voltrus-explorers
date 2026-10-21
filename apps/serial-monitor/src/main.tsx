@@ -6,9 +6,10 @@ import App from "./App";
 import "./styles.css";
 
 const PRO_FEATURES = [
-  "Virtual serial port (PTY) for loopback tests and bridging",
-  "Modbus RTU frame simulation templates",
-  "Communication log export to CSV",
+  "Copy and export the full communication log (CSV)",
+  "Unlimited log scrollback",
+  "Send macros and repeat-send at a fixed interval",
+  "Unlimited saved port profiles",
 ];
 
 // Center and size the window on launch

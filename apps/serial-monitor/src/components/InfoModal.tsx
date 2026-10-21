@@ -49,11 +49,15 @@ export function InfoModal({ show, onClose }: InfoModalProps) {
         Send plain text strings over the serial connection.
         <br />
         <br />
+        {status && !status.store && (
+          <>
         <strong style={{ color: "var(--text)" }}>Virtual Port</strong>
         <br />
         Create a real PTY-based virtual serial port for testing. Other apps can connect to it.
         <br />
         <br />
+          </>
+        )}
         <span style={{ color: "var(--text-muted)" }}>Part of the </span>
         <strong style={{ color: "var(--accent-text)" }}>Voltrus</strong>
         <span style={{ color: "var(--text-muted)" }}> suite by </span>

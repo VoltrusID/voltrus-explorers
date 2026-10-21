@@ -16,6 +16,10 @@ import appIcon from "../src-tauri/icons/128x128.png";
 
 import type { PortInfo, SerialConfig, TrafficEntry, SidebarMode } from "./types";
 import { TEMPLATES } from "./constants";
+import {
+  FREE_LOG_LINES, loadMacros, loadProfiles, saveMacros, saveProfiles,
+  type PortProfile, type SendMacro,
+} from "./profiles";
 import { formatTimestamp } from "./components/ConnectionHealth";
 import { MonitorSidebar } from "./components/MonitorSidebar";
 import { VirtualPortSidebar } from "./components/VirtualPortSidebar";
@@ -27,7 +31,9 @@ import { InfoModal } from "./components/InfoModal";
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { requirePro } = useProStatus();
+  const { pro, status, requirePro, openUpsell } = useProStatus();
+  // The PTY-based virtual port cannot be created inside the App Sandbox, so store builds do not offer it.
+  const virtualAvailable = status !== null && !status.store;
 
   // Connection state
   const [connected, setConnected] = useState(false);
@@ -72,6 +78,16 @@ function App() {
   const [virtualSendFormat, setVirtualSendFormat] = useState<"hex" | "ascii">("hex");
   const [virtualTraffic, setVirtualTraffic] = useState<TrafficEntry[]>([]);
 
+  // Saved settings, macros, repeat-send
+  const [profiles, setProfilesState] = useState<PortProfile[]>(loadProfiles);
+  const [macros, setMacrosState] = useState<SendMacro[]>(loadMacros);
+  const [repeating, setRepeating] = useState(false);
+  const [repeatMs, setRepeatMs] = useState(1000);
+  const setProfiles = useCallback((list: PortProfile[]) => setProfilesState(saveProfiles(list)), []);
+  const setMacros = useCallback((list: SendMacro[]) => setMacrosState(saveMacros(list)), []);
+  const proRef = useRef(pro);
+  proRef.current = pro;
+
   // Simulation
   const [simTemplate, setSimTemplate] = useState<string | null>(null);
   const [simRunning, setSimRunning] = useState(false);
@@ -85,7 +101,10 @@ function App() {
   // -----------------------------------------------------------------------
 
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
-    setLog((prev) => [...prev, { timestamp: Date.now(), direction, message }]);
+    setLog((prev) => {
+      const next = [...prev, { timestamp: Date.now(), direction, message }];
+      return proRef.current || next.length <= FREE_LOG_LINES ? next : next.slice(-FREE_LOG_LINES);
+    });
   }, []);
 
   // -----------------------------------------------------------------------
@@ -374,7 +393,7 @@ function App() {
   // Send handler
   // -----------------------------------------------------------------------
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (keepInput = false) => {
     if (!sendData || !connected) return;
     try {
       await invoke("send", { data: sendData, format: sendFormat });
@@ -391,11 +410,32 @@ function App() {
         setTrafficData((prev) => [...prev.slice(-200), { direction: "TX", data: hex, timestamp: ts }]);
         addLog("tx", `ASCII: ${sendData}`);
       }
-      setSendData("");
+      if (keepInput !== true) setSendData("");
     } catch (e) {
       addLog("error", `Send failed: ${e}`);
+      setRepeating(false);
     }
   }, [sendData, sendFormat, connected, addLog]);
+
+  const sendRef = useRef(handleSend);
+  sendRef.current = handleSend;
+  useEffect(() => {
+    if (!repeating || !connected || !pro) {
+      if (repeating && !connected) setRepeating(false);
+      return;
+    }
+    const timer = setInterval(() => { void sendRef.current(true); }, repeatMs);
+    return () => clearInterval(timer);
+  }, [repeating, connected, pro, repeatMs]);
+
+  const applyProfile = useCallback((p: PortProfile) => {
+    if (p.port_name) setPortName(p.port_name);
+    setBaudRate(p.baud_rate);
+    setDataBits(p.data_bits);
+    setStopBits(p.stop_bits);
+    setParity(p.parity);
+    setTimeoutMs(p.timeout_ms);
+  }, []);
 
   // -----------------------------------------------------------------------
   // Cleanup on unmount
@@ -431,9 +471,22 @@ function App() {
       ? "Virtual port is not active. Create one to capture loopback traffic."
       : "No traffic yet. Connect to a port or start the simulation.";
 
+  const logNote =
+    !pro && log.length >= FREE_LOG_LINES ? (
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", flexShrink: 0 }}>
+        Showing the last {FREE_LOG_LINES} log lines.{" "}
+        <button
+          onClick={() => openUpsell("Unlimited log scrollback")}
+          style={{ background: "none", border: "none", padding: 0, color: "var(--accent)", cursor: "pointer", font: "inherit" }}
+        >
+          Pro keeps the full log
+        </button>
+      </div>
+    ) : null;
+
   const anyConnected = connected || virtualActive;
 
-  const modeSegmented = (
+  const modeSegmented = virtualAvailable ? (
     <Segmented
       label="Mode"
       block
@@ -444,7 +497,7 @@ function App() {
         { value: "virtual", label: <>Virtual port <ProBadge /></> },
       ]}
     />
-  );
+  ) : null;
 
   const monitorSidebar = (
     <MonitorSidebar
@@ -461,6 +514,7 @@ function App() {
       simTemplate={simTemplate} setSimTemplate={setSimTemplate}
       simRunning={simRunning} setSimRunning={setSimRunning}
       setTrafficData={setTrafficData} addLog={addLog}
+      profiles={profiles} setProfiles={setProfiles} applyProfile={applyProfile}
     />
   );
 
@@ -510,7 +564,10 @@ function App() {
                   <SendComposer
                     format={sendFormat} onFormatChange={setSendFormat}
                     value={sendData} onValueChange={setSendData}
-                    onSend={handleSend} disabled={!connected}
+                    onSend={() => handleSend()} disabled={!connected}
+                    macros={macros} onMacrosChange={setMacros}
+                    repeating={repeating} onRepeatingChange={setRepeating}
+                    repeatMs={repeatMs} onRepeatMsChange={setRepeatMs}
                   />
                 ) : (
                   <SendComposer
@@ -522,7 +579,15 @@ function App() {
               </div>
             )}
             {mobileTab === "log" && (
-              <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+              <>
+                {logNote}
+                <LogPanel
+                  entries={log}
+                  beforeCopyAll={() => requirePro("Copy the full log")}
+                  beforeExport={() => requirePro("Log export")}
+                  onExport={(f) => addLog("info", `Log exported to ${f}`)}
+                />
+              </>
             )}
           </div>
           <nav style={{ display: "flex", borderTop: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
@@ -583,7 +648,10 @@ function App() {
               <SendComposer
                 format={sendFormat} onFormatChange={setSendFormat}
                 value={sendData} onValueChange={setSendData}
-                onSend={handleSend} disabled={!connected}
+                onSend={() => handleSend()} disabled={!connected}
+                macros={macros} onMacrosChange={setMacros}
+                repeating={repeating} onRepeatingChange={setRepeating}
+                repeatMs={repeatMs} onRepeatMsChange={setRepeatMs}
               />
             ) : (
               <SendComposer
@@ -603,7 +671,15 @@ function App() {
               onMouseEnter={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "var(--border)"; }}
               onMouseLeave={(e) => { if (!dragSide) (e.target as HTMLElement).style.background = "transparent"; }}
             />
-            <LogPanel entries={log} beforeExport={() => requirePro("Log export")} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+            <>
+                {logNote}
+                <LogPanel
+                  entries={log}
+                  beforeCopyAll={() => requirePro("Copy the full log")}
+                  beforeExport={() => requirePro("Log export")}
+                  onExport={(f) => addLog("info", `Log exported to ${f}`)}
+                />
+              </>
           </main>
         </div>
       )}

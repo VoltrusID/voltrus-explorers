@@ -10,7 +10,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds several notifications and devices at once and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, virtual serial port, frame simulation | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, line view with live traffic table, frame simulation. Pro adds log export, send macros, repeat-send and saved profiles | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
@@ -52,8 +52,10 @@ and the GitHub Releases have everything.
 
 | Serial Monitor | |
 | --- | --- |
-| Free | Open a port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, communication log with copy |
-| Pro | Virtual serial port (PTY) for loopback tests and bridging, Modbus RTU frame simulation templates, communication log export to CSV |
+| Free | Open one port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, the last 200 communication log lines with single-line copy, one saved port profile, Modbus RTU frame simulation templates |
+| Pro | Copy-all and CSV export of the communication log, unlimited log scrollback, send macros, repeat-send at a fixed interval, unlimited saved port profiles |
+
+The virtual serial port (PTY) is available in source builds and GitHub Releases only; the App Sandbox of the App Store build does not allow creating pseudo-terminals.
 
 ### NATS Explorer
 

@@ -1,10 +1,12 @@
 import { RotateCcw, RefreshCw, Play, Square } from "lucide-react";
 import type { PortInfo, TrafficEntry } from "../types";
 import { BAUD_PRESETS, PARITY_OPTIONS, DATA_BITS_OPTIONS, STOP_BITS_OPTIONS, TEMPLATES } from "../constants";
-import { Button, Field, IconButton, ProBadge, Section, useProStatus } from "@mactools/ui";
+import { Button, Field, IconButton, Section } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import type { Dispatch, SetStateAction } from "react";
 import { ConnectionHealth } from "./ConnectionHealth";
+import { ProfilesSection } from "./ProfilesSection";
+import type { PortProfile } from "../profiles";
 
 interface MonitorSidebarProps {
   // Connection form
@@ -35,6 +37,10 @@ interface MonitorSidebarProps {
   setSimRunning: (v: boolean) => void;
   setTrafficData: Dispatch<SetStateAction<TrafficEntry[]>>;
   addLog: (direction: LogEntry["direction"], message: string) => void;
+  // Saved profiles
+  profiles: PortProfile[];
+  setProfiles: (list: PortProfile[]) => void;
+  applyProfile: (p: PortProfile) => void;
 }
 
 export function MonitorSidebar({
@@ -63,8 +69,10 @@ export function MonitorSidebar({
   setSimRunning,
   setTrafficData,
   addLog,
+  profiles,
+  setProfiles,
+  applyProfile,
 }: MonitorSidebarProps) {
-  const { requirePro } = useProStatus();
   return (
     <>
       <Section title="Connection">
@@ -225,7 +233,15 @@ export function MonitorSidebar({
         </Button>
       </Section>
 
-      <Section title="Frame simulation" meta={<ProBadge />}>
+      <ProfilesSection
+        profiles={profiles}
+        setProfiles={setProfiles}
+        onApply={applyProfile}
+        disabled={connected}
+        current={{ port_name: portName, baud_rate: baudRate, data_bits: dataBits, stop_bits: stopBits, parity, timeout_ms: timeoutMs }}
+      />
+
+      <Section title="Frame simulation">
         <Field label="Template">
           {(id) => (
             <select
@@ -265,7 +281,7 @@ export function MonitorSidebar({
               setSimRunning(false);
               setTrafficData([]);
               addLog("info", "Simulation stopped");
-            } else if (simTemplate && requirePro("Frame simulation")) {
+            } else if (simTemplate) {
               setTrafficData([]);
               setSimRunning(true);
             }
