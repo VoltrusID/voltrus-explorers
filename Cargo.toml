@@ -6,6 +6,7 @@ members = [
     "crates/mt-bacnet",
     "crates/mt-dnp3",
     "crates/mt-ble",
+    "crates/mt-enip",
     "crates/mt-store",
     "crates/mt-s7",
     "apps/modbus-poll/src-tauri",
@@ -13,6 +14,7 @@ members = [
     "apps/ble-inspector/src-tauri",
     "apps/dnp3-explorer/src-tauri",
     "apps/s7-explorer/src-tauri",
+    "apps/enip-explorer/src-tauri",
 ]
 
 [workspace.package]

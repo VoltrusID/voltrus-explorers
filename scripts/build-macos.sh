@@ -6,6 +6,7 @@
 #   scripts/build-macos.sh <app> unsigned              # compile + bundle only (CI on pull requests)
 #
 # <app> is a directory under apps/ (bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer). Output goes to build/<app>/<mode>/.
+# <app> is a directory under apps/ (bacnet-explorer, modbus-poll, dnp3-explorer, enip-explorer). Output goes to build/<app>/<mode>/.
 #
 # Signing identities come from the keychain search list (CI imports them into a temporary keychain).
 #   appstore: "Apple Distribution" + "3rd Party Mac Developer Installer", and MAS_PROFILE = path to a

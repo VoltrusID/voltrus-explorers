@@ -9,6 +9,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read values. Pro adds writing values, notification subscriptions and log export | Mac App Store (soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -35,6 +36,12 @@ Version 1.4.0 is the first free release.
 
 S7 Explorer is an independent tool. Siemens, SIMATIC, S7-300, S7-400, S7-1200, S7-1500 and TIA Portal are trademarks of
 Siemens AG; it is not affiliated with or endorsed by Siemens.
+| EtherNet/IP Explorer | |
+| --- | --- |
+| Free | Discover devices and read their identity, connect, browse tags, live read polling, hex view, CIP object tree and browser (Get Attribute Single and All, list instances), EDS import, custom response decoders, packet log viewer |
+| Pro | Write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
+
+EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
 
 ## Build from source
 
@@ -42,7 +49,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip
 ```
 
 Universal release build (unsigned):
@@ -52,18 +59,21 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-store` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store` and `bun run --cwd apps/modbus-poll test`.
 
 ## Layout
 
 ```
 apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands), also builds for iOS (scripts/build-ios.sh)
+apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
+apps/enip-explorer      Tauri app (EtherNet/IP scanner and adapter)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/s7-explorer       Tauri app (macOS)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
+crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
