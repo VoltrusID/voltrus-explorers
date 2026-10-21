@@ -45,6 +45,7 @@
 pub mod client;
 pub mod server;
 pub mod types;
+mod vars;
 
 // Re-export the primary public API at the crate root.
 pub use client::{S7Client, parse_area_string, read_tags, write_tag};

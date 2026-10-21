@@ -59,6 +59,8 @@ export function useS7Device(deviceId: string) {
         setError(null);
         return result;
       } catch (e) {
+        // Do not leave the last good values on screen as if they were current.
+        setValues([]);
         setError(String(e));
         return [];
       }

@@ -5,14 +5,17 @@
 //! simulator and read/write an in-memory tag image.
 //!
 //! Supported server-side jobs:
-//! - S7 Setup Communication (negotiation)
-//! - Read Var (0x04)
-//! - Write Var (0x05)
+//! - S7 Setup Communication (negotiation of the PDU size)
+//! - Read Var (0x04) and Write Var (0x05), with the item layout, transport sizes, bit/byte
+//!   lengths, pad bytes and return codes of a real CPU (see `vars.rs`)
+//!
+//! The image is plain byte memory per area, so a bit, a word and a double word at the same
+//! address see the same data.
 //!
 //! Diagnostics / block management are not simulated — a simulator exists to
 //! exercise data access, not to impersonate a CPU's diagnostic buffer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -22,6 +25,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::types::*;
+use crate::vars::*;
 
 /// Coordinate identifying a single tag in the simulated PLC image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,118 +40,138 @@ struct TagCoord {
 fn coord_of(tag: &S7Tag) -> TagCoord {
     TagCoord {
         area: tag.area.code(),
-        db: tag.db_number,
+        db: if tag.area == S7Area::DB { tag.db_number } else { 0 },
         offset: tag.offset,
         bit: tag.bit_offset,
-        data_type: tag.data_type.clone(),
+        data_type: tag.data_type,
     }
 }
 
-fn ts_to_dtype(ts: u8) -> Option<S7DataType> {
-    match ts {
-        TS_BIT => Some(S7DataType::Bool),
-        TS_BYTE => Some(S7DataType::Byte),
-        TS_WORD => Some(S7DataType::Word),
-        TS_DWORD => Some(S7DataType::DWord),
-        TS_REAL => Some(S7DataType::Real),
-        TS_TIMER => Some(S7DataType::Timer),
-        TS_COUNTER => Some(S7DataType::Counter),
-        _ => None,
-    }
+/// The simulated PLC memory: plain bytes per area, like a real CPU.
+///
+/// Reading a word that was written as two bytes, or a bit of a byte written as a whole, works the
+/// way it does on a PLC. DBs exist once something was put in them; reading a DB nobody created is
+/// "object does not exist" (item return code 0x0A), the answer a real CPU gives. Inputs, outputs,
+/// markers, timers and counters always exist and read as zero until set.
+#[derive(Default)]
+struct Image {
+    /// Bytes by (area code, DB number). The DB number is 0 for areas that have none. Timers and
+    /// counters take two bytes each, at `number * 2`.
+    memory: HashMap<(u8, u16), Vec<u8>>,
+    /// Tags that were seeded or set, so the image can be listed as tags again.
+    tags: HashSet<TagCoord>,
 }
 
-fn dtype_size(dt: &S7DataType) -> usize {
-    match dt {
-        S7DataType::Bool => 1,
-        S7DataType::Byte => 1,
-        S7DataType::Word => 2,
-        S7DataType::DWord => 4,
-        S7DataType::Real => 4,
-        S7DataType::String => 1,
-        S7DataType::Timer | S7DataType::Counter => 2,
+impl Image {
+    fn exists(&self, area: u8, db: u16) -> bool {
+        area != AREA_DB || self.memory.contains_key(&(area, db))
     }
-}
 
-/// Split the 24-bit address of an item into (byte offset, bit). Timers and counters are
-/// addressed by number, everything else by bit offset.
-fn split_item_address(area: u8, address: u32) -> (u16, u8) {
-    if area == AREA_TIMER || area == AREA_COUNTER {
-        (address as u16, 0)
-    } else {
-        ((address / 8) as u16, (address % 8) as u8)
+    /// `len` bytes at `offset`, zero-filled past what was ever written. `None` if the DB is missing.
+    fn read(&self, area: u8, db: u16, offset: usize, len: usize) -> Option<Vec<u8>> {
+        if !self.exists(area, db) {
+            return None;
+        }
+        let mut out = vec![0u8; len];
+        if let Some(mem) = self.memory.get(&(area, db)) {
+            for (i, byte) in out.iter_mut().enumerate() {
+                *byte = mem.get(offset + i).copied().unwrap_or(0);
+            }
+        }
+        Some(out)
     }
-}
 
-/// Transport size a real PLC reports for the data it returns for `ts`: timers and counters come
-/// back as octet strings, everything else echoes the request.
-fn response_transport_size(ts: u8) -> u8 {
-    if ts == TS_TIMER || ts == TS_COUNTER {
-        TS_OCTET_STRING
-    } else {
-        ts
+    /// Write `bytes` at `offset`, growing the area. `false` if the DB is missing.
+    fn write(&mut self, area: u8, db: u16, offset: usize, bytes: &[u8]) -> bool {
+        if !self.exists(area, db) {
+            return false;
+        }
+        let mem = self.memory.entry((area, db)).or_default();
+        if mem.len() < offset + bytes.len() {
+            mem.resize(offset + bytes.len(), 0);
+        }
+        mem[offset..offset + bytes.len()].copy_from_slice(bytes);
+        true
     }
-}
 
-fn encode_value_bytes(v: &S7Value, bit: u8) -> Vec<u8> {
-    match v {
-        S7Value::Bool(b) => vec![if *b { 1u8 << bit } else { 0 }],
-        S7Value::Byte(x) => vec![*x],
-        S7Value::Word(x) => x.to_be_bytes().to_vec(),
-        S7Value::DWord(x) => x.to_be_bytes().to_vec(),
-        S7Value::Real(x) => x.to_be_bytes().to_vec(),
-        S7Value::Timer(ms) => encode_timer_ms(*ms).to_be_bytes().to_vec(),
-        S7Value::Counter(n) => encode_counter(*n).to_be_bytes().to_vec(),
-        S7Value::String(s) => {
-            let mut b = Vec::new();
-            b.push(s.len() as u8 + 2);
-            b.push(s.len() as u8);
-            b.extend_from_slice(s.as_bytes());
-            b
+    fn write_bit(&mut self, area: u8, db: u16, offset: usize, bit: u8, on: bool) -> bool {
+        let Some(current) = self.read(area, db, offset, 1) else {
+            return false;
+        };
+        let mask = 1u8 << bit;
+        let byte = if on { current[0] | mask } else { current[0] & !mask };
+        self.write(area, db, offset, &[byte])
+    }
+
+    /// Byte offset of a tag inside its area (timers and counters are numbered, not byte addressed).
+    fn byte_offset(tag: &S7Tag) -> usize {
+        match tag.area {
+            S7Area::Timer | S7Area::Counter => tag.offset as usize * 2,
+            _ => tag.offset as usize,
         }
     }
-}
 
-fn decode_value_bytes(data: &[u8], dt: &S7DataType, bit: u8) -> S7Value {
-    match dt {
-        S7DataType::Bool => S7Value::Bool(!data.is_empty() && (data[0] & (1 << bit)) != 0),
-        S7DataType::Byte => S7Value::Byte(data.first().copied().unwrap_or(0)),
-        S7DataType::Word => S7Value::Word(
-            data.get(..2)
-                .map(|d| u16::from_be_bytes([d[0], d[1]]))
-                .unwrap_or(0),
-        ),
-        S7DataType::DWord => S7Value::DWord(
-            data.get(..4)
-                .map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]]))
-                .unwrap_or(0),
-        ),
-        S7DataType::Real => S7Value::Real(
-            data.get(..4)
-                .map(|d| f32::from_bits(u32::from_be_bytes([d[0], d[1], d[2], d[3]])))
-                .unwrap_or(0.0),
-        ),
-        S7DataType::Timer => S7Value::Timer(
-            data.get(..2)
-                .map(|d| decode_timer_ms(u16::from_be_bytes([d[0], d[1]])))
-                .unwrap_or(0),
-        ),
-        S7DataType::Counter => S7Value::Counter(
-            data.get(..2)
-                .map(|d| decode_counter(u16::from_be_bytes([d[0], d[1]])))
-                .unwrap_or(0),
-        ),
-        S7DataType::String => S7Value::String(
-            data.get(2..)
-                .map(|d| String::from_utf8_lossy(d).to_string())
-                .unwrap_or_default(),
-        ),
+    /// Put a tag's value into memory, creating its DB if needed.
+    fn put(&mut self, tag: &S7Tag, value: &S7Value) {
+        let area = tag.area.code();
+        let db = if tag.area == S7Area::DB { tag.db_number } else { 0 };
+        self.memory.entry((area, db)).or_default();
+        let offset = Self::byte_offset(tag);
+        match value {
+            S7Value::Bool(on) => {
+                self.write_bit(area, db, offset, tag.bit_offset, *on);
+            }
+            // The simulator's strings are the TIA default, String[254]: [254, length, characters].
+            S7Value::String(text) => {
+                let mut bytes = vec![254u8, text.len().min(254) as u8];
+                bytes.extend_from_slice(&text.as_bytes()[..text.len().min(254)]);
+                self.write(area, db, offset, &bytes);
+            }
+            other => {
+                if let Ok(bytes) = write_payload(tag, other) {
+                    self.write(area, db, offset, &bytes);
+                }
+            }
+        }
+        self.tags.insert(coord_of(tag));
+    }
+
+    /// The value currently in memory for a tag coordinate.
+    fn get(&self, coord: TagCoord) -> S7Value {
+        let tag = tag_from_coord(coord);
+        let len = match tag.data_type {
+            S7DataType::String => 256,
+            _ => tag.data_len(),
+        };
+        let data = self
+            .read(coord.area, coord.db, Self::byte_offset(&tag), len)
+            .unwrap_or_default();
+        let data = if tag.data_type == S7DataType::Bool {
+            vec![data.first().map_or(0, |b| (b >> coord.bit) & 1)]
+        } else {
+            data
+        };
+        decode_value(&data, &tag)
+    }
+
+    fn db_numbers(&self) -> Vec<u16> {
+        let mut dbs: Vec<u16> = self
+            .memory
+            .keys()
+            .filter(|(area, _)| *area == AREA_DB)
+            .map(|(_, db)| *db)
+            .collect();
+        dbs.sort_unstable();
+        dbs
     }
 }
+
+type SharedImage = Arc<RwLock<Image>>;
 
 /// A running S7 simulator instance.
 pub struct S7Server {
     running: Arc<AtomicBool>,
-    store: Arc<RwLock<HashMap<TagCoord, S7Value>>>,
+    store: SharedImage,
     handle: Mutex<Option<JoinHandle<()>>>,
     port: u16,
 }
@@ -155,14 +179,25 @@ pub struct S7Server {
 impl S7Server {
     /// Bind on `port` (0 = OS-assigned) and seed the tag image with `initial`.
     pub async fn start(port: u16, initial: Vec<(S7Tag, S7Value)>) -> std::io::Result<Self> {
+        Self::start_with_pdu_size(port, initial, DEFAULT_PDU_SIZE).await
+    }
+
+    /// Like [`start`](Self::start), but offers at most `pdu_size` bytes as the S7 PDU size, the way
+    /// a CPU with a smaller limit (S7-300: 240) does. Requests and responses larger than the
+    /// negotiated size are answered with the PLC's "PDU size" error.
+    pub async fn start_with_pdu_size(
+        port: u16,
+        initial: Vec<(S7Tag, S7Value)>,
+        pdu_size: u16,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port)).await?;
         let actual_port = listener.local_addr()?.port();
 
-        let mut store = HashMap::new();
-        for (tag, value) in initial {
-            store.insert(coord_of(&tag), value);
+        let mut image = Image::default();
+        for (tag, value) in &initial {
+            image.put(tag, value);
         }
-        let store = Arc::new(RwLock::new(store));
+        let store: SharedImage = Arc::new(RwLock::new(image));
         let running = Arc::new(AtomicBool::new(true));
 
         let store_c = Arc::clone(&store);
@@ -176,7 +211,7 @@ impl S7Server {
                     Ok((stream, _peer)) => {
                         let s = Arc::clone(&store_c);
                         tokio::spawn(async move {
-                            let _ = handle_client(stream, s).await;
+                            let _ = handle_client(stream, s, pdu_size).await;
                         });
                     }
                     Err(_) => break,
@@ -199,24 +234,21 @@ impl S7Server {
 
     /// Overwrite a single tag's value in the image.
     pub async fn set_value(&self, tag: &S7Tag, value: S7Value) {
-        self.store.write().await.insert(coord_of(tag), value);
+        self.store.write().await.put(tag, &value);
     }
 
     /// Convenience setter for boolean tags.
     pub async fn set_bool(&self, tag: &S7Tag, active: bool) {
-        self.store
-            .write()
-            .await
-            .insert(coord_of(tag), S7Value::Bool(active));
+        self.store.write().await.put(tag, &S7Value::Bool(active));
     }
 
     /// Snapshot of every tag coordinate → value (for UI display).
     pub async fn snapshot(&self) -> Vec<(S7Tag, S7Value)> {
-        self.store
-            .read()
-            .await
+        let image = self.store.read().await;
+        image
+            .tags
             .iter()
-            .map(|(c, v)| (tag_from_coord(*c), v.clone()))
+            .map(|c| (tag_from_coord(*c), image.get(*c)))
             .collect()
     }
 
@@ -305,7 +337,8 @@ fn ack_header(pdu_ref: u16, param_len: u16, data_len: u16) -> Vec<u8> {
 
 async fn handle_client(
     mut stream: TcpStream,
-    store: Arc<RwLock<HashMap<TagCoord, S7Value>>>,
+    store: SharedImage,
+    pdu_limit: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // 1. COTP Connection Request → Connection Confirm.
     let cr = read_tpkt_payload(&mut stream).await?;
@@ -315,7 +348,7 @@ async fn handle_client(
     }
     write_tpkt(&mut stream, &cc).await?;
 
-    // 2. S7 Setup Communication.
+    // 2. S7 Setup Communication: answer with the smaller of the PDU size asked for and ours.
     let setup = read_tpkt_payload(&mut stream).await?;
     if setup.len() < 4 {
         return Ok(());
@@ -324,7 +357,12 @@ async fn handle_client(
         .get(3 + 4..3 + 6)
         .map(|b| u16::from_be_bytes([b[0], b[1]]))
         .unwrap_or(0);
-    let setup_resp = build_setup_comm_resp(pdu_ref);
+    let requested = setup
+        .get(3 + 16..3 + 18)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]))
+        .unwrap_or(pdu_limit);
+    let pdu_size = requested.min(pdu_limit);
+    let setup_resp = build_setup_comm_resp(pdu_ref, pdu_size);
     write_tpkt(&mut stream, &cotp_dt_wrap(&setup_resp)).await?;
 
     // 3. Request loop.
@@ -350,16 +388,22 @@ async fn handle_client(
             .unwrap_or(&[]);
         let func = params.first().copied().unwrap_or(0);
 
-        let resp = match (msg_type, func) {
-            (S7_MSG_TYPE_JOB, S7_READ_VAR) => build_read_resp(pdu_ref, params, &store).await,
-            (S7_MSG_TYPE_JOB, S7_WRITE_VAR) => build_write_resp(pdu_ref, params, data, &store).await,
-            (S7_MSG_TYPE_JOB, S7_LIST_BLOCKS) => build_block_list_resp(pdu_ref, &store).await,
-            (S7_MSG_TYPE_JOB, S7_UPLOAD) => build_upload_resp(pdu_ref),
-            (S7_MSG_TYPE_JOB, S7_DELETE_BLOCK) => build_delete_resp(pdu_ref),
-            // SZL / CPU diagnostics request (user-data, function 0x00).
-            (S7_MSG_TYPE_USER_DATA, S7_CPU_FUNC) => build_szl_resp(pdu_ref, params),
-            _ => build_unsupported_resp(pdu_ref),
+        let resp = if s7.len() > pdu_size as usize {
+            ack_error(pdu_ref, 0x8500)
+        } else {
+            match (msg_type, func) {
+                (S7_MSG_TYPE_JOB, S7_READ_VAR) => build_read_resp(pdu_ref, params, &store).await,
+                (S7_MSG_TYPE_JOB, S7_WRITE_VAR) => build_write_resp(pdu_ref, params, data, &store).await,
+                (S7_MSG_TYPE_JOB, S7_LIST_BLOCKS) => build_block_list_resp(pdu_ref, &store).await,
+                (S7_MSG_TYPE_JOB, S7_UPLOAD) => build_upload_resp(pdu_ref),
+                (S7_MSG_TYPE_JOB, S7_DELETE_BLOCK) => build_delete_resp(pdu_ref),
+                // SZL / CPU diagnostics request (user-data, function 0x00).
+                (S7_MSG_TYPE_USER_DATA, S7_CPU_FUNC) => build_szl_resp(pdu_ref, params),
+                _ => build_unsupported_resp(pdu_ref),
+            }
         };
+        // A real CPU answers a request whose response would not fit the PDU with an error.
+        let resp = if resp.len() > pdu_size as usize { ack_error(pdu_ref, 0x8500) } else { resp };
         if write_tpkt(&mut stream, &cotp_dt_wrap(&resp)).await.is_err() {
             break;
         }
@@ -367,120 +411,137 @@ async fn handle_client(
     Ok(())
 }
 
-fn build_setup_comm_resp(pdu_ref: u16) -> Vec<u8> {
+/// An ACK_DATA with no parameters or data and the given error class and code.
+fn ack_error(pdu_ref: u16, error: u16) -> Vec<u8> {
+    let mut s7 = ack_header(pdu_ref, 0, 0);
+    let n = s7.len();
+    s7[n - 2..].copy_from_slice(&error.to_be_bytes());
+    s7
+}
+
+fn build_setup_comm_resp(pdu_ref: u16, pdu_size: u16) -> Vec<u8> {
     let mut params = Vec::new();
     params.push(S7_SETUP_COMM);
     params.push(0x00);
-    params.extend_from_slice(&0x0100u16.to_be_bytes()); // max AMQ caller
-    params.extend_from_slice(&0x0100u16.to_be_bytes()); // max AMQ callee
-    params.extend_from_slice(&DEFAULT_PDU_SIZE.to_be_bytes());
+    params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ caller
+    params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ callee
+    params.extend_from_slice(&pdu_size.to_be_bytes());
 
     let mut s7 = ack_header(pdu_ref, params.len() as u16, 0);
     s7.extend_from_slice(&params);
     s7
 }
 
-async fn build_read_resp(
-    pdu_ref: u16,
-    params: &[u8],
-    store: &Arc<RwLock<HashMap<TagCoord, S7Value>>>,
-) -> Vec<u8> {
-    let item_count = params.get(1).copied().unwrap_or(0) as usize;
-    let items = params.get(2..).unwrap_or(&[]);
-    let guard = store.read().await;
+/// One 12-byte item of a Read/Write Var request, decoded.
+struct RequestItem {
+    ts: u8,
+    elements: usize,
+    db: u16,
+    area: u8,
+    address: u32,
+}
+
+fn request_items(params: &[u8]) -> Vec<RequestItem> {
+    let count = params.get(1).copied().unwrap_or(0) as usize;
+    (0..count)
+        .filter_map(|i| params.get(2 + i * 12..2 + (i + 1) * 12))
+        .map(|item| RequestItem {
+            ts: item[3],
+            elements: u16::from_be_bytes([item[4], item[5]]) as usize,
+            db: u16::from_be_bytes([item[6], item[7]]),
+            area: item[8],
+            address: ((item[9] as u32) << 16) | ((item[10] as u32) << 8) | item[11] as u32,
+        })
+        .collect()
+}
+
+impl RequestItem {
+    /// Where the item starts in the image: (DB key, byte offset, bit, byte length), or the item
+    /// return code if the request cannot be served.
+    fn locate(&self) -> Result<(u16, usize, u8, usize), u8> {
+        let unit = request_unit_size(self.ts).ok_or(RC_TRANSPORT_SIZE_NOT_SUPPORTED)?;
+        if S7Area::from_code(self.area).is_none() {
+            return Err(RC_ADDRESS_OUT_OF_RANGE);
+        }
+        let db = if self.area == AREA_DB { self.db } else { 0 };
+        Ok(match self.ts {
+            TS_BIT => (db, (self.address / 8) as usize, (self.address % 8) as u8, 1),
+            // Timers and counters are addressed by number; the image keeps 2 bytes for each.
+            TS_TIMER | TS_COUNTER => (db, self.address as usize * 2, 0, self.elements * unit),
+            _ => (db, (self.address / 8) as usize, 0, self.elements * unit),
+        })
+    }
+}
+
+async fn build_read_resp(pdu_ref: u16, params: &[u8], store: &SharedImage) -> Vec<u8> {
+    let items = request_items(params);
+    let image = store.read().await;
 
     let mut resp_data = Vec::new();
-    for i in 0..item_count {
-        let off = i * 12;
-        let item = items.get(off..off + 12).unwrap_or(&[]);
-        if item.len() < 12 {
-            resp_data.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]);
-            continue;
-        }
-        let ts = item[3];
-        let num_elems = u16::from_be_bytes([item[4], item[5]]);
-        let db = u16::from_be_bytes([item[6], item[7]]);
-        let area = item[8];
-        let off_bits =
-            ((item[9] as u32) << 16) | ((item[10] as u32) << 8) | (item[11] as u32);
-        let (offset, bit) = split_item_address(area, off_bits);
-
-        let bytes = match ts_to_dtype(ts) {
-            Some(dt) => {
-                let coord = TagCoord {
-                    area,
-                    db,
-                    offset,
-                    bit,
-                    data_type: dt.clone(),
-                };
-                match guard.get(&coord) {
-                    Some(v) => encode_value_bytes(v, bit),
-                    None => vec![0u8; dtype_size(&dt) * num_elems as usize],
+    for (i, item) in items.iter().enumerate() {
+        let result = item.locate().and_then(|(db, offset, bit, len)| {
+            image
+                .read(item.area, db, offset, len)
+                .map(|bytes| if item.ts == TS_BIT { vec![(bytes[0] >> bit) & 1] } else { bytes })
+                .ok_or(RC_OBJECT_DOES_NOT_EXIST)
+        });
+        match result {
+            Ok(bytes) => {
+                let (ts, length) = response_item_header(item.ts, bytes.len());
+                resp_data.push(RC_SUCCESS);
+                resp_data.push(ts);
+                resp_data.extend_from_slice(&length.to_be_bytes());
+                resp_data.extend_from_slice(&bytes);
+                if bytes.len() % 2 == 1 && i + 1 < items.len() {
+                    resp_data.push(0x00); // pad to an even length unless last
                 }
             }
-            None => vec![0u8; 1],
-        };
-
-        resp_data.push(0xFF); // item return code: success
-        resp_data.push(response_transport_size(ts));
-        resp_data.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-        resp_data.extend_from_slice(&bytes);
+            Err(code) => resp_data.extend_from_slice(&[code, 0x00, 0x00, 0x00]),
+        }
     }
-    drop(guard);
+    drop(image);
 
-    let mut out_params = Vec::new();
-    out_params.push(S7_READ_VAR);
-    out_params.push(item_count as u8);
-
+    let out_params = [S7_READ_VAR, items.len() as u8];
     let mut s7 = ack_header(pdu_ref, out_params.len() as u16, resp_data.len() as u16);
     s7.extend_from_slice(&out_params);
     s7.extend_from_slice(&resp_data);
     s7
 }
 
-async fn build_write_resp(
-    pdu_ref: u16,
-    params: &[u8],
-    data: &[u8],
-    store: &Arc<RwLock<HashMap<TagCoord, S7Value>>>,
-) -> Vec<u8> {
-    let item_count = params.get(1).copied().unwrap_or(0) as usize;
-    let items = params.get(2..).unwrap_or(&[]);
-    let mut return_codes: Vec<u8> = Vec::new();
+async fn build_write_resp(pdu_ref: u16, params: &[u8], data: &[u8], store: &SharedImage) -> Vec<u8> {
+    let items = request_items(params);
+    let mut image = store.write().await;
 
-    if item_count >= 1 && items.len() >= 12 {
-        let item = &items[..12];
-        let ts = item[3];
-        let db = u16::from_be_bytes([item[6], item[7]]);
-        let area = item[8];
-        let off_bits =
-            ((item[9] as u32) << 16) | ((item[10] as u32) << 8) | (item[11] as u32);
-        let (offset, bit) = split_item_address(area, off_bits);
+    // Write data items follow each other: [return code, transport size, length, bytes], padded to
+    // an even length unless last.
+    let mut pos = 0;
+    let mut return_codes = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let Some(header) = data.get(pos..pos + 4) else {
+            return_codes.push(RC_ADDRESS_OUT_OF_RANGE);
+            continue;
+        };
+        let size = data_item_bytes(header[1], u16::from_be_bytes([header[2], header[3]]));
+        let bytes = data.get(pos + 4..pos + 4 + size).unwrap_or(&[]);
+        pos += 4 + size + usize::from(size % 2 == 1 && i + 1 < items.len());
 
-        // Write request data: [return_code, transport_size, len(2), value_bytes...]
-        if data.len() >= 4 {
-            let vlen = u16::from_be_bytes([data[2], data[3]]) as usize;
-            let vbytes = data.get(4..4 + vlen).unwrap_or(&[]);
-            if let Some(dt) = ts_to_dtype(ts) {
-                let coord = TagCoord {
-                    area,
-                    db,
-                    offset,
-                    bit,
-                    data_type: dt.clone(),
+        let code = match item.locate() {
+            Err(code) => code,
+            Ok((_, _, _, len)) if bytes.len() != len => 0x07, // data type inconsistent with the item size
+            Ok((db, offset, bit, _)) => {
+                let written = if item.ts == TS_BIT {
+                    image.write_bit(item.area, db, offset, bit, bytes[0] & 1 != 0)
+                } else {
+                    image.write(item.area, db, offset, bytes)
                 };
-                let val = decode_value_bytes(vbytes, &dt, bit);
-                store.write().await.insert(coord, val);
+                if written { RC_SUCCESS } else { RC_OBJECT_DOES_NOT_EXIST }
             }
-        }
-        return_codes.push(0xFF);
+        };
+        return_codes.push(code);
     }
+    drop(image);
 
-    let mut out_params = Vec::new();
-    out_params.push(S7_WRITE_VAR);
-    out_params.push(item_count as u8);
-
+    let out_params = [S7_WRITE_VAR, items.len() as u8];
     let mut s7 = ack_header(pdu_ref, out_params.len() as u16, return_codes.len() as u16);
     s7.extend_from_slice(&out_params);
     s7.extend_from_slice(&return_codes);
@@ -490,19 +551,8 @@ async fn build_write_resp(
 /// Synthesize a block list from the simulated image: every distinct DB
 /// referenced by the seeded tags is reported as a DB block. Other block types
 /// (OB/FB/FC) aren't modelled — this is a data-access simulator, not a CPU.
-async fn build_block_list_resp(
-    pdu_ref: u16,
-    store: &Arc<RwLock<HashMap<TagCoord, S7Value>>>,
-) -> Vec<u8> {
-    let guard = store.read().await;
-    let mut dbs: Vec<u16> = guard
-        .keys()
-        .filter(|c| c.area == AREA_DB)
-        .map(|c| c.db)
-        .collect();
-    dbs.sort_unstable();
-    dbs.dedup();
-    drop(guard);
+async fn build_block_list_resp(pdu_ref: u16, store: &SharedImage) -> Vec<u8> {
+    let dbs = store.read().await.db_numbers();
 
     // Data field: [return_code 0xFF][transport_size 0x00][inner_len(2)][type, count, nums...]
     let inner_len = 2 + dbs.len() * 2;
@@ -765,16 +815,19 @@ mod tests {
         let tags = vec![
             S7Tag::parse_address("T5").unwrap(),
             S7Tag::parse_address("C10").unwrap(),
-            S7Tag::parse_address("DB1.DBD0").unwrap(),
             S7Tag::parse_address("C11").unwrap(), // not seeded: zeros, and the item after it still lines up
             S7Tag::parse_address("MW4").unwrap(),
         ];
         let values = client.read(&tags).await.expect("read");
         assert_eq!(values[0], S7Value::Timer(12_300));
         assert_eq!(values[1], S7Value::Counter(247));
-        assert_eq!(values[2], S7Value::DWord(0));
-        assert_eq!(values[3], S7Value::Counter(0));
-        assert_eq!(values[4], S7Value::Word(0));
+        assert_eq!(values[2], S7Value::Counter(0));
+        assert_eq!(values[3], S7Value::Word(0));
+
+        // A DB nobody created is "object does not exist", as on a real CPU, and the error says which tag.
+        let missing = [tags[0].clone(), S7Tag::parse_address("DB7.DBD0").unwrap()];
+        let error = client.read(&missing).await.unwrap_err().to_string();
+        assert!(error.contains("DB7.DBD0") && error.contains("0x0A"), "{error}");
 
         // The client refuses to write them.
         let err = client
@@ -790,5 +843,270 @@ mod tests {
 
         client.disconnect().await.unwrap();
         server.stop().await;
+    }
+
+    // ── Wire-level conformance ──
+    //
+    // The requests and expected answers below are packets of the Wireshark sample capture
+    // `s7comm_varservice_libnodavedemo.pcap` (https://wiki.wireshark.org/SampleCaptures, S7comm):
+    // real traffic between libnodave and a PLC that negotiated a 240 byte PDU. The simulator,
+    // started with the same PDU limit, has to answer byte for byte the way that PLC did.
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    fn hex(s: &str) -> Vec<u8> {
+        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
+    }
+
+    async fn send_tpkt(stream: &mut TcpStream, payload: &[u8]) {
+        let mut packet = vec![0x03, 0x00];
+        packet.extend_from_slice(&((payload.len() + 4) as u16).to_be_bytes());
+        packet.extend_from_slice(payload);
+        stream.write_all(&packet).await.unwrap();
+    }
+
+    async fn recv_tpkt(stream: &mut TcpStream) -> Vec<u8> {
+        let mut header = [0u8; 4];
+        stream.read_exact(&mut header).await.unwrap();
+        let mut payload = vec![0u8; u16::from_be_bytes([header[2], header[3]]) as usize - 4];
+        stream.read_exact(&mut payload).await.unwrap();
+        payload
+    }
+
+    /// Send one S7 PDU in a COTP data TPDU and return the S7 PDU of the answer.
+    async fn raw_exchange(stream: &mut TcpStream, s7: &[u8]) -> Vec<u8> {
+        let mut payload = vec![0x02, 0xf0, 0x80];
+        payload.extend_from_slice(s7);
+        send_tpkt(stream, &payload).await;
+        recv_tpkt(stream).await[3..].to_vec()
+    }
+
+    /// Connect with the capture's Connection Request (packet 7) and Setup Communication (packet 9);
+    /// returns the stream and the setup answer.
+    async fn raw_connect(port: u16) -> (TcpStream, Vec<u8>) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        send_tpkt(&mut stream, &hex("11 e0 00 00 00 01 00 c1 02 01 00 c2 02 01 02 c0 01 09")).await;
+        let cc = recv_tpkt(&mut stream).await;
+        assert_eq!(cc[1], 0xd0, "connection confirm");
+        let setup = raw_exchange(&mut stream, &hex("32 01 00 00 ff ff 00 08 00 00 f0 00 00 01 00 01 07 80")).await;
+        (stream, setup)
+    }
+
+    #[tokio::test]
+    async fn simulator_answers_like_the_plc_in_the_capture() {
+        let seed = vec![(S7Tag::parse_address("DB1.DBB63").unwrap(), S7Value::Byte(0))];
+        let server = S7Server::start_with_pdu_size(0, seed, 240).await.unwrap();
+        let (mut stream, setup) = raw_connect(server.port()).await;
+
+        // Packet 10: the PLC offers 240 bytes although the client asked for 1920.
+        assert_eq!(setup, hex("32 03 00 00 ff ff 00 08 00 00 00 00 f0 00 00 01 00 01 00 f0"));
+
+        // Packets 11 and 12: 64 bytes of DB1. Length 0x0200 is in bits.
+        let read = raw_exchange(&mut stream, &hex("32 01 00 00 00 00 00 0e 00 00 04 01 12 0a 10 02 00 40 00 01 84 00 00 00")).await;
+        let mut expected = hex("32 03 00 00 00 00 00 02 00 44 00 00 04 01 ff 04 02 00");
+        expected.extend(std::iter::repeat(0u8).take(64));
+        assert_eq!(read, expected);
+
+        // Packets 15 and 16: write four bytes to the markers.
+        let write = raw_exchange(&mut stream, &hex("32 01 00 00 00 02 00 0e 00 08 05 01 12 0a 10 02 00 04 00 00 83 00 00 00 00 04 00 20 a9 10 00 01")).await;
+        assert_eq!(write, hex("32 03 00 00 00 02 00 02 00 01 00 00 05 01 ff"));
+
+        // Packets 13 and 14: read 16 marker bytes back (the capture's other bytes differ).
+        let read = raw_exchange(&mut stream, &hex("32 01 00 00 00 01 00 0e 00 00 04 01 12 0a 10 02 00 10 00 00 83 00 00 00")).await;
+        assert_eq!(read[..22], hex("32 03 00 00 00 01 00 02 00 14 00 00 04 01 ff 04 00 80 a9 10 00 01")[..]);
+        assert_eq!(read.len(), 12 + 2 + 4 + 16);
+
+        server.stop().await;
+    }
+
+    /// A multi-item read has the pad byte after odd-sized items and a bit comes back as 0 or 1.
+    #[tokio::test]
+    async fn simulator_pads_odd_items_and_answers_bits_like_a_plc() {
+        let mut word = S7Tag::parse_address("DB1.DBW2").unwrap();
+        word.data_type = S7DataType::Word;
+        let seed = vec![
+            (S7Tag::parse_address("DB1.DBX0.5").unwrap(), S7Value::Bool(true)),
+            (word, S7Value::Word(0x1234)),
+        ];
+        let server = S7Server::start(0, seed).await.unwrap();
+        let (mut stream, _) = raw_connect(server.port()).await;
+
+        // Bit DB1.DBX0.5 (address 5), word DB1.DBW2 (address 16), DB9 byte 0 (does not exist).
+        let request = hex(
+            "32 01 00 00 00 07 00 26 00 00 04 03
+             12 0a 10 01 00 01 00 01 84 00 00 05
+             12 0a 10 04 00 01 00 01 84 00 00 10
+             12 0a 10 02 00 01 00 09 84 00 00 00",
+        );
+        let response = raw_exchange(&mut stream, &request).await;
+        let items = &response[14..];
+        assert_eq!(items, hex("ff 03 00 01 01 00  ff 04 00 10 12 34  0a 00 00 00"), "bit, pad, word, missing DB");
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn simulator_refuses_what_does_not_fit_its_pdu() {
+        let server = S7Server::start_with_pdu_size(0, Vec::new(), 240).await.unwrap();
+        let (mut stream, _) = raw_connect(server.port()).await;
+
+        // 300 bytes of marker data would make a 318 byte response.
+        let read = raw_exchange(&mut stream, &hex("32 01 00 00 00 09 00 0e 00 00 04 01 12 0a 10 02 01 2c 00 00 83 00 00 00")).await;
+        assert_eq!(read, hex("32 03 00 00 00 09 00 00 00 00 85 00"));
+
+        // 25 items make a 312 byte request.
+        let mut request = hex("32 01 00 00 00 0a 01 2e 00 00 04 19");
+        for _ in 0..25 {
+            request.extend(hex("12 0a 10 04 00 01 00 00 83 00 00 00"));
+        }
+        let read = raw_exchange(&mut stream, &request).await;
+        assert_eq!(read, hex("32 03 00 00 00 0a 00 00 00 00 85 00"));
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn client_splits_reads_to_fit_a_small_pdu() {
+        let mut seed = Vec::new();
+        let mut tags = Vec::new();
+        for i in 0..45u16 {
+            let tag = S7Tag::parse_address(&format!("MW{}", i * 2)).unwrap();
+            seed.push((tag.clone(), S7Value::Word(1000 + i)));
+            tags.push(tag);
+        }
+        // A 200 character string, read with an explicit length so it needs two 222 byte pieces.
+        let mut text = S7Tag::parse_address("DB1.DBB0").unwrap();
+        text.data_type = S7DataType::String;
+        let long = "abcdefghij".repeat(20);
+        seed.push((text.clone(), S7Value::String(long.clone())));
+        let mut explicit = text.clone();
+        explicit.length = 256;
+        tags.push(explicit);
+
+        let server = S7Server::start_with_pdu_size(0, seed, 240).await.unwrap();
+        let client = S7Client::connect(cfg(server.port())).await.unwrap();
+        let values = client.read(&tags).await.expect("split read");
+        for i in 0..45u16 {
+            assert_eq!(values[i as usize], S7Value::Word(1000 + i));
+        }
+        assert_eq!(values[45], S7Value::String(long));
+
+        client.disconnect().await.unwrap();
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn bits_words_and_dwords_share_the_same_memory() {
+        let server = S7Server::start(0, vec![(S7Tag::parse_address("DB1.DBB0").unwrap(), S7Value::Byte(0))])
+            .await
+            .unwrap();
+        let client = S7Client::connect(cfg(server.port())).await.unwrap();
+
+        let bit = |n: u8| S7Tag::parse_address(&format!("DB1.DBX0.{n}")).unwrap();
+        client.write(&bit(5), S7Value::Bool(true)).await.unwrap();
+        client.write(&bit(0), S7Value::Bool(true)).await.unwrap();
+        let values = client
+            .read(&[bit(0), bit(4), bit(5), S7Tag::parse_address("DB1.DBB0").unwrap()])
+            .await
+            .unwrap();
+        assert_eq!(
+            values,
+            vec![S7Value::Bool(true), S7Value::Bool(false), S7Value::Bool(true), S7Value::Byte(0b0010_0001)]
+        );
+        client.write(&bit(5), S7Value::Bool(false)).await.unwrap();
+        assert_eq!(client.read(&[S7Tag::parse_address("DB1.DBB0").unwrap()]).await.unwrap()[0], S7Value::Byte(1));
+
+        // A double word written whole is readable as its two words, big endian like the PLC.
+        client
+            .write(&S7Tag::parse_address("MD10").unwrap(), S7Value::DWord(0x0102_0304))
+            .await
+            .unwrap();
+        let words = client
+            .read(&[S7Tag::parse_address("MW10").unwrap(), S7Tag::parse_address("MW12").unwrap()])
+            .await
+            .unwrap();
+        assert_eq!(words, vec![S7Value::Word(0x0102), S7Value::Word(0x0304)]);
+
+        // Writing to a DB that does not exist is refused with the PLC's return code.
+        let error = client
+            .write(&S7Tag::parse_address("DB9.DBW0").unwrap(), S7Value::Word(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("DB9.DBW0") && error.contains("0x0A"), "{error}");
+
+        // So is a value of the wrong type for the tag.
+        let error = client
+            .write(&S7Tag::parse_address("MW0").unwrap(), S7Value::Real(1.0))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("MW0"), "{error}");
+
+        client.disconnect().await.unwrap();
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn strings_are_read_by_their_own_length_and_written_within_their_maximum() {
+        let mut text = S7Tag::parse_address("DB1.DBB10").unwrap();
+        text.data_type = S7DataType::String;
+        // Smaller PDU: the 200 character string needs a second read of the characters in pieces.
+        let long = "0123456789".repeat(20);
+        let server = S7Server::start_with_pdu_size(
+            0,
+            vec![(text.clone(), S7Value::String("hello".into()))],
+            240,
+        )
+        .await
+        .unwrap();
+        let client = S7Client::connect(cfg(server.port())).await.unwrap();
+
+        assert_eq!(client.read(&[text.clone()]).await.unwrap()[0], S7Value::String("hello".into()));
+
+        client.write(&text, S7Value::String(long.clone())).await.unwrap();
+        assert_eq!(client.read(&[text.clone()]).await.unwrap()[0], S7Value::String(long));
+
+        client.write(&text, S7Value::String(String::new())).await.unwrap();
+        assert_eq!(client.read(&[text.clone()]).await.unwrap()[0], S7Value::String(String::new()));
+
+        let error = client
+            .write(&text, S7Value::String("x".repeat(255)))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("at most 254"), "{error}");
+
+        client.disconnect().await.unwrap();
+        server.stop().await;
+    }
+
+    /// A PLC that stops answering must not hang the app: the request fails, and the connection
+    /// then refuses further use instead of reading the late answer as the next one.
+    #[tokio::test]
+    async fn a_silent_plc_times_out_and_the_connection_is_dropped() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut cr = recv_tpkt(&mut stream).await;
+            cr[1] = 0xd0;
+            send_tpkt(&mut stream, &cr).await;
+            let setup = recv_tpkt(&mut stream).await;
+            let pdu_ref = u16::from_be_bytes([setup[7], setup[8]]);
+            let mut reply = vec![0x02, 0xf0, 0x80];
+            reply.extend(build_setup_comm_resp(pdu_ref, 240));
+            send_tpkt(&mut stream, &reply).await;
+            let _ = recv_tpkt(&mut stream).await; // the read request, never answered
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        });
+
+        let client = S7Client::connect_with_timeout(cfg(port), std::time::Duration::from_millis(300))
+            .await
+            .unwrap();
+        let tag = S7Tag::parse_address("MW0").unwrap();
+        let error = client.read(&[tag.clone()]).await.unwrap_err().to_string();
+        assert!(error.contains("no answer"), "{error}");
+        let error = client.read(&[tag]).await.unwrap_err().to_string();
+        assert!(error.contains("reconnect"), "{error}");
     }
 }

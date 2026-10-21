@@ -55,8 +55,6 @@ pub(crate) const TS_REAL: u8 = 0x08;
 pub(crate) const TS_COUNTER: u8 = 0x1C;
 /// S7 timer (area 0x1D). Elements are 2 bytes each and addressed by number.
 pub(crate) const TS_TIMER: u8 = 0x1D;
-/// Transport size a PLC uses for a timer or counter in a read response (octet string, length in bytes).
-pub(crate) const TS_OCTET_STRING: u8 = 0x09;
 
 // S7 error codes
 pub(crate) const S7_ERR_NONE: u16 = 0x0000;

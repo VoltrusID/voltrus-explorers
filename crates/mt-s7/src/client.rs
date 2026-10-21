@@ -12,6 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::types::*;
+use crate::vars::*;
 
 // ── Inner client (owns the TCP stream, requires &mut self) ──
 
@@ -36,6 +37,8 @@ struct Inner {
     pdu_ref: AtomicU16,
     /// Negotiated S7 PDU size: the most one request or one response may carry, S7 header included.
     pdu_size: u16,
+    /// How long one request may take before the connection is given up on.
+    request_timeout: Duration,
     /// Set after a timeout or I/O failure. The stream may hold a half-read or late response, so it
     /// cannot be used again.
     broken: bool,
@@ -49,6 +52,7 @@ impl Inner {
         mut stream: TcpStream,
         rack: u8,
         slot: u8,
+        request_timeout: Duration,
     ) -> Result<Self, ProtocolError> {
         // COTP Connection Request, then Connection Confirm.
         let cotp_cr = build_cotp_cr(rack, slot);
@@ -57,7 +61,7 @@ impl Inner {
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("COTP CR send: {e}")))?;
 
-        let cc = tokio::time::timeout(REQUEST_TIMEOUT, read_cotp_cc(&mut stream))
+        let cc = tokio::time::timeout(request_timeout, read_cotp_cc(&mut stream))
             .await
             .map_err(|_| ProtocolError::ConnectionFailed("COTP CC timed out".into()))??;
         let tpdu_size = parse_cotp_cc(&cc)?;
@@ -69,7 +73,7 @@ impl Inner {
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm send: {e}")))?;
 
-        let resp = tokio::time::timeout(REQUEST_TIMEOUT, recv_pdu(&mut stream))
+        let resp = tokio::time::timeout(request_timeout, recv_pdu(&mut stream))
             .await
             .map_err(|_| ProtocolError::ConnectionFailed("S7 Setup Comm timed out".into()))?
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm recv: {e}")))?;
@@ -91,6 +95,7 @@ impl Inner {
             stream,
             pdu_ref,
             pdu_size,
+            request_timeout,
             broken: false,
         })
     }
@@ -108,7 +113,7 @@ impl Inner {
         if self.broken {
             return Err("the connection to the PLC was lost, reconnect".into());
         }
-        let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
+        let result = tokio::time::timeout(self.request_timeout, async {
             send_pdu(&mut self.stream, s7).await.map_err(|e| e.to_string())?;
             let pdu_ref = s7.get(4..6);
             for _ in 0..4 {
@@ -128,9 +133,38 @@ impl Inner {
             }
             Err(_) => {
                 self.broken = true;
-                Err(format!("no answer from the PLC within {} s", REQUEST_TIMEOUT.as_secs()))
+                Err(format!("no answer from the PLC within {:.1} s", self.request_timeout.as_secs_f32()))
             }
         }
+    }
+
+    /// Read the raw data bytes of each tag, splitting what does not fit one PDU into several
+    /// requests and several tags into one request where they fit.
+    async fn read_raw(&mut self, tags: &[S7Tag]) -> Result<Vec<Vec<u8>>, ProtocolError> {
+        // What one item can carry: the PDU minus response header, parameter header and item header.
+        let max_data = self.pdu_size as usize - 18;
+        let mut pieces: Vec<S7Tag> = Vec::new();
+        let mut owner: Vec<usize> = Vec::new();
+        for (i, tag) in tags.iter().enumerate() {
+            for piece in split_tag(tag, max_data) {
+                pieces.push(piece);
+                owner.push(i);
+            }
+        }
+
+        let mut raw: Vec<Vec<u8>> = vec![Vec::new(); tags.len()];
+        for range in plan_batches(&pieces, self.pdu_size) {
+            let batch = &pieces[range.clone()];
+            let request = build_read_var_request(self.next_pdu_ref(), batch);
+            let response = self
+                .exchange(&request)
+                .await
+                .map_err(|e| ProtocolError::ReadFailed(format!("Read: {e}")))?;
+            for (part, tag_index) in parse_read_var_response(&response, batch)?.into_iter().zip(&owner[range]) {
+                raw[*tag_index].extend(part);
+            }
+        }
+        Ok(raw)
     }
 
     async fn read_tags(&mut self, tags: &[S7Tag]) -> Result<Vec<S7Value>, ProtocolError> {
@@ -138,13 +172,37 @@ impl Inner {
             return Ok(Vec::new());
         }
 
-        let request = self.build_read_var_request(tags);
-        let response = self
-            .exchange(&request)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Send: {e}")))?;
+        // A string is [max length, actual length, characters]. When the caller does not say how
+        // long it is, read the two length bytes first, then the characters that are there.
+        let probes: Vec<S7Tag> = tags
+            .iter()
+            .map(|t| if is_unsized_string(t) { string_header(t) } else { t.clone() })
+            .collect();
+        let mut raw = self.read_raw(&probes).await?;
 
-        parse_read_var_response(&response, tags)
+        let mut tails: Vec<(usize, S7Tag)> = Vec::new();
+        for (i, tag) in tags.iter().enumerate() {
+            if !is_unsized_string(tag) {
+                continue;
+            }
+            let length = raw[i][1].min(raw[i][0]);
+            raw[i][1] = length; // never claim more characters than the PLC string can hold
+            if length > 0 {
+                let mut chars = tag.clone();
+                chars.data_type = S7DataType::Byte;
+                chars.offset += 2;
+                chars.length = length as u16;
+                tails.push((i, chars));
+            }
+        }
+        if !tails.is_empty() {
+            let wanted: Vec<S7Tag> = tails.iter().map(|(_, t)| t.clone()).collect();
+            for ((i, _), chars) in tails.iter().zip(self.read_raw(&wanted).await?) {
+                raw[*i].extend(chars);
+            }
+        }
+
+        Ok(tags.iter().zip(&raw).map(|(tag, data)| decode_value(data, tag)).collect())
     }
 
     async fn write_tag(&mut self, tag: &S7Tag, value: &S7Value) -> Result<(), ProtocolError> {
@@ -153,13 +211,60 @@ impl Inner {
                 "Timers and counters are read-only".into(),
             ));
         }
-        let request = self.build_write_var_request(tag, value);
+        if tag.data_type == S7DataType::String {
+            return self.write_string(tag, value).await;
+        }
+        let payload = write_payload(tag, value).map_err(ProtocolError::WriteFailed)?;
+        self.write_bytes(tag, &payload).await
+    }
+
+    /// Send one Write Var for `payload` at `tag` and check the PLC accepted it.
+    async fn write_bytes(&mut self, tag: &S7Tag, payload: &[u8]) -> Result<(), ProtocolError> {
+        // job header 10 + params 2 + item 12 + data item header 4
+        if 28 + payload.len() > self.pdu_size as usize {
+            return Err(ProtocolError::WriteFailed(format!(
+                "{} bytes do not fit the PLC's {} byte PDU",
+                payload.len(),
+                self.pdu_size
+            )));
+        }
+        let request = build_write_var_request(self.next_pdu_ref(), tag, payload);
         let response = self
             .exchange(&request)
             .await
-            .map_err(|e| ProtocolError::WriteFailed(format!("Send: {e}")))?;
+            .map_err(|e| ProtocolError::WriteFailed(format!("Write: {e}")))?;
+        parse_write_var_response(&response, tag)
+    }
 
-        parse_write_var_response(&response)
+    /// Write a string without touching the PLC string's maximum length byte: read it, check the
+    /// text fits, then write the actual length and the characters after it.
+    async fn write_string(&mut self, tag: &S7Tag, value: &S7Value) -> Result<(), ProtocolError> {
+        let S7Value::String(text) = value else {
+            return Err(ProtocolError::WriteFailed(format!(
+                "a {value:?} value cannot be written to {} (String)",
+                tag.label()
+            )));
+        };
+        if !text.is_ascii() {
+            return Err(ProtocolError::WriteFailed(
+                "S7 strings hold single-byte characters, use ASCII text".into(),
+            ));
+        }
+        let header = self.read_raw(&[string_header(tag)]).await?;
+        let max = header[0][0] as usize;
+        if text.len() > max {
+            return Err(ProtocolError::WriteFailed(format!(
+                "the text is {} characters but {} holds at most {max}",
+                text.len(),
+                tag.label()
+            )));
+        }
+        let mut payload = vec![text.len() as u8];
+        payload.extend_from_slice(text.as_bytes());
+        let mut chars = string_header(tag);
+        chars.offset += 1;
+        chars.length = payload.len() as u16;
+        self.write_bytes(&chars, &payload).await
     }
 
     async fn shutdown(&mut self) -> Result<(), ProtocolError> {
@@ -309,108 +414,20 @@ impl Inner {
 
         parse_delete_response(&resp)
     }
-
-    // ── Request builders ──
-
-    fn build_read_var_request(&self, tags: &[S7Tag]) -> Vec<u8> {
-        let pdu_ref = self.next_pdu_ref();
-
-        let mut params = Vec::new();
-        params.push(S7_READ_VAR);
-        params.push(tags.len() as u8);
-
-        let mut total_data_size: u16 = 0;
-        let mut items = Vec::new();
-
-        for tag in tags {
-            let byte_count = if tag.data_type == S7DataType::Bool {
-                1
-            } else {
-                tag.data_type.byte_size() * tag.length
-            };
-            total_data_size += byte_count;
-
-            push_item_spec(&mut items, tag);
-        }
-
-        params.extend_from_slice(&items);
-
-        // Data area: header + placeholder data
-        let mut data = Vec::new();
-        data.push(0x00); // return code
-        data.push(0xFF); // transport size
-        data.extend_from_slice(&total_data_size.to_be_bytes());
-        data.extend_from_slice(&vec![0x00u8; total_data_size as usize]);
-
-        // S7 header + params + data
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_JOB);
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&(data.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&params);
-        s7.extend_from_slice(&data);
-
-        s7
-    }
-
-    fn build_write_var_request(&self, tag: &S7Tag, value: &S7Value) -> Vec<u8> {
-        let pdu_ref = self.next_pdu_ref();
-
-        let mut params = Vec::new();
-        params.push(S7_WRITE_VAR);
-        params.push(0x01); // 1 item
-
-        push_item_spec(&mut params, tag);
-
-        let value_bytes = encode_value(value, tag);
-        let mut data = Vec::new();
-        data.push(0x00);
-        data.push(0x00);
-        data.extend_from_slice(&(value_bytes.len() as u16).to_be_bytes());
-        data.extend_from_slice(&value_bytes);
-
-        let mut s7 = Vec::new();
-        s7.push(S7_PROTOCOL_ID);
-        s7.push(S7_MSG_TYPE_JOB);
-        s7.extend_from_slice(&0x0000u16.to_be_bytes());
-        s7.extend_from_slice(&pdu_ref.to_be_bytes());
-        s7.extend_from_slice(&(params.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&(data.len() as u16).to_be_bytes());
-        s7.extend_from_slice(&params);
-        s7.extend_from_slice(&data);
-
-        s7
-    }
 }
 
-/// Append the 12-byte S7-any item specification for `tag` to a Read/Write Var parameter block.
-///
-/// Timers and counters are addressed by number (not by bit offset), carry no DB number and
-/// use their own transport size.
-fn push_item_spec(params: &mut Vec<u8>, tag: &S7Tag) {
-    params.push(0x12); // variable specification: address
-    params.push(0x0A); // length of following address specification
-    params.push(0x10); // syntax ID: S7 any
-    params.push(tag.data_type.transport_size());
-    let num_elements = if tag.data_type == S7DataType::Bool {
-        1u16
-    } else {
-        tag.length
-    };
-    params.extend_from_slice(&num_elements.to_be_bytes());
-    params.extend_from_slice(&tag.db_number.to_be_bytes());
-    params.push(tag.area.code());
-    let address = if matches!(tag.area, S7Area::Timer | S7Area::Counter) {
-        tag.offset as u32
-    } else {
-        (tag.offset as u32) * 8 + (tag.bit_offset as u32)
-    };
-    params.push(((address >> 16) & 0xFF) as u8);
-    params.push(((address >> 8) & 0xFF) as u8);
-    params.push((address & 0xFF) as u8);
+/// A string tag whose length the caller did not give: its characters are found by reading the
+/// length bytes first.
+fn is_unsized_string(tag: &S7Tag) -> bool {
+    tag.data_type == S7DataType::String && tag.length <= 2
+}
+
+/// The two length bytes at the start of a string, as a byte-array tag.
+fn string_header(tag: &S7Tag) -> S7Tag {
+    let mut header = tag.clone();
+    header.data_type = S7DataType::Byte;
+    header.length = 2;
+    header
 }
 
 // ── Public wrapper implementing ProtocolClient ──
@@ -462,16 +479,7 @@ impl ProtocolClient for S7Client {
     type Value = S7Value;
 
     async fn connect(config: Self::Config) -> Result<Self, ProtocolError> {
-        let addr = format!("{}:{}", config.host, config.port);
-        let stream = TcpStream::connect(&addr)
-            .await
-            .map_err(|e| ProtocolError::ConnectionFailed(format!("{addr}: {e}")))?;
-
-        let inner = Inner::negotiate(stream, config.rack, config.slot).await?;
-
-        Ok(Self {
-            inner: tokio::sync::Mutex::new(Some(inner)),
-        })
+        Self::connect_with_timeout(config, REQUEST_TIMEOUT).await
     }
 
     async fn read(&self, tags: &[Self::Tag]) -> Result<Vec<Self::Value>, ProtocolError> {
@@ -503,6 +511,25 @@ impl ProtocolClient for S7Client {
 // ── Diagnostics methods on S7Client ──
 
 impl S7Client {
+    /// Connect, giving up on the TCP connection, the handshake and every later request after
+    /// `timeout`.
+    pub(crate) async fn connect_with_timeout(
+        config: S7Config,
+        timeout: Duration,
+    ) -> Result<Self, ProtocolError> {
+        let addr = format!("{}:{}", config.host, config.port);
+        let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
+            .await
+            .map_err(|_| ProtocolError::ConnectionFailed(format!("{addr}: no answer")))?
+            .map_err(|e| ProtocolError::ConnectionFailed(format!("{addr}: {e}")))?;
+
+        let inner = Inner::negotiate(stream, config.rack, config.slot, timeout).await?;
+
+        Ok(Self {
+            inner: tokio::sync::Mutex::new(Some(inner)),
+        })
+    }
+
     pub async fn read_cpu_info(&self) -> Result<CpuInfo, ProtocolError> {
         let mut guard = self.inner.lock().await;
         let inner = guard.as_mut().ok_or(ProtocolError::NotConnected)?;
@@ -713,44 +740,6 @@ impl S7Tag {
     }
 }
 
-// ── Error descriptions ──
-
-/// Describe the 16-bit error class and code of an ACK_DATA header (bytes 10-11).
-fn describe_header_error(code: u16) -> String {
-    let text = match code {
-        0x8104 => "function not available in this PLC",
-        0x8500 => "request or response does not fit the negotiated PDU size",
-        0xD241 => "a password is needed",
-        0xD602 => "the password is wrong",
-        0xDC01 => "invalid value",
-        0x8001 => "the PLC refused the request in its current mode",
-        _ => "",
-    };
-    if text.is_empty() {
-        format!("0x{code:04X}")
-    } else {
-        format!("{text} (0x{code:04X})")
-    }
-}
-
-/// Describe the return code the PLC gives one item of a read or write.
-fn describe_return_code(code: u8) -> String {
-    let text = match code {
-        0x01 => "hardware fault",
-        0x03 => "access to this object is not allowed (protected or optimized DB)",
-        0x05 => "address out of range",
-        0x06 => "data type not supported",
-        0x07 => "data type inconsistent with the item size",
-        0x0A => "object does not exist (is the DB there?)",
-        _ => "",
-    };
-    if text.is_empty() {
-        format!("return code 0x{code:02X}")
-    } else {
-        format!("{text} (0x{code:02X})")
-    }
-}
-
 // ── Standalone helpers (one-shot read/write) ──
 
 /// Perform a single read of multiple tags without keeping a persistent client.
@@ -933,6 +922,16 @@ fn parse_cotp_cc(cc: &[u8]) -> Result<u16, ProtocolError> {
 
 /// Read the PDU size out of a Setup Communication response (S7 PDU, ACK_DATA header included).
 fn parse_setup_comm_response(data: &[u8]) -> Result<u16, ProtocolError> {
+    // A refusal is just the 12 byte ACK_DATA header with an error class and code.
+    if data.len() >= 12 && data[0] == S7_PROTOCOL_ID {
+        let error_code = u16::from_be_bytes([data[10], data[11]]);
+        if error_code != S7_ERR_NONE {
+            return Err(ProtocolError::ConnectionFailed(format!(
+                "S7 Setup Comm error: {}",
+                describe_header_error(error_code)
+            )));
+        }
+    }
     // ACK_DATA header (12) + [F0, reserved, AmQ calling (2), AmQ called (2), PDU size (2)].
     if data.len() < 20 {
         return Err(ProtocolError::ConnectionFailed(format!(
@@ -946,13 +945,6 @@ fn parse_setup_comm_response(data: &[u8]) -> Result<u16, ProtocolError> {
             data[0]
         )));
     }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::ConnectionFailed(format!(
-            "S7 Setup Comm error: {}",
-            describe_header_error(error_code)
-        )));
-    }
     if data[12] != S7_SETUP_COMM {
         return Err(ProtocolError::ConnectionFailed(format!(
             "Setup Comm response has function 0x{:02X}",
@@ -960,180 +952,6 @@ fn parse_setup_comm_response(data: &[u8]) -> Result<u16, ProtocolError> {
         )));
     }
     Ok(u16::from_be_bytes([data[18], data[19]]))
-}
-
-fn parse_read_var_response(data: &[u8], tags: &[S7Tag]) -> Result<Vec<S7Value>, ProtocolError> {
-    if data.len() < 17 {
-        return Err(ProtocolError::ReadFailed("S7 Read Var response too short".into()));
-    }
-    if data[0] != S7_PROTOCOL_ID {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid S7 protocol ID: 0x{:02X}",
-            data[0]
-        )));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::ReadFailed(format!(
-            "S7 Read Var error: 0x{error_code:04X}"
-        )));
-    }
-
-    let param_len = u16::from_be_bytes([data[6], data[7]]) as usize;
-    let data_start = 12 + param_len;
-
-    if data.len() < data_start + 1 {
-        return Err(ProtocolError::ReadFailed(
-            "S7 Read Var response data area too short".into(),
-        ));
-    }
-
-    let mut values = Vec::new();
-    let mut offset = data_start;
-
-    for tag in tags {
-        if offset >= data.len() {
-            values.push(S7Value::Byte(0));
-            continue;
-        }
-
-        let return_code = data[offset];
-        offset += 1;
-
-        if return_code != 0xFF {
-            values.push(S7Value::Byte(0));
-            if offset + 3 <= data.len() {
-                offset += 1; // transport size
-                let item_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
-                offset += 2;
-                offset += item_len;
-            }
-            continue;
-        }
-
-        if offset + 2 > data.len() {
-            values.push(S7Value::Byte(0));
-            break;
-        }
-        offset += 1; // transport size
-
-        let item_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
-        offset += 2;
-
-        if offset + item_len > data.len() {
-            values.push(S7Value::Byte(0));
-            break;
-        }
-
-        let item_data = &data[offset..offset + item_len];
-        values.push(decode_value(item_data, tag));
-        offset += item_len;
-    }
-
-    Ok(values)
-}
-
-fn parse_write_var_response(data: &[u8]) -> Result<(), ProtocolError> {
-    // ACK_DATA header is 12 bytes (incl. error class + error code); we only
-    // inspect those two bytes, so anything shorter than the header is invalid.
-    if data.len() < 12 {
-        return Err(ProtocolError::WriteFailed(
-            "S7 Write Var response too short".into(),
-        ));
-    }
-    if data[0] != S7_PROTOCOL_ID {
-        return Err(ProtocolError::WriteFailed(format!(
-            "Invalid S7 protocol ID: 0x{:02X}",
-            data[0]
-        )));
-    }
-    let error_code = u16::from_be_bytes([data[10], data[11]]);
-    if error_code != S7_ERR_NONE {
-        return Err(ProtocolError::WriteFailed(format!(
-            "S7 Write Var error: 0x{error_code:04X}"
-        )));
-    }
-    Ok(())
-}
-
-fn decode_value(data: &[u8], tag: &S7Tag) -> S7Value {
-    match tag.data_type {
-        S7DataType::Bool => {
-            if data.is_empty() {
-                S7Value::Bool(false)
-            } else {
-                S7Value::Bool((data[0] & (1 << tag.bit_offset)) != 0)
-            }
-        }
-        S7DataType::Byte => S7Value::Byte(data.first().copied().unwrap_or(0)),
-        S7DataType::Word => {
-            if data.len() >= 2 {
-                S7Value::Word(u16::from_be_bytes([data[0], data[1]]))
-            } else {
-                S7Value::Word(0)
-            }
-        }
-        S7DataType::DWord => {
-            if data.len() >= 4 {
-                S7Value::DWord(u32::from_be_bytes([data[0], data[1], data[2], data[3]]))
-            } else {
-                S7Value::DWord(0)
-            }
-        }
-        S7DataType::Real => {
-            if data.len() >= 4 {
-                let bits = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                S7Value::Real(f32::from_bits(bits))
-            } else {
-                S7Value::Real(0.0)
-            }
-        }
-        S7DataType::Timer => S7Value::Timer(
-            data.get(..2)
-                .map(|d| decode_timer_ms(u16::from_be_bytes([d[0], d[1]])))
-                .unwrap_or(0),
-        ),
-        S7DataType::Counter => S7Value::Counter(
-            data.get(..2)
-                .map(|d| decode_counter(u16::from_be_bytes([d[0], d[1]])))
-                .unwrap_or(0),
-        ),
-        S7DataType::String => {
-            if data.len() >= 2 {
-                let actual_len = data[1] as usize;
-                if data.len() >= 2 + actual_len {
-                    let s = String::from_utf8_lossy(&data[2..2 + actual_len]);
-                    S7Value::String(s.to_string())
-                } else {
-                    S7Value::String(String::new())
-                }
-            } else {
-                S7Value::String(String::new())
-            }
-        }
-    }
-}
-
-fn encode_value(value: &S7Value, tag: &S7Tag) -> Vec<u8> {
-    match value {
-        S7Value::Bool(v) => {
-            let byte = if *v { 1u8 << tag.bit_offset } else { 0u8 };
-            vec![byte]
-        }
-        S7Value::Byte(v) => vec![*v],
-        S7Value::Word(v) => v.to_be_bytes().to_vec(),
-        S7Value::DWord(v) => v.to_be_bytes().to_vec(),
-        S7Value::Real(v) => v.to_be_bytes().to_vec(),
-        S7Value::Timer(ms) => encode_timer_ms(*ms).to_be_bytes().to_vec(),
-        S7Value::Counter(v) => encode_counter(*v).to_be_bytes().to_vec(),
-        S7Value::String(s) => {
-            let mut bytes = Vec::new();
-            bytes.push(tag.length as u8); // max length
-            bytes.push(s.len() as u8); // actual length
-            bytes.extend_from_slice(s.as_bytes());
-            bytes
-        }
-    }
 }
 
 /// Parse an area string (case-insensitive) to an [`S7Area`].
@@ -1467,50 +1285,50 @@ mod tests {
         assert_eq!(marker.data_type, S7DataType::Real);
     }
 
-    /// Item layout from the S7 any-pointer: timers and counters are addressed by number with
-    /// their own transport size, other areas by bit offset.
-    #[test]
-    fn item_spec_encoding() {
-        let mut buf = Vec::new();
-        push_item_spec(&mut buf, &S7Tag::parse_address("T5").unwrap());
-        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x1D, 0x00, 0x01, 0x00, 0x00, 0x1D, 0x00, 0x00, 0x05]);
-
-        buf.clear();
-        push_item_spec(&mut buf, &S7Tag::parse_address("C300").unwrap());
-        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x1C, 0x00, 0x01, 0x00, 0x00, 0x1C, 0x00, 0x01, 0x2C]);
-
-        buf.clear();
-        push_item_spec(&mut buf, &S7Tag::parse_address("DB1.DBW10").unwrap());
-        assert_eq!(buf, [0x12, 0x0A, 0x10, 0x04, 0x00, 0x01, 0x00, 0x01, 0x84, 0x00, 0x00, 0x50]);
+    fn hex(s: &str) -> Vec<u8> {
+        s.split_whitespace().map(|b| u8::from_str_radix(b, 16).unwrap()).collect()
     }
 
-    #[test]
-    fn decodes_timer_and_counter_words() {
-        let timer = S7Tag::parse_address("T1").unwrap();
-        // time base 1 s (0b10), BCD 0x123 = 123
-        assert_eq!(decode_value(&[0x21, 0x23], &timer), S7Value::Timer(123_000));
-        // time base 10 ms (0b00), BCD 0x999
-        assert_eq!(decode_value(&[0x09, 0x99], &timer), S7Value::Timer(9_990));
-        // time base 10 s (0b11), BCD 0x001
-        assert_eq!(decode_value(&[0x30, 0x01], &timer), S7Value::Timer(10_000));
-        assert_eq!(decode_value(&[], &timer), S7Value::Timer(0));
+    // The packets below are from the Wireshark sample capture `s7comm_varservice_libnodavedemo.pcap`
+    // (https://wiki.wireshark.org/SampleCaptures, S7comm), real traffic between libnodave and a PLC.
 
-        let counter = S7Tag::parse_address("C1").unwrap();
-        assert_eq!(decode_value(&[0x02, 0x47], &counter), S7Value::Counter(247));
-        assert_eq!(decode_value(&[0x09, 0x99], &counter), S7Value::Counter(999));
+    /// Packet 7 is a Connection Request for rack 0, slot 2 (TSAP 01 02). Ours differs only in the
+    /// TPDU size we ask for (0x0A = 1024 bytes instead of 0x09).
+    #[test]
+    fn connection_request_matches_capture_packet_7() {
+        let captured = hex("03 00 00 16 11 e0 00 00 00 01 00 c1 02 01 00 c2 02 01 02 c0 01 09");
+        let mut ours = build_cotp_cr(0, 2);
+        assert_eq!(ours.pop(), Some(REQUESTED_TPDU_CODE));
+        assert_eq!(ours, captured[..captured.len() - 1]);
+        // snap7: remote TSAP = (connection type << 8) + rack * 0x20 + slot, type PG = 1 (`SetConnectionParams`
+        // callers in s7_micro_client.cpp:2680).
+        assert_eq!(&build_cotp_cr(1, 3)[15..19], [0xC2, 0x02, 0x01, 0x23]);
     }
 
+    /// Packet 8: the Connection Confirm (TPKT stripped). Its TPDU size parameter comes first.
     #[test]
-    fn read_response_for_timers_and_counters() {
-        let tags = vec![
-            S7Tag::parse_address("T1").unwrap(),
-            S7Tag::parse_address("C1").unwrap(),
-        ];
-        // ACK_DATA header (12 bytes) + param (read var, 2 items), then two octet-string items.
-        let mut pdu = vec![S7_PROTOCOL_ID, 0x03, 0, 0, 0, 1, 0, 2, 0, 12, 0, 0, S7_READ_VAR, 2];
-        pdu.extend_from_slice(&[0xFF, 0x09, 0x00, 0x02, 0x10, 0x50]); // time base 100 ms, BCD 050
-        pdu.extend_from_slice(&[0xFF, 0x09, 0x00, 0x02, 0x00, 0x42]);
-        let values = parse_read_var_response(&pdu, &tags).unwrap();
-        assert_eq!(values, vec![S7Value::Timer(5_000), S7Value::Counter(42)]);
+    fn connection_confirm_capture_packet_8() {
+        let cc = hex("11 d0 00 01 00 03 00 c0 01 09 c1 02 01 00 c2 02 01 02");
+        assert_eq!(parse_cotp_cc(&cc).unwrap(), 512);
+        // Without a TPDU parameter the PLC accepted what we asked for.
+        assert_eq!(parse_cotp_cc(&hex("06 d0 00 01 00 03 00")).unwrap(), 1024);
+        assert!(parse_cotp_cc(&hex("06 e0 00 01 00 03 00")).is_err());
+        assert!(parse_cotp_cc(&hex("0a d0 00 01 00 03 00 c0 01 20")).is_err());
+    }
+
+    /// Packet 9 is the Setup Communication request (the capture asks for PDU 1920, we ask for 480;
+    /// both use one job each way). Packet 10 is the answer: 20 bytes, PDU size 0x00F0 = 240.
+    #[test]
+    fn setup_communication_matches_capture_packets_9_and_10() {
+        let captured = hex("32 01 00 00 ff ff 00 08 00 00 f0 00 00 01 00 01 07 80");
+        let ours = build_s7_setup_comm(&AtomicU16::new(0xFFFF));
+        assert_eq!(ours[..16], captured[..16]);
+        assert_eq!(ours[16..], DEFAULT_PDU_SIZE.to_be_bytes());
+
+        let response = hex("32 03 00 00 ff ff 00 08 00 00 00 00 f0 00 00 01 00 01 00 f0");
+        assert_eq!(parse_setup_comm_response(&response).unwrap(), 240);
+        assert!(parse_setup_comm_response(&response[..19]).is_err());
+        let refused = hex("32 03 00 00 ff ff 00 00 00 00 81 04");
+        assert!(parse_setup_comm_response(&refused).unwrap_err().to_string().contains("0x8104"));
     }
 }
