@@ -4,6 +4,7 @@
 //! with no external S7 library dependency.
 
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use mt_protocol::{ProtocolClient, ProtocolError};
@@ -14,17 +15,30 @@ use crate::types::*;
 
 // ── Inner client (owns the TCP stream, requires &mut self) ──
 
+/// How long to wait for the PLC to answer one request before giving up on the connection.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// TPDU size (bytes, COTP header included) we ask for in the connection request: code 0x0A = 2^10.
+const REQUESTED_TPDU_CODE: u8 = 0x0A;
+
+/// Size of the COTP data (DT) header that precedes every S7 PDU.
+const COTP_DT_HEADER_LEN: usize = 3;
+
+/// Smallest PDU that can carry a one-item read (10 + 2 + 12 request, 12 + 2 + 4 + data response).
+const MIN_PDU_SIZE: u16 = 32;
+
 /// Low-level S7 PLC client managing a single TCP connection.
 ///
 /// This struct contains the mutable connection state and is wrapped in an async
 /// Mutex by [`S7Client`] to satisfy the `ProtocolClient` trait's `&self` methods.
-#[allow(dead_code)]
 struct Inner {
     stream: TcpStream,
     pdu_ref: AtomicU16,
+    /// Negotiated S7 PDU size: the most one request or one response may carry, S7 header included.
     pdu_size: u16,
-    rack: u8,
-    slot: u8,
+    /// Set after a timeout or I/O failure. The stream may hold a half-read or late response, so it
+    /// cannot be used again.
+    broken: bool,
 }
 
 impl Inner {
@@ -36,36 +50,38 @@ impl Inner {
         rack: u8,
         slot: u8,
     ) -> Result<Self, ProtocolError> {
-        // Build & send COTP Connection Request
+        // COTP Connection Request, then Connection Confirm.
         let cotp_cr = build_cotp_cr(rack, slot);
         stream
             .write_all(&cotp_cr)
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("COTP CR send: {e}")))?;
 
-        // Read COTP Connection Confirm
-        let cc = read_cotp_cc(&mut stream).await?;
+        let cc = tokio::time::timeout(REQUEST_TIMEOUT, read_cotp_cc(&mut stream))
+            .await
+            .map_err(|_| ProtocolError::ConnectionFailed("COTP CC timed out".into()))??;
+        let tpdu_size = parse_cotp_cc(&cc)?;
 
-        // Verify it's a CC
-        if cc.len() < 6 || cc[1] != COTP_CC {
-            return Err(ProtocolError::ConnectionFailed(format!(
-                "Expected COTP CC, got: {:02X?}",
-                &cc[..cc.len().min(6)]
-            )));
-        }
-
-        // Build & send S7 Setup Communication
+        // S7 Setup Communication.
         let pdu_ref = AtomicU16::new(1u16);
         let setup = build_s7_setup_comm(&pdu_ref);
-        send_s7(&mut stream, &setup)
+        send_pdu(&mut stream, &setup)
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm send: {e}")))?;
 
-        // Read S7 Setup Communication response
-        let resp = read_s7_response(&mut stream)
+        let resp = tokio::time::timeout(REQUEST_TIMEOUT, recv_pdu(&mut stream))
             .await
+            .map_err(|_| ProtocolError::ConnectionFailed("S7 Setup Comm timed out".into()))?
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm recv: {e}")))?;
-        let pdu_size = parse_setup_comm_response(&resp)?;
+        let negotiated = parse_setup_comm_response(&resp)?;
+
+        // One S7 PDU plus its COTP DT header has to fit one TPDU, because we never fragment.
+        let pdu_size = negotiated.min(tpdu_size.saturating_sub(COTP_DT_HEADER_LEN as u16));
+        if pdu_size < MIN_PDU_SIZE {
+            return Err(ProtocolError::ConnectionFailed(format!(
+                "PLC negotiated a PDU size of {pdu_size} bytes, which is too small to use"
+            )));
+        }
 
         tracing::info!(
             "Connected to S7 PLC rack={rack}, slot={slot}, PDU size={pdu_size}"
@@ -75,13 +91,46 @@ impl Inner {
             stream,
             pdu_ref,
             pdu_size,
-            rack,
-            slot,
+            broken: false,
         })
     }
 
     fn next_pdu_ref(&self) -> u16 {
         self.pdu_ref.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Send one S7 PDU and wait for the PLC's answer to it.
+    ///
+    /// Answers whose PDU reference does not match (left over from an earlier request) are skipped.
+    /// A timeout or I/O error marks the connection broken, since the stream may hold a half-read
+    /// or late response.
+    async fn exchange(&mut self, s7: &[u8]) -> Result<Vec<u8>, String> {
+        if self.broken {
+            return Err("the connection to the PLC was lost, reconnect".into());
+        }
+        let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
+            send_pdu(&mut self.stream, s7).await.map_err(|e| e.to_string())?;
+            let pdu_ref = s7.get(4..6);
+            for _ in 0..4 {
+                let response = recv_pdu(&mut self.stream).await?;
+                if response.get(4..6) == pdu_ref {
+                    return Ok(response);
+                }
+            }
+            Err("the PLC answered a different request".to_string())
+        })
+        .await;
+        match result {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(e)) => {
+                self.broken = true;
+                Err(e)
+            }
+            Err(_) => {
+                self.broken = true;
+                Err(format!("no answer from the PLC within {} s", REQUEST_TIMEOUT.as_secs()))
+            }
+        }
     }
 
     async fn read_tags(&mut self, tags: &[S7Tag]) -> Result<Vec<S7Value>, ProtocolError> {
@@ -90,13 +139,10 @@ impl Inner {
         }
 
         let request = self.build_read_var_request(tags);
-        send_s7(&mut self.stream, &request)
+        let response = self
+            .exchange(&request)
             .await
             .map_err(|e| ProtocolError::ReadFailed(format!("Send: {e}")))?;
-
-        let response = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Recv: {e}")))?;
 
         parse_read_var_response(&response, tags)
     }
@@ -108,13 +154,10 @@ impl Inner {
             ));
         }
         let request = self.build_write_var_request(tag, value);
-        send_s7(&mut self.stream, &request)
+        let response = self
+            .exchange(&request)
             .await
             .map_err(|e| ProtocolError::WriteFailed(format!("Send: {e}")))?;
-
-        let response = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::WriteFailed(format!("Recv: {e}")))?;
 
         parse_write_var_response(&response)
     }
@@ -150,13 +193,10 @@ impl Inner {
         s7.extend_from_slice(&0x0000u16.to_be_bytes()); // data length
         s7.extend_from_slice(&params);
 
-        send_s7(&mut self.stream, &s7)
+        let resp = self
+            .exchange(&s7)
             .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("SZL send: {e}")))?;
-
-        let resp = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("SZL recv: {e}")))?;
+            .map_err(|e| ProtocolError::ReadFailed(format!("SZL: {e}")))?;
 
         parse_szl_response(&resp)
     }
@@ -197,13 +237,10 @@ impl Inner {
         s7.extend_from_slice(&0x0000u16.to_be_bytes());
         s7.extend_from_slice(&params);
 
-        send_s7(&mut self.stream, &s7)
+        let resp = self
+            .exchange(&s7)
             .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("List blocks send: {e}")))?;
-
-        let resp = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("List blocks recv: {e}")))?;
+            .map_err(|e| ProtocolError::ReadFailed(format!("List blocks: {e}")))?;
 
         parse_block_list_response(&resp)
     }
@@ -233,13 +270,10 @@ impl Inner {
         s7.extend_from_slice(&0x0000u16.to_be_bytes());
         s7.extend_from_slice(&params);
 
-        send_s7(&mut self.stream, &s7)
+        let resp = self
+            .exchange(&s7)
             .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Upload block send: {e}")))?;
-
-        let resp = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Upload block recv: {e}")))?;
+            .map_err(|e| ProtocolError::ReadFailed(format!("Upload block: {e}")))?;
 
         parse_upload_response(&resp)
     }
@@ -268,13 +302,10 @@ impl Inner {
         s7.extend_from_slice(&0x0000u16.to_be_bytes());
         s7.extend_from_slice(&params);
 
-        send_s7(&mut self.stream, &s7)
+        let resp = self
+            .exchange(&s7)
             .await
-            .map_err(|e| ProtocolError::WriteFailed(format!("Delete block send: {e}")))?;
-
-        let resp = read_s7_response(&mut self.stream)
-            .await
-            .map_err(|e| ProtocolError::WriteFailed(format!("Delete block recv: {e}")))?;
+            .map_err(|e| ProtocolError::WriteFailed(format!("Delete block: {e}")))?;
 
         parse_delete_response(&resp)
     }
@@ -682,6 +713,44 @@ impl S7Tag {
     }
 }
 
+// ── Error descriptions ──
+
+/// Describe the 16-bit error class and code of an ACK_DATA header (bytes 10-11).
+fn describe_header_error(code: u16) -> String {
+    let text = match code {
+        0x8104 => "function not available in this PLC",
+        0x8500 => "request or response does not fit the negotiated PDU size",
+        0xD241 => "a password is needed",
+        0xD602 => "the password is wrong",
+        0xDC01 => "invalid value",
+        0x8001 => "the PLC refused the request in its current mode",
+        _ => "",
+    };
+    if text.is_empty() {
+        format!("0x{code:04X}")
+    } else {
+        format!("{text} (0x{code:04X})")
+    }
+}
+
+/// Describe the return code the PLC gives one item of a read or write.
+fn describe_return_code(code: u8) -> String {
+    let text = match code {
+        0x01 => "hardware fault",
+        0x03 => "access to this object is not allowed (protected or optimized DB)",
+        0x05 => "address out of range",
+        0x06 => "data type not supported",
+        0x07 => "data type inconsistent with the item size",
+        0x0A => "object does not exist (is the DB there?)",
+        _ => "",
+    };
+    if text.is_empty() {
+        format!("return code 0x{code:02X}")
+    } else {
+        format!("{text} (0x{code:02X})")
+    }
+}
+
 // ── Standalone helpers (one-shot read/write) ──
 
 /// Perform a single read of multiple tags without keeping a persistent client.
@@ -722,15 +791,15 @@ fn build_cotp_cr(rack: u8, slot: u8) -> Vec<u8> {
     cotp_params.extend_from_slice(&dst_tsap.to_be_bytes());
     cotp_params.push(0xC0);
     cotp_params.push(0x01);
-    cotp_params.push(0x0A); // TPDU size 1024
+    cotp_params.push(REQUESTED_TPDU_CODE);
 
     let cotp_len = 1 + 2 + 2 + 1 + cotp_params.len();
     let mut cotp = Vec::new();
     cotp.push(cotp_len as u8);
     cotp.push(COTP_CR);
-    cotp.extend_from_slice(&0x0001u16.to_be_bytes());
-    cotp.extend_from_slice(&0x0001u16.to_be_bytes());
-    cotp.push(0x00);
+    cotp.extend_from_slice(&0x0000u16.to_be_bytes()); // destination reference: 0 in a CR
+    cotp.extend_from_slice(&0x0001u16.to_be_bytes()); // source reference: S7 CPUs want it non-zero
+    cotp.push(0x00); // class 0, no options
     cotp.extend_from_slice(&cotp_params);
 
     let total_len = 4 + cotp.len();
@@ -749,8 +818,8 @@ fn build_s7_setup_comm(pdu_ref: &AtomicU16) -> Vec<u8> {
     let mut params = Vec::new();
     params.push(S7_SETUP_COMM);
     params.push(0x00);
-    params.extend_from_slice(&MAX_PDU_SIZE.to_be_bytes());
-    params.extend_from_slice(&MAX_PDU_SIZE.to_be_bytes());
+    params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ calling: one job at a time
+    params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ called
     params.extend_from_slice(&DEFAULT_PDU_SIZE.to_be_bytes());
 
     let mut s7 = Vec::new();
@@ -766,47 +835,19 @@ fn build_s7_setup_comm(pdu_ref: &AtomicU16) -> Vec<u8> {
 }
 
 async fn read_cotp_cc(stream: &mut TcpStream) -> Result<Vec<u8>, ProtocolError> {
-    let mut tpkt_header = [0u8; 4];
-    stream
-        .read_exact(&mut tpkt_header)
+    read_tpkt(stream)
         .await
-        .map_err(|e| ProtocolError::ConnectionFailed(format!("TPKT header read: {e}")))?;
-
-    if tpkt_header[0] != TPKT_VERSION {
-        return Err(ProtocolError::ConnectionFailed(format!(
-            "Invalid TPKT version: {}",
-            tpkt_header[0]
-        )));
-    }
-
-    let packet_len = u16::from_be_bytes([tpkt_header[2], tpkt_header[3]]) as usize;
-    if packet_len < 4 {
-        return Err(ProtocolError::ConnectionFailed(format!(
-            "Invalid TPKT packet length: {packet_len}"
-        )));
-    }
-
-    let mut payload = vec![0u8; packet_len - 4];
-    stream
-        .read_exact(&mut payload)
-        .await
-        .map_err(|e| ProtocolError::ConnectionFailed(format!("COTP payload read: {e}")))?;
-
-    Ok(payload)
+        .map_err(|e| ProtocolError::ConnectionFailed(format!("COTP CC: {e}")))
 }
 
-async fn send_s7(stream: &mut TcpStream, s7_data: &[u8]) -> Result<()> {
-    let mut cotp = Vec::with_capacity(3);
-    cotp.push(0x02);
-    cotp.push(COTP_DT);
-    cotp.push(0x80);
-
-    let total_len = 4 + cotp.len() + s7_data.len();
+/// Wrap one S7 PDU in a COTP DT header (EOT set) and a TPKT header and send it.
+async fn send_pdu(stream: &mut TcpStream, s7_data: &[u8]) -> Result<()> {
+    let total_len = 4 + COTP_DT_HEADER_LEN + s7_data.len();
     let mut packet = Vec::with_capacity(total_len);
     packet.push(TPKT_VERSION);
     packet.push(0x00);
     packet.extend_from_slice(&(total_len as u16).to_be_bytes());
-    packet.extend_from_slice(&cotp);
+    packet.extend_from_slice(&[0x02, COTP_DT, 0x80]); // LI = 2, DT, TPDU nr 0 + EOT
     packet.extend_from_slice(s7_data);
 
     stream
@@ -816,43 +857,84 @@ async fn send_s7(stream: &mut TcpStream, s7_data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-async fn read_s7_response(stream: &mut TcpStream) -> Result<Vec<u8>, ProtocolError> {
+/// Read one TPKT packet and return what follows the 4-byte TPKT header.
+async fn read_tpkt(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
     let mut tpkt_header = [0u8; 4];
     stream
         .read_exact(&mut tpkt_header)
         .await
-        .map_err(|e| ProtocolError::ReadFailed(format!("S7 TPKT header: {e}")))?;
-
+        .map_err(|e| format!("TPKT header: {e}"))?;
     if tpkt_header[0] != TPKT_VERSION {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid TPKT version: {}",
-            tpkt_header[0]
-        )));
+        return Err(format!("invalid TPKT version {}", tpkt_header[0]));
     }
-
     let packet_len = u16::from_be_bytes([tpkt_header[2], tpkt_header[3]]) as usize;
     if packet_len < 4 {
-        return Err(ProtocolError::ReadFailed(format!(
-            "Invalid TPKT length: {packet_len}"
-        )));
+        return Err(format!("invalid TPKT length {packet_len}"));
     }
-
     let mut payload = vec![0u8; packet_len - 4];
     stream
         .read_exact(&mut payload)
         .await
-        .map_err(|e| ProtocolError::ReadFailed(format!("S7 payload: {e}")))?;
-
-    // Skip COTP DT header (3 bytes)
-    if payload.len() < 3 {
-        return Err(ProtocolError::ReadFailed("S7 COTP payload too short".into()));
-    }
-
-    Ok(payload[3..].to_vec())
+        .map_err(|e| format!("TPKT payload: {e}"))?;
+    Ok(payload)
 }
 
+/// Receive one S7 PDU. COTP data TPDUs the PLC split across several TPKT packets (EOT bit clear)
+/// are reassembled.
+async fn recv_pdu(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
+    let mut pdu = Vec::new();
+    loop {
+        let payload = read_tpkt(stream).await?;
+        let header_len = payload.first().map(|li| *li as usize + 1).unwrap_or(0);
+        if payload.len() < header_len || header_len < COTP_DT_HEADER_LEN || payload[1] != COTP_DT {
+            return Err(format!(
+                "expected a COTP data packet, got {:02X?}",
+                &payload[..payload.len().min(8)]
+            ));
+        }
+        pdu.extend_from_slice(&payload[header_len..]);
+        if payload[2] & 0x80 != 0 {
+            return Ok(pdu);
+        }
+        if pdu.len() > 2 * MAX_PDU_SIZE as usize {
+            return Err("fragmented PDU is larger than any PDU size S7 allows".into());
+        }
+    }
+}
+
+/// Read the TPDU size out of a COTP Connection Confirm (the payload after the TPKT header).
+/// A CC without a TPDU size parameter agrees to what we asked for.
+fn parse_cotp_cc(cc: &[u8]) -> Result<u16, ProtocolError> {
+    if cc.len() < 7 || cc[1] != COTP_CC {
+        return Err(ProtocolError::ConnectionFailed(format!(
+            "Expected COTP CC, got: {:02X?}",
+            &cc[..cc.len().min(6)]
+        )));
+    }
+    let header_end = (cc[0] as usize + 1).min(cc.len());
+    let mut code = REQUESTED_TPDU_CODE;
+    let mut params = cc.get(7..header_end).unwrap_or(&[]);
+    while params.len() >= 2 {
+        let len = params[1] as usize;
+        let Some(value) = params.get(2..2 + len) else { break };
+        if params[0] == 0xC0 && len == 1 {
+            code = value[0];
+        }
+        params = &params[2 + len..];
+    }
+    // TPDU size is 2^code bytes, 7 (128) to 13 (8192) per ISO 8073.
+    if !(7..=13).contains(&code) {
+        return Err(ProtocolError::ConnectionFailed(format!(
+            "COTP CC has an invalid TPDU size code 0x{code:02X}"
+        )));
+    }
+    Ok(1u16 << code)
+}
+
+/// Read the PDU size out of a Setup Communication response (S7 PDU, ACK_DATA header included).
 fn parse_setup_comm_response(data: &[u8]) -> Result<u16, ProtocolError> {
-    if data.len() < 17 {
+    // ACK_DATA header (12) + [F0, reserved, AmQ calling (2), AmQ called (2), PDU size (2)].
+    if data.len() < 20 {
         return Err(ProtocolError::ConnectionFailed(format!(
             "Setup Comm response too short: {} bytes",
             data.len()
@@ -867,22 +949,17 @@ fn parse_setup_comm_response(data: &[u8]) -> Result<u16, ProtocolError> {
     let error_code = u16::from_be_bytes([data[10], data[11]]);
     if error_code != S7_ERR_NONE {
         return Err(ProtocolError::ConnectionFailed(format!(
-            "S7 Setup Comm error: 0x{error_code:04X}"
+            "S7 Setup Comm error: {}",
+            describe_header_error(error_code)
         )));
     }
-
-    let pdu_size = if data.len() >= 27 {
-        let negotiated = u16::from_be_bytes([data[25], data[26]]);
-        if negotiated > 0 {
-            negotiated.min(MAX_PDU_SIZE)
-        } else {
-            DEFAULT_PDU_SIZE
-        }
-    } else {
-        DEFAULT_PDU_SIZE
-    };
-
-    Ok(pdu_size)
+    if data[12] != S7_SETUP_COMM {
+        return Err(ProtocolError::ConnectionFailed(format!(
+            "Setup Comm response has function 0x{:02X}",
+            data[12]
+        )));
+    }
+    Ok(u16::from_be_bytes([data[18], data[19]]))
 }
 
 fn parse_read_var_response(data: &[u8], tags: &[S7Tag]) -> Result<Vec<S7Value>, ProtocolError> {
