@@ -130,7 +130,8 @@ jobs:
 
   ios:
     if: inputs.ios && inputs.app == 'modbus-poll'
-    runs-on: macos-15
+    # App Store Connect requires the iOS 26 SDK (Xcode 26), which macos-15 images do not select by default.
+    runs-on: macos-26
     timeout-minutes: 90
     environment: release
     steps:
