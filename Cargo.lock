@@ -674,6 +674,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dnp3_explorer"
+version = "2.0.0"
+dependencies = [
+ "mt-dnp3",
+ "mt-protocol",
+ "mt-store",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tokio",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1916,6 +1932,19 @@ dependencies = [
  "anyhow",
  "bacnet-rs",
  "if-addrs",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "mt-dnp3"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
  "mt-protocol",
  "serde",
  "serde_json",

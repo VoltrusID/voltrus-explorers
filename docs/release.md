@@ -57,6 +57,7 @@ write succeeded.
 | --- | --- | --- |
 | BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 14.99 (the app's paid price) |
 | Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
+| DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | not set yet (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
 
 - Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.
   The logic is `crates/mt-store` (Rust) and `packages/mt-ui/src/pro.tsx` (`ProProvider`, `requirePro`).
