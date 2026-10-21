@@ -56,6 +56,7 @@ write succeeded.
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
 | BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 14.99 (the app's paid price) |
+| EtherNet/IP Explorer | `com.joyodigitama.enipexplorer.pro` | set in App Store Connect |
 | Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 9.99 (one purchase covers macOS and iOS) |
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | not set yet (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
 

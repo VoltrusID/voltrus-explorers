@@ -5,10 +5,12 @@ members = [
     "crates/mt-modbus",
     "crates/mt-bacnet",
     "crates/mt-dnp3",
+    "crates/mt-enip",
     "crates/mt-store",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/dnp3-explorer/src-tauri",
+    "apps/enip-explorer/src-tauri",
 ]
 
 [workspace.package]

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "EtherNet-IP Explorer",
+  "version": "1.5.0",
+  "identifier": "com.joyodigitama.enip-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "EtherNet/IP Explorer",
+        "width": 1280,
+        "height": 820,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "EtherNet/IP CIP tag browser and PLC simulator",
+    "longDescription": "Discover EtherNet/IP devices, browse CIP tags and attributes, and read values from Allen-Bradley and other EtherNet/IP PLCs. Pro adds tag and attribute writes, trends, implicit I/O, CIP services, EDS import, packet log export, and a built-in adapter and PLC simulator.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}
