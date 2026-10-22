@@ -103,10 +103,8 @@ impl MockServer {
     }
 }
 
-/// A base URL nothing listens on.
+/// A base URL nothing listens on. Port 1 (tcpmux) is privileged and unused, so connects are refused. A freshly
+/// released ephemeral port is not safe: a MockServer in a parallel test can bind it and answer.
 pub async fn dead_base() -> String {
-    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", l.local_addr().unwrap());
-    drop(l);
-    base
+    "http://127.0.0.1:1".to_string()
 }
