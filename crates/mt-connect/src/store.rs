@@ -15,6 +15,49 @@ pub struct StoreProduct {
     pub title: String,
     pub description: String,
     pub price: Option<String>,
+    /// ISO 8601 length of one billing period (`P1M`, `P1Y`), shown to the user as the subscription length.
+    pub period: Option<String>,
+    /// Introductory offer (e.g. the yearly plan's one-month free trial), if the product has one.
+    pub intro: Option<IntroOffer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IntroOffer {
+    /// StoreKit's localized price of the introductory period ("Free" for a free trial).
+    pub price: String,
+    /// ISO 8601 length of one introductory period.
+    pub period: String,
+    /// How many introductory periods the offer lasts.
+    pub periods: u32,
+    pub free: bool,
+}
+
+/// One StoreKit pricing phase, reduced to what the subscription terms need.
+#[cfg_attr(not(feature = "store"), allow(dead_code))]
+pub(crate) struct Phase {
+    /// `true` for the regular renewing price, `false` for an introductory phase.
+    pub recurring: bool,
+    pub price: String,
+    pub period: String,
+    pub cycles: i32,
+}
+
+/// A price string with no non-zero digit is free: "$0.00", "0,00 €", and the localized word for "Free".
+fn is_free(price: &str) -> bool {
+    !price.chars().any(|c| c.is_numeric() && c.to_digit(10).is_none_or(|d| d != 0))
+}
+
+/// Subscription length and introductory offer from a product's pricing phases.
+#[cfg_attr(not(feature = "store"), allow(dead_code))]
+pub(crate) fn subscription_terms(phases: &[Phase]) -> (Option<String>, Option<IntroOffer>) {
+    let period = phases.iter().find(|p| p.recurring).map(|p| p.period.clone());
+    let intro = phases.iter().find(|p| !p.recurring).map(|p| IntroOffer {
+        free: is_free(&p.price),
+        price: p.price.clone(),
+        period: p.period.clone(),
+        periods: p.cycles.max(1) as u32,
+    });
+    (period, intro)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -106,7 +149,22 @@ mod commands {
         let mut out: Vec<StoreProduct> = found
             .products
             .into_iter()
-            .map(|p| StoreProduct { id: p.product_id, title: p.title, description: p.description, price: p.formatted_price })
+            .map(|p| {
+                let phases: Vec<Phase> = p
+                    .subscription_offer_details
+                    .iter()
+                    .flatten()
+                    .flat_map(|o| &o.pricing_phases)
+                    .map(|ph| Phase {
+                        recurring: ph.recurrence_mode == 1,
+                        price: ph.formatted_price.clone(),
+                        period: ph.billing_period.clone(),
+                        cycles: ph.billing_cycle_count,
+                    })
+                    .collect();
+                let (period, intro) = subscription_terms(&phases);
+                StoreProduct { id: p.product_id, title: p.title, description: p.description, price: p.formatted_price, period, intro }
+            })
             .collect();
         let order = |id: &str| connect.config.subscription_products.iter().position(|p| p == id).unwrap_or(usize::MAX);
         out.sort_by_key(|p| order(&p.id));
@@ -193,6 +251,34 @@ mod tests {
         assert_eq!(classify_purchase_error("Purchase cancelled by user"), Some(PurchaseEnd::Cancelled));
         assert_eq!(classify_purchase_error("Purchase is pending"), Some(PurchaseEnd::Pending));
         assert_eq!(classify_purchase_error("Purchase failed: no network"), None);
+    }
+
+    fn phase(recurring: bool, price: &str, period: &str, cycles: i32) -> Phase {
+        Phase { recurring, price: price.into(), period: period.into(), cycles }
+    }
+
+    #[test]
+    fn monthly_has_a_length_and_no_intro() {
+        let (period, intro) = subscription_terms(&[phase(true, "$4.99", "P1M", 0)]);
+        assert_eq!(period.as_deref(), Some("P1M"));
+        assert_eq!(intro, None);
+    }
+
+    #[test]
+    fn yearly_free_trial_is_reported_as_intro() {
+        let (period, intro) = subscription_terms(&[phase(false, "Free", "P1M", 1), phase(true, "$39.99", "P1Y", 0)]);
+        assert_eq!(period.as_deref(), Some("P1Y"));
+        assert_eq!(intro, Some(IntroOffer { price: "Free".into(), period: "P1M".into(), periods: 1, free: true }));
+    }
+
+    #[test]
+    fn paid_intro_is_not_free() {
+        for price in ["$0.99", "0,99 €", "¥150"] {
+            assert!(!is_free(price), "{price}");
+        }
+        for price in ["Free", "$0.00", "0,00 €", "Gratis"] {
+            assert!(is_free(price), "{price}");
+        }
     }
 
     #[test]
