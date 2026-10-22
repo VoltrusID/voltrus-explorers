@@ -41,8 +41,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** `productBase` is `pro_product_id` without `.pro` (see connect.json); ids are `<base>.connect.monthly|yearly`. */
 export function connectReviewScene(app, productBase) {
   const products = [
-    { id: `${productBase}.connect.monthly`, title: "Voltrus Connect", description: "Team sharing and Remote sites. Billed monthly.", price: PRICES.monthly },
-    { id: `${productBase}.connect.yearly`, title: "Voltrus Connect", description: "Team sharing and Remote sites. Billed yearly.", price: PRICES.yearly },
+    { id: `${productBase}.connect.monthly`, title: "Voltrus Connect", description: "Profile sync, teams, Remote sites. Billed monthly.", price: PRICES.monthly },
+    { id: `${productBase}.connect.yearly`, title: "Voltrus Connect", description: "Profile sync, teams, Remote sites. Billed yearly.", price: PRICES.yearly },
   ];
   return {
     id: "connect-review",
