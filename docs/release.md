@@ -65,6 +65,12 @@ the user starts server mode).
 
 ## Pro (in-app purchase)
 
+**Serial Monitor and BLE Inspector are GitHub-only.** Apple rejected both under guideline 4.3 (Spam) and the App Store
+submissions were withdrawn. They ship as notarized DMGs on GitHub Releases (`serial-monitor-v<version>`,
+`ble-inspector-v<version>`), built without the `store` feature, so every Pro feature is unlocked. Their `store.json`
+files and the two Pro products below are kept but unused; do not dispatch `appstore=true` for either app. Release with:
+`gh workflow run release.yml --ref main -f app=<app> -f appstore=false -f dmg=true -f ios=false -f upload=false -f github_release=true`.
+
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
 | BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 19.99 (recommended; set when `free_since` is set, previous buyers are grandfathered) |
