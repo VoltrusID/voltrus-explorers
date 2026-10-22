@@ -777,3 +777,49 @@ export const iosScenes = [
     },
   },
 ];
+
+
+// ── Voltrus Connect website screenshots (named scenes only, see ../connect-docs.mjs) ──
+import { connectDocScenes, connectDocIosScenes } from "../connect-docs.mjs";
+
+const connectProfiles = profiles.map((p) => ({
+  name: p.name,
+  shared: p.name === "Chiller 1",
+  data: { transport: p.transport, tcp: p.tcp, rtu: p.rtu, blocks: p.blocks },
+}));
+
+scenes.push(
+  ...connectDocScenes({
+    app: "modbus-poll",
+    pre: initCommon,
+    serverProfiles: connectProfiles,
+    async prepare(page) {
+      await connectTcp(page, "MCC-1 incomer", 40);
+      await waitLatency(page, 16);
+    },
+    async saveFlow(page, h) {
+      // A live connection nobody has saved under this name yet: name it, and Connect carries it to the account.
+      await clickButton(page, "Save as new");
+      await h.sleep(300);
+      await clickButton(page, "Save as profile…");
+      await h.sleep(300);
+      await page.type('input[placeholder="Profile name"]', "Boiler meter");
+      await page.evaluate(() => {
+        const input = document.querySelector('input[placeholder="Profile name"]');
+        let el = input;
+        while (el && !/(auto|scroll)/.test(getComputedStyle(el).overflowY)) el = el.parentElement;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+      await h.sleep(400);
+    },
+  }),
+);
+
+iosScenes.push(
+  ...connectDocIosScenes({
+    app: "modbus-poll",
+    init: iosInit + `localStorage.setItem("modbus-poll-conn-profiles", "[]");`,
+    prepare: iosPrepare,
+    serverProfiles: connectProfiles.filter((p) => p.data.transport === "tcp"),
+  }),
+);

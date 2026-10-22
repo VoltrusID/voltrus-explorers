@@ -733,3 +733,51 @@ export const iosScenes = [
     },
   },
 ];
+
+
+// ── Voltrus Connect website screenshots (named scenes only, see ../connect-docs.mjs) ──
+import { connectDocScenes, connectDocIosScenes } from "../connect-docs.mjs";
+
+const watch = (list) => list.map(([type, instance, name, source]) => ({ type, instance, name, source }));
+const connectProfiles = [
+  { name: "Chiller plant", shared: true, device: ["10.20.4.30", 3010], watch: watch([["analogInput", 1, "CHW-SUPPLY", "cov"], ["analogInput", 2, "CHW-RETURN", "cov"], ["analogValue", 1, "CHW-SP", "poll"]]) },
+  { name: "Lobby VAV", shared: false, device: ["10.20.5.12", 4101], watch: watch([["analogInput", 1, "ZN-TEMP", "cov"], ["analogOutput", 1, "DMPR-CMD", "poll"]]) },
+  { name: "Boiler room", shared: false, device: ["10.20.7.3", 8015], watch: watch([["analogInput", 1, "HW-SUPPLY", "cov"], ["binaryInput", 1, "BLR-STATUS", "poll"]]) },
+].map((p) => ({ name: p.name, shared: p.shared, data: { device: { ip: p.device[0], port: 47808, device_id: p.device[1] }, watch: p.watch } }));
+
+const connectLocal = JSON.stringify(connectProfiles.map((p) => ({ key: p.name, name: p.name, data: p.data })));
+
+scenes.push(
+  ...connectDocScenes({
+    app: "bacnet-explorer",
+    pre: `localStorage.setItem("bacnet-explorer-profiles", ${JSON.stringify(connectLocal)});`,
+    serverProfiles: connectProfiles,
+    async prepare(page) {
+      await connect(page);
+      await browse(page);
+      await expand(page, "Analog Input");
+      await selectObject(page, "SA-TEMP");
+      await addTrend(page, ["SA-TEMP", "RA-TEMP", "MA-TEMP"]);
+      await feedCov(page, 3, 40);
+    },
+    async saveFlow(page, h) {
+      // The device is connected and its points are on the trend: save it, and Connect carries it to the account.
+      await h.openDialog(page);
+      await h.waitText(page, "Last synced");
+      await h.clickTab(page, "Profiles");
+      await page.type('input[placeholder="Profile name"]', "AHU-01 roof plant");
+      await h.clickText(page, ".vt-dialog button", "Save");
+      await h.waitText(page, "AHU-01 roof plant");
+      await h.sleep(1200);
+    },
+  }),
+);
+
+iosScenes.push(
+  ...connectDocIosScenes({
+    app: "bacnet-explorer",
+    init: iosInit,
+    prepare: iosPrepare,
+    serverProfiles: connectProfiles,
+  }),
+);

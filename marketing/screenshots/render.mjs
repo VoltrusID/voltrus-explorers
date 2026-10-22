@@ -11,6 +11,8 @@
 // for iphone/ipad) as out/bare-<NN>-<id>.png (out/bare-ios-<device>-<NN>-<id>.png), for website use. Bare renders
 // emulate prefers-color-scheme: dark so apps that follow the system theme match the dark site.
 //
+// A scene with `crop: "<selector>"` also writes out/bare-<NN>-<id>-crop.png around that element.
+// Scenes flagged `review` (the Voltrus Connect website scenes in connect-docs.mjs) render only when named.
 // A scene file may export `uiScale` (> 1 renders the UI larger inside the same window size).
 // SCREENSHOT_PORT picks the dev-server port (default 1420) so two apps can render at once.
 // Requirements: Chromium at $CHROMIUM (default /usr/bin/chromium) and the Inter font installed.
@@ -65,7 +67,7 @@ const FONT_CSS = `:root { --font-sans: "Inter", system-ui, sans-serif !important
   * { caret-color: transparent !important; }`;
 
 try {
-  const list = only.length ? scenes.filter((s) => only.includes(s.id)) : scenes;
+  const list = only.length ? scenes.filter((s) => only.includes(s.id)) : scenes.filter((s) => !s.review);
   for (const scene of list) {
     const page = await browser.newPage();
     if (device) {
@@ -84,6 +86,24 @@ try {
     await scene.setup(page, deviceArg);
     await new Promise((r) => setTimeout(r, scene.settleMs ?? 600));
     const shot = await page.screenshot({ type: "png" });
+    // `crop` (a selector, bare renders only) also writes out/bare-<NN>-<id>-crop.png: that element plus a 32px margin.
+    let crop = null;
+    if (bare && scene.crop) {
+      const box = await page.evaluate((sel) => {
+        const r = document.querySelector(sel)?.getBoundingClientRect();
+        return r && { x: r.x, y: r.y, width: r.width, height: r.height };
+      }, scene.crop);
+      if (box) {
+        const pad = 32;
+        const x = Math.max(0, box.x - pad);
+        const y = Math.max(0, box.y - pad);
+        const vp = page.viewport();
+        crop = await page.screenshot({
+          type: "png",
+          clip: { x, y, width: Math.min(vp.width - x, box.width + 2 * pad), height: Math.min(vp.height - y, box.height + 2 * pad) },
+        });
+      }
+    }
     await page.close();
 
     const prefix = `${bare ? "bare-" : ""}${device ? `ios-${deviceArg}-` : ""}${String(scenes.indexOf(scene) + 1).padStart(2, "0")}-${scene.id}.png`;
@@ -91,6 +111,11 @@ try {
       const file = join(outDir, prefix);
       writeFileSync(file, shot);
       console.log(file);
+      if (crop) {
+        const cropFile = file.replace(/\.png$/, "-crop.png");
+        writeFileSync(cropFile, crop);
+        console.log(cropFile);
+      }
       continue;
     }
 
