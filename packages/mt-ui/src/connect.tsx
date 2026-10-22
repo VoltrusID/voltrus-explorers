@@ -90,11 +90,23 @@ interface RemoteJoin {
   limits: string[];
 }
 
+interface StoreIntroOffer {
+  /** StoreKit's localized price of the introductory period. */
+  price: string;
+  /** ISO 8601 length of one introductory period, e.g. "P1M". */
+  period: string;
+  periods: number;
+  free: boolean;
+}
+
 interface StoreProduct {
   id: string;
   title: string;
   description: string;
   price: string | null;
+  /** ISO 8601 length of one billing period ("P1M", "P1Y"); null when StoreKit did not report it. */
+  period: string | null;
+  intro: StoreIntroOffer | null;
 }
 
 type SubscribeOutcome = { status: "linked"; me: ConnectMe } | { status: "pending" } | { status: "cancelled" };
@@ -133,9 +145,11 @@ interface ConnectContextValue {
   info: ConnectInfo | null;
   signedIn: boolean;
   me: ConnectMe | null;
-  /** The user is in the browser and has not come back yet. */
+  /** The sign-in window is open and the user has not come back yet. */
   waitingForBrowser: boolean;
   error: string | null;
+  /** Quiet status for the sign-in tab, e.g. after the user closed the sign-in window. */
+  notice: string | null;
   syncing: boolean;
   syncSummary: SyncSummary | null;
   syncError: string | null;
@@ -196,6 +210,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<ConnectMe | null>(null);
   const [waitingForBrowser, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncSummary, setSyncSummary] = useState<SyncSummary | null>(null);
@@ -331,13 +346,20 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let off: (() => void) | undefined;
     let stopped = false;
-    listen<{ ok: boolean; error: string | null }>("connect://auth", (event) => {
+    listen<{ ok: boolean; cancelled: boolean; error: string | null }>("connect://auth", (event) => {
       setWaiting(false);
+      if (event.payload.cancelled) {
+        setError(null);
+        setNotice("Sign-in cancelled.");
+        return;
+      }
       if (!event.payload.ok) {
+        setNotice(null);
         setError(event.payload.error ?? "Sign-in failed.");
         return;
       }
       setError(null);
+      setNotice(null);
       setSignedIn(true);
       setDialogOpen(true);
       void (async () => {
@@ -383,6 +405,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async () => {
     setError(null);
+    setNotice(null);
     try {
       await invoke("connect_sign_in");
       setWaiting(true);
@@ -529,6 +552,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
       me,
       waitingForBrowser,
       error,
+      notice,
       syncing,
       syncSummary,
       syncError,
@@ -554,7 +578,7 @@ export function ConnectProvider({ children }: { children: ReactNode }) {
       hooks,
     }),
     [
-      available, storeProducts, plansOffered, info, signedIn, me, waitingForBrowser, error, syncing, syncSummary, syncError, conflicts, failures,
+      available, storeProducts, plansOffered, info, signedIn, me, waitingForBrowser, error, notice, syncing, syncSummary, syncError, conflicts, failures,
       pendingDeletes, meta, attention, dialogOpen, openDialog, closeDialog, signIn, cancelSignIn, signOut, refreshMe,
       syncNow, setTeam, keepMine, useServerCopy, saveCurrent, register, hooks,
     ],
@@ -689,7 +713,7 @@ function AccountTab() {
         </p>
         {c.waitingForBrowser ? (
           <Callout tone="info">
-            Finish signing in in your browser. This window updates when you come back.{" "}
+            Finish signing in in the sign-in window. This window updates when you come back.{" "}
             <Button size="sm" variant="ghost" onClick={c.cancelSignIn}>
               Cancel
             </Button>
@@ -701,7 +725,20 @@ function AccountTab() {
             </Button>
           </div>
         )}
+        {c.notice && <p style={{ ...dim, margin: 0 }}>{c.notice}</p>}
         {c.error && <Callout tone="danger">{c.error}</Callout>}
+        {c.info?.store && c.plansOffered && c.storeProducts && (
+          <Section title="Connect subscriptions">
+            <div style={col}>
+              {c.storeProducts.map((p) => (
+                <PlanDetails key={p.id} product={p} />
+              ))}
+              <p style={{ ...dim, margin: 0, fontSize: "var(--fs-xs)" }}>Sign in to subscribe. {RENEWAL_TERMS}</p>
+              <LegalLinks />
+            </div>
+          </Section>
+        )}
+        {!(c.info?.store && c.plansOffered) && <LegalLinks />}
       </div>
     );
   }
@@ -732,6 +769,7 @@ function AccountTab() {
           </Button>
         </div>
       )}
+      {!(ent && !ent.active && store && c.plansOffered) && <LegalLinks />}
       <Section title="Delete account">
         <p style={{ ...dim, margin: "0 0 8px" }}>
           Permanently deletes your Voltrus account and everything Connect stores for it. You confirm with a code we email you.
@@ -770,9 +808,88 @@ function SyncStatus() {
 }
 
 const APPLE_TERMS = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
-const PRIVACY = "https://voltrus.id/privacy";
+const PRIVACY = "https://voltrus.id/privacy/";
+const RENEWAL_TERMS =
+  "Renews automatically until cancelled; manage or cancel in your Apple Account settings. Payment is charged to your Apple Account at confirmation of purchase, and renewal is charged within 24 hours before the end of the current period unless you cancel at least 24 hours before it ends.";
 
-/** App Store builds only: StoreKit shows the localized price; this app never states or links to one. */
+function LegalLink({ url, children }: { url: string; children: ReactNode }) {
+  return (
+    <a
+      href={url}
+      onClick={(e) => {
+        e.preventDefault();
+        openLink(url);
+      }}
+      style={{ fontSize: "var(--fs-sm)", color: "var(--accent, var(--text))", textDecoration: "underline", cursor: "pointer" }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/** Terms of Use (Apple's standard EULA) and Privacy Policy, opened in the system browser. */
+function LegalLinks() {
+  return (
+    <div style={{ ...row, gap: 16 }}>
+      <LegalLink url={APPLE_TERMS}>Terms of Use (EULA)</LegalLink>
+      <LegalLink url={PRIVACY}>Privacy Policy</LegalLink>
+    </div>
+  );
+}
+
+const PERIOD_UNITS = { D: "day", W: "week", M: "month", Y: "year" } as const;
+
+/** "P1M" -> { count: 1, unit: "month" }; null for anything StoreKit would not send. */
+function parsePeriod(iso: string | null): { count: number; unit: string } | null {
+  const m = iso ? /^P(\d+)([DWMY])$/.exec(iso) : null;
+  return m ? { count: Number(m[1]), unit: PERIOD_UNITS[m[2] as keyof typeof PERIOD_UNITS] } : null;
+}
+
+/** "1 month", "3 months". */
+function periodLength(iso: string | null, times = 1): string | null {
+  const p = parsePeriod(iso);
+  if (!p) return null;
+  const n = p.count * times;
+  return `${n} ${p.unit}${n === 1 ? "" : "s"}`;
+}
+
+/** "$4.99 per month", "$12.99 every 3 months". */
+function priceLine(price: string | null, iso: string | null): string | null {
+  const p = parsePeriod(iso);
+  if (!price) return null;
+  if (!p) return price;
+  return p.count === 1 ? `${price} per ${p.unit}` : `${price} every ${p.count} ${p.unit}s`;
+}
+
+function introLine(p: StoreProduct): string | null {
+  const intro = p.intro;
+  const length = intro && periodLength(intro.period, intro.periods);
+  if (!intro || !length) return null;
+  const then = priceLine(p.price, p.period);
+  const first = intro.free ? `${length} free trial for new subscribers` : `${intro.price} for the first ${length} (new subscribers)`;
+  return then ? `${first}, then ${then}` : first;
+}
+
+/** One subscription as the App Store reviews it: title, length, price, and any introductory offer. */
+function PlanDetails({ product: p, action }: { product: StoreProduct; action?: ReactNode }) {
+  const length = periodLength(p.period);
+  const price = priceLine(p.price, p.period);
+  const intro = introLine(p);
+  return (
+    <div style={{ ...row, justifyContent: "space-between", alignItems: "flex-start" }}>
+      <span style={{ ...dim, color: "var(--text)" }}>
+        <strong>{p.title}</strong>
+        {length && <span style={{ ...dim, display: "block" }}>Length: {length}</span>}
+        {price && <span style={{ ...dim, display: "block" }}>Price: {price}</span>}
+        {intro && <span style={{ ...dim, display: "block" }}>{intro}</span>}
+        {p.description ? <span style={{ ...dim, display: "block" }}>{p.description}</span> : null}
+      </span>
+      {action}
+    </div>
+  );
+}
+
+/** App Store builds only: StoreKit supplies the title, length and localized price shown here. */
 function SubscribePanel() {
   const c = useConnect();
   const { busy, error, notice, setNotice, run } = useAction();
@@ -793,7 +910,7 @@ function SubscribePanel() {
     run("restore", async () => {
       const out = await invoke<{ linked: number; me: ConnectMe }>("connect_link_purchases");
       c.setMe(out.me);
-      if (out.linked === 0) setNotice("No Connect subscription was found for this Apple ID.");
+      if (out.linked === 0) setNotice("No Connect subscription was found for this Apple Account.");
       else void c.syncNow();
     });
 
@@ -801,11 +918,10 @@ function SubscribePanel() {
     <Section title="Connect subscription">
       <div style={col}>
         {(products ?? []).map((p) => (
-            <div key={p.id} style={{ ...row, justifyContent: "space-between" }}>
-              <span style={{ ...dim, color: "var(--text)" }}>
-                {p.title}
-                {p.description ? <span style={{ ...dim, display: "block" }}>{p.description}</span> : null}
-              </span>
+          <PlanDetails
+            key={p.id}
+            product={p}
+            action={
               <Button
                 variant="primary"
                 size="sm"
@@ -816,25 +932,16 @@ function SubscribePanel() {
               >
                 {p.price ? `Subscribe · ${p.price}` : "Subscribe"}
               </Button>
-            </div>
+            }
+          />
         ))}
         <div style={row}>
           <Button size="sm" variant="ghost" loading={busy === "restore"} disabled={busy !== null} onClick={() => void restore()}>
             Restore purchases
           </Button>
         </div>
-        <p style={{ ...dim, margin: 0, fontSize: "var(--fs-xs)" }}>
-          Payment is charged to your Apple ID. The subscription renews automatically unless it is cancelled at least 24 hours before the
-          end of the current period. Manage or cancel it in your Apple ID settings.
-        </p>
-        <div style={row}>
-          <Button size="sm" variant="ghost" onClick={() => openLink(APPLE_TERMS)}>
-            Terms of Use
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => openLink(PRIVACY)}>
-            Privacy Policy
-          </Button>
-        </div>
+        <p style={{ ...dim, margin: 0, fontSize: "var(--fs-xs)" }}>{RENEWAL_TERMS}</p>
+        <LegalLinks />
         <Messages error={error} notice={notice} />
       </div>
     </Section>

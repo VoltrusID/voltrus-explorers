@@ -121,6 +121,11 @@ impl Session {
         Ok(url)
     }
 
+    /// Drops the attempt started by [`Self::begin_sign_in`] (the user closed the sign-in sheet).
+    pub fn abandon_sign_in(&self) {
+        let _ = self.vault.delete(PENDING_KEY);
+    }
+
     /// Whether `url` is this app's sign-in redirect.
     pub fn owns_callback(&self, url: &Url) -> bool {
         is_callback(url, &self.redirect_uri)

@@ -6,8 +6,9 @@ contract live in the `voltrus-console` repository (`/api/connect/*`, `src/lib/co
 
 ## Pieces
 
-- `crates/mt-connect`: sign-in (OAuth 2.0 authorization code + PKCE in the system browser, back through the
-  `voltrus-<slug>://connect` deep link), tokens in the macOS/iOS Keychain, token refresh, profile sync, teams, Remote
+- `crates/mt-connect`: sign-in (OAuth 2.0 authorization code + PKCE; on macOS and iOS in an
+  `ASWebAuthenticationSession` sheet anchored to the main window (App Store guideline 4: never the default browser,
+  `src/web_auth.rs`), elsewhere in the system browser and back through the `voltrus-<slug>://connect` deep link), tokens in the macOS/iOS Keychain, token refresh, profile sync, teams, Remote
   sites, and (feature `store`) the App Store subscription. Apps call `mt_connect::setup(builder, include_str!("../connect.json"))`
   after `mt_store::setup` and register the `connect_*` commands.
 - `packages/mt-ui/src/connect.tsx`: `ConnectProvider`, `ConnectButton` (toolbar), the Connect dialog, and
@@ -60,7 +61,11 @@ Profile data is stored by the server as plain JSON: never put passwords or token
    ids are final once created. Keep them inactive until the price is decided.
 2. Point App Store Server Notifications V2 (production and sandbox) at `https://console.voltrus.id/api/connect/app-store/notifications`.
 3. Once the products are priced, attach the subscriptions to the app version that ships Connect, with a review screenshot of the Connect dialog.
-4. Privacy Policy: the dialog links `https://voltrus.id/privacy`; the page must exist before review.
+4. Guideline 3.1.2(c): the dialog shows each subscription's title, length, localized price and introductory offer (all from
+   StoreKit), the auto-renewal sentence, and links Terms of Use (Apple's standard EULA
+   `https://www.apple.com/legal/internet-services/itunes/dev/stdeula/`) and Privacy Policy (`https://voltrus.id/privacy/`) on
+   the sign-in tab and under the subscribe panel. Put the same two links in the App Store Connect metadata (Privacy Policy URL,
+   and the EULA field or the app description).
 
 
 ## Prices
@@ -68,5 +73,5 @@ Profile data is stored by the server as plain JSON: never put passwords or token
 One entitlement per paid seat across every app. App Store (per app, same price in both apps): monthly $4.99, yearly $39.99
 with a 30 day free introductory offer for new subscribers; Indonesia storefront Rp 39.000 / Rp 299.000; other storefronts
 are Apple's equalization of the USD price. Display name "Voltrus Connect", description up to 55 characters. The dialog shows
-only StoreKit's localized price. Review screenshot: `bun marketing/screenshots/render.mjs <app> --bare connect-review`
+StoreKit's title, length, localized price and trial; no price is hard-coded. Review screenshot: `bun marketing/screenshots/render.mjs <app> --bare connect-review`
 (2560x1600, App Store build view with the subscribe panel). Console prices and team packs live in the console repository.

@@ -1,5 +1,7 @@
 //! The `connect_*` Tauri commands the apps register.
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use tauri::Manager;
 use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -36,11 +38,44 @@ pub async fn connect_signed_in(connect: State<'_, Connect>) -> Cmd<bool> {
     Ok(connect.session.is_signed_in().await?)
 }
 
-/// Opens the Voltrus sign-in page in the system browser. The result arrives as [`AUTH_EVENT`].
+/// Starts the Voltrus sign-in. On macOS and iOS the authorize page runs in an `ASWebAuthenticationSession`
+/// sheet (App Store guideline 4: never the default browser); elsewhere it opens in the system browser and
+/// the deep link returns. The result arrives as [`crate::AUTH_EVENT`].
 #[tauri::command]
 pub async fn connect_sign_in<R: Runtime>(app: AppHandle<R>, connect: State<'_, Connect>) -> Cmd<()> {
     let url = connect.session.begin_sign_in()?;
-    app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| format!("Could not open the browser: {e}"))
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        let started = start_sign_in_sheet(&app, &connect, url).await;
+        if started.is_err() {
+            connect.session.abandon_sign_in();
+        }
+        started
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| format!("Could not open the browser: {e}"))
+    }
+}
+
+/// Presents the sign-in sheet anchored to the app's main window and waits until it is up.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+async fn start_sign_in_sheet<R: Runtime>(app: &AppHandle<R>, connect: &Connect, url: Url) -> Cmd<()> {
+    let scheme = Url::parse(connect.session.redirect_uri()).map_err(|e| e.to_string())?.scheme().to_string();
+    let window = app
+        .get_webview_window("main")
+        .or_else(|| app.webview_windows().into_values().next())
+        .ok_or("The app window is not available.")?;
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    // `with_webview` runs its closure on the main thread, where AuthenticationServices must be driven.
+    window
+        .with_webview(move |webview| {
+            let started = crate::web_auth::start(webview.inner(), &url, &scheme, move |outcome| crate::finish_web_auth(&handle, outcome));
+            let _ = started_tx.send(started);
+        })
+        .map_err(|e| format!("Could not open the sign-in window: {e}"))?;
+    started_rx.await.map_err(|_| "Could not open the sign-in window.".to_string())?
 }
 
 #[tauri::command]

@@ -1,5 +1,6 @@
 // App Store Connect review screenshot for the Voltrus Connect subscriptions: the signed-in, free account
-// view of the Connect dialog with the StoreKit subscribe panel (App Store build, prices come from StoreKit).
+// view of the Connect dialog with the StoreKit subscribe panel (App Store build: title, length, price and the
+// yearly free trial come from StoreKit; Terms of Use and Privacy Policy links under the panel).
 //
 //   bun marketing/screenshots/render.mjs <app> --bare connect-review
 //
@@ -19,7 +20,7 @@ function installConnectMock(cfg) {
   };
   const commands = {
     connect_info: () => ({ app_slug: cfg.app, store: true, console_url: null }),
-    connect_signed_in: () => true,
+    connect_signed_in: () => cfg.signedIn,
     connect_me: () => me,
     connect_store_products: () => cfg.products,
     connect_sync: () => ({ ops: [], cursor: 0 }),
@@ -38,18 +39,34 @@ function installConnectMock(cfg) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** `productBase` is `pro_product_id` without `.pro` (see connect.json); ids are `<base>.connect.monthly|yearly`. */
-export function connectReviewScene(app, productBase) {
+/**
+ * `signedIn: false` renders the signed-out sign-in tab (subscription list, Terms of Use and Privacy Policy links).
+ * `productBase` is `pro_product_id` without `.pro` (see connect.json); ids are `<base>.connect.monthly|yearly`. */
+export function connectReviewScene(app, productBase, { signedIn = true } = {}) {
   const products = [
-    { id: `${productBase}.connect.monthly`, title: "Voltrus Connect", description: "Profile sync, teams, Remote sites. Billed monthly.", price: PRICES.monthly },
-    { id: `${productBase}.connect.yearly`, title: "Voltrus Connect", description: "Profile sync, teams, Remote sites. Billed yearly.", price: PRICES.yearly },
+    {
+      id: `${productBase}.connect.monthly`,
+      title: "Voltrus Connect Monthly",
+      description: "Profile sync, teams, Remote sites.",
+      price: PRICES.monthly,
+      period: "P1M",
+      intro: null,
+    },
+    {
+      id: `${productBase}.connect.yearly`,
+      title: "Voltrus Connect Yearly",
+      description: "Profile sync, teams, Remote sites.",
+      price: PRICES.yearly,
+      period: "P1Y",
+      intro: { price: "Free", period: "P1M", periods: 1, free: true },
+    },
   ];
   return {
-    id: "connect-review",
+    id: signedIn ? "connect-review" : "connect-review-signin",
     review: true,
     headline: "Voltrus Connect",
     sub: "Review screenshot",
-    init: `(${installConnectMock.toString()})(${JSON.stringify({ app, products })});`,
+    init: `(${installConnectMock.toString()})(${JSON.stringify({ app, products, signedIn })});`,
     settleMs: 500,
     async setup(page) {
       await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 });

@@ -1,7 +1,7 @@
 //! Voltrus Connect client for the explorer apps.
 //!
-//! Sign in with a Voltrus account (OAuth 2.0 code + PKCE in the system browser, redirected back through
-//! the `voltrus-<slug>://connect` deep link), keep tokens in the Keychain, sync saved profiles, manage
+//! Sign in with a Voltrus account (OAuth 2.0 code + PKCE: `ASWebAuthenticationSession` on macOS and iOS,
+//! the system browser plus the `voltrus-<slug>://connect` deep link elsewhere), keep tokens in the Keychain, sync saved profiles, manage
 //! teams, list Voltrus Remote sites, and (App Store builds) link StoreKit subscriptions to the account.
 //!
 //! Apps call [`setup`] with their `connect.json` and register the `connect_*` commands. The StoreKit
@@ -18,6 +18,8 @@ mod session;
 mod store;
 mod sync;
 mod vault;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod web_auth;
 
 #[cfg(test)]
 mod testutil;
@@ -82,6 +84,8 @@ pub struct ConnectInfo {
 #[derive(Debug, Clone, Serialize)]
 struct AuthEvent {
     ok: bool,
+    /// The user closed the sign-in sheet: not an error, the UI just stops waiting.
+    cancelled: bool,
     error: Option<String>,
 }
 
@@ -121,21 +125,40 @@ pub fn setup<R: Runtime>(builder: tauri::Builder<R>, config_json: &str) -> tauri
 fn handle_urls<R: Runtime>(app: &AppHandle<R>, urls: Vec<Url>) {
     let Some(connect) = app.try_state::<Connect>() else { return };
     for url in urls {
-        if !connect.session.owns_callback(&url) {
-            continue;
+        if connect.session.owns_callback(&url) {
+            complete_callback(app, url, false);
         }
-        let session = connect.session.clone();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let payload = match session.complete_sign_in(&url).await {
-                Ok(()) => AuthEvent { ok: true, error: None },
-                // Someone else's redirect: not ours to report.
-                Err(ConnectError::ForeignCallback) => return,
-                Err(e) => AuthEvent { ok: false, error: Some(e.to_string()) },
-            };
-            let _ = app.emit(AUTH_EVENT, payload);
-        });
     }
+}
+
+/// Exchanges the redirect for tokens and reports the result as [`AUTH_EVENT`]. A redirect that is not
+/// ours (`ForeignCallback`) is noise from the deep-link path, but a failure when the in-app sign-in
+/// sheet returned it (`report_foreign`).
+fn complete_callback<R: Runtime>(app: &AppHandle<R>, url: Url, report_foreign: bool) {
+    let Some(connect) = app.try_state::<Connect>() else { return };
+    let session = connect.session.clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let payload = match session.complete_sign_in(&url).await {
+            Ok(()) => AuthEvent { ok: true, cancelled: false, error: None },
+            Err(ConnectError::ForeignCallback) if !report_foreign => return,
+            Err(e) => AuthEvent { ok: false, cancelled: false, error: Some(e.to_string()) },
+        };
+        let _ = app.emit(AUTH_EVENT, payload);
+    });
+}
+
+/// End of an `ASWebAuthenticationSession` (runs on the main thread).
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn finish_web_auth<R: Runtime>(app: &AppHandle<R>, outcome: web_auth::Outcome) {
+    let Some(connect) = app.try_state::<Connect>() else { return };
+    let payload = match outcome {
+        web_auth::Outcome::Callback(url) => return complete_callback(app, url, true),
+        web_auth::Outcome::Cancelled => AuthEvent { ok: false, cancelled: true, error: None },
+        web_auth::Outcome::Failed(e) => AuthEvent { ok: false, cancelled: false, error: Some(e) },
+    };
+    connect.session.abandon_sign_in();
+    let _ = app.emit(AUTH_EVENT, payload);
 }
 
 pub use commands::{

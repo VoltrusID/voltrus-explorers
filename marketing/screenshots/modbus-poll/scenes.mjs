@@ -826,3 +826,4 @@ iosScenes.push(
   }),
 );
 scenes.push(connectReviewScene("modbus-poll", "com.joyodigitama.modbuspoll"));
+scenes.push(connectReviewScene("modbus-poll", "com.joyodigitama.modbuspoll", { signedIn: false }));

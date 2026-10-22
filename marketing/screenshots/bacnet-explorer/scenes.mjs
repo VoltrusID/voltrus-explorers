@@ -784,3 +784,4 @@ iosScenes.push(
   }),
 );
 scenes.push(connectReviewScene("bacnet-explorer", "com.joyodigitama.bacnetexplorer"));
+scenes.push(connectReviewScene("bacnet-explorer", "com.joyodigitama.bacnetexplorer", { signedIn: false }));
