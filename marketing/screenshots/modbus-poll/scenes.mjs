@@ -322,6 +322,8 @@ export const mock = `(${installMock.toString()})();`;
 
 // ── Shared scene plumbing ────────────────────────────────────────────────────────────────────────
 
+import { connectReviewScene } from "../connect-review.mjs";
+
 const PROFILE_BLOCKS = [
   { name: "PM5560", address: 2999, quantity: 14, type: "float32", area: "holding" },
   { name: "Energy", address: 3203, quantity: 2, type: "float64", area: "holding" },
@@ -823,3 +825,4 @@ iosScenes.push(
     serverProfiles: connectProfiles.filter((p) => p.data.transport === "tcp"),
   }),
 );
+scenes.push(connectReviewScene("modbus-poll", "com.joyodigitama.modbuspoll"));

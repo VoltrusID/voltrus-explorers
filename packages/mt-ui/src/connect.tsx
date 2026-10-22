@@ -684,7 +684,8 @@ function AccountTab() {
       <div style={col}>
         <p style={{ ...dim, margin: 0 }}>
           Sign in with your Voltrus account to keep your saved profiles in sync across your devices.
-          {c.plansOffered && " Sharing profiles with a team and listing Voltrus Remote sites need an active Connect subscription."}
+          {c.plansOffered &&
+            " Creating a team, sharing profiles and adding Voltrus Remote sites need an active Connect subscription; viewing a subscribed team's profiles and sites is free."}
         </p>
         {c.waitingForBrowser ? (
           <Callout tone="info">
@@ -1029,10 +1030,9 @@ function TeamsTab() {
     <div style={col}>
       {!active && (
         <Callout tone="info">
-          {c.plansOffered
-            ? "Creating teams and sharing profiles need an active Connect subscription."
-            : "Creating teams and sharing profiles are not available on your account yet."}{" "}
-          You can still accept an invite and leave teams.
+          Sign in with your Voltrus account to keep your saved profiles in sync across your devices.
+          {c.plansOffered &&
+            " Creating a team, sharing profiles and adding Voltrus Remote sites need an active Connect subscription; viewing a subscribed team's profiles and sites is free."}
         </Callout>
       )}
       {teams === null ? (
@@ -1149,17 +1149,23 @@ function RemoteTab() {
   const [copied, setCopied] = useState(false);
   const active = c.me?.entitlement.active === true;
 
+  // A free account can still view the sites of teams whose owner subscribes; the server answers 402 when there are none.
+  const [locked, setLocked] = useState(false);
   useEffect(() => {
-    if (!active) return;
-    void run("load", async () => setSites(await invoke<RemoteSite[]>("connect_remote_sites")));
+    void run("load", async () => {
+      try {
+        setSites(await invoke<RemoteSite[]>("connect_remote_sites"));
+        setLocked(false);
+      } catch (e) {
+        if (!active) setLocked(true);
+        else throw e;
+      }
+    });
   }, [active, run]);
 
-  if (!active) {
-    return (
-      <Callout tone="info">
-        {c.plansOffered
-          ? "Listing Voltrus Remote sites needs an active Connect subscription."
-          : "Listing Voltrus Remote sites is not available on your account yet."}
+          Sign in with your Voltrus account to keep your saved profiles in sync across your devices.
+          {c.plansOffered &&
+            " Creating a team, sharing profiles and adding Voltrus Remote sites need an active Connect subscription; viewing a subscribed team's profiles and sites is free."}
       </Callout>
     );
   }

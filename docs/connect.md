@@ -44,6 +44,8 @@ Profile data is stored by the server as plain JSON: never put passwords or token
   copy; nothing is overwritten silently.
 - Refresh tokens rotate and are single use. The new one is written to the Keychain before the access token is used;
   a rejected refresh signs the user out, a network failure does not.
+- Viewers are free: a free account sees the profiles, members and Remote sites of any team whose owner has an active
+  entitlement; creating teams, inviting, writing shared profiles and adding Remote sites need the account's own.
 - Outside the App Store the entitlement comes from the console; the dialog only offers a link to the account page.
   In App Store builds the dialog shows the StoreKit product titles and localized prices, Restore, the renewal
   disclosure and Terms/Privacy links. It never links to console pricing.
@@ -59,3 +61,12 @@ Profile data is stored by the server as plain JSON: never put passwords or token
 2. Point App Store Server Notifications V2 (production and sandbox) at `https://console.voltrus.id/api/connect/app-store/notifications`.
 3. Once the products are priced, attach the subscriptions to the app version that ships Connect, with a review screenshot of the Connect dialog.
 4. Privacy Policy: the dialog links `https://voltrus.id/privacy`; the page must exist before review.
+
+
+## Prices
+
+One entitlement per paid seat across every app. App Store (per app, same price in both apps): monthly $4.99, yearly $39.99
+with a 30 day free introductory offer for new subscribers; Indonesia storefront Rp 39.000 / Rp 299.000; other storefronts
+are Apple's equalization of the USD price. Display name "Voltrus Connect", description up to 55 characters. The dialog shows
+only StoreKit's localized price. Review screenshot: `bun marketing/screenshots/render.mjs <app> --bare connect-review`
+(2560x1600, App Store build view with the subscribe panel). Console prices and team packs live in the console repository.

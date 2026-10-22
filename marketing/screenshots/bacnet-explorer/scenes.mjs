@@ -5,6 +5,8 @@
 // (read_object_properties returns the 12 properties the Rust side reads; BitString status flags
 // decode to BacnetValue::Null on the Rust side, so the inspector really shows "—" for them).
 
+import { connectReviewScene } from "../connect-review.mjs";
+
 export const uiScale = 1.1;
 
 const U = {
@@ -781,3 +783,4 @@ iosScenes.push(
     serverProfiles: connectProfiles,
   }),
 );
+scenes.push(connectReviewScene("bacnet-explorer", "com.joyodigitama.bacnetexplorer"));
