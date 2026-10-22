@@ -1163,9 +1163,12 @@ function RemoteTab() {
     });
   }, [active, run]);
 
-          Sign in with your Voltrus account to keep your saved profiles in sync across your devices.
-          {c.plansOffered &&
-            " Creating a team, sharing profiles and adding Voltrus Remote sites need an active Connect subscription; viewing a subscribed team's profiles and sites is free."}
+  if (!active && locked) {
+    return (
+      <Callout tone="info">
+        {c.plansOffered
+          ? "Adding Voltrus Remote sites needs an active Connect subscription. You can still see the sites of a team whose owner subscribes."
+          : "Listing Voltrus Remote sites is not available on your account yet."}
       </Callout>
     );
   }
