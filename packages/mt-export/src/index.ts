@@ -1,4 +1,4 @@
-import type { ExportFormat, ExportResult, FormatId, Protocol, TagList } from "./model";
+import type { ExportFormat, ExportOptions, ExportResult, FormatId, Protocol, TagList } from "./model";
 import { csvFormat } from "./formats/csv";
 import { jsonFormat } from "./formats/json";
 import { ignitionFormat } from "./formats/ignition";
@@ -26,9 +26,9 @@ export const FORMATS: ExportFormat[] = [
 
 export const formatsFor = (protocol: Protocol): ExportFormat[] => FORMATS.filter((f) => f.protocols.includes(protocol));
 
-export function exportTags(id: FormatId, list: TagList): ExportResult {
+export function exportTags(id: FormatId, list: TagList, options: ExportOptions = {}): ExportResult {
   const format = FORMATS.find((f) => f.id === id);
   if (!format) throw new Error(`Unknown export format '${id}'`);
   if (!format.protocols.includes(list.protocol)) throw new Error(`${format.label} does not support ${list.protocol} tags`);
-  return format.export(list);
+  return format.export(list, options);
 }

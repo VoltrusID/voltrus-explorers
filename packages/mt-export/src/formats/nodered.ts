@@ -1,4 +1,4 @@
-import type { ExportFormat, ModbusTag, ModbusTagList, TagList } from "../model";
+import type { ExportFormat, ExportOptions, ModbusTag, ModbusTagList, TagList } from "../model";
 import { fileStem, nodeId, toJson, typeWidth } from "../util";
 import { buildBacnetRustredFlow } from "./bacnetflow";
 
@@ -176,8 +176,14 @@ export const rustredFormat: ExportFormat = {
   hint: "Read nodes and a device config for RustRED's editor",
   extension: "json",
   protocols: ["modbus", "bacnet"],
-  export(list: TagList) {
-    const { nodes, warnings } = list.protocol === "bacnet" ? buildBacnetRustredFlow(list) : build(list, "rustred");
+  options: [{
+    id: "bacnetWriteNodes",
+    label: "Write nodes for writable tags",
+    hint: "Adds a bacnet write node and an inject node for each writable tag. Click the inject node to write its payload.",
+    protocols: ["bacnet"],
+  }],
+  export(list: TagList, options: ExportOptions = {}) {
+    const { nodes, warnings } = list.protocol === "bacnet" ? buildBacnetRustredFlow(list, options) : build(list, "rustred");
     return { fileName: `${fileStem(list.source.name)}-rustred-flow.json`, content: toJson(nodes), warnings };
   },
 };

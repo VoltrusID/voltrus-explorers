@@ -1,1 +1,1 @@
-2 writable tags are read only in this flow; RustRED's bacnet write node does not write to devices yet.
+2 writable tags are read only in this flow. Turn on write nodes to add a bacnet write node for each.

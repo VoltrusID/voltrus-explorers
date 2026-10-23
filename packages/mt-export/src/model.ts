@@ -100,6 +100,19 @@ export interface ExportResult {
   warnings: string[];
 }
 
+/** Things the user can switch on for a format. Off unless the app turns them on. */
+export interface ExportOptions {
+  /** RustRED BACnet flow: add a `bacnet write` node, with an inject node to trigger it, for every writable tag. */
+  bacnetWriteNodes?: boolean;
+}
+
+export interface ExportOption {
+  id: keyof ExportOptions;
+  label: string;
+  hint: string;
+  protocols: Protocol[];
+}
+
 export interface ExportFormat {
   id: FormatId;
   label: string;
@@ -108,5 +121,7 @@ export interface ExportFormat {
   /** File extension without the dot. */
   extension: string;
   protocols: Protocol[];
-  export(list: TagList): ExportResult;
+  /** Options this format reads, for the dialog to offer. */
+  options?: ExportOption[];
+  export(list: TagList, options?: ExportOptions): ExportResult;
 }

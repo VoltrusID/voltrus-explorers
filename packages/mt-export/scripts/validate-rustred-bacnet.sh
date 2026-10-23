@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the RustRED BACnet flow export in a RustRED release against the headless BACnet simulator of mt-bacnet
-# (crates/mt-bacnet/examples/sim_headless.rs) and checks the values that reach the debug node. Needs gh (or
+# Runs the RustRED BACnet flow export (reads, a write node and a COV subscription) in a RustRED release against the
+# headless BACnet simulator of mt-bacnet (crates/mt-bacnet/examples/sim_headless.rs) and checks the values that reach the
+# debug node: the polled points, the value the write node put into the valve, and a COV notification. Needs gh (or
 # RUSTRED=/path/to/rust-red), bun, cargo and python3. SIM=/path/to/sim_headless skips the cargo build.
 #
 #   bash scripts/validate-rustred-bacnet.sh
@@ -27,15 +28,16 @@ port=47921
 sleep 1
 bun "$here/dump-bacnet-flow.ts" "$port" > "$work/flow.json"
 mkdir -p "$work/home"
-timeout 8 "$RUSTRED" run --headless -u "$work/home" --bind "127.0.0.1:15999" "$work/flow.json" > "$work/run.log" 2>&1 || true
+timeout 10 "$RUSTRED" run --headless -u "$work/home" --bind "127.0.0.1:15999" "$work/flow.json" > "$work/run.log" 2>&1 || true
 
 python3 - "$work/run.log" <<'PY'
 import math, re, sys
 log = open(sys.argv[1]).read()
-want = {"Supply temp": 21.5, "Voltage": 230.25, "Fan status": 1, "Mode": 3, "Valve": 50}
+want = {"Supply temp": 21.5, "Voltage": 230.25, "Fan status": 1, "Mode": 3, "COV true": 21.5}
 seen = {}
-for key, value in re.findall(r'"(Supply temp|Voltage|Fan status|Mode|Valve)": ([^,\n}]+)', log):
+for key, value in re.findall(r'"(Supply temp|Voltage|Fan status|Mode|COV true)": ([^,\n}]+)', log):
     seen[key] = value.strip()
+valves = [float(v) for v in re.findall(r'"Valve": ([^,\n}]+)', log)]
 names = re.findall(r'"Supply temp name": "([^"]*)"', log)
 bad = []
 for key, expected in want.items():
@@ -45,6 +47,13 @@ for key, expected in want.items():
     if not ok: bad.append(key)
 print(("ok   " if names else "FAIL ") + "Supply temp name", names[:1])
 if not names: bad.append("name")
+# The valve starts at 50; the write node sets 42 two seconds in, and later polls must read it back.
+ok = 50 in valves and valves[-1:] == [42.0]
+print(("ok   " if ok else "FAIL ") + "Valve before and after the write", valves[:1], valves[-1:])
+if not ok: bad.append("valve")
+wrote = '"relinquished": false' in log or 'relinquished' in log
+print(("ok   " if wrote else "FAIL ") + "write result reached the debug node")
+if not wrote: bad.append("write result")
 if bad:
     print(log[-3000:])
     sys.exit(1)

@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { exportTags, FORMATS, formatsFor, groupReads, reference6 } from "../src";
-import type { BacnetTagList, FormatId, ModbusTagList, TagList } from "../src";
+import type { BacnetTagList, ExportOptions, FormatId, ModbusTagList, TagList } from "../src";
 import { BACNET_LIST, MODBUS_HIGH, MODBUS_LIST, MODBUS_LITTLE, MODBUS_RTU } from "./fixtures";
 import { expectGolden } from "./golden";
 
-const MODBUS_CASES: [string, FormatId, TagList][] = [
+const MODBUS_CASES: [string, FormatId, TagList, ExportOptions?][] = [
   ["modbus-tcp", "csv", MODBUS_LIST],
   ["modbus-tcp", "json", MODBUS_LIST],
   ["modbus-tcp", "ignition", MODBUS_LIST],
@@ -31,14 +31,15 @@ const MODBUS_CASES: [string, FormatId, TagList][] = [
   ["bacnet", "ignition", BACNET_LIST],
   ["bacnet", "kepware", BACNET_LIST],
   ["bacnet", "rustred", BACNET_LIST],
+  ["bacnet-writes", "rustred", BACNET_LIST, { bacnetWriteNodes: true }],
   ["bacnet", "voltrus-scada", BACNET_LIST],
   ["bacnet", "voltrus-gateway", BACNET_LIST],
 ];
 
 describe("golden files", () => {
-  for (const [name, id, list] of MODBUS_CASES) {
+  for (const [name, id, list, options] of MODBUS_CASES) {
     it(`${name} as ${id}`, () => {
-      const out = exportTags(id, list);
+      const out = exportTags(id, list, options);
       const ext = FORMATS.find((f) => f.id === id)!.extension;
       expectGolden(`${name}.${id}.${ext}`, out.content);
       expectGolden(`${name}.${id}.warnings.txt`, out.warnings.join("\n") + (out.warnings.length ? "\n" : ""));
@@ -187,8 +188,41 @@ describe("flows", () => {
     expect(out.payload).toEqual({ "Fan cmd": 21.5 });
     expect(out.topic).toBe("AHU-1");
   });
-  it("rustred BACnet: warns about writable tags", () => {
-    expect(exportTags("rustred", BACNET_LIST).warnings[0]).toMatch(/^2 writable tags are read only/);
+  it("rustred BACnet: warns about writable tags unless write nodes are on", () => {
+    expect(exportTags("rustred", BACNET_LIST).warnings[0]).toMatch(/^2 writable tags are read only in this flow. Turn on write nodes/);
+  });
+  it("rustred BACnet: write nodes for writable tags, each behind its own inject node", () => {
+    const out = exportTags("rustred", BACNET_LIST, { bacnetWriteNodes: true });
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toMatch(/^Each write node has an inject node/);
+    const nodes = JSON.parse(out.content) as Record<string, any>[];
+    const ids = new Set(nodes.map((n) => n.id));
+    expect(ids.size).toBe(nodes.length);
+    for (const n of nodes) for (const w of n.wires ?? []) for (const to of w) expect(ids.has(to)).toBe(true);
+    const cfg = nodes.find((n) => n.type === "bacnet-config")!;
+    const writes = nodes.filter((n) => n.type === "bacnet write");
+    expect(writes.map((w) => [w.name, w.objectType, w.objectInstance, w.property, w.configNode, w.priority, w.valueType])).toEqual([
+      ["Fan cmd", "binaryOutput", 2, "presentValue", cfg.id, "", "auto"],
+      ["Mode", "multiStateValue", 3, "presentValue", cfg.id, "", "auto"],
+    ]);
+    const injects = nodes.filter((n) => n.type === "inject" && String(n.name).startsWith("write "));
+    expect(injects.map((i) => [i.name, i.payload, i.payloadType, i.once, i.repeat])).toEqual([
+      ["write Fan cmd", "false", "bool", false, ""],
+      ["write Mode", "1", "num", false, ""],
+    ]);
+    injects.forEach((inj, i) => expect(inj.wires[0]).toEqual([writes[i].id]));
+    // The read side is unchanged: the polling inject still feeds exactly the three read nodes.
+    expect(nodes.filter((n) => n.type === "bacnet read")).toHaveLength(3);
+  });
+  it("rustred BACnet: no write nodes when no tag is writable", () => {
+    const list: BacnetTagList = { ...BACNET_LIST, tags: BACNET_LIST.tags.filter((t) => !t.writable) };
+    const out = exportTags("rustred", list, { bacnetWriteNodes: true });
+    expect(out.warnings).toEqual([]);
+    expect(JSON.parse(out.content).some((n: any) => n.type === "bacnet write")).toBe(false);
+  });
+  it("offers the write option for BACnet only", () => {
+    const f = FORMATS.find((x) => x.id === "rustred")!;
+    expect(f.options).toMatchObject([{ id: "bacnetWriteNodes", protocols: ["bacnet"] }]);
   });
   it("has no Node-RED variant for BACnet", () => {
     expect(formatsFor("bacnet").some((f) => f.id === "nodered")).toBe(false);

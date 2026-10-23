@@ -1,0 +1,1 @@
+Each write node has an inject node with a placeholder payload. Set the payload before you click it; a null payload relinquishes the priority slot.

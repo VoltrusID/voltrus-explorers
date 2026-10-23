@@ -1,4 +1,4 @@
-import { exportTags, formatsFor, type ExportResult, type FormatId, type Protocol, type TagList } from "@mactools/export";
+import { exportTags, formatsFor, type ExportOptions, type ExportResult, type FormatId, type Protocol, type TagList } from "@mactools/export";
 import { useMemo, useState } from "react";
 import { saveTextFile } from "./files";
 import { Button, Callout, Dialog, Field } from "./primitives";
@@ -28,16 +28,19 @@ export function ExportTagsDialog({ open, onClose, protocol, buildList, defaultNa
   const [format, setFormat] = useState<FormatId>(formats[0].id);
   const [name, setName] = useState<string | null>(null);
   const deviceName = (name ?? defaultName).trim() || "Device";
+  const [chosen, setChosen] = useState<ExportOptions>({});
+  const formatOptions = useMemo(() => formats.find((f) => f.id === format)?.options?.filter((o) => o.protocols.includes(protocol)) ?? [], [formats, format, protocol]);
+  const active = useMemo(() => Object.fromEntries(formatOptions.map((o) => [o.id, chosen[o.id] === true])) as ExportOptions, [formatOptions, chosen]);
 
   const { out, error, count } = useMemo((): { out: ExportResult | null; error: string | null; count: number } => {
     if (!open) return { out: null, error: null, count: 0 };
     try {
       const list = buildList(deviceName);
-      return { out: exportTags(format, list), error: null, count: list.tags.length };
+      return { out: exportTags(format, list, active), error: null, count: list.tags.length };
     } catch (e) {
       return { out: null, error: String(e), count: 0 };
     }
-  }, [open, format, deviceName, buildList]);
+  }, [open, format, deviceName, buildList, active]);
 
   const save = async () => {
     if (!out) return;
@@ -73,6 +76,15 @@ export function ExportTagsDialog({ open, onClose, protocol, buildList, defaultNa
         <Field label="Format">
           <SheetSelect value={format} options={options} onChange={setFormat} sheetTitle="Export format" />
         </Field>
+        {formatOptions.map((o) => (
+          <label key={o.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: "var(--fs-sm)" }}>
+            <input type="checkbox" checked={active[o.id] === true} onChange={(e) => setChosen({ ...chosen, [o.id]: e.target.checked })} style={{ marginTop: 3 }} />
+            <span>
+              {o.label}
+              <span style={{ display: "block", fontSize: "var(--fs-xs)", color: "var(--text-dim)" }}>{o.hint}</span>
+            </span>
+          </label>
+        ))}
         <Field label="Device name">
           <input className="vt-input" value={name ?? defaultName} onChange={(e) => setName(e.target.value)} />
         </Field>

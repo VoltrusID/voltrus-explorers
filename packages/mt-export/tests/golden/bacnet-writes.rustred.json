@@ -1,0 +1,241 @@
+[
+  {
+    "id": "70d2e0a466a17e66",
+    "type": "tab",
+    "label": "AHU-1",
+    "disabled": false,
+    "info": "Exported from BACnet Explorer"
+  },
+  {
+    "id": "3f1867afe200a849",
+    "type": "bacnet-config",
+    "name": "AHU-1",
+    "deviceId": 1001,
+    "targetHost": "192.168.1.60",
+    "targetPort": 47808,
+    "apduTimeoutMs": 3000,
+    "retries": 1
+  },
+  {
+    "id": "0035693c5c7a3162",
+    "type": "inject",
+    "z": "70d2e0a466a17e66",
+    "name": "every 5 s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "5",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 0.5,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 150,
+    "y": 80,
+    "wires": [
+      [
+        "a1f930e3e20d383d",
+        "a0f92f505c216dc6",
+        "a3f93409d635a34f"
+      ]
+    ]
+  },
+  {
+    "id": "a1f930e3e20d383d",
+    "type": "bacnet read",
+    "z": "70d2e0a466a17e66",
+    "name": "Zone temp",
+    "configNode": "3f1867afe200a849",
+    "objectType": "analogInput",
+    "objectInstance": 1,
+    "property": "presentValue",
+    "x": 400,
+    "y": 80,
+    "wires": [
+      [
+        "67334e6f40cc3bf9"
+      ]
+    ]
+  },
+  {
+    "id": "a0f92f505c216dc6",
+    "type": "bacnet read",
+    "z": "70d2e0a466a17e66",
+    "name": "Fan cmd",
+    "configNode": "3f1867afe200a849",
+    "objectType": "binaryOutput",
+    "objectInstance": 2,
+    "property": "presentValue",
+    "x": 400,
+    "y": 130,
+    "wires": [
+      [
+        "67334e6f40cc3bf9"
+      ]
+    ]
+  },
+  {
+    "id": "a3f93409d635a34f",
+    "type": "bacnet read",
+    "z": "70d2e0a466a17e66",
+    "name": "Mode",
+    "configNode": "3f1867afe200a849",
+    "objectType": "multiStateValue",
+    "objectInstance": 3,
+    "property": "presentValue",
+    "x": 400,
+    "y": 180,
+    "wires": [
+      [
+        "67334e6f40cc3bf9"
+      ]
+    ]
+  },
+  {
+    "id": "161e7c858b823d23",
+    "type": "inject",
+    "z": "70d2e0a466a17e66",
+    "name": "write Fan cmd",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "false",
+    "payloadType": "bool",
+    "x": 150,
+    "y": 280,
+    "wires": [
+      [
+        "93b0bc07d9ae231d"
+      ]
+    ]
+  },
+  {
+    "id": "93b0bc07d9ae231d",
+    "type": "bacnet write",
+    "z": "70d2e0a466a17e66",
+    "name": "Fan cmd",
+    "configNode": "3f1867afe200a849",
+    "objectType": "binaryOutput",
+    "objectInstance": 2,
+    "property": "presentValue",
+    "priority": "",
+    "valueType": "auto",
+    "relinquish": false,
+    "x": 400,
+    "y": 280,
+    "wires": [
+      [
+        "b242a9be38620174"
+      ]
+    ]
+  },
+  {
+    "id": "1ef4c47b55f29321",
+    "type": "inject",
+    "z": "70d2e0a466a17e66",
+    "name": "write Mode",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "1",
+    "payloadType": "num",
+    "x": 150,
+    "y": 330,
+    "wires": [
+      [
+        "82bb87111c29f667"
+      ]
+    ]
+  },
+  {
+    "id": "82bb87111c29f667",
+    "type": "bacnet write",
+    "z": "70d2e0a466a17e66",
+    "name": "Mode",
+    "configNode": "3f1867afe200a849",
+    "objectType": "multiStateValue",
+    "objectInstance": 3,
+    "property": "presentValue",
+    "priority": "",
+    "valueType": "auto",
+    "relinquish": false,
+    "x": 400,
+    "y": 330,
+    "wires": [
+      [
+        "b242a9be38620174"
+      ]
+    ]
+  },
+  {
+    "id": "b242a9be38620174",
+    "type": "debug",
+    "z": "70d2e0a466a17e66",
+    "name": "write results",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 650,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "67334e6f40cc3bf9",
+    "type": "function",
+    "z": "70d2e0a466a17e66",
+    "name": "name the value",
+    "func": "const names = {\"analogInput:1:presentValue\":\"Zone temp\",\"binaryOutput:2:presentValue\":\"Fan cmd\",\"multiStateValue:3:presentValue\":\"Mode\"};\nconst b = msg.bacnet;\nmsg.payload = { [names[`${b.objectType}:${b.objectInstance}:${b.property}`]]: msg.payload };\nmsg.topic = \"AHU-1\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 650,
+    "y": 80,
+    "wires": [
+      [
+        "8bc9b980fa805872"
+      ]
+    ]
+  },
+  {
+    "id": "8bc9b980fa805872",
+    "type": "debug",
+    "z": "70d2e0a466a17e66",
+    "name": "values",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 880,
+    "y": 80,
+    "wires": []
+  }
+]
