@@ -389,7 +389,7 @@ export function MasterSidebar({
             <input
               className="vt-input vt-input--mono"
               style={{ flex: 1 }}
-              placeholder="192.168.1"
+              placeholder="192.168.1 or 192.168.1.0/24"
               value={scanSubnet}
               onChange={(e) => setScanSubnet(e.target.value)}
             />
@@ -400,12 +400,12 @@ export function MasterSidebar({
                 if (!scanSubnet || !requirePro("Network scan")) return;
                 setScanning(true);
                 setScanResults([]);
-                addLog("info", `Scanning ${scanSubnet}.0/24 on port 502...`);
+                addLog("info", `Scanning ${scanSubnet.trim()} on port 502...`);
                 try {
                   const results = await invoke<{ ip: string; port_open: boolean; hostname: string | null }[]>("scan_network", { subnet: scanSubnet, port: 502 });
                   const open = results.filter((r) => r.port_open);
                   setScanResults(results);
-                  addLog("info", `Scan complete: ${open.length} devices found on port 502`);
+                  addLog("info", `Scan complete: ${open.length} of ${results.length} hosts answered on port 502`);
                 } catch (e) {
                   addLog("error", `Scan failed: ${String(e)}`);
                 }

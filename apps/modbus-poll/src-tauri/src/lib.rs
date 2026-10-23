@@ -3,6 +3,7 @@ mod master;
 mod slave;
 mod simulation;
 mod network;
+mod scan_targets;
 mod system;
 
 use state::*;

@@ -1,18 +1,23 @@
+use crate::scan_targets::scan_targets;
 use crate::state::ScanResult;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+/// Connection attempts in flight at once; macOS allows 256 open files per process by default.
+const SCAN_CONCURRENCY: usize = 128;
 
 #[tauri::command]
 pub async fn scan_network(subnet: String, port: u16) -> Result<Vec<ScanResult>, String> {
-    let parts: Vec<&str> = subnet.split('.').collect();
-    if parts.len() < 3 {
-        return Err("Invalid subnet, expected e.g. 192.168.1".into());
-    }
-    let base = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+    let targets = scan_targets(&subnet)?;
+    let gate = Arc::new(Semaphore::new(SCAN_CONCURRENCY));
 
     let mut handles = Vec::new();
-    for i in 1..=254u8 {
-        let addr = format!("{}.{}", base, i);
+    for ip in targets {
+        let addr = ip.to_string();
         let p = port;
+        let gate = gate.clone();
         handles.push(tokio::spawn(async move {
+            let _slot = gate.acquire().await;
             let target = format!("{}:{}", addr, p);
             // Only a completed TCP handshake means the port is open; a refusal or
             // an unreachable error also finishes quickly but is not a device.
