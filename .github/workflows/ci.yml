@@ -1,5 +1,5 @@
 # Checks for every push and pull request. No secrets: safe for forks.
-# Linux: crate tests, frontend typecheck/build/tests. macOS: unsigned universal build of each app.
+# Linux: crate tests, frontend typecheck/build/tests. macOS: crate tests, and an unsigned universal build of each app.
 name: CI
 
 on:
@@ -60,6 +60,27 @@ jobs:
           bun run --cwd apps/opcua-explorer test
           bun run --cwd apps/ble-inspector test
           bun run --cwd apps/mqtt-explorer test
+
+  # The same crate tests on a real Mac: the protocol simulators and clients talk over loopback sockets there too.
+  test-macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-test-${{ runner.os }}-
+
+      - name: Crate tests
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-store -p mt-connect
 
   macos:
     runs-on: macos-15
