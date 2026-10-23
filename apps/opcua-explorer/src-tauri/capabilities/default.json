@@ -1,8 +1,13 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for OPC UA Explorer",
+  "description": "Default capabilities for OPC UA Explorer (desktop)",
   "windows": [
     "main"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
   ],
   "permissions": [
     "core:default",

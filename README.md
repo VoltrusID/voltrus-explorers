@@ -133,10 +133,10 @@ apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
 apps/enip-explorer      Tauri app (EtherNet/IP scanner and adapter)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
-apps/s7-explorer       Tauri app (macOS)
+apps/s7-explorer       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
-apps/opcua-explorer    Tauri app (macOS)
+apps/opcua-explorer    Tauri app, also builds for iOS (scripts/build-ios.sh)
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator

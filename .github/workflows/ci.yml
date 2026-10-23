@@ -103,7 +103,7 @@ jobs:
       # These apps ship for iPhone/iPad too (the release job builds the IPA). Compile the device target here so a
       # break in the mobile entry point or an iOS-only dependency shows up in the pull request.
       - name: Check iOS target
-        if: contains(fromJSON('["bacnet-explorer", "modbus-poll"]'), matrix.app)
+        if: contains(fromJSON('["bacnet-explorer", "modbus-poll", "s7-explorer", "opcua-explorer"]'), matrix.app)
         run: |
           rustup target add aarch64-apple-ios
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"

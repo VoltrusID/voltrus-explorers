@@ -48,6 +48,10 @@
       "entitlements": "entitlements.plist",
       "providerShortName": "JoyoDigitama",
       "minimumSystemVersion": "13.0"
+    },
+    "iOS": {
+      "developmentTeam": "F6Q6UFUK69",
+      "minimumSystemVersion": "15.0"
     }
   }
 }

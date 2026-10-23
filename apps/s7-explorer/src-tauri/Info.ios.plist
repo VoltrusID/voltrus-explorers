@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into gen/apple/<app>_iOS/Info.plist by Tauri (Info.ios.plist next to
+	     tauri.conf.json is picked up automatically). Connecting to S7 PLCs (ISO-on-TCP, port 102) and the built-in PLC simulator use the local network. S7 does not use Bonjour, so no NSBonjourServices. -->
+	<!-- productName must stay space-free for the Xcode 26 archive step, so the
+	     home-screen name comes from CFBundleDisplayName instead. -->
+	<key>CFBundleDisplayName</key>
+	<string>S7 Explorer</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>S7 Explorer connects to Siemens S7 PLCs on your local network (S7-300, S7-400, S7-1200 and S7-1500) to read and write data blocks and memory areas, and can run a virtual S7 PLC that other S7 tools can connect to.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

@@ -368,6 +368,7 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
         // Native open/save panels + writes to the paths the user picked (the only

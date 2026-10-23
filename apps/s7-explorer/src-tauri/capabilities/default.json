@@ -1,7 +1,14 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for S7 Explorer",
-  "windows": ["main"],
+  "description": "Default capabilities for S7 Explorer (desktop)",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

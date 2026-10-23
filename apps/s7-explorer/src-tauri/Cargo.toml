@@ -6,6 +6,7 @@ license.workspace = true
 
 [lib]
 name = "s7_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 # App Store build: Pro sold as an in-app purchase (see crates/mt-store).
