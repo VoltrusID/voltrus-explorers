@@ -31,7 +31,7 @@ import { isBitArea, isWritableArea, readPlanKey } from "./helpers";
 import { blocksToCsv, parseBlocksCsv } from "./csv";
 import { startTrafficFeed } from "./trafficStore";
 import { useStore } from "./store";
-import { fieldsOf } from "./sessions";
+import { fieldsOf, sessionLabel } from "./sessions";
 import { effectivePlan, mayOpenConnection, valueCapNotice } from "./limits";
 import {
   IDLE, useConnRuntime, runtimeOf, startPolling, pausePolling, readNow, connectTcp, cancelConnect,
@@ -739,7 +739,7 @@ function App() {
         onClose={() => setShowScadaExport(false)}
         protocol="modbus"
         buildList={buildScadaList}
-        defaultName={activeConnProfile ?? String(tcpFormValues.host ?? "Modbus device")}
+        defaultName={transport === "rtu" ? sessionLabel({ transport, tcpFormValues, rtuPort, activeConnProfile }) : activeConnProfile ?? String(tcpFormValues.host ?? "Modbus device")}
         onLog={addLog}
       />
     </div>
