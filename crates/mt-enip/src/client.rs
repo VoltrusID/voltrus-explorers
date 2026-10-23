@@ -1322,6 +1322,7 @@ mod tests {
                 element_count: 1,
                 initial_value: CipValue::Dint(1),
                 template_id: None,
+                read_only: false,
             }],
             vec![],
         )

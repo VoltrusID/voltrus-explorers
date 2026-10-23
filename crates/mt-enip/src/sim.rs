@@ -222,6 +222,7 @@ impl EnipSimDevice {
                 element_count: d.element_count,
                 initial_value: Point::from_def(d).to_cip_value(d.base),
                 template_id: None,
+                read_only: !d.writable,
             })
             .collect();
 

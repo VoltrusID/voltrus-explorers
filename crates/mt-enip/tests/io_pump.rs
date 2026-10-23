@@ -23,6 +23,7 @@ fn dint(name: &str, v: i32) -> CipTagDef {
         element_count: 1,
         initial_value: CipValue::Dint(v),
         template_id: None,
+        read_only: false,
     }
 }
 

@@ -72,6 +72,8 @@ pub struct CipTagEntry {
     pub element_count: u16,
     pub value: CipValue,
     pub template_id: Option<u16>,
+    /// Refuses a client's Write Tag (the simulator drives this tag).
+    pub read_only: bool,
 }
 
 /// Assign a freshly computed scalar to a tag, preserving array shape.
@@ -93,7 +95,7 @@ pub fn tag_entry_from_def(t: CipTagDef) -> (String, CipTagEntry) {
     };
     (
         t.name,
-        CipTagEntry { data_type: t.data_type, element_count: t.element_count.max(1), value, template_id: t.template_id },
+        CipTagEntry { data_type: t.data_type, element_count: t.element_count.max(1), value, template_id: t.template_id, read_only: t.read_only },
     )
 }
 
@@ -1017,6 +1019,11 @@ async fn handle_write_tag(
         return err_reply(service, 0x04, &[0x0000]);
     };
     let entry = tags.get_mut(&r.key).unwrap();
+    if entry.read_only {
+        drop(tags);
+        log(log_tx, "write", &name, format!("Write refused: {name} is read-only (driven by the simulator)"));
+        return err_reply(service, 0x0E, &[]);
+    }
     let whole = entry_image(entry);
     let img = resolved_image(entry, &r);
 
@@ -1649,6 +1656,7 @@ mod tests {
                 element_count: 1,
                 value: CipValue::Bytes(bytes.clone()),
                 template_id: Some(1),
+                read_only: false,
             },
         );
         let templates = vec![t];
@@ -1678,7 +1686,7 @@ mod tests {
     }
 
     fn tag(dt: CipDataType, count: u16, v: CipValue) -> CipTagDef {
-        CipTagDef { name: String::new(), data_type: dt, element_count: count, initial_value: v, template_id: None }
+        CipTagDef { name: String::new(), data_type: dt, element_count: count, initial_value: v, template_id: None, read_only: false }
     }
 
     struct Fx {
@@ -1700,6 +1708,7 @@ mod tests {
                     ..tag(CipDataType::Dint, 300, CipValue::Array((0..300).map(CipValue::Dint).collect()))
                 },
                 CipTagDef { name: "Program:Main.Motor".into(), ..tag(CipDataType::Real, 1, CipValue::Real(2.5)) },
+                CipTagDef { name: "Sensor".into(), read_only: true, ..tag(CipDataType::Real, 1, CipValue::Real(9.5)) },
             ];
             for i in 0..60 {
                 tags.push(CipTagDef { name: format!("Bulk{i:03}_with_a_longish_name"), ..tag(CipDataType::Dint, 1, CipValue::Dint(i)) });
@@ -1712,6 +1721,7 @@ mod tests {
                 element_count: 1,
                 initial_value: CipValue::Bytes(packed),
                 template_id: Some(1),
+                read_only: false,
             });
             let (state, rx, shutdown) = start_enip_server(
                 EnipServerConfig { port: 0, bind_addr: "127.0.0.1".into() },
@@ -1822,6 +1832,19 @@ mod tests {
         assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
         let r = fx.call(&build_read_tag_request("Name", 1).unwrap()).await;
         assert_eq!(&r[8..15], &h("03 00 00 00 42 79 65")[..]);
+    }
+
+    #[tokio::test]
+    async fn a_read_only_tag_refuses_writes_with_attribute_not_settable() {
+        let fx = Fx::new().await;
+        let real = TagType::atomic(CIP_TYPE_REAL);
+        let req = build_write_tag_request("Sensor", &real, 1, &1.0f32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 0e 00"));
+        // The value is untouched and still readable.
+        assert_eq!(fx.call(&build_read_tag_request("Sensor", 1).unwrap()).await[6..], 9.5f32.to_le_bytes());
+        // A writable tag next to it still writes.
+        let req = build_write_tag_request("Program:Main.Motor", &real, 1, &3.0f32.to_le_bytes()).unwrap();
+        assert_eq!(fx.call(&req).await, h("cd 00 00 00"));
     }
 
     #[tokio::test]

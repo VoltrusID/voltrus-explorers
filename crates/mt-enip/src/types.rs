@@ -330,6 +330,9 @@ pub struct CipTagDef {
     pub initial_value: CipValue,
     #[serde(default)]
     pub template_id: Option<u16>,
+    /// A tag the simulator drives itself: a client's Write Tag is refused with "Attribute not settable" (0x0E).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 /// One member of a CIP UDT (structure) template.

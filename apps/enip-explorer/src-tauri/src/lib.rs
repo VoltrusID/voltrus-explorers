@@ -341,6 +341,7 @@ async fn sim_start(
             element_count: 1,
             initial_value: CipValue::Bytes(packed),
             template_id: Some(u.template_id),
+            read_only: false,
         });
         templates.push(tmpl);
     }
@@ -531,6 +532,9 @@ async fn server_write_tag(
     let server_state = adapter.state.as_ref().ok_or("Server not running")?;
     let mut tags = server_state.tags.lock().await;
     let entry = tags.get_mut(&name).ok_or(format!("Tag not found: {name}"))?;
+    if entry.read_only {
+        return Err(format!("{name} is read-only: the simulator drives its value"));
+    }
     match value {
         CipValue::Array(_) | CipValue::Bytes(_) | CipValue::String(_) => entry.value = value,
         scalar => mt_enip::server::assign_scalar(entry, scalar),

@@ -133,6 +133,7 @@ mod tests {
             element_count: 1,
             initial_value: CipValue::default(),
             template_id: Some(template_id),
+            read_only: false,
         }
     }
 

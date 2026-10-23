@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
 
 fn def(name: &str, dt: CipDataType, count: u16, v: CipValue) -> CipTagDef {
-    CipTagDef { name: name.into(), data_type: dt, element_count: count, initial_value: v, template_id: None }
+    CipTagDef { name: name.into(), data_type: dt, element_count: count, initial_value: v, template_id: None, read_only: false }
 }
 
 fn tag(name: &str, dt: CipDataType, count: u16) -> CipTag {
@@ -79,6 +79,7 @@ async fn target() -> Target {
         element_count: 1,
         initial_value: CipValue::Bytes(packed),
         template_id: Some(t.id),
+        read_only: false,
     });
     let (state, log, shutdown) = start_enip_server(
         EnipServerConfig { port: 0, bind_addr: "127.0.0.1".into() },
