@@ -449,7 +449,7 @@ pub async fn start_slave_server_rtu_virtual(
     };
 
     if result == -1 {
-        return Err(io::Error::last_os_error().into());
+        return Err(anyhow::anyhow!("openpty failed: {}", io::Error::last_os_error()));
     }
 
     // openpty leaves the default cooked line discipline: ICRNL turns a 0x0D data byte into 0x0A,
@@ -461,7 +461,7 @@ pub async fn start_slave_server_rtu_virtual(
                 libc::close(master_fd);
                 libc::close(slave_fd);
             }
-            return Err(e.into());
+            return Err(anyhow::anyhow!("setting the virtual port to raw mode failed: {e}"));
         }
     }
 
@@ -473,7 +473,14 @@ pub async fn start_slave_server_rtu_virtual(
 
     // master fd → TTYPort → SerialStream
     let tty_port = unsafe { serialport::TTYPort::from_raw_fd(master_fd) };
-    let stream = tokio_serial::SerialStream::try_from(tty_port)?;
+    let stream = match tokio_serial::SerialStream::try_from(tty_port) {
+        Ok(stream) => stream,
+        Err(e) => {
+            // `tty_port` is dropped by the failed conversion and closed the master side; the slave fd is ours.
+            unsafe { libc::close(slave_fd) };
+            return Err(anyhow::anyhow!("attaching the virtual port to the async runtime failed: {e}"));
+        }
+    };
 
     let state = new_state(register_count);
     let (log_tx, log_rx) = mpsc::unbounded_channel();
