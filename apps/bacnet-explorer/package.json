@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mactools/export": "workspace:*",
     "@mactools/ui": "workspace:*",
     "@tauri-apps/api": "^2",
     "lightweight-charts": "5.2.0",

@@ -6,6 +6,7 @@ export { LogPanel, type LogEntry } from "./components/LogPanel";
 export { HexViewer } from "./components/HexViewer";
 export { ValueEditor } from "./components/ValueEditor";
 export { useProtocol, type WriteResult } from "./hooks/useProtocol";
+export { ExportTagsDialog, type ExportTagsDialogProps } from "./exportDialog";
 export { saveTextFile, openTextFile, pickSavePath, appendTextFile, CSV_FILTER, type FileFilter } from "./files";
 export {
   Badge,

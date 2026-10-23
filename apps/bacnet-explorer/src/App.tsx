@@ -784,6 +784,7 @@ function App() {
             layout={layout}
             active={isActive}
             deviceLabel={`${d.ip}-${d.device_id}`}
+            device={d}
             onObjectSelect={(obj) => addLog("info", `Selected ${obj.object_type}:${obj.object_instance}`)}
             trendKeys={trendKeys}
             onToggleTrend={toggleTrend}

@@ -15,14 +15,16 @@ import {
   LineChart,
   ListTree,
   Server,
+  Share,
   Star,
   ToggleLeft,
   type LucideIcon,
 } from "lucide-react";
-import { Button, EmptyState, IconButton, ProBadge, saveTextFile, useProStatus } from "@mactools/ui";
+import { Button, EmptyState, ExportTagsDialog, IconButton, ProBadge, saveTextFile, useProStatus } from "@mactools/ui";
 import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry, BacnetValue } from "../types";
 import { formatObjectType } from "../types";
 import { buildObjectListCsv, type ObjectListRow } from "../objectCsv";
+import { buildTagList, type ExportDevice } from "../scadaExport";
 import { trendKey } from "../hooks/useBacnetTrend";
 import { PropertyInspector } from "./PropertyInspector";
 import { DeviceInspector } from "./DeviceInspector";
@@ -65,6 +67,8 @@ interface ObjectBrowserProps {
   active?: boolean;
   /** Used in the exported file name. */
   deviceLabel?: string;
+  /** The device being browsed; Export to SCADA needs its address. */
+  device?: ExportDevice;
   watchKeys?: Set<string>;
   onToggleWatch?: (obj: { type: string; instance: number }, name: string) => void;
   /** One-line result for the communication log after an export finished or failed. */
@@ -174,7 +178,7 @@ function objectKey(obj: BacnetObjectInfo): string {
 
 export function ObjectBrowser(props: ObjectBrowserProps) {
   const { onObjectSelect, trendKeys, onToggleTrend, onOpenTrendLog, onOpenSchedule, layout = "split", treeWidth } = props;
-  const { active: deviceActive = true, deviceLabel, watchKeys, onToggleWatch, onExportResult } = props;
+  const { active: deviceActive = true, deviceLabel, device, watchKeys, onToggleWatch, onExportResult } = props;
   const { requirePro } = useProStatus();
   const stacked = layout === "stacked";
 
@@ -193,11 +197,9 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
   const deviceActiveRef = useRef(deviceActive);
   deviceActiveRef.current = deviceActive;
 
-  // One read per object (the browse reply carries no names), a few at a time.
-  const exportList = useCallback(async () => {
-    if (!requirePro("Export object list to CSV")) return;
+  // One read per object (the browse reply carries no names), a few at a time. `null` when it was cancelled or stopped.
+  const readRows = useCallback(async (what: string): Promise<ObjectListRow[] | null> => {
     const list = objects;
-    if (list.length === 0 || exportProgress) return;
     exportCancelled.current = false;
     setExportProgress({ done: 0, total: list.length });
     const rows: ObjectListRow[] = new Array(list.length);
@@ -233,24 +235,55 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
     try {
       await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
       if (stoppedBy !== null) {
-        if (stoppedBy !== "cancelled") onExportResult?.("error", `Object list export stopped: ${stoppedBy}`);
-        return;
+        if (stoppedBy !== "cancelled") onExportResult?.("error", `${what} stopped: ${stoppedBy}`);
+        return null;
       }
+      return rows;
+    } finally {
+      setExportProgress(null);
+    }
+  }, [objects, onExportResult]);
+
+  const exportList = useCallback(async () => {
+    if (!requirePro("Export object list to CSV")) return;
+    if (objects.length === 0 || exportProgress) return;
+    try {
+      const rows = await readRows("Object list export");
+      if (!rows) return;
       const failed = rows.filter((r) => r.error).length;
       const name = `bacnet-objects-${(deviceLabel ?? "device").replace(/[^A-Za-z0-9_.-]+/g, "-")}.csv`;
       const path = await saveTextFile(name, buildObjectListCsv(rows));
       if (path) {
         onExportResult?.(
           "info",
-          `Object list exported to ${path} (${list.length} objects${failed ? `, ${failed} could not be read` : ""})`,
+          `Object list exported to ${path} (${objects.length} objects${failed ? `, ${failed} could not be read` : ""})`,
         );
       }
     } catch (e) {
       onExportResult?.("error", `Object list export failed: ${e}`);
-    } finally {
-      setExportProgress(null);
     }
-  }, [objects, exportProgress, requirePro, deviceLabel, onExportResult]);
+  }, [objects, exportProgress, requirePro, deviceLabel, onExportResult, readRows]);
+
+  // Export to SCADA: read the names first, then let the user pick a format.
+  const [scadaRows, setScadaRows] = useState<ObjectListRow[] | null>(null);
+  const exportScada = useCallback(async () => {
+    if (!requirePro("Export to SCADA")) return;
+    if (objects.length === 0 || exportProgress || !device) return;
+    try {
+      const rows = await readRows("Export to SCADA");
+      if (rows) setScadaRows(rows);
+    } catch (e) {
+      onExportResult?.("error", `Export to SCADA failed: ${e}`);
+    }
+  }, [objects, exportProgress, requirePro, device, onExportResult, readRows]);
+  const buildScadaList = useCallback(
+    (name: string) => {
+      const { list, skipped } = buildTagList(scadaRows ?? [], device!, name);
+      void skipped;
+      return list;
+    },
+    [scadaRows, device],
+  );
 
   // Leaving the view (unmount) stops a running export.
   useEffect(() => () => { exportCancelled.current = true; }, []);
@@ -401,9 +434,14 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
               </Button>
             </div>
           ) : (
-            <Button block disabled={objects.length === 0} icon={<Download size={14} strokeWidth={1.75} />} onClick={exportList}>
-              Export CSV <ProBadge />
-            </Button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <Button block disabled={objects.length === 0} icon={<Download size={14} strokeWidth={1.75} />} onClick={exportList}>
+                Export CSV <ProBadge />
+              </Button>
+              <Button block disabled={objects.length === 0 || !device} icon={<Share size={14} strokeWidth={1.75} />} onClick={exportScada}>
+                Export to SCADA <ProBadge />
+              </Button>
+            </div>
           )}
         </div>
 
@@ -590,6 +628,16 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
           />
         )}
       </div>
+      {device && (
+        <ExportTagsDialog
+          open={scadaRows !== null}
+          onClose={() => setScadaRows(null)}
+          protocol="bacnet"
+          buildList={buildScadaList}
+          defaultName={deviceLabel ?? `${device.ip}-${device.device_id}`}
+          onLog={(level, message) => onExportResult?.(level, message)}
+        />
+      )}
     </div>
   );
 }

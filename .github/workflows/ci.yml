@@ -53,6 +53,7 @@ jobs:
 
       - name: Frontend tests
         run: |
+          bun run --cwd packages/mt-export test
           bun run --cwd apps/modbus-poll test
           bun run --cwd apps/bacnet-explorer test
           bun run --cwd apps/serial-monitor test

@@ -31,12 +31,12 @@ takes effect when `free_since` is set in their `store.json`).
 | Modbus Poll | |
 | --- | --- |
 | Free | Modbus TCP master with one connection, read up to 20 values across any number of blocks, all data types, byte orders and addressing, communication log with CSV export, traffic view (last 500 frames), one saved connection profile. A saved profile with more than 20 values loads, but only its first 20 values are polled |
-| Pro | Unlimited values, writes (coils and registers), RTU over serial, bus scan and auto-detect, network scan, slave simulator with templates, live trends, traffic CSV export and copy-all, block CSV import and export, unlimited saved profiles, several connections open at once (one tab each), logging of polled values to a CSV file |
+| Pro | Unlimited values, writes (coils and registers), RTU over serial, bus scan and auto-detect, network scan, slave simulator with templates, live trends, traffic CSV export and copy-all, block CSV import and export, export of the tag list to Ignition, Kepware, Node-RED, RustRED, Home Assistant, Voltrus SCADA and Voltrus Gateway files (or generic CSV and JSON), unlimited saved profiles, several connections open at once (one tab each), logging of polled values to a CSV file |
 
 | BACnet Explorer | |
 | --- | --- |
 | Free | Who-Is discovery, connect to one device at a time, browse objects, read any property, watch list with manual refresh, communication log with CSV export |
-| Pro | Write properties (all priorities, relinquish), several devices open at once, object list CSV export, auto-refresh watch list, live trends and COV, trend log and schedule viewers, alarms and events with acknowledge, device simulator |
+| Pro | Write properties (all priorities, relinquish), several devices open at once, object list CSV export, export of the object list to Ignition, Voltrus SCADA and Voltrus Gateway files (or generic CSV and JSON), auto-refresh watch list, live trends and COV, trend log and schedule viewers, alarms and events with acknowledge, device simulator |
 
 | DNP3 Explorer | |
 | --- | --- |

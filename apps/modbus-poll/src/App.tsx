@@ -9,6 +9,7 @@ import {
   LogPanel,
   ValueEditor,
   EmptyState,
+  ExportTagsDialog,
   IconButton,
   PageTitle,
   SheetSelect,
@@ -57,7 +58,7 @@ import { PhoneDataList } from "./components/PhoneDataList";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
-import { ExportDialog } from "./components/ExportDialog";
+import { buildTagList } from "./scadaExport";
 
 const NO_VALUES: unknown[] = [];
 
@@ -391,6 +392,10 @@ function App() {
 
   // ── Export to SCADA ──
   const [showScadaExport, setShowScadaExport] = useState(false);
+  const buildScadaList = useCallback(
+    (name: string) => buildTagList(blocks, name, { transport, tcpFormValues, rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuPollInterval, endianness }),
+    [blocks, transport, tcpFormValues, rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuPollInterval, endianness],
+  );
   const openScadaExport = useCallback(() => {
     if (!requirePro("Export to SCADA")) return;
     setShowScadaExport(true);
@@ -709,11 +714,11 @@ function App() {
 
       <InfoDialog toggleTheme={toggleTheme} />
       <CustomTemplateDialog onSave={saveCustomTemplate} />
-      <ExportDialog
+      <ExportTagsDialog
         open={showScadaExport}
         onClose={() => setShowScadaExport(false)}
-        blocks={blocks}
-        connection={{ transport, tcpFormValues, rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuPollInterval, endianness }}
+        protocol="modbus"
+        buildList={buildScadaList}
         defaultName={activeConnProfile ?? String(tcpFormValues.host ?? "Modbus device")}
         onLog={addLog}
       />
