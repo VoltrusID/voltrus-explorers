@@ -1010,6 +1010,8 @@ mod tests {
     }
 
     // ── RTU over a pseudo-terminal ──
+    // The PTY tests run on two worker threads: the tty flush (tcdrain) blocks its thread until the other end has read the
+    // bytes, and on macOS that end is the slave server task, which a current-thread runtime could never schedule.
 
     #[cfg(all(feature = "serial", unix))]
     async fn virtual_rtu(
@@ -1034,7 +1036,7 @@ mod tests {
     /// RTU frames are binary: bytes a cooked terminal would translate or swallow (CR, LF, ^C, ^D,
     /// XON, XOFF) must arrive untouched.
     #[cfg(all(feature = "serial", unix))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rtu_pty_carries_control_characters_in_register_data() {
         let (state, _shutdown, client) = virtual_rtu(5).await;
         state.lock().unwrap().registers[..4].copy_from_slice(&[0x0D0A, 0x0304, 0x1113, 0x0A0A]);
@@ -1053,7 +1055,7 @@ mod tests {
     /// Unit 0 on a serial line is the broadcast address: the write is executed, nobody answers,
     /// so the master must not report a timeout.
     #[cfg(all(feature = "serial", unix))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rtu_broadcast_write_succeeds_without_a_reply() {
         let (state, _shutdown, client) = virtual_rtu(5).await;
         client.set_unit_id(0).await;
@@ -1086,7 +1088,7 @@ mod tests {
     /// (Modbus over Serial Line v1.02 §2.5.1.1). The silent interval is made 120 ms here so the
     /// test can measure it.
     #[cfg(all(feature = "serial", unix))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rtu_request_waits_for_the_silent_interval_after_the_previous_frame() {
         use std::os::fd::FromRawFd;
         let (_state, _log, _shutdown, _path, slave_fd) =
