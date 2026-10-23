@@ -7,6 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::account::{self, RemoteJoin, RemoteSite, TeamDetail};
+use crate::ai::{self, AiFailure};
 use crate::model::Me;
 use crate::profiles::{self, ProfileDraft, SaveOutcome};
 use crate::sync::{self, SyncRequest, SyncResult};
@@ -143,6 +144,18 @@ pub async fn connect_team_remove_member(team_id: String, user_id: Option<String>
         None => account::me(&connect.session).await?.user.id,
     };
     Ok(account::remove_member(&connect.session, &team_id, &user_id).await?)
+}
+
+/// Assistant availability for this account: `{ enabled, entitled, models, quota }`.
+#[tauri::command]
+pub async fn connect_ai_status(connect: State<'_, Connect>) -> Result<serde_json::Value, AiFailure> {
+    ai::status(&connect.session).await
+}
+
+/// Runs one assistant task (`register_map`, `manual_blocks`, `diagnose`, `decode`, `ask`). Read and suggest only.
+#[tauri::command]
+pub async fn connect_ai_run(task: String, payload: serde_json::Value, connect: State<'_, Connect>) -> Result<serde_json::Value, AiFailure> {
+    ai::run(&connect.session, &task, &payload).await
 }
 
 #[tauri::command]

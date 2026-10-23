@@ -8,6 +8,7 @@
 //! plugin comes from `mt_store::setup`, which the app must call first.
 
 mod account;
+mod ai;
 mod api;
 mod commands;
 mod error;
@@ -32,6 +33,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
 
 pub use account::{RemoteJoin, RemoteSite, TeamDetail};
+pub use ai::AiFailure;
 pub use error::ConnectError;
 pub use model::Me;
 pub use profiles::{Profile, ProfileDraft, SaveOutcome};
@@ -162,7 +164,7 @@ fn finish_web_auth<R: Runtime>(app: &AppHandle<R>, outcome: web_auth::Outcome) {
 }
 
 pub use commands::{
-    connect_info, connect_invite_accept, connect_me, connect_new_id, connect_open_url, connect_profile_save, connect_remote_join,
+    connect_ai_run, connect_ai_status, connect_info, connect_invite_accept, connect_me, connect_new_id, connect_open_url, connect_profile_save, connect_remote_join,
     connect_remote_sites, connect_sign_in, connect_sign_out, connect_signed_in, connect_sync, connect_team_create,
     connect_team_invite, connect_team_remove_member, connect_teams,
 };

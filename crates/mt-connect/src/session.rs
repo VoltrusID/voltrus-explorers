@@ -217,15 +217,33 @@ impl Session {
         }
     }
 
+    /// Puts tokens in the vault, as a finished sign-in would (tests of other modules).
+    #[cfg(test)]
+    pub(crate) fn seed_tokens_for_test(&self, access: &str, refresh: &str, expires_at: u64) {
+        let t = TokenSet { access_token: access.into(), refresh_token: refresh.into(), expires_at };
+        self.vault.set(TOKENS_KEY, &serde_json::to_string(&t).unwrap()).unwrap();
+    }
+
     /// Authorized request; one refresh-and-retry when the server answers 401.
     pub async fn request(&self, method: Method, path: &str, body: Option<&Value>) -> Result<RawResponse, ConnectError> {
+        self.request_within(method, path, body, None).await
+    }
+
+    /// [`Session::request`] with its own timeout (see [`Api::send_within`]).
+    pub async fn request_within(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<RawResponse, ConnectError> {
         let token = self.access_token(None).await?;
-        let first = self.api.send(method.clone(), path, Some(&token), body).await?;
+        let first = self.api.send_within(method.clone(), path, Some(&token), body, timeout).await?;
         if first.status != 401 {
             return Ok(first);
         }
         let token = self.access_token(Some(&token)).await?;
-        let second = self.api.send(method, path, Some(&token), body).await?;
+        let second = self.api.send_within(method, path, Some(&token), body, timeout).await?;
         if second.status == 401 {
             let mut cache = self.cache.lock().await;
             self.store(&mut cache, None)?;

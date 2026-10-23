@@ -91,7 +91,22 @@ impl Api {
     }
 
     pub async fn send(&self, method: Method, path: &str, bearer: Option<&str>, body: Option<&Value>) -> Result<RawResponse, ConnectError> {
+        self.send_within(method, path, bearer, body, None).await
+    }
+
+    /// [`Api::send`] with its own timeout instead of the client's 30 seconds (model requests can take longer).
+    pub async fn send_within(
+        &self,
+        method: Method,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<&Value>,
+        timeout: Option<Duration>,
+    ) -> Result<RawResponse, ConnectError> {
         let mut req = self.http.request(method, format!("{}{}", self.base, path)).header("accept", "application/json");
+        if let Some(timeout) = timeout {
+            req = req.timeout(timeout);
+        }
         if let Some(token) = bearer {
             req = req.bearer_auth(token);
         }
