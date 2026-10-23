@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Badge, Button, DataTable, Dialog, type Column, type Tone } from "@mactools/ui";
+import { Badge, Button, DataTable, Dialog, EmptyState, ListGroup, useIsPhone, type Column, type Tone } from "@mactools/ui";
 
 export interface CertInfo {
   thumbprint: string;
@@ -58,6 +58,62 @@ export function CertManager({
     catch (e) { setErr(String(e)); onLog?.("error", String(e)); }
     setBusy(false);
   };
+
+  const phone = useIsPhone();
+  if (phone) {
+    const order = ["own", "trusted", "rejected"];
+    const sorted = [...certs].sort((a, b) => order.indexOf(a.bucket) - order.indexOf(b.bucket));
+    return (
+      <Dialog open onClose={onClose} title="Certificates">
+        <div className="oc-stack">
+        <span className="vt-hint">
+          Trusted certificates are used to check servers when you connect with Sign or Sign and encrypt. Rejected ones are refused. Changes apply the next time you connect.
+        </span>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Button disabled={busy} onClick={load}>Refresh</Button>
+          <Button disabled={busy} onClick={() => act(() => invoke("cert_generate"), "Own certificate marked for regeneration")}>New own certificate</Button>
+        </div>
+        {err && <div className="vt-hint vt-hint--error" role="alert">{err}</div>}
+        {sorted.length === 0 ? (
+          <EmptyState compact title={busy ? "Reading certificates" : "No certificates yet"} description={busy ? undefined : "Connect to a server with a secure policy once, and its certificate shows up here."} />
+        ) : (
+          <ListGroup>
+            {sorted.map((c) => (
+              <div key={`${c.bucket}:${c.thumbprint}`} className="vm-row oc-cert">
+                <div className="oc-cert__head">
+                  <span className="vm-row__title">{shortSub(c.subject)}</span>
+                  <Badge tone={bucketTone(c.bucket)}>{c.bucket === "own" ? "This app" : c.bucket}</Badge>
+                </div>
+                <div className="oc-kv">
+                  <span className="oc-kv__k">Thumbprint</span>
+                  <span className="oc-kv__v">{c.thumbprint}</span>
+                </div>
+                <div className="oc-kv">
+                  <span className="oc-kv__k">Valid</span>
+                  <span className="oc-kv__v">{shortDate(c.valid_from)} to {shortDate(c.valid_to)}</span>
+                </div>
+                <div className="oc-kv">
+                  <span className="oc-kv__k">Kind</span>
+                  <span className="oc-kv__v">{c.kind}{c.is_ca ? ", certificate authority" : ""}</span>
+                </div>
+                {c.bucket === "rejected" && (
+                  <Button block variant="primary" disabled={busy} onClick={() => act(() => invoke("cert_trust", { thumbprint: c.thumbprint }), `Trusted ${shortTp(c.thumbprint)}`)}>
+                    Trust this certificate
+                  </Button>
+                )}
+                {c.bucket === "trusted" && (
+                  <Button block variant="danger" disabled={busy} onClick={() => act(() => invoke("cert_reject", { thumbprint: c.thumbprint }), `Rejected ${shortTp(c.thumbprint)}`)}>
+                    Reject this certificate
+                  </Button>
+                )}
+              </div>
+            ))}
+          </ListGroup>
+        )}
+        </div>
+      </Dialog>
+    );
+  }
 
   const columns: Column[] = [
     { key: "bucket", label: "Bucket", width: "90px" },

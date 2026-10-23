@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { X } from "lucide-react";
-import { Button, DataTable, Dialog, Field, StatusDot, type Column } from "@mactools/ui";
+import { Badge, Button, DataTable, Dialog, Field, IconButton, ListGroup, Section, SheetSelect, StatusDot, useIsPhone, type Column } from "@mactools/ui";
+import { fmtValue, quality } from "./phone/format";
 import { Sparkline } from "./Sparkline";
 
 interface NotificationValue {
@@ -127,6 +128,115 @@ export function SubscriptionPanel({
     subIdRef.current = null;
     setRunning(false);
   };
+
+  const phone = useIsPhone();
+  if (phone) {
+    const num = (v: number, set: (n: number) => void) => (id: string) => (
+      <input id={id} className="vt-input vt-input--mono" type="number" inputMode="decimal" disabled={running} value={v} onChange={(e) => set(Number(e.target.value))} />
+    );
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title="Monitored items"
+        footer={
+          !running ? (
+            <Button variant="primary" size="lg" loading={busy} disabled={nodes.length === 0} onClick={start}>Start subscription</Button>
+          ) : (
+            <Button variant="danger" size="lg" onClick={stop}>Stop subscription</Button>
+          )
+        }
+      >
+        {running && (
+          <span className="oc-live vt-hint">
+            <StatusDot tone="success" />
+            Live, {count} notifications so far.
+          </span>
+        )}
+        {err && <div className="vt-hint vt-hint--error" role="alert">{err}</div>}
+
+        <Section title="Nodes" meta={nodes.length > 0 ? nodes.length : undefined}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              className="vt-input vt-input--mono"
+              style={{ flex: 1, minWidth: 0 }}
+              placeholder="ns=2;s=Reactor.Temperature"
+              disabled={running}
+              value={newNode}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="Node ID to monitor"
+              onChange={(e) => setNewNode(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addNode(); }}
+            />
+            <Button disabled={running || !newNode.trim()} onClick={addNode}>Add</Button>
+          </div>
+          {nodes.length === 0 ? (
+            <span className="vt-hint">Type a node ID and tap Add. Browse shows the IDs of every node.</span>
+          ) : (
+            <ListGroup className="vm-group--flat">
+              {nodes.map((n, i) => {
+                const l = live[n];
+                const q = l ? quality(l.status, l.value) : null;
+                const pts = history[n];
+                return (
+                  <div key={n} className="vm-row oc-watch" style={running ? undefined : { minHeight: 56 }}>
+                    <div className="oc-watch__text">
+                      <span className="oc-watch__name" style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>{n}</span>
+                      {q && <span className="oc-watch__meta"><Badge tone={q.tone}>{q.label}</Badge></span>}
+                    </div>
+                    {running && (
+                      <div className="oc-watch__value">
+                        <span className={l ? "oc-value" : "oc-value oc-value--empty"}>{l ? fmtValue(l.value) : "Waiting"}</span>
+                        {pts && pts.length > 1 && <Sparkline points={pts} color={COLORS[i % COLORS.length]!} width={72} height={22} />}
+                      </div>
+                    )}
+                    {!running && (
+                      <IconButton label={`Remove ${n}`} onClick={() => setNodes((p) => p.filter((x) => x !== n))}>
+                        <X size={18} strokeWidth={1.75} />
+                      </IconButton>
+                    )}
+                  </div>
+                );
+              })}
+            </ListGroup>
+          )}
+        </Section>
+
+        <Section title="Timing">
+          <Field label="Publishing (ms)">{num(publishMs, setPublishMs)}</Field>
+          <Field label="Sampling (ms)">{num(samplingMs, setSamplingMs)}</Field>
+          <Field label="Queue size">{num(queueSize, setQueueSize)}</Field>
+        </Section>
+
+        <Section title="Filter">
+          <Field label="Monitoring">
+            <SheetSelect sheetTitle="Monitoring mode" disabled={running} value={mode} onChange={setMode} options={[
+              { value: "Reporting", label: "Reporting", hint: "Sample and report changes" },
+              { value: "Sampling", label: "Sampling", hint: "Sample but do not report" },
+              { value: "Disabled", label: "Disabled", hint: "Neither sample nor report" },
+            ]} />
+          </Field>
+          <Field label="Trigger">
+            <SheetSelect sheetTitle="Data change trigger" disabled={running} value={trigger} onChange={setTrigger} options={[
+              { value: "Status", label: "Status", hint: "When the quality changes" },
+              { value: "StatusValue", label: "Status and value", hint: "When quality or value changes" },
+              { value: "StatusValueTimestamp", label: "Status, value and time", hint: "Also when the timestamp changes" },
+            ]} />
+          </Field>
+          <Field label="Deadband">
+            <SheetSelect sheetTitle="Deadband type" disabled={running} value={deadbandType} onChange={setDeadbandType} options={[
+              { value: 0, label: "None", hint: "Report every change" },
+              { value: 1, label: "Absolute", hint: "Ignore changes below the value" },
+              { value: 2, label: "Percent", hint: "Ignore changes below the value, in %" },
+            ]} />
+          </Field>
+          {deadbandType !== 0 && <Field label="Deadband value">{num(deadbandValue, setDeadbandValue)}</Field>}
+        </Section>
+      </Dialog>
+    );
+  }
 
   const columns: Column[] = [
     { key: "node_id", label: "Node ID", width: "200px" },

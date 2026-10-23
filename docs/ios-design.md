@@ -73,11 +73,41 @@ needs no desktop API and no privileged port; iOS suspends it with the app, which
 
 Checking it: `bun marketing/screenshots/render-phone.mjs s7-explorer [outDir] [--scheme=light|dark] [--only=connect,watch,blocks,trend,sheets,pickers,more]`.
 
+## OPC UA Explorer
+
+`apps/opcua-explorer/src/phone/` and the phone branches of the panels (they render only under the phone shell; the desktop DOM is
+unchanged). Five tabs, the rest in More: **Connect**, **Browse**, **Watch**, **Trend**, **More** (Server, Namespaces, Log).
+
+- **Connect**: endpoint URL, then Security (policy and mode as `SheetSelect` sheets with a one-line hint per choice, a secure policy
+  with mode None switches the mode and the reverse) and Sign in (anonymous or user name and password). Discovery names such as
+  `Aes128_Sha256_RsaOaep` are mapped to the form's policy names. One large Connect button. With a session open the page lists the
+  sessions (tap to switch, X to disconnect), New connection (Pro for a second one) and Tools. Find servers (`DiscoveryPanel`) and
+  Certificates (`CertManager`, Pro) are sheets: discovery lists servers and endpoints as rows (tap a server to load its endpoints,
+  tap an endpoint to fill the form); a certificate is a card with thumbprint, validity and Trust or Reject.
+- **Browse** (`PhoneBrowse`): the address space as drill-down rows, one level per screen. A breadcrumb bar of pills jumps back up,
+  and an up button steps out. Tap an object to go in (its info button opens details), tap a variable for the node sheet: the value large
+  and live (re-read every 2 s), Read, Write (Pro, off when the access level has no write bit), Watch, trend, and Attributes /
+  References (tap a reference to jump to that node). Variables already watched show their value in the row.
+- **Watch** (`WatchList`): the session's monitored items as rows: name and node id, a quality chip (Good, Uncertain, Bad from the
+  last notification, Waiting before the first), the value at 22px with a sparkline, and a trend button. Tap a row to write. The bar above has Read
+  values, Subscriptions (`SubscriptionPanel`, Pro, as a sheet: nodes, timing, filter, Start) and Export CSV (a sheet; the file goes
+  through the system save panel). Several sessions add a session picker.
+- **Trend**: a chart plus a list of the series, window as a segmented control. Only mounted while the tab is showing (the chart needs a size).
+- **More**: Server (port, start and stop, device template picker, simulator; its nodes are rows like Watch), Namespaces, Log.
+
+Hidden or changed on a phone: the desktop Mode switch, the drag handles, the table, the PKI path under `$TMPDIR`, the sidebar tools
+grid. Store builds keep the same rules as the desktop: Pro rows carry the `ProBadge` only, there are no prices and no GitHub link in About.
+
+```
+bun marketing/screenshots/render-phone.mjs opcua-explorer [outDir] [--scheme=light|dark] [--only=connect,tabs,pickers,live,server,about]
+```
+
 ## Checking it
 
 ```
 bun marketing/screenshots/render-phone.mjs modbus-poll   [outDir] [--scheme=light|dark] [--only=connect,live,slave,sheets,pickers]
 bun marketing/screenshots/render-phone.mjs bacnet-explorer [outDir] [--scheme=light|dark] [--only=devices,tabs,live,sim,sheets]
+bun marketing/screenshots/render-phone.mjs opcua-explorer [outDir] [--scheme=light|dark] [--only=connect,tabs,pickers,live,server,about]
 bun marketing/screenshots/render-phone.mjs s7-explorer   [outDir] [--scheme=light|dark] [--only=connect,watch,blocks,trend,sheets,pickers,more]
 ```
 

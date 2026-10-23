@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, DataTable, Dialog, type Column } from "@mactools/ui";
+import { Badge, Button, DataTable, Dialog, EmptyState, Field, ListGroup, ListRow, useIsPhone, type Column } from "@mactools/ui";
 
 export interface OpcEndpoint {
   url: string;
@@ -46,10 +46,10 @@ export function DiscoveryPanel({
     setBusy(false);
   };
 
-  const doGetEndpoints = () => run(async () => {
-    const eps = await invoke<OpcEndpoint[]>("get_endpoints", { url });
+  const doGetEndpoints = (target: string = url) => run(async () => {
+    const eps = await invoke<OpcEndpoint[]>("get_endpoints", { url: target });
     setEndpoints(eps);
-    onLog?.("rx", `Discovered ${eps.length} endpoints on ${url}`);
+    onLog?.("rx", `Discovered ${eps.length} endpoints on ${target}`);
   });
   const doFindServers = () => run(async () => {
     const ss = (await invoke<OpcServer[]>("find_servers", { url })) ?? [];
@@ -65,6 +65,79 @@ export function DiscoveryPanel({
     { key: "security_level", label: "Level", width: "60px" },
     { key: "url", label: "Endpoint URL" },
   ];
+
+  const phone = useIsPhone();
+  const modeOf = (e: OpcEndpoint) => e.security_mode.replace("MessageSecurityMode::", "");
+  const pick = (e: OpcEndpoint) => {
+    onSelect(e.url, policyShort(e.security_policy_uri), modeOf(e));
+    onLog?.("info", `Selected ${e.url} (${policyShort(e.security_policy_uri)} / ${e.security_mode})`);
+    onClose();
+  };
+
+  if (phone) {
+    return (
+      <Dialog open onClose={onClose} title="Find servers">
+        <div className="oc-stack">
+        <Field stacked label="Discovery URL">
+          {(id) => (
+            <input
+              id={id}
+              className="vt-input vt-input--mono"
+              type="url"
+              inputMode="url"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="opc.tcp://host:port"
+            />
+          )}
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Button variant="primary" loading={busy} onClick={() => doGetEndpoints()}>Get endpoints</Button>
+          <Button disabled={busy} onClick={doFindServers}>Find servers</Button>
+        </div>
+        {err && <div className="vt-hint vt-hint--error" role="alert">{err}</div>}
+        {servers.length > 0 && (
+          <>
+            <div className="vm-sheet-group">Servers</div>
+            <ListGroup>
+              {servers.map((s, i) => (
+                <ListRow
+                  key={i}
+                  title={s.application_name || "Unnamed server"}
+                  subtitle={s.discovery_urls[0] ?? s.application_uri}
+                  chevron={!!s.discovery_urls[0]}
+                  onClick={s.discovery_urls[0] ? () => { setUrl(s.discovery_urls[0]!); setServers([]); void doGetEndpoints(s.discovery_urls[0]!); } : undefined}
+                />
+              ))}
+            </ListGroup>
+          </>
+        )}
+        {endpoints.length > 0 ? (
+          <>
+            <div className="vm-sheet-group">Endpoints</div>
+            <ListGroup>
+              {endpoints.map((e, i) => (
+                <ListRow
+                  key={i}
+                  title={`${policyShort(e.security_policy_uri)}`}
+                  subtitle={`${modeOf(e) === "SignAndEncrypt" ? "Sign and encrypt" : modeOf(e)} · ${e.url}`}
+                  trailing={<Badge>Level {e.security_level}</Badge>}
+                  onClick={() => pick(e)}
+                />
+              ))}
+            </ListGroup>
+            <span className="vt-hint">Tap an endpoint to use its address and security settings.</span>
+          </>
+        ) : (
+          !busy && !err && servers.length === 0 && <EmptyState compact title="No endpoints" description="Check the discovery URL, then try again." />
+        )}
+        </div>
+      </Dialog>
+    );
+  }
 
   const rows = endpoints.map((e) => ({
     security_policy_uri: policyShort(e.security_policy_uri),
@@ -85,7 +158,7 @@ export function DiscoveryPanel({
           placeholder="opc.tcp://host:port"
           aria-label="Discovery URL"
         />
-        <Button variant="primary" disabled={busy} onClick={doGetEndpoints}>Endpoints</Button>
+        <Button variant="primary" disabled={busy} onClick={() => doGetEndpoints()}>Endpoints</Button>
         <Button disabled={busy} onClick={doFindServers}>Servers</Button>
       </div>
 
@@ -116,12 +189,7 @@ export function DiscoveryPanel({
           data={rows}
           emptyMessage={busy ? "Querying" : "No endpoints. Check the discovery URL."}
           renderCell={(key, row) => (key === "url" ? <span className="mono">{String(row[key] ?? "")}</span> : String(row[key] ?? ""))}
-          onRowClick={(row) => {
-            const e = (row as Record<string, unknown>)._raw as OpcEndpoint;
-            onSelect(e.url, policyShort(e.security_policy_uri), e.security_mode.replace("MessageSecurityMode::", ""));
-            onLog?.("info", `Selected ${e.url} (${policyShort(e.security_policy_uri)} / ${e.security_mode})`);
-            onClose();
-          }}
+          onRowClick={(row) => pick((row as Record<string, unknown>)._raw as OpcEndpoint)}
         />
       </div>
       <span className="vt-hint">Click a row to load its URL and security policy into the connection form.</span>

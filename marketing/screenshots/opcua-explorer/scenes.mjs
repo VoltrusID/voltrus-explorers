@@ -215,8 +215,19 @@ function mockMain() {
       { url: ENDPOINT, security_policy_uri: POL + "Basic256Sha256", security_mode: "MessageSecurityMode::Sign", transport_profile_uri: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary", security_level: 3, user_token_policies: ["UserName", "Certificate"] },
       { url: ENDPOINT, security_policy_uri: POL + "Basic256Sha256", security_mode: "MessageSecurityMode::SignAndEncrypt", transport_profile_uri: "http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary", security_level: 4, user_token_policies: ["UserName", "Certificate"] },
     ],
-    find_servers: () => [],
-    cert_list: () => [],
+    find_servers: () => [
+      { application_name: "Plant Gateway", application_uri: "urn:plant-gateway:UA:Server", application_type: "Server", product_uri: "urn:voltrus:plant-gateway", discovery_urls: [ENDPOINT] },
+      { application_name: "Packaging Line PLC", application_uri: "urn:line1-plc:UA:Server", application_type: "Server", product_uri: "urn:vendor:plc", discovery_urls: ["opc.tcp://192.168.20.41:4840"] },
+      { application_name: "Boiler Controller", application_uri: "urn:boiler-ctrl:UA:Server", application_type: "Server", product_uri: "urn:vendor:ctrl", discovery_urls: ["opc.tcp://192.168.20.52:48010"] },
+    ],
+    cert_trust: () => null,
+    cert_reject: () => null,
+    cert_generate: () => null,
+    cert_list: () => [
+      { thumbprint: "9F2C4A71B8E03D5566A1C0E7D4B28F13A9E5C7D0", subject: "CN=OPC UA Explorer, O=Voltrus, DC=iphone", issuer: "CN=OPC UA Explorer, O=Voltrus", valid_from: "2026-10-01T00:00:00Z", valid_to: "2031-10-01T00:00:00Z", bucket: "own", kind: "client", is_ca: false, path: "pki/own/cert.der" },
+      { thumbprint: "3B7D91E0A4C25F68D1B3E9A07C46D852F0A1B3C4", subject: "CN=Plant Gateway, O=Acme Controls", issuer: "CN=Acme Controls Root CA", valid_from: "2025-03-14T00:00:00Z", valid_to: "2030-03-14T00:00:00Z", bucket: "trusted", kind: "server", is_ca: false, path: "pki/trusted/a.der" },
+      { thumbprint: "C41A0D2E77F9B358E6A2D1049B7C3E85F1D6A2B9", subject: "CN=Boiler Controller, O=Acme Controls", issuer: "CN=Boiler Controller, O=Acme Controls", valid_from: "2026-09-02T00:00:00Z", valid_to: "2026-12-31T00:00:00Z", bucket: "rejected", kind: "server", is_ca: false, path: "pki/rejected/b.der" },
+    ],
     create_subscription: () => nextSub++,
     create_monitored_items: ({ session, subscriptionId, items }) => {
       subs.set(subscriptionId, { session, nodes: items.map((i) => i.node_id) });

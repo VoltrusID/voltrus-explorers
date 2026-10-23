@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, Dialog, EmptyState } from "@mactools/ui";
+import { Button, Dialog, EmptyState, ListGroup, PageTitle, useIsPhone } from "@mactools/ui";
 
 export interface OpcNamespace {
   index: number;
@@ -13,11 +13,14 @@ export function NamespacePanel({
   session,
   onClose,
   onLog,
+  inline,
 }: {
   /** Id of the client session to read. */
   session: string;
   onClose: () => void;
   onLog?: (d: Dir, m: string) => void;
+  /** On a phone the list is a tab, not a dialog. */
+  inline?: boolean;
 }) {
   const [items, setItems] = useState<OpcNamespace[]>([]);
   const [err, setErr] = useState("");
@@ -34,6 +37,29 @@ export function NamespacePanel({
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  const phone = useIsPhone();
+  if (phone && inline) {
+    return (
+      <>
+        <PageTitle title="Namespaces" caption="From the server" actions={<Button size="sm" loading={loading} onClick={load}>Refresh</Button>} />
+        {err ? (
+          <div className="vt-hint vt-hint--error" role="alert">{err}</div>
+        ) : items.length === 0 ? (
+          <EmptyState compact title={loading ? "Reading namespaces" : "No namespaces"} description={loading ? undefined : "The server returned an empty NamespaceArray."} />
+        ) : (
+          <ListGroup>
+            {items.map((n) => (
+              <div key={n.index} className="vm-row oc-kv">
+                <span className="oc-kv__k oc-kv__k--raw">ns={n.index}</span>
+                <span className="oc-kv__v">{n.uri}</span>
+              </div>
+            ))}
+          </ListGroup>
+        )}
+      </>
+    );
+  }
 
   return (
     <Dialog open onClose={onClose} title="Namespace index" width={560}>

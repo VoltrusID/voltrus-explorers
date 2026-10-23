@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { Button, EmptyState, Segmented } from "@mactools/ui";
+import { Button, EmptyState, IconButton, ListGroup, Segmented, useIsPhone } from "@mactools/ui";
 import {
   createChart,
   LineSeries,
@@ -39,6 +39,7 @@ function getChartColors() {
 }
 
 export default function TrendPanel({ series, onRemove, windowSec, onWindowChange }: Props) {
+  const phone = useIsPhone();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<ISeriesApi<"Line">[]>([]);
@@ -166,8 +167,47 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
         <EmptyState
           compact
           title="No series in the trend"
-          description="Click the chart icon on a table row to add that node to the trend."
+          description={phone ? "Tap the chart icon on a value in Watch or Server to add it here." : "Click the chart icon on a table row to add that node to the trend."}
         />
+      </div>
+    );
+  }
+
+  if (phone) {
+    return (
+      <div className="oc-scroll" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Segmented
+          block
+          label="Trend window"
+          value={String(windowSec)}
+          onChange={(v) => onWindowChange(Number(v))}
+          options={[
+            { value: "30", label: "30 s" },
+            { value: "60", label: "1 min" },
+            { value: "300", label: "5 min" },
+          ]}
+        />
+        <div className="oc-chart">
+          <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} role="img" aria-label="Trend chart showing live data" />
+        </div>
+        {userScrolled && (
+          <Button variant="primary" block onClick={resetView}>
+            Follow live data
+          </Button>
+        )}
+        <ListGroup>
+          {series.map((s, i) => (
+            <div key={s.id} className="vm-row">
+              <span className="oc-swatch" style={{ background: s.color || COLORS[i % COLORS.length] }} aria-hidden="true" />
+              <span className="vm-row__text">
+                <span className="vm-row__title">{s.name}</span>
+              </span>
+              <IconButton label={`Remove ${s.name} from trend`} onClick={() => onRemove(s.id)}>
+                <X size={18} strokeWidth={1.75} />
+              </IconButton>
+            </div>
+          ))}
+        </ListGroup>
       </div>
     );
   }

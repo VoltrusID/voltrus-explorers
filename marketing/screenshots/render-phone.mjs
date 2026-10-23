@@ -1,7 +1,7 @@
-// Drives the iPhone layout of Modbus Poll, BACnet Explorer or S7 Explorer in Chromium (iPhone 15: 393x852 @3x, touch, iOS user agent)
+// Drives the iPhone layout of Modbus Poll, BACnet Explorer, S7 Explorer or OPC UA Explorer in Chromium (iPhone 15: 393x852 @3x, touch, iOS user agent)
 // with the mocked Tauri runtime the App Store scenes use, and saves one plain screenshot per screen, light and dark.
 //
-//   bun marketing/screenshots/render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer> [outDir] [--scheme=light|dark|both] [--only=a,b]
+//   bun marketing/screenshots/render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer|opcua-explorer> [outDir] [--scheme=light|dark|both] [--only=a,b]
 //
 // Default outDir is /tmp/<app>-phone. Safe areas are simulated through CDP Emulation.setSafeAreaInsetsOverride with the
 // iPhone 15 portrait insets (status bar / Dynamic Island 59, home indicator 34), so `env(safe-area-inset-*)` is real here.
@@ -21,7 +21,7 @@ const root = join(here, "../..");
 const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const [app, outArg] = args.filter((a) => !a.startsWith("--"));
-if (!["modbus-poll", "bacnet-explorer", "s7-explorer"].includes(app ?? "")) throw new Error("usage: render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer> [outDir]");
+if (!["modbus-poll", "bacnet-explorer", "s7-explorer", "opcua-explorer"].includes(app ?? "")) throw new Error("usage: render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer|opcua-explorer> [outDir]");
 const outDir = outArg ?? `/tmp/${app}-phone`;
 const schemes = flag("scheme") === "light" ? ["light"] : flag("scheme") === "dark" ? ["dark"] : ["light", "dark"];
 const only = flag("only")?.split(",");
@@ -155,6 +155,17 @@ async function closeSheetByTapOutside(page) {
   await sleep(500);
   if (await page.$(".vt-dialog")) console.error("tap outside did not dismiss the sheet");
   else console.log("tap outside dismissed the sheet");
+}
+
+/** Taps the row titled `label` of the open sheet. */
+async function pickRow(page, label) {
+  const ok = await page.evaluate((label) => {
+    const row = [...document.querySelectorAll('.vm-sheet-list [role="option"]')].find((el) => el.querySelector(".vm-row__title")?.textContent === label);
+    row?.click();
+    return !!row;
+  }, label);
+  if (!ok) throw new Error(`no sheet row "${label}"`);
+  await sleep(450);
 }
 
 const wants = (name) => !only || only.includes(name);
@@ -717,8 +728,216 @@ async function s7(scheme) {
   await page.close().catch(() => {});
 }
 
+// ── OPC UA Explorer ───────────────────────────────────────────────────────────────────────────────
+async function opcua(scheme) {
+  let page = await open(scheme, "");
+  const tab = (t) => clickSel(page, "nav [role=tab]", t);
+  const moreTo = async (label) => {
+    await tab("More");
+    await page.waitForSelector(".vt-dialog .vm-row", { timeout: 5000 });
+    await sleep(350);
+    await clickSel(page, ".vt-dialog .vm-row", label);
+    await sleep(500);
+  };
+  const closeSheet = async () => {
+    await page.keyboard.press("Escape");
+    await sleep(450);
+  };
+  const type = async (sel, value) => {
+    const el = await page.$(sel);
+    await el.click({ clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await el.type(value);
+  };
+  // Pages stay mounted when hidden, so a trigger is looked up among the visible ones.
+  const pickVisible = async (current, label) => {
+    const opened = await page.evaluate((current) => {
+      const b = [...document.querySelectorAll("button[data-sheet-select]")].find((el) => el.offsetParent !== null && el.textContent.trim() === current);
+      b?.click();
+      return !!b;
+    }, current);
+    if (!opened) throw new Error(`no visible select showing "${current}"`);
+    await page.waitForSelector(".vm-sheet-list", { timeout: 5000 });
+    await sleep(400);
+    await pickRow(page, label);
+  };
+  const trendOn = async (names) => {
+    for (const name of names) {
+      await page.evaluate((name) => document.querySelector(`button[aria-label="Add ${name} to trend"]`).click(), name);
+      await sleep(300);
+    }
+  };
+
+  if (wants("connect")) {
+    await shot(page, scheme, "01-connect");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "02-connect-end");
+    await scrollMain(page, 0);
+  }
+  if (wants("tabs")) {
+    for (const [t, name] of [["Browse", "03-browse-empty"], ["Watch", "04-watch-empty"], ["Trend", "05-trend-empty"]]) {
+      await tab(t);
+      await shot(page, scheme, name);
+    }
+    await tab("More");
+    await page.waitForSelector(".vt-dialog .vm-row", { timeout: 5000 });
+    await sleep(450);
+    await shot(page, scheme, "06-more-sheet");
+    await closeSheet();
+    await moreTo("Server");
+    await shot(page, scheme, "07-server");
+    await moreTo("Namespaces");
+    await shot(page, scheme, "08-namespaces-empty");
+    await tab("Connect");
+  }
+  if (wants("pickers")) {
+    await openTrigger(page, "None");
+    await shot(page, scheme, "10-policy-sheet");
+    await closeSheetBySwipe(page);
+    await openTrigger(page, "None");
+    await pickRow(page, "Basic256Sha256");
+    await openTrigger(page, "Sign and encrypt");
+    await shot(page, scheme, "11-mode-sheet");
+    await closeSheetByTapOutside(page);
+    await pickVisible("Anonymous", "User name and password");
+    await sleep(200);
+    await shot(page, scheme, "12-connect-secure");
+    await clickSel(page, ".vm-body .vm-row", "Find servers");
+    await page.waitForSelector(".vt-dialog .vm-row", { timeout: 5000 });
+    await sleep(500);
+    await shot(page, scheme, "13-discovery-endpoints");
+    await clickSel(page, ".vt-dialog button", "Find servers", { exact: true });
+    await page.waitForFunction(() => [...document.querySelectorAll(".vt-dialog .vm-row__title")].some((e) => e.textContent === "Plant Gateway"), { timeout: 5000 });
+    await sleep(300);
+    await shot(page, scheme, "14-discovery-servers");
+    await clickSel(page, ".vt-dialog .vm-row", "Plant Gateway");
+    await sleep(600);
+    await clickSel(page, ".vt-dialog .vm-row", "Basic256Sha256");
+    await sleep(500);
+    await scrollMain(page, 0);
+    await shot(page, scheme, "15-connect-filled");
+    await scrollMain(page, "end");
+    await clickSel(page, ".vm-body .vm-row", "Certificates");
+    await page.waitForSelector(".oc-cert", { timeout: 5000 });
+    await sleep(400);
+    await shot(page, scheme, "16-certificates");
+    await page.evaluate(() => document.querySelector(".vt-dialog__body")?.scrollTo(0, 9999));
+    await shot(page, scheme, "17-certificates-end");
+    await clickSel(page, ".vt-dialog button", "Trust this certificate");
+    await sleep(500);
+    await closeSheet();
+    await scrollMain(page, 0);
+  }
+  if (wants("live")) {
+    await page.evaluate(() => (document.querySelector('input[type="url"]').scrollIntoView(), null));
+    const inputs = await page.$$(".vm-body input:not([type=url])");
+    if (inputs[0]) await inputs[0].type("operator");
+    if (inputs[1]) await inputs[1].type("plantfloor");
+    await clickSel(page, "button", "Connect", { exact: true });
+    await page.waitForFunction(() => document.querySelector('nav [role=tab][aria-selected="true"]')?.textContent.includes("Watch"), { timeout: 8000 });
+    await sleep(900);
+    await page.evaluate(() => window.__advance(10));
+    await shot(page, scheme, "20-watch");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "21-watch-end");
+    await scrollMain(page, 0);
+    await clickSel(page, ".oc-watch", "Pump1Speed");
+    await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+    await sleep(400);
+    await shot(page, scheme, "22-write-sheet");
+    await closeSheet();
+    await trendOn(["BoilerTemp", "SteamPressure", "Pump1Speed", "TankLevel"]);
+    await shot(page, scheme, "23-watch-trending");
+    await page.click('button[aria-label="Export CSV"]');
+    await sleep(500);
+    await shot(page, scheme, "24-export-sheet");
+    await closeSheet();
+    await page.click('button[aria-label="Subscriptions"]');
+    await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+    await sleep(600);
+    for (const n of ["ns=2;s=Boiler.Temperature", "ns=2;s=Pump1.MotorCurrent", "ns=2;s=Tank1.Level"]) {
+      await type('.vt-dialog input[aria-label="Node ID to monitor"]', n);
+      await page.keyboard.press("Enter");
+      await sleep(120);
+    }
+    await shot(page, scheme, "25-subscriptions-setup");
+    await page.evaluate(() => document.querySelector(".vt-dialog__body")?.scrollTo(0, 9999));
+    await shot(page, scheme, "26-subscriptions-setup-end");
+    await clickSel(page, ".vt-dialog button", "Start subscription");
+    await sleep(500);
+    await page.evaluate(() => window.__advance(12));
+    await page.evaluate(() => document.querySelector(".vt-dialog__body")?.scrollTo(0, 0));
+    await shot(page, scheme, "27-subscriptions-live");
+    await clickSel(page, ".vt-dialog button", "Stop subscription");
+    await closeSheet();
+
+    await tab("Browse");
+    await page.waitForSelector(".oc-crumb", { timeout: 5000 });
+    await sleep(500);
+    await shot(page, scheme, "30-browse-root");
+    await clickSel(page, ".vm-row", "Plant");
+    await sleep(500);
+    await clickSel(page, ".vm-row", "Pump1");
+    await sleep(500);
+    await shot(page, scheme, "31-browse-pump");
+    await clickSel(page, ".vm-row", "Speed");
+    await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+    await sleep(600);
+    await shot(page, scheme, "32-node-sheet");
+    await page.evaluate(() => document.querySelector(".vt-dialog__body")?.scrollTo(0, 9999));
+    await shot(page, scheme, "33-node-sheet-end");
+    await clickSel(page, ".vt-dialog button", "References");
+    await sleep(300);
+    await page.evaluate(() => document.querySelector(".vt-dialog__body")?.scrollTo(0, 9999));
+    await shot(page, scheme, "34-node-references");
+    await closeSheet();
+    await clickSel(page, ".oc-crumb", "Objects");
+    await sleep(400);
+
+    await tab("Trend");
+    await page.evaluate(() => window.__advance(60));
+    await sleep(500);
+    await shot(page, scheme, "40-trend");
+    await page.evaluate(() => [...document.querySelectorAll(".oc-scroll")].find((e) => e.offsetParent !== null)?.scrollTo(0, 9999));
+    await shot(page, scheme, "41-trend-end");
+
+    await moreTo("Namespaces");
+    await page.waitForSelector(".oc-kv", { timeout: 5000 });
+    await shot(page, scheme, "42-namespaces");
+    await moreTo("Log");
+    await shot(page, scheme, "43-log");
+    await tab("Connect");
+    await shot(page, scheme, "44-connect-connected");
+  }
+  await page.close();
+
+  if (wants("server")) {
+    page = await open(scheme, "");
+    await moreTo("Server");
+    await page.evaluate(() => document.querySelector("section")?.scrollIntoView());
+    await pickVisible("None", "Process Plant (Reactor R-101)");
+    await shot(page, scheme, "50-server-template");
+    await clickSel(page, ".vm-body button", "Start simulation");
+    await sleep(700);
+    await page.evaluate(() => window.__advance(20));
+    await scrollMain(page, 0);
+    await shot(page, scheme, "51-server-running");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "52-server-nodes");
+    await page.close();
+  }
+
+  if (wants("about")) {
+    page = await open(scheme, "");
+    await page.click('button[aria-label="About"]');
+    await sleep(500);
+    await shot(page, scheme, "60-about");
+    await page.close();
+  }
+}
+
 try {
-  for (const scheme of schemes) await (app === "modbus-poll" ? modbus(scheme) : app === "s7-explorer" ? s7(scheme) : bacnet(scheme));
+  for (const scheme of schemes) await (app === "modbus-poll" ? modbus(scheme) : app === "s7-explorer" ? s7(scheme) : app === "opcua-explorer" ? opcua(scheme) : bacnet(scheme));
   const bad = results.filter((r) => r.bad > 0);
   console.log(`\n${results.length} screens audited, ${bad.length} with findings${bad.length ? ": " + bad.map((r) => r.label).join(", ") : ""}`);
 } finally {

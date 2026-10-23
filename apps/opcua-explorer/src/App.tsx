@@ -6,9 +6,15 @@ import {
   ConnectionForm,
   DataTable,
   Dialog,
+  EmptyState,
   Field,
   IconButton,
+  ListGroup,
+  ListRow,
+  PageTitle,
+  PhoneTabBar,
   Section,
+  SheetSelect,
   Segmented,
   StatusBar,
   Tabs,
@@ -18,10 +24,11 @@ import {
   ProBadge,
   ValueEditor,
   saveTextFile,
+  usePhoneShell,
   useProStatus,
 } from "@mactools/ui";
-import type { LogEntry } from "@mactools/ui";
-import { ChartLine, Download, FileDown, Play, Plug, Plus, Server, Square, X } from "lucide-react";
+import type { LogEntry, PhoneTabItem } from "@mactools/ui";
+import { ChartLine, Download, FileDown, Layers, ListTree, Play, Plug, Plus, Radio, RefreshCw, ScrollText, Server, Square, Eye, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { DiscoveryPanel } from "./DiscoveryPanel";
 import { BrowserPanel } from "./BrowserPanel";
@@ -29,6 +36,10 @@ import { SubscriptionPanel } from "./SubscriptionPanel";
 import { CertManager } from "./CertManager";
 import { NamespacePanel } from "./NamespacePanel";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
+import { PhoneConnect, DEFAULT_CONN, type ConnForm } from "./phone/PhoneConnect";
+import { normalizePolicy } from "./phone/policies";
+import { PhoneBrowse, type BrowseNodeRef } from "./phone/PhoneBrowse";
+import { WatchList, type WatchItem } from "./phone/WatchList";
 import { ValueLog, samplesToCsv, valuesToCsv } from "./valueLog";
 
 interface OpcUaConfig {
@@ -62,6 +73,8 @@ interface ClientValue {
   data_type?: string;
   value: unknown;
   timestamp: number;
+  /** Status of the last notification (Good, Uncertain, Bad); unset for values that came from a plain read. */
+  status?: string;
 }
 
 /** A connected OPC UA server. */
@@ -153,13 +166,33 @@ const DEFAULT_NODES: OpcUaNode[] = [
 // Free tier: live subscription (or fallback polling) covers this many nodes; the rest refresh via "Read values".
 const FREE_MONITORED_ITEMS = 10;
 
+
+type PhoneTab = "connect" | "browse" | "watch" | "trend" | "server" | "namespaces" | "log";
 function App() {
   const [mode, setMode] = useState<"server" | "client">("server");
   const [leftWidth, setLeftWidth] = useState(264);
   const [tableHeight, setTableHeight] = useState(300);
   const [dragSide, setDragSide] = useState<"left" | "table" | null>(null);
-  const [mobileTab, setMobileTab] = useState<"connect" | "data" | "log">("connect");
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  // Phone layout (< 768px): bottom tabs, the shared phone shell. Wider windows keep the two-pane layout.
+  const [phoneTab, setPhoneTab] = useState<PhoneTab>("connect");
+  const isMobile = usePhoneShell();
+  // On a phone the page follows the system (iOS draws the status bar from it) and the chart reads the theme from <html>.
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() => (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+  useEffect(() => {
+    const system = window.matchMedia("(prefers-color-scheme: light)");
+    const follow = () => setSystemTheme(system.matches ? "light" : "dark");
+    system.addEventListener("change", follow);
+    return () => system.removeEventListener("change", follow);
+  }, []);
+  useEffect(() => {
+    if (!isMobile) return;
+    document.documentElement.setAttribute("data-theme", systemTheme);
+    return () => document.documentElement.removeAttribute("data-theme");
+  }, [isMobile, systemTheme]);
+  const [conn, setConn] = useState<ConnForm>(DEFAULT_CONN);
+  const [lastError, setLastError] = useState<string | null>(null);
+  // Last few numeric values per series key, for the sparklines of the phone lists.
+  const [history, setHistory] = useState<Record<string, number[]>>({});
   const [log, setLog] = useState<LogEntry[]>([]);
 
   // Server state
@@ -192,7 +225,7 @@ function App() {
   const [simRunning, setSimRunning] = useState(false);
   const [simValues, setSimValues] = useState<number[]>([]);
 
-  const [editingNode, setEditingNode] = useState<{ id: string; value: string; dataType: string } | null>(null);
+  const [editingNode, setEditingNode] = useState<{ id: string; value: string; dataType: string; server: boolean } | null>(null);
   const [showInfo, setShowInfo] = useState(false);
 
   // Trend state
@@ -215,6 +248,8 @@ function App() {
 
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
     setLog((prev) => [...prev, { timestamp: Date.now(), direction, message }]);
+    // The phone header shows the latest problem until something else goes right.
+    setLastError((cur) => (direction === "error" ? message : direction === "info" || direction === "rx" ? null : cur));
   }, []);
 
   // Drag resize
@@ -239,12 +274,6 @@ function App() {
     window.addEventListener("mouseup", () => setDragSide(null));
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", () => setDragSide(null)); };
   }, [dragSide]);
-
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   // Poll server nodes when server is on
   useEffect(() => {
@@ -306,9 +335,9 @@ function App() {
       updateSession(session.id, (s) => ({
         ...s,
         values: s.values.some((row) => row.node_id === n.node_id)
-          ? s.values.map((row) => row.node_id === n.node_id ? { ...row, value: n.value, timestamp: ts || row.timestamp } : row)
+          ? s.values.map((row) => row.node_id === n.node_id ? { ...row, value: n.value, timestamp: ts || row.timestamp, status: n.status } : row)
           // Unknown node: add it so the row still appears.
-          : [...s.values, { node_id: n.node_id, name: n.node_id, data_type: "", value: n.value, timestamp: ts }],
+          : [...s.values, { node_id: n.node_id, name: n.node_id, data_type: "", value: n.value, timestamp: ts, status: n.status }],
       }));
     }).then((fn) => { if (active) unlistenMainRef.current = fn; });
     return () => { active = false; unlistenMainRef.current?.(); unlistenMainRef.current = null; };
@@ -377,6 +406,7 @@ function App() {
       setSessions((prev) => [...prev, { id, label, endpoint: config.endpoint_url, browsed: [], values: [] }]);
       setActiveId(id);
       setAdding(false);
+      setPhoneTab("watch");
 
       try {
         const nodes = (await invoke<OpcUaNode[]>("browse_nodes", { session: id })) ?? [];
@@ -490,10 +520,13 @@ function App() {
   }, [simRunning, simTemplate, serverOn, serverPort, addLog, requirePro]);
 
   // Writing a value is Pro.
-  const openEditor = useCallback((row: Record<string, unknown>) => {
+  const openNodeEditor = useCallback((id: string, value: unknown, dataType: string, server: boolean) => {
     if (!requirePro("Writing values")) return;
-    setEditingNode({ id: String(row.nodeId), value: String(row.value ?? ""), dataType: String(row.dataType ?? "Double") });
+    setEditingNode({ id, value: value === null || value === undefined || typeof value === "object" ? "" : String(value), dataType: dataType || "Double", server });
   }, [requirePro]);
+  const openEditor = useCallback((row: Record<string, unknown>) => {
+    openNodeEditor(String(row.nodeId), row.value ?? "", String(row.dataType ?? "Double"), mode === "server");
+  }, [openNodeEditor, mode]);
 
   // ── Table ──
 
@@ -565,7 +598,23 @@ function App() {
     if (changed) setTrendSeries(next);
   }, [valueSig, trendWindow]);
 
-  const toggleTrend = useCallback((key: string, name: string) => {
+  // Sparkline history of every value that changes (phone lists).
+  useEffect(() => {
+    if (!isMobile) return;
+    setHistory((prev) => {
+      let next = prev;
+      for (const r of trendRowsRef.current) {
+        if (Number.isNaN(r.v)) continue;
+        const cur = prev[r.key];
+        if (cur && cur[cur.length - 1] === r.v) continue;
+        if (next === prev) next = { ...prev };
+        next[r.key] = [...(cur ?? []), r.v].slice(-40);
+      }
+      return next;
+    });
+  }, [valueSig, isMobile]);
+
+  const toggleTrend = useCallback((key: string, name: string, initial?: number) => {
     // Adding a series is Pro; removing one never is.
     if (!trendSeriesRef.current.has(key) && !requirePro("Live trends")) return;
     setTrendSeries((prev) => {
@@ -573,7 +622,7 @@ function App() {
       if (next.has(key)) {
         next.delete(key);
       } else {
-        const v = trendRowsRef.current.find((r) => r.key === key)?.v ?? 0;
+        const v = initial ?? trendRowsRef.current.find((r) => r.key === key)?.v ?? 0;
         const colors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
         next.set(key, { id: key, name, color: colors[next.size % colors.length], points: [{ t: Date.now(), v: Number.isNaN(v) ? 0 : v }] });
       }
@@ -586,16 +635,16 @@ function App() {
   const addSession = () => {
     if (sessions.length > 0 && !requirePro("Several sessions")) return;
     setAdding(true);
-    setMobileTab("connect");
+    setPhoneTab("connect");
   };
 
-  const exportCsv = async (kind: "values" | "changes") => {
+  const exportCsv = async (kind: "values" | "changes", from: "server" | "client" = mode) => {
     setShowExport(false);
     if (!requirePro("CSV export of monitored values")) return;
     const csv = kind === "changes"
       ? samplesToCsv(valueLog.all())
       : valuesToCsv(
-          mode === "server"
+          from === "server"
             ? serverNodes.map((n) => ({ session: "Server", nodeId: n.node_id, name: n.name, dataType: n.data_type, value: n.value, timestamp: n.timestamp ?? 0 }))
             : sessions.flatMap((s) => s.values.map((v) => ({
                 session: s.label,
@@ -831,33 +880,297 @@ function App() {
     </>
   );
 
-  // ── Mobile tab bar ──
-  const mobileTabBar = (
-    <nav style={{ display: "flex", borderTop: "1px solid var(--border)", background: "var(--card)", flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-      {([{ id: "connect" as const, label: mode === "server" ? "Server" : "Connect" }, { id: "data" as const, label: "Data" }, { id: "log" as const, label: "Log" }] as const).map((tab) => (
-        <button key={tab.id} onClick={() => setMobileTab(tab.id)}
-          style={{ flex: 1, padding: "10px 0 8px", fontSize: 11, fontWeight: 600, background: "none", border: "none",
-            color: mobileTab === tab.id ? "var(--accent)" : "var(--text-muted)",
-            borderTop: mobileTab === tab.id ? "2px solid var(--accent)" : "2px solid transparent", cursor: "pointer" }}
-        >{tab.label}</button>
-      ))}
-    </nav>
+  // ── Phone: the built-in server ──
+  const templateOptions = [
+    { value: "", label: "None", hint: "Empty address space" },
+    ...Object.entries(PROFILES).map(([k, p]) => ({ value: k, label: p.name, hint: `${p.registers.length} simulated points` })),
+  ];
+  const sidebarServer = (
+    <>
+      <Section title="Server">
+        <Field label="Port">
+          {(id) => <input id={id} className="vt-input vt-input--mono" type="number" inputMode="numeric" value={serverPort} onChange={(e) => setServerPort(Number(e.target.value))} disabled={serverOn} />}
+        </Field>
+        <Button block size="lg" variant={serverOn ? "danger" : "primary"} icon={serverOn ? <Square size={16} strokeWidth={2} /> : <Play size={16} strokeWidth={2} />} onClick={handleServerToggle}>
+          {serverOn ? "Stop server" : "Start server"}
+        </Button>
+        <span className="vt-hint">
+          {serverOn
+            ? `Running. Other devices on this network connect to this device's address on port ${serverPort}.`
+            : "Runs an OPC UA server on this device, so you can try a client against it."}
+        </span>
+      </Section>
+      <Section title="Device template" meta={<ProBadge />}>
+        <Field label="Template">
+          <SheetSelect
+            sheetTitle="Device template"
+            value={simTemplate}
+            options={templateOptions}
+            onChange={(v) => { setSimTemplate(v); if (simRunning) handleSimToggle(); }}
+          />
+        </Field>
+        <Button block variant={simRunning ? "danger" : "primary"} disabled={!simTemplate} icon={simRunning ? <Square size={16} strokeWidth={2} /> : <Play size={16} strokeWidth={2} />} onClick={handleSimToggle}>
+          {simRunning ? "Stop simulation" : "Start simulation"}
+        </Button>
+        <span className="vt-hint">
+          {simTemplate ? `${PROFILES[simTemplate]?.description}. ${PROFILES[simTemplate]?.registers.length} points.` : "Pick a device template to fill the server with changing values. The server starts by itself if it is not running."}
+        </span>
+      </Section>
+    </>
+  );
+
+  // ── Phone pages (bottom tabs) ──
+  const ICON = { size: 22, strokeWidth: 2 } as const;
+  const phoneTabs: PhoneTabItem<PhoneTab>[] = [
+    { id: "connect", label: "Connect", icon: <Plug {...ICON} /> },
+    { id: "browse", label: "Browse", icon: <ListTree {...ICON} /> },
+    { id: "watch", label: "Watch", icon: <Eye {...ICON} /> },
+    { id: "trend", label: "Trend", icon: <ChartLine {...ICON} />, badge: trendSeries.size },
+    { id: "server", label: "Server", icon: <Server {...ICON} /> },
+    { id: "namespaces", label: "Namespaces", icon: <Layers {...ICON} /> },
+    { id: "log", label: "Log", icon: <ScrollText {...ICON} /> },
+  ];
+
+  const watchItems: WatchItem[] = activeSession
+    ? activeSession.values.map((v) => ({ key: `${activeSession.id}|${v.node_id}`, nodeId: v.node_id, name: v.name, dataType: v.data_type ?? "", value: v.value, status: v.status }))
+    : [];
+  const serverItems: WatchItem[] = serverNodes.map((n) => ({ key: `server|${n.node_id}`, nodeId: n.node_id, name: n.name, dataType: n.data_type, value: n.value }));
+
+  const trendItem = (it: WatchItem) => {
+    const name = it.name || it.nodeId;
+    toggleTrend(it.key, it.key.startsWith("server|") || sessions.length < 2 ? name : `${activeSession?.label ?? ""}: ${name}`, Number.isNaN(Number(it.value)) ? undefined : Number(it.value));
+  };
+
+  // Watch a node from the browser: one more monitored item on the session's live subscription (or its polling fallback).
+  const watchNode = async (n: BrowseNodeRef) => {
+    const s = activeSession;
+    if (!s || s.values.some((v) => v.node_id === n.nodeId)) return;
+    const nodes: OpcUaNode[] = [...s.values.map((v) => ({ node_id: v.node_id, name: v.name, data_type: v.data_type ?? "" })), { node_id: n.nodeId, name: n.name, data_type: n.dataType }];
+    updateSession(s.id, (x) => ({ ...x, values: [...x.values, { node_id: n.nodeId, name: n.name, data_type: n.dataType, value: n.value ?? null, timestamp: Date.now() }] }));
+    const runtime = runtimeRef.current.get(s.id);
+    if (runtime?.subId != null && (pro || s.values.length < FREE_MONITORED_ITEMS)) {
+      const item = { node_id: n.nodeId, attribute_id: 13, sampling_interval_ms: 1000, queue_size: 10, discard_oldest: true, monitoring_mode: "Reporting", trigger: "StatusValue", deadband_type: 0, deadband_value: 0 };
+      try {
+        await invoke<number>("create_monitored_items", { session: s.id, subscriptionId: runtime.subId, items: [item] });
+        addLog("info", `Watching ${n.name}`);
+      } catch (e) { addLog("error", `Watch failed: ${e}`); }
+    } else if (runtime?.poll !== undefined) {
+      startClientPoll(s, nodes);
+    } else {
+      addLog("info", `${n.name} added to Watch. Free builds update ${FREE_MONITORED_ITEMS} items live, so use Read values to refresh this one.`);
+    }
+  };
+
+  const trendNode = async (n: BrowseNodeRef) => {
+    const key = `${activeId}|${n.nodeId}`;
+    if (!trendSeries.has(key)) {
+      if (!requirePro("Live trends")) return;
+      await watchNode(n);
+    }
+    const num = Number(n.value);
+    toggleTrend(key, sessions.length > 1 ? `${scopeLabel}: ${n.name}` : n.name, n.value === null || n.value === undefined || Number.isNaN(num) ? undefined : num);
+  };
+
+  const needsSession = (icon: React.ReactNode, what: string) => (
+    <EmptyState
+      icon={icon}
+      title="Not connected"
+      description={`Connect to an OPC UA server to ${what}.`}
+      action={<Button variant="primary" onClick={() => setPhoneTab("connect")}>Go to Connect</Button>}
+    />
+  );
+
+  // Every page stays mounted (hidden when inactive) so the browsed path, the watch list and the log survive tab switches.
+  // `fill` pages scroll inside (lists, log); the others scroll as a whole.
+  const phonePage = (tab: PhoneTab, children: React.ReactNode, fill = false) => (
+    <div className={fill ? "vm-body vm-body--fill" : "vm-body"} style={phoneTab === tab ? undefined : { display: "none" }}>
+      {children}
+    </div>
+  );
+
+  const readAll = () => {
+    if (!activeSession) return;
+    void readValues(activeSession, activeSession.values.map((v) => ({ node_id: v.node_id, name: v.name, data_type: v.data_type ?? "" })));
+  };
+
+  const sessionSheet = sessions.length > 1 && (
+    <SheetSelect
+      sheetTitle="Session"
+      aria-label="Session"
+      value={activeId ?? ""}
+      options={sessions.map((s) => ({ value: s.id, label: s.label, hint: s.endpoint }))}
+      onChange={(id) => setActiveId(id)}
+    />
+  );
+
+  const phoneLayout = (
+    <>
+      {phonePage(
+        "connect",
+        <PhoneConnect
+          form={conn}
+          onForm={setConn}
+          sessions={sessions.map((s) => ({ id: s.id, label: s.label, endpoint: s.endpoint, nodes: s.values.length }))}
+          activeId={activeId}
+          adding={adding}
+          loading={clientLoading}
+          onConnect={() => handleConnect({
+            endpointUrl: conn.endpointUrl.trim(),
+            securityPolicy: conn.securityPolicy,
+            securityMode: conn.securityMode,
+            username: conn.auth === "user" ? conn.username : "",
+            password: conn.auth === "user" ? conn.password : "",
+          })}
+          onCancel={() => { setAdding(false); setClientLoading(false); }}
+          onActivate={(id) => { setActiveId(id); setAdding(false); }}
+          onDisconnect={closeSession}
+          onAdd={addSession}
+          onDiscover={() => setShowDiscovery(true)}
+          onCerts={() => { if (requirePro("Certificate management")) setShowCerts(true); }}
+        />,
+      )}
+      {phonePage(
+        "browse",
+        activeSession ? (
+          <PhoneBrowse
+            key={activeSession.id}
+            session={activeSession.id}
+            watched={(id) => {
+              const v = activeSession.values.find((x) => x.node_id === id);
+              return v ? { value: v.value, dataType: v.data_type ?? "" } : undefined;
+            }}
+            trending={(id) => trendSeries.has(`${activeSession.id}|${id}`)}
+            onWatch={watchNode}
+            onTrend={trendNode}
+            onWrite={(n) => openNodeEditor(n.nodeId, n.value, n.dataType, false)}
+            onLog={addLog}
+          />
+        ) : (
+          <>
+            <PageTitle title="Browse" caption="Address space" />
+            {needsSession(<ListTree size={22} strokeWidth={1.75} />, "browse its address space")}
+          </>
+        ),
+        true,
+      )}
+      {phonePage(
+        "watch",
+        <>
+          <PageTitle title="Watch" caption={activeSession ? `${watchItems.length} ${watchItems.length === 1 ? "item" : "items"}` : "Live values"} />
+          {activeSession ? (
+            <>
+              <div className="oc-toolbar">
+                {sessionSheet}
+                <div style={{ flex: 1 }} />
+                <IconButton outline label="Read values" onClick={readAll}>
+                  <RefreshCw size={18} strokeWidth={1.75} />
+                </IconButton>
+                <IconButton outline label="Subscriptions" onClick={() => { if (requirePro("Subscriptions")) setShowSubscriptions(true); }}>
+                  <Radio size={18} strokeWidth={1.75} />
+                </IconButton>
+                <IconButton outline label="Export CSV" onClick={() => setShowExport(true)}>
+                  <Download size={18} strokeWidth={1.75} />
+                </IconButton>
+              </div>
+              <div className="oc-scroll">
+                {watchItems.length === 0 ? (
+                  <EmptyState compact title="No values" description="Open a variable on the Browse tab and tap Watch to follow it here." />
+                ) : (
+                  <WatchList
+                    items={watchItems}
+                    history={history}
+                    trending={trendSeries}
+                    onOpen={(it) => openNodeEditor(it.nodeId, it.value, it.dataType, false)}
+                    onToggleTrend={trendItem}
+                  />
+                )}
+                <p className="oc-note" style={{ marginTop: 12 }}>
+                  {pro ? "Values update live. Tap a row to write a value." : `Live updates for the first ${FREE_MONITORED_ITEMS} items. Tap a row to write a value (Pro). Several sessions at once need Pro.`}
+                </p>
+              </div>
+            </>
+          ) : (
+            needsSession(<Eye size={22} strokeWidth={1.75} />, "watch its values")
+          )}
+        </>,
+        true,
+      )}
+      {phonePage(
+        "trend",
+        <>
+          <PageTitle title="Trend" caption={trendSeries.size > 0 ? `${trendSeries.size} live` : "Values over time"} />
+          {phoneTab === "trend" && (
+            <TrendPanel
+              key={trendSeries.size > 0 ? "chart" : "empty"}
+              series={Array.from(trendSeries.values())}
+              onRemove={(nodeId) => setTrendSeries((prev) => { const n = new Map(prev); n.delete(nodeId); return n; })}
+              windowSec={trendWindow}
+              onWindowChange={setTrendWindow}
+            />
+          )}
+        </>,
+        true,
+      )}
+      {phonePage(
+        "server",
+        <>
+          <PageTitle title="Server" caption={serverOn ? `Running on port ${serverPort}` : "Built-in OPC UA server"} />
+          {sidebarServer}
+          {serverOn && serverItems.length > 0 && (
+            <Section title="Nodes" className="oc-bare">
+              <WatchList
+                items={serverItems}
+                history={history}
+                trending={trendSeries}
+                onOpen={(it) => openNodeEditor(it.nodeId, it.value, it.dataType, true)}
+                onToggleTrend={trendItem}
+              />
+            </Section>
+          )}
+        </>,
+      )}
+      {phonePage(
+        "namespaces",
+        <>
+          {activeSession ? (
+            phoneTab === "namespaces" && <NamespacePanel key={activeSession.id} session={activeSession.id} onClose={() => setPhoneTab("connect")} onLog={addLog} inline />
+          ) : (
+            <>
+              <PageTitle title="Namespaces" caption="From the server" />
+              {needsSession(<Layers size={22} strokeWidth={1.75} />, "read its namespaces")}
+            </>
+          )}
+        </>,
+      )}
+      {phonePage(
+        "log",
+        <>
+          <PageTitle title="Log" caption="Every request and reply" />
+          <div className="vm-fill">
+            <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+          </div>
+        </>,
+        true,
+      )}
+      <PhoneTabBar tabs={phoneTabs} active={phoneTab} onChange={setPhoneTab} />
+    </>
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
-      <Toolbar title="OPC UA Explorer" icon={appIcon} connected={sessions.length > 0 || serverOn} onDisconnect={() => { sessions.forEach((s) => closeSession(s.id)); if (serverOn) handleServerToggle(); }} onInfo={() => setShowInfo(true)} />
+    <div className={isMobile ? "vm-app" : undefined} style={isMobile ? undefined : { display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+      <Toolbar
+        title="OPC UA Explorer"
+        icon={appIcon}
+        context={isMobile ? activeSession?.label ?? (serverOn ? `Port ${serverPort}` : undefined) : undefined}
+        connected={sessions.length > 0 || serverOn}
+        statusLabel={serverOn && sessions.length === 0 ? "Server running" : undefined}
+        onDisconnect={() => { sessions.forEach((s) => closeSession(s.id)); if (serverOn) handleServerToggle(); }}
+        onInfo={() => setShowInfo(true)}
+        error={lastError}
+      />
 
       {isMobile ? (
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-            {mobileTab === "connect" && <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{sidebarContent}</div>}
-            {mobileTab === "data" && <>{tableToolbar}<DataTable columns={columns} data={tableData} onRowClick={openEditor} /></>}
-            {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />}
-          </div>
-          {mobileTabBar}
-          <StatusBar connected={sessions.length > 0 || serverOn} latency={0} pollCount={0} error={null} />
-        </div>
+        phoneLayout
       ) : (
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <aside className="vt-sidebar" style={{ width: leftWidth, cursor: dragSide ? "col-resize" : undefined }}>{sidebarContent}</aside>
@@ -927,6 +1240,21 @@ function App() {
       )}
 
       {!isMobile && <StatusBar connected={sessions.length > 0 || serverOn} latency={0} pollCount={0} error={null} />}
+      {isMobile && showExport && (
+        <Dialog open onClose={() => setShowExport(false)} title="Export to CSV">
+          <ListGroup>
+            <ListRow icon={<FileDown size={18} strokeWidth={1.75} />} title="Current values" subtitle="One row per watched node" trailing={<ProBadge />} chevron onClick={() => exportCsv("values", "client")} />
+            <ListRow
+              icon={<FileDown size={18} strokeWidth={1.75} />}
+              title="Recorded changes"
+              subtitle={valueLog.size === 0 ? "Nothing recorded yet" : `${valueLog.size} samples since the app started`}
+              trailing={<ProBadge />}
+              chevron={valueLog.size > 0}
+              onClick={valueLog.size > 0 ? () => exportCsv("changes", "client") : undefined}
+            />
+          </ListGroup>
+        </Dialog>
+      )}
       {editingNode && (
         <ValueEditor
           address={editingNode.id}
@@ -935,7 +1263,7 @@ function App() {
           onSubmit={async (value, dataType) => {
             const parsed = dataType === "bool" ? value === "true" || value === "1" : parseFloat(value);
             const val = dataType === "bool" ? parsed : isNaN(parsed as number) ? value : parsed;
-            if (mode === "server") {
+            if (editingNode.server) {
               await invoke("server_write_node", { nodeId: editingNode.id, value: val }).catch((e) => addLog("error", String(e)));
               addLog("tx", `Write ${val} to ${editingNode.id} (server)`);
             } else {
@@ -969,12 +1297,25 @@ function App() {
           }
         >
           <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
+            {isMobile ? (
+              <>
+                <p style={{ margin: "0 0 10px" }}>
+                  <strong style={{ color: "var(--text)" }}>Connect</strong>: Connect to an OPC UA server, browse its address space, watch values and trend them. Pro adds more than 10 live monitored items, several sessions at once, CSV export, trends, writing values and certificate management.
+                </p>
+                <p style={{ margin: "0 0 10px" }}>
+                  <strong style={{ color: "var(--text)" }}>Server</strong> (More tab): Run an OPC UA server on this device. Pro adds device templates that fill it with simulated values.
+                </p>
+              </>
+            ) : (
+              <>
             <p style={{ margin: "0 0 10px" }}>
               <strong style={{ color: "var(--text)" }}>Server mode</strong>: Run a local OPC UA server. Pro adds device templates that inject simulated values.
             </p>
             <p style={{ margin: "0 0 10px" }}>
               <strong style={{ color: "var(--text)" }}>Client mode</strong>: Connect to an OPC UA server, browse its address space and read node values. Pro adds more than 10 live monitored items, several sessions at once, CSV export of monitored values, trends, writing values and certificate management.
             </p>
+              </>
+            )}
             <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
               Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama
             </p>
@@ -987,6 +1328,7 @@ function App() {
           onClose={() => setShowDiscovery(false)}
           onSelect={(url, policy, secMode) => {
             setDiscovered({ endpointUrl: url, securityPolicy: policy, securityMode: secMode });
+            setConn((c) => ({ ...c, endpointUrl: url, securityPolicy: normalizePolicy(policy), securityMode: secMode }));
             setConnKey((k) => k + 1);
             addLog("info", `Loaded ${url} (${policy} / ${secMode}) into connection form`);
           }}

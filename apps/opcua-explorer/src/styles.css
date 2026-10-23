@@ -1,2 +1,284 @@
 @import "tailwindcss";
 @import "@mactools/ui/styles.css";
+
+/* ── Phone layout (see docs/ios-design.md). Only matches under the phone shell, so desktop and iPad are untouched. ── */
+
+html[data-shell="phone"] .oc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Breadcrumb bar of the address-space browser: a row of pills that scrolls sideways and keeps the current level in view. */
+html[data-shell="phone"] .oc-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--page-x));
+  padding: 0 var(--page-x);
+  scrollbar-width: none;
+}
+
+html[data-shell="phone"] .oc-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-shell="phone"] .oc-crumb {
+  flex-shrink: 0;
+  height: 44px;
+  max-width: 60vw;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-shell="phone"] .oc-crumb[aria-current="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+html[data-shell="phone"] .oc-crumbs__sep {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* A watch row: name and node id at the left, the value large at the right with its sparkline under it. */
+html[data-shell="phone"] .oc-watch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 10px 8px 10px 16px;
+}
+
+html[data-shell="phone"] .oc-watch__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+html[data-shell="phone"] .oc-watch__name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-shell="phone"] .oc-watch__id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-shell="phone"] .oc-watch__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .oc-watch__meta .vt-badge {
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .oc-watch__value {
+  flex: 0 0 auto;
+  max-width: 46%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+html[data-shell="phone"] .oc-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 22px;
+  line-height: 26px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+html[data-shell="phone"] .oc-value--empty {
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .oc-value--hero {
+  font-size: 34px;
+  line-height: 40px;
+  letter-spacing: -0.6px;
+}
+
+/* Key / value rows of the node sheet and certificate cards: the label above, the value wraps. */
+html[data-shell="phone"] .oc-kv {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 10px 16px;
+  min-height: 0;
+}
+
+html[data-shell="phone"] .oc-kv__k {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .oc-kv__v {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 19px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+html[data-shell="phone"] .oc-kv__v--bad {
+  color: var(--danger);
+}
+
+html[data-shell="phone"] .oc-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 0 2px;
+}
+
+html[data-shell="phone"] .oc-hero__id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+html[data-shell="phone"] .oc-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+html[data-shell="phone"] .oc-actions .vt-btn {
+  padding: 0 8px;
+}
+
+html[data-shell="phone"] .oc-actions--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html[data-shell="phone"] .oc-cert {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+html[data-shell="phone"] .oc-cert__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+html[data-shell="phone"] .oc-cert__head .vm-row__title {
+  flex: 1;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .oc-cert .oc-kv {
+  padding: 0;
+}
+
+html[data-shell="phone"] .oc-chart {
+  flex: 0 0 auto;
+  height: 38vh;
+  min-height: 220px;
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-shell="phone"] .oc-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .oc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .oc-toolbar > .vm-select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .oc-note {
+  padding: 0 4px;
+  font-size: var(--fs-sm);
+  line-height: 19px;
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .oc-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* A Section whose list is its own card: no second card around it. */
+html[data-shell="phone"] .oc-bare > .vt-section__body {
+  padding: 0;
+  background: none;
+}
+
+html[data-shell="phone"] .oc-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+html[data-shell="phone"] .oc-kv__k--raw {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Children of a scrolling page keep their height (the shared page is a flex column whose children could shrink and clip). */
+html[data-shell="phone"] .vm-body:not(.vm-body--fill) > * {
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .oc-scroll > * {
+  flex-shrink: 0;
+}
