@@ -146,6 +146,12 @@ pub async fn connect_team_remove_member(team_id: String, user_id: Option<String>
     Ok(account::remove_member(&connect.session, &team_id, &user_id).await?)
 }
 
+/// Whether the assistant is open to everyone (no sign-in needed): `{ available }`.
+#[tauri::command]
+pub async fn connect_ai_availability(connect: State<'_, Connect>) -> Result<serde_json::Value, AiFailure> {
+    ai::availability(&connect.session).await
+}
+
 /// Assistant availability for this account: `{ enabled, entitled, models, quota }`.
 #[tauri::command]
 pub async fn connect_ai_status(connect: State<'_, Connect>) -> Result<serde_json::Value, AiFailure> {

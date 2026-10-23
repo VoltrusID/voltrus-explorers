@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Bell, ExternalLink, LineChart, ListTree, Play, Plug, Radar, ScrollText, Square, X } from "lucide-react";
+import { Bell, ExternalLink, LineChart, ListTree, Play, Plug, Radar, ScrollText, Sparkles, Square, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import {
   Button,
@@ -25,6 +25,7 @@ import {
   ProBadge,
   ProAboutRow,
   ConnectButton,
+  useAssistantAccess,
   useProStatus,
   LogPanel,
   ValueEditor,
@@ -43,6 +44,7 @@ import { useConnectSync } from "./hooks/useConnectSync";
 import { TrendLogDialog } from "./components/TrendLogDialog";
 import { ScheduleDialog } from "./components/ScheduleDialog";
 import { WatchPanel, type WatchItem } from "./components/WatchPanel";
+import { AssistantHost } from "./components/AssistantHost";
 
 type PhoneTab = "devices" | "objects" | "trend" | "alarms" | "log";
 
@@ -171,6 +173,10 @@ function App() {
     if (!requirePro("Schedule viewer")) return;
     setScheduleObject(instance);
   };
+
+  // The Assistant: a side panel on desktop, a sheet from More on a phone. Absent when it is off for the account.
+  const assistantAccess = useAssistantAccess();
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   // ── State ──
   const [objects] = useState<BacnetObject[]>([
@@ -884,15 +890,17 @@ function App() {
 
   // ── Phone pages (bottom tabs) ──
   const ICON = { size: 22, strokeWidth: 2 } as const;
-  const phoneTabs: PhoneTabItem<PhoneTab>[] = [
+  const phoneTabs: PhoneTabItem<PhoneTab | "assistant">[] = [
     { id: "devices", label: "Devices", icon: <Radar {...ICON} /> },
     { id: "objects", label: "Objects", icon: <ListTree {...ICON} /> },
     { id: "trend", label: "Trend", icon: <LineChart {...ICON} />, badge: trend.series.length },
     { id: "alarms", label: "Alarms", icon: <Bell {...ICON} /> },
     { id: "log", label: "Log", icon: <ScrollText {...ICON} /> },
+    ...(assistantAccess !== "hidden" ? [{ id: "assistant" as const, label: "Assistant", icon: <Sparkles {...ICON} /> }] : []),
   ];
 
-  const selectPhoneTab = (tab: PhoneTab) => {
+  const selectPhoneTab = (tab: PhoneTab | "assistant") => {
+    if (tab === "assistant") return setAssistantOpen(true);
     if (tab === "alarms") {
       if (!requirePro("Alarms and events")) return;
       setAlarmsOpened(true);
@@ -920,6 +928,15 @@ function App() {
       <PageTitle title={title} caption={caption} />
       {fill ? <div className="vm-fill">{children}</div> : children}
     </div>
+  );
+
+  const assistantHost = (
+    <AssistantHost
+      device={connectedDevice ? { port: connectedDevice.port, device_id: connectedDevice.device_id } : null}
+      openDevices={devices.length}
+      error={protocol.error}
+      logLines={() => log.slice(-40).map((l) => `${l.direction} ${l.message}`)}
+    />
   );
 
   const phoneLayout = (
@@ -1000,7 +1017,16 @@ function App() {
       <Toolbar
         title="BACnet Explorer"
         icon={appIcon}
-        actions={<ConnectButton />}
+        actions={
+          <>
+            {assistantAccess !== "hidden" && !isMobile && (
+              <IconButton label={assistantOpen ? "Hide the Assistant" : "Assistant"} size="sm" onClick={() => setAssistantOpen((o) => !o)}>
+                <Sparkles size={16} strokeWidth={1.75} />
+              </IconButton>
+            )}
+            <ConnectButton />
+          </>
+        }
         context={connected && connectedDevice ? `${connectedDevice.ip}:${connectedDevice.port}` : undefined}
         connected={connected}
         onDisconnect={handleDisconnect}
@@ -1037,6 +1063,11 @@ function App() {
           <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", padding: 8, gap: 4 }}>
             {mainContent}
           </main>
+          {assistantOpen && assistantAccess !== "hidden" && (
+            <aside className="vt-sidebar" style={{ width: 340, flexShrink: 0, borderLeft: "1px solid var(--border)", overflowY: "auto" }}>
+              {assistantHost}
+            </aside>
+          )}
         </div>
       )}
 
@@ -1046,6 +1077,12 @@ function App() {
           error={protocol.error}
           device={connectedDevice}
         />
+      )}
+
+      {isMobile && (
+        <Dialog open={assistantOpen && assistantAccess !== "hidden"} onClose={() => setAssistantOpen(false)} title="Assistant">
+          {assistantHost}
+        </Dialog>
       )}
 
       {/* Value editor modal */}

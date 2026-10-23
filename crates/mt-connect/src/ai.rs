@@ -51,6 +51,13 @@ impl AiFailure {
     }
 }
 
+/// `GET /api/connect/ai/availability` (no sign-in): `{ available }`, true when the assistant is open to everyone.
+/// Signed-out apps use it to decide whether to mention the Assistant at all.
+pub async fn availability(session: &Session) -> Result<Value, AiFailure> {
+    let res = session.api().send(Method::GET, "/api/connect/ai/availability", None, None).await.map_err(AiFailure::from_error)?;
+    res.json().map_err(AiFailure::from_error)
+}
+
 /// `GET /api/connect/ai/status`: `{ enabled: false }` or `{ enabled, entitled, models, quota }`.
 pub async fn status(session: &Session) -> Result<Value, AiFailure> {
     let res = session.request(Method::GET, "/api/connect/ai/status", None).await.map_err(AiFailure::from_error)?;
@@ -102,6 +109,20 @@ mod tests {
         let reqs = server.requests.lock();
         assert_eq!(reqs[1].authorization.as_deref(), Some("Bearer a1"));
         assert_eq!(reqs[1].json()["protocol"], "modbus");
+    }
+
+    #[tokio::test]
+    async fn availability_needs_no_sign_in() {
+        let server = MockServer::start(|req| {
+            if req.authorization.is_some() {
+                json(400, json!({ "error": "unexpected_auth" }))
+            } else {
+                json(200, json!({ "available": false }))
+            }
+        })
+        .await;
+        let s = Session::with_clock(Api::new(&server.base).unwrap(), Box::new(MemoryVault::default()), "modbus-poll", "voltrus-modbus-poll://connect", "test", || 1);
+        assert_eq!(availability(&s).await.unwrap()["available"], false);
     }
 
     #[tokio::test]

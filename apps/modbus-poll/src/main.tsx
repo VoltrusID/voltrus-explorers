@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
-import { ConnectProvider, ProProvider } from "@mactools/ui";
+import { AssistantProvider, ConnectProvider, ProProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
@@ -24,7 +24,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <ProProvider appName="Modbus Poll" features={PRO_FEATURES}>
         <ConnectProvider>
-          <App />
+          <AssistantProvider>
+            <App />
+          </AssistantProvider>
         </ConnectProvider>
       </ProProvider>
     </ErrorBoundary>

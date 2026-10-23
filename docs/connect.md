@@ -75,3 +75,14 @@ with a 30 day free introductory offer for new subscribers; Indonesia storefront 
 are Apple's equalization of the USD price. Display name "Voltrus Connect", description up to 55 characters. The dialog shows
 StoreKit's title, length, localized price and trial; no price is hard-coded. Review screenshot: `bun marketing/screenshots/render.mjs <app> --bare connect-review`
 (2560x1600, App Store build view with the subscribe panel). Console prices and team packs live in the console repository.
+
+## Assistant (Modbus Poll, BACnet Explorer)
+
+An optional AI assistant in the Connect subscription (console contract: `voltrus-console/docs/connect-ai.md`). Modbus Poll offers find registers, read a manual page (text or photo), diagnose an error, decode raw values and ask about the session; BACnet Explorer offers diagnose and ask. It only reads and suggests: results are proposals (blocks are added only when the user taps "Add these blocks"), and nothing is ever written to a device.
+
+- **Client**: `mt-connect` commands `connect_ai_availability`, `connect_ai_status` and `connect_ai_run(task, payload)` (task whitelist; 90 s timeout for photo requests). Failures reach the UI as `{ status, code, message, quota }`.
+- **UI**: `packages/mt-ui` `AssistantProvider` (inside `ConnectProvider`), `AssistantPanel`, `useAssistantAccess`. Desktop: Modbus Poll shows it as an "Assistant" tab beside Blocks, BACnet Explorer as a side panel from the toolbar; phone: More, then Assistant opens a sheet. Pure logic is in `assistantLogic.ts`, tested from the apps (`__tests__/assistant.test.ts`).
+- **Visibility**: hidden while the console feature flag is off for the account. Signed out: offered only if the console says it is open to everyone (`/ai/availability`), as a button to the Voltrus Connect dialog. Signed in without Connect: same button. Store builds mention no price and no outside link; subscribing happens in the Connect dialog (StoreKit).
+- **Consent** (App Store 5.1.2(i)): a sheet before first use names Cloudflare Workers AI and says what is sent; stored per app (`voltrus-assistant-consent:<slug>`, bump `CONSENT_VERSION` when the text changes).
+- **Quota** is shown under the panel after every answer (300 text and 30 photo requests per month by default).
+- **Privacy**: apps send hosts and credentials nowhere (Modbus Poll drops the host before sending; the console masks IPs, addresses, e-mails and links again).

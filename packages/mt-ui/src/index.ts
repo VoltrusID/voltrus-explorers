@@ -67,3 +67,7 @@ export {
   type StatusChipProps,
 } from "./phone";
 export { SheetSelect, type SheetOption, type SheetSelectProps } from "./sheetSelect";
+export { AssistantPanel, type AssistantPanelProps } from "./AssistantPanel";
+export { AssistantProvider, useAssistant, useAssistantAccess, type AssistantAccess } from "./assistantProvider";
+export { commonWordOrder } from "./assistantLogic";
+export type { AssistantBlock, AssistantContext, AssistantProtocol, AssistantTask, WordOrder } from "./assistantLogic";

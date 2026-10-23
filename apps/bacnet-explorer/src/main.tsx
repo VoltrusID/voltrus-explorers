@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { ConnectProvider, ProProvider } from "@mactools/ui";
+import { AssistantProvider, ConnectProvider, ProProvider } from "@mactools/ui";
 import { DevicePanel } from "./components/DevicePanel";
 import "./styles.css";
 
@@ -27,7 +27,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     ) : (
       <ProProvider appName="BACnet Explorer" features={PRO_FEATURES}>
         <ConnectProvider>
-          <App />
+          <AssistantProvider>
+            <App />
+          </AssistantProvider>
         </ConnectProvider>
       </ProProvider>
     )}

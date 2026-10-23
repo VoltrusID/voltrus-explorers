@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, currentMonitor, LogicalSize } from "@tauri-apps/api/window";
 import {
+  Dialog,
   DataTable,
   ConnectButton,
   StatusBar,
@@ -16,6 +17,7 @@ import {
   Tabs,
   usePhoneShell,
   useProStatus,
+  useAssistantAccess,
   saveTextFile,
   openTextFile,
 } from "@mactools/ui";
@@ -58,6 +60,7 @@ import { PhoneDataList } from "./components/PhoneDataList";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
+import { AssistantHost } from "./components/AssistantHost";
 import { buildTagList } from "./scadaExport";
 
 const NO_VALUES: unknown[] = [];
@@ -79,6 +82,10 @@ function App() {
   const activeId = useStore((s) => s.activeSessionId);
   const sessionCount = useStore((s) => s.sessions.length);
   const rt = useConnRuntime((s) => s.byId[activeId] ?? IDLE);
+  // The Assistant: a tab beside Blocks on desktop, a sheet from More on a phone. Absent when it is off for the account.
+  const assistantAccess = useAssistantAccess();
+  const [rightTab, setRightTab] = useState<"blocks" | "assistant">("blocks");
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const connProfiles = useStore((s) => s.connProfiles);
   const {
     mode, setMode, leftWidth, rightWidth, tableHeight,
@@ -637,7 +644,10 @@ function App() {
               <div className="vm-fill">{trendPanel}</div>
             </div>
           )}
-          <MobileTabBar />
+          <MobileTabBar assistant={mode === "master" && assistantAccess !== "hidden" ? () => setAssistantOpen(true) : undefined} />
+          <Dialog open={assistantOpen} onClose={() => setAssistantOpen(false)} title="Assistant">
+            <AssistantHost error={rt.error} />
+          </Dialog>
         </>
       ) : (
         /* ── Desktop layout ── */
@@ -690,7 +700,17 @@ function App() {
             width: rightWidth, flexShrink: 0, borderLeft: "1px solid var(--border)", background: "var(--card)",
             padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, cursor: dragSide ? "col-resize" : undefined,
           }}>
-            {mode === "master"
+            {mode === "master" && assistantAccess !== "hidden" && (
+              <Tabs
+                label="Right panel"
+                value={rightTab}
+                items={[{ value: "blocks", label: "Blocks" }, { value: "assistant", label: "Assistant" }]}
+                onChange={setRightTab}
+              />
+            )}
+            {mode === "master" && assistantAccess !== "hidden" && rightTab === "assistant"
+              ? <AssistantHost error={rt.error} />
+              : mode === "master"
               ? <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} onExportScada={openScadaExport} />
               : <TemplatePanel applyProfile={applyProfile} toggleSimulation={toggleSimulation} saveCustomTemplate={saveCustomTemplate} />
             }
