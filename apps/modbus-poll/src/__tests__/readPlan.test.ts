@@ -3,7 +3,7 @@ import { blockStep, blockType, buildReadPlan, readPlanKey, validateBlock } from 
 import { buildTableRows } from "../utils/rows";
 import type { ReadBlock } from "../types";
 
-// The app's default blocks (PM5560 demo against the built-in simulator).
+// A PM5560 map (against the built-in simulator template); it used to be the app's default.
 const DEFAULT_BLOCKS: ReadBlock[] = [
   { name: "Voltage", address: 2999, quantity: 3, type: "float32", area: "holding" },
   { name: "Current", address: 3005, quantity: 3, type: "float32", area: "holding" },

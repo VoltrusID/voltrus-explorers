@@ -14,6 +14,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
+import { pickOption } from "./pick.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
@@ -117,6 +118,45 @@ async function shot(page, scheme, name) {
   await audit(page, `${name}-${scheme}`);
 }
 
+
+/** Opens the SheetSelect whose trigger shows `text` or carries that aria-label. */
+async function openTrigger(page, text) {
+  const ok = await page.evaluate((text) => {
+    const b = [...document.querySelectorAll("button[data-sheet-select]")].find((el) => el.textContent.trim().startsWith(text) || el.getAttribute("aria-label") === text);
+    if (!b) return false;
+    b.click();
+    return true;
+  }, text);
+  if (!ok) {
+    const seen = await page.evaluate(() => [...document.querySelectorAll("button[data-sheet-select]")].map((e) => e.textContent.trim() || e.getAttribute("aria-label")));
+    throw new Error(`no sheet select "${text}"; saw ${seen.join(" | ")}`);
+  }
+  await page.waitForSelector(".vm-sheet-list", { timeout: 5000 });
+  await sleep(450);
+}
+
+/** Swipes the open sheet down from its header with real touch events; fails the audit if it stays open. */
+async function closeSheetBySwipe(page) {
+  const box = await page.$eval(".vt-dialog__header", (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x + 60, y: r.y + r.height / 2 };
+  });
+  const cdp = await page.createCDPSession();
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x, y: box.y }] });
+  for (let dy = 20; dy <= 160; dy += 20) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: box.x, y: box.y + dy }] });
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await sleep(500);
+  if (await page.$(".vt-dialog")) console.error("swipe down did not dismiss the sheet");
+  else console.log("swipe down dismissed the sheet");
+}
+
+async function closeSheetByTapOutside(page) {
+  await page.mouse.click(196, 60);
+  await sleep(500);
+  if (await page.$(".vt-dialog")) console.error("tap outside did not dismiss the sheet");
+  else console.log("tap outside dismissed the sheet");
+}
+
 const wants = (name) => !only || only.includes(name);
 
 /** Scrolls the biggest scrollable element to `y` ("end" for the bottom). */
@@ -157,16 +197,6 @@ async function setStore(page, patch) {
     useStore.setState(new Function("return " + patchSrc)());
   }, patch);
   await sleep(200);
-}
-
-async function chooseOption(page, optionText, value) {
-  await page.evaluate((optionText) => {
-    const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === optionText));
-    s.setAttribute("data-pick", "1");
-  }, optionText);
-  await page.select("[data-pick]", value);
-  await page.evaluate(() => document.querySelector("[data-pick]")?.removeAttribute("data-pick"));
-  await sleep(300);
 }
 
 async function waitPolls(page, n) {
@@ -210,7 +240,7 @@ async function modbus(scheme) {
     }
   }
   if (wants("live")) {
-    await chooseOption(page, "New profile", "MCC-1 incomer");
+    await pickOption(page, "New profile", "MCC-1 incomer");
     await clickSel(page, "button", "Connect", { exact: true });
     await waitPolls(page, 25);
     await sleep(1500);
@@ -260,6 +290,78 @@ async function modbus(scheme) {
   }
   await page.close();
 
+  if (wants("pickers")) {
+    // Every list opens as a bottom sheet. Seed twelve profiles so the profile sheet is searchable.
+    const many = JSON.stringify(
+      Array.from({ length: 12 }, (_, i) => ({
+        name: i < 3 ? `MCC-${i + 1} incomer` : `Panel ${i + 1}`,
+        transport: "tcp",
+        tcp: { host: `10.0.0.${i + 1}`, port: 502, unitId: 1, pollInterval: 1000 },
+        rtu: { port: "", baudRate: 9600, dataBits: 8, stopBits: 1, parity: "none", unitId: 1 },
+        blocks: [{ name: "Registers", address: 0, quantity: 10, type: "uint16", area: "holding" }],
+      })),
+    );
+    page = await open(scheme, `${init}\nlocalStorage.setItem("modbus-poll-conn-profiles", ${JSON.stringify(many)});`);
+    await openTrigger(page, "New profile");
+    await shot(page, scheme, "40-sheet-profiles-search");
+    await page.type('.vt-dialog input[type="search"]', "mcc");
+    await sleep(300);
+    await shot(page, scheme, "41-sheet-profiles-filtered");
+    const rows = await page.$$eval('.vm-sheet-list [role="option"]', (els) => els.length);
+    if (rows !== 3) console.error(`profile search: expected 3 rows for "mcc", got ${rows}`);
+    await closeSheetBySwipe(page);
+    await openTrigger(page, "New profile");
+    await closeSheetByTapOutside(page);
+    await scrollMain(page, "end");
+    await openTrigger(page, "AB CD");
+    await shot(page, scheme, "42-sheet-word-order");
+    await page.keyboard.press("Escape");
+    await sleep(400);
+    await openTrigger(page, "Decimal");
+    await shot(page, scheme, "43-sheet-value-format");
+    await page.keyboard.press("Escape");
+    await sleep(400);
+    await scrollMain(page, 0);
+    await openTrigger(page, "Connection");
+    await shot(page, scheme, "44-sheet-connections");
+    await page.keyboard.press("Escape");
+    await sleep(400);
+    await setStore(page, `({ mobileTab: "blocks" })`);
+    await sleep(300);
+    await scrollMain(page, "end");
+    await openTrigger(page, "holding");
+    await shot(page, scheme, "45-sheet-area");
+    await page.keyboard.press("Escape");
+    await sleep(400);
+    await openTrigger(page, "uint16");
+    await shot(page, scheme, "46-sheet-type");
+    await page.close();
+
+    // Block picker on the Data tab, with a connected device.
+    page = await open(scheme, init);
+    await pickOption(page, "New profile", "MCC-1 incomer");
+    await clickSel(page, "button", "Connect", { exact: true });
+    await waitPolls(page, 10);
+    await setStore(page, `({ mobileTab: "data" })`);
+    await sleep(500);
+    await openTrigger(page, "Read block");
+    await shot(page, scheme, "47-sheet-blocks");
+    await page.close();
+
+    // Write value: the type picker opens a sheet over the sheet.
+    page = await open(scheme, init);
+    await pickOption(page, "New profile", "MCC-1 incomer");
+    await clickSel(page, "button", "Connect", { exact: true });
+    await waitPolls(page, 10);
+    await setStore(page, `({ mobileTab: "data" })`);
+    await sleep(500);
+    await page.evaluate(() => [...document.querySelectorAll(".vm-row[role=button]")].find((r) => !r.textContent.includes("ON") && !r.textContent.includes("OFF"))?.click());
+    await sleep(500);
+    await openTrigger(page, "Float32");
+    await shot(page, scheme, "48-sheet-over-sheet");
+    await page.close();
+  }
+
   if (wants("slave")) {
     page = await open(scheme, init);
     await setStore(page, `({ mode: "slave", slavePollMs: 500 })`);
@@ -271,7 +373,7 @@ async function modbus(scheme) {
     await setStore(page, `({ mobileTab: "template" })`);
     await sleep(300);
     await shot(page, scheme, "22-slave-template");
-    await chooseOption(page, "Select device…", "pm5560");
+    await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
     await sleep(500);
     await clickSel(page, "button", "Simulate", { exact: true });
     await sleep(2500);
@@ -384,7 +486,7 @@ async function bacnet(scheme) {
   if (wants("sim")) {
     // The simulator: starting it opens the control panel as a full-screen sheet (iOS has a single window).
     page = await open(scheme, init);
-    await page.select(".vm-body select", "ahu");
+    await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
     await sleep(300);
     await shot(page, scheme, "20-simulator-setup");
     await clickSel(page, ".vm-body button", "Start simulation");

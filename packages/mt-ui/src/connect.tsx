@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Check, Cloud, Copy, LogOut, RefreshCw, Share2, Sparkles, UserRound, Users } from "lucide-react";
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Section, Tabs } from "./primitives";
+import { SheetSelect } from "./sheetSelect";
 import {
   acceptServerCopy,
   applyOps,
@@ -1063,7 +1064,8 @@ function ProfilesTab() {
                   <label style={{ ...row, gap: 6, fontSize: "var(--fs-sm)", color: "var(--text-dim)" }}>
                     <Share2 size={14} strokeWidth={1.75} aria-hidden />
                     <span>Share</span>
-                    <select
+                    <SheetSelect
+                      sheetTitle="Share with"
                       className="vt-select vt-select--sm"
                       value={team ?? ""}
                       disabled={!canShare || teams.length === 0 || (link ? !link.canEdit : false)}
@@ -1076,15 +1078,9 @@ function ProfilesTab() {
                             ? "Create or join a team in the Teams tab first."
                             : undefined
                       }
-                      onChange={(e) => c.setTeam(p.key, e.target.value || null)}
-                    >
-                      <option value="">Only me</option>
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => c.setTeam(p.key, id || null)}
+                      options={[{ value: "", label: "Only me" }, ...teams.map((t) => ({ value: t.id, label: t.name }))]}
+                    />
                   </label>
                 </div>
               </li>

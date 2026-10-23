@@ -55,7 +55,7 @@ describe("value cap", () => {
     expect(limited.every((r) => r.limited === true && r.value === "Pro" && r.rawValue === null)).toBe(true);
   });
 
-  it("the default PM5560 map (16 values) is under the cap", () => {
+  it("a PM5560 map (16 values) is under the cap", () => {
     const pm5560 = [block("V", 3, "float32"), block("I", 3, "float32"), block("P", 3, "float32"), block("Q", 4, "float32"), block("T", 1, "float32"), block("E", 2, "float64")];
     expect(valueCount(pm5560)).toBe(16);
     expect(valueCapNotice(pm5560, false)).toBeNull();

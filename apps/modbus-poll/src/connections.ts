@@ -9,6 +9,7 @@ import { useStore } from "./store";
 import { appendTrendPoints } from "./trend";
 import { dropTraffic } from "./trafficStore";
 import type { ModbusConfig, ReadBlock } from "./types";
+import { explainModbusError } from "./utils/format";
 import { buildTableRows } from "./utils/rows";
 
 /**
@@ -115,7 +116,7 @@ function onPoll(id: string, ctx: PollContext, values: unknown[], pollCount: numb
   const failures = Array.from(new Set(polled.flatMap((r) => (r.error ? [r.error] : [])))).join("\n");
   if (failures !== (lastFailures.get(id) ?? "")) {
     lastFailures.set(id, failures);
-    if (failures) failures.split("\n").forEach((m) => log(id, "error", m));
+    if (failures) failures.split("\n").forEach((m) => log(id, "error", explainModbusError(m)));
   }
 
   const now = Date.now();
@@ -156,7 +157,7 @@ async function readOnce(id: string, ctx: PollContext, gen: number) {
     return result;
   } catch (e) {
     if (gen === generations.get(id)) {
-      const message = String(e);
+      const message = explainModbusError(String(e));
       if (message !== runtimeOf(id).error) log(id, "error", message);
       patch(id, { error: message, stale: true });
     }

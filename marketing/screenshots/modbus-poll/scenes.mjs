@@ -7,6 +7,8 @@
 // The meter model is a Schneider PM5560: three phase voltages/currents, powers, PF, frequency, THD, temperature
 // as float32 from register 2999, energy counters as float64 from 3203, status inputs as discrete bits 0..3.
 
+import { pickOption } from "../pick.mjs";
+
 function installMock() {
   const T0 = Date.now();
   const callbacks = new Map();
@@ -406,12 +408,7 @@ async function clickButton(page, text) {
 }
 
 async function chooseProfile(page, name) {
-  await page.evaluate(() => {
-    const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "New profile"));
-    s.setAttribute("data-profile-select", "1");
-  });
-  await page.select("[data-profile-select]", name);
-  await sleep(300);
+  await pickOption(page, "New profile", name);
 }
 
 /** Sizes the comm log to a whole number of rows so no half row shows under its header; the leftover is dark spacing. */
@@ -534,11 +531,7 @@ export const scenes = [
       await sleep(300);
       await clickButton(page, "Start server");
       await sleep(400);
-      await page.evaluate(() => {
-        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "Select device…"));
-        s.setAttribute("data-template-select", "1");
-      });
-      await page.select("[data-template-select]", "pm5560");
+      await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
       await sleep(600);
       await clickButton(page, "Simulate");
       await sleep(1500);
@@ -719,11 +712,7 @@ export const iosScenes = [
       await clickButton(page, "Start server");
       await sleep(400);
       if (device === "iphone") await mobileTab(page, "Template");
-      await page.evaluate(() => {
-        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "Select device…"));
-        s.setAttribute("data-template-select", "1");
-      });
-      await page.select("[data-template-select]", "pm5560");
+      await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
       await sleep(600);
       await clickButton(page, "Simulate");
       await sleep(1500);

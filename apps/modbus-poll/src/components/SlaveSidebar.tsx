@@ -1,4 +1,4 @@
-import { Button, Field, IconButton, Section, Segmented } from "@mactools/ui";
+import { Button, Field, IconButton, Section, Segmented, SheetSelect } from "@mactools/ui";
 import { Copy, X } from "lucide-react";
 import { useStore } from "../store";
 
@@ -76,21 +76,25 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
         <Section title="Slave RTU">
           <div className="vt-rows" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Field label="Serial port">
-              <select className="vt-select" value={slaveRtuVirtualPort ? "__virtual__" : slaveRtuPort}
-                onChange={(e) => {
-                  if (e.target.value === "__virtual__") {
+              <SheetSelect
+                sheetTitle="Serial port"
+                value={slaveRtuVirtualPort ? "__virtual__" : slaveRtuPort}
+                onChange={(port) => {
+                  if (port === "__virtual__") {
                     setSlaveRtuVirtualPort(true);
                     setSlaveRtuPort("");
                   } else {
                     setSlaveRtuVirtualPort(false);
-                    setSlaveRtuPort(e.target.value);
+                    setSlaveRtuPort(port);
                   }
                 }}
-                disabled={slaveRunning}>
-                <option value="__virtual__">Virtual port (PTY)</option>
-                <option value="">Select port…</option>
-                {serialPorts.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+                disabled={slaveRunning}
+                options={[
+                  { value: "__virtual__", label: "Virtual port (PTY)" },
+                  { value: "", label: "Select port…" },
+                  ...serialPorts.map((p) => ({ value: p, label: p })),
+                ]}
+              />
             </Field>
             {slaveRtuVirtualPort && slaveRunning && slaveVirtualPortPath && (
               <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -112,10 +116,14 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
                     disabled={slaveRunning || slaveRtuVirtualPort}
                   />
                 ) : (
-                  <select className="vt-select" style={{ flex: 1 }} value={slaveRtuBaud} onChange={(e) => { const v = e.target.value; if (v === "custom") setSlaveRtuBaud(0); else setSlaveRtuBaud(Number(v)); }} disabled={slaveRunning || slaveRtuVirtualPort}>
-                    {BAUD_PRESETS.map((b) => <option key={b} value={b}>{b}</option>)}
-                    <option value="custom">Custom…</option>
-                  </select>
+                  <SheetSelect
+                    sheetTitle="Baud rate"
+                    style={{ flex: 1 }}
+                    value={slaveRtuBaud}
+                    onChange={(v) => setSlaveRtuBaud(v === "custom" ? 0 : Number(v))}
+                    disabled={slaveRunning || slaveRtuVirtualPort}
+                    options={[...BAUD_PRESETS.map((b) => ({ value: b as string | number, label: String(b) })), { value: "custom", label: "Custom…" }]}
+                  />
                 )}
                 {!BAUD_PRESETS.includes(slaveRtuBaud) && (
                   <IconButton label="Back to preset baud rates" size="sm" onClick={() => setSlaveRtuBaud(9600)} disabled={slaveRunning || slaveRtuVirtualPort}>
@@ -126,23 +134,31 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
             </Field></div>
             <div className="vt-field-grid" style={{ display: "flex", gap: 4, opacity: slaveRtuVirtualPort ? 0.4 : 1 }}>
               <div style={{ flex: 1 }}><Field stacked label="Data bits">
-                <select className="vt-select" value={slaveRtuDataBits} onChange={(e) => setSlaveRtuDataBits(Number(e.target.value))} disabled={slaveRunning || slaveRtuVirtualPort}>
-                  <option value={7}>7</option>
-                  <option value={8}>8</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Data bits"
+                  value={slaveRtuDataBits}
+                  onChange={setSlaveRtuDataBits}
+                  disabled={slaveRunning || slaveRtuVirtualPort}
+                  options={[{ value: 7, label: "7" }, { value: 8, label: "8" }]}
+                />
               </Field></div>
               <div style={{ flex: 1 }}><Field stacked label="Stop bits">
-                <select className="vt-select" value={slaveRtuStopBits} onChange={(e) => setSlaveRtuStopBits(Number(e.target.value))} disabled={slaveRunning || slaveRtuVirtualPort}>
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Stop bits"
+                  value={slaveRtuStopBits}
+                  onChange={setSlaveRtuStopBits}
+                  disabled={slaveRunning || slaveRtuVirtualPort}
+                  options={[{ value: 1, label: "1" }, { value: 2, label: "2" }]}
+                />
               </Field></div>
               <div style={{ flex: 1 }}><Field stacked label="Parity">
-                <select className="vt-select" value={slaveRtuParity} onChange={(e) => setSlaveRtuParity(e.target.value)} disabled={slaveRunning || slaveRtuVirtualPort}>
-                  <option value="none">None</option>
-                  <option value="even">Even</option>
-                  <option value="odd">Odd</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Parity"
+                  value={slaveRtuParity}
+                  onChange={setSlaveRtuParity}
+                  disabled={slaveRunning || slaveRtuVirtualPort}
+                  options={[{ value: "none", label: "None" }, { value: "even", label: "Even" }, { value: "odd", label: "Odd" }]}
+                />
               </Field></div>
             </div>
             <Field label="Unit ID (1-247)">

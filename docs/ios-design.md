@@ -41,10 +41,21 @@ JoyoFit (`~/Documents/JoyoDigitama/watch-fit`, Expo / React Native) is the refer
 - **Lists**: Modbus Data (`PhoneDataList`), slave registers (`SlaveTable`), Traffic (`TrafficPanel`) and the BACnet device and
   discovery lists use `ListGroup` / rows instead of wide tables.
 
+## Pickers: `SheetSelect`
+
+Every list or select on a phone opens as a bottom sheet (`packages/mt-ui/src/sheetSelect.tsx`): the trigger is a button that looks
+like the field, the sheet has a title, a search field when there are more than ten choices (`SEARCH_THRESHOLD`), 56px rows with
+a checkmark on the current one, optional group headers, hints and a footer action, and it closes on a tap outside, the close
+button or a swipe down on its header (`Dialog` handles the swipe for every sheet). On macOS and iPad `SheetSelect` renders the
+same native `<select>` as before, so the desktop DOM is unchanged. Used for: profiles, device templates, update speed, register
+type and area, serial settings, bus-scan area, the write dialog's data type, BACnet simulation templates, the Connect share
+target, the connection picker, the read-block picker and (phone only) value format and word order, which are segmented controls on
+the desktop.
+
 ## Checking it
 
 ```
-bun marketing/screenshots/render-phone.mjs modbus-poll   [outDir] [--scheme=light|dark] [--only=connect,live,slave,sheets]
+bun marketing/screenshots/render-phone.mjs modbus-poll   [outDir] [--scheme=light|dark] [--only=connect,live,slave,sheets,pickers]
 bun marketing/screenshots/render-phone.mjs bacnet-explorer [outDir] [--scheme=light|dark] [--only=devices,tabs,live,sim,sheets]
 ```
 

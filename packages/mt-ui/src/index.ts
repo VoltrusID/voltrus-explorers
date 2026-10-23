@@ -65,3 +65,4 @@ export {
   type PhoneTabItem,
   type StatusChipProps,
 } from "./phone";
+export { SheetSelect, type SheetOption, type SheetSelectProps } from "./sheetSelect";

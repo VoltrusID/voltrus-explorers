@@ -6,6 +6,7 @@
 // decode to BacnetValue::Null on the Rust side, so the inspector really shows "—" for them).
 
 import { connectReviewScene } from "../connect-review.mjs";
+import { pickOption } from "../pick.mjs";
 
 export const uiScale = 1.1;
 
@@ -502,7 +503,7 @@ export const scenes = [
     headline: "Test without <em>any hardware</em>",
     sub: "Run a virtual AHU on UDP 47808, then browse it, write setpoints and trend it like a real controller.",
     setup: async (page) => {
-      await page.select("aside select", "ahu");
+      await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
       await sleep(150);
       await clickText(page, "aside button", "Start simulation");
       await sleep(250);
@@ -694,7 +695,7 @@ export const iosScenes = [
     init: iosInit,
     setup: async (page, device) => {
       await iosPrepare(page, device);
-      await page.select(device === "iphone" ? ".vm-body select" : "aside select", "ahu");
+      await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
       await sleep(150);
       await tap(page, device === "iphone" ? ".vm-body button" : "aside button", "Start simulation");
       await sleep(300);

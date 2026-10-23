@@ -4,6 +4,7 @@ import type { DeviceProfile, RegisterDef } from "./templates";
 import type { ReadBlock, DisplayFormat, ConnProfile } from "./types";
 import type { TrendSeries } from "./TrendPanel";
 import { loadCustomTemplates } from "./templates";
+import { defaultBlocks } from "./constants";
 import { loadConnProfiles } from "./helpers";
 import { newSessionFields, pickSessionFields, type Session, type SessionFields } from "./sessions";
 
@@ -248,15 +249,7 @@ export const useStore = create<AppState>((set, get) => ({
   setPlatform: (platform) => set({ platform }),
 
   // Master blocks
-  blocks: [
-    { name: "Voltage", address: 2999, quantity: 3, type: "float32", area: "holding" },
-    { name: "Current", address: 3005, quantity: 3, type: "float32", area: "holding" },
-    { name: "Power", address: 3011, quantity: 3, type: "float32", area: "holding" },
-    { name: "Power Quality", address: 3017, quantity: 4, type: "float32", area: "holding" },
-    { name: "Temperature", address: 3025, quantity: 1, type: "float32", area: "holding" },
-    // PM5560 energy counters are 4-register float64 values at 3027 and 3031.
-    { name: "Energy", address: 3027, quantity: 2, type: "float64", area: "holding" },
-  ],
+  blocks: defaultBlocks(),
   setBlocks: (blocks) => set((s) => ({ blocks: typeof blocks === "function" ? blocks(s.blocks) : blocks })),
   activeBlockTab: 0,
   setActiveBlockTab: (activeBlockTab) => set({ activeBlockTab }),

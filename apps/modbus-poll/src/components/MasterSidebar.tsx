@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ConnectionForm, Badge, Button, Field, IconButton, ProBadge, Section, Segmented, useProStatus } from "@mactools/ui";
+import { ConnectionForm, Badge, Button, Field, IconButton, ProBadge, Section, Segmented, SheetSelect, useIsPhone, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, FileDown, Pencil, Radar, RefreshCw, ScanSearch, Square, X } from "lucide-react";
 import { SaveProfileAsInput } from "../SaveProfileAsInput";
 import { ENDIAN_OPTS, VIRTUAL_PORT } from "../constants";
@@ -57,6 +57,7 @@ export function MasterSidebar({
   } = useStore();
 
   const { requirePro } = useProStatus();
+  const phone = useIsPhone();
 
   // iOS has no serial ports — Modbus TCP only.
   const isIos = platform === "ios";
@@ -122,11 +123,18 @@ export function MasterSidebar({
                     disabled={protocol.connected}
                   />
                 ) : (
-                  <select className="vt-select" style={{ flex: 1 }} value={rtuPort} onChange={(e) => setRtuPort(e.target.value)} disabled={protocol.connected}>
-                    <option value="">Select port…</option>
-                    <option value={VIRTUAL_PORT}>In-app virtual slave</option>
-                    {serialPorts.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
+                  <SheetSelect
+                    sheetTitle="Serial port"
+                    style={{ flex: 1 }}
+                    value={rtuPort}
+                    onChange={setRtuPort}
+                    disabled={protocol.connected}
+                    options={[
+                      { value: "", label: "Select port…" },
+                      { value: VIRTUAL_PORT, label: "In-app virtual slave" },
+                      ...serialPorts.map((p) => ({ value: p, label: p })),
+                    ]}
+                  />
                 )}
                 <IconButton
                   label={rtuPortManual ? "Switch to port list" : "Enter port path manually"}
@@ -161,32 +169,44 @@ export function MasterSidebar({
                     </IconButton>
                   </>
                 ) : (
-                  <select className="vt-select" style={{ flex: 1 }} value={rtuBaud} onChange={(e) => { const v = e.target.value; if (v === "custom") setRtuBaud(0); else setRtuBaud(Number(v)); }} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
-                    {BAUD_PRESETS.map((b) => <option key={b} value={b}>{b}</option>)}
-                    <option value="custom">Custom…</option>
-                  </select>
+                  <SheetSelect
+                    sheetTitle="Baud rate"
+                    style={{ flex: 1 }}
+                    value={rtuBaud}
+                    onChange={(v) => setRtuBaud(v === "custom" ? 0 : Number(v))}
+                    disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
+                    options={[...BAUD_PRESETS.map((b) => ({ value: b as string | number, label: String(b) })), { value: "custom", label: "Custom…" }]}
+                  />
                 )}
               </div>
             </Field>
             <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
               <div style={{ flex: 1 }}><Field stacked label="Data bits">
-                <select className="vt-select" value={rtuDataBits} onChange={(e) => setRtuDataBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
-                  <option value={7}>7</option>
-                  <option value={8}>8</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Data bits"
+                  value={rtuDataBits}
+                  onChange={setRtuDataBits}
+                  disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
+                  options={[{ value: 7, label: "7" }, { value: 8, label: "8" }]}
+                />
               </Field></div>
               <div style={{ flex: 1 }}><Field stacked label="Stop bits">
-                <select className="vt-select" value={rtuStopBits} onChange={(e) => setRtuStopBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Stop bits"
+                  value={rtuStopBits}
+                  onChange={setRtuStopBits}
+                  disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
+                  options={[{ value: 1, label: "1" }, { value: 2, label: "2" }]}
+                />
               </Field></div>
               <div style={{ flex: 1 }}><Field stacked label="Parity">
-                <select className="vt-select" value={rtuParity} onChange={(e) => setRtuParity(e.target.value)} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
-                  <option value="none">None</option>
-                  <option value="even">Even</option>
-                  <option value="odd">Odd</option>
-                </select>
+                <SheetSelect
+                  sheetTitle="Parity"
+                  value={rtuParity}
+                  onChange={setRtuParity}
+                  disabled={protocol.connected || rtuPort === VIRTUAL_PORT}
+                  options={[{ value: "none", label: "None" }, { value: "even", label: "Even" }, { value: "odd", label: "Odd" }]}
+                />
               </Field></div>
             </div>
             <Field label="Unit ID">
@@ -263,18 +283,16 @@ export function MasterSidebar({
       {/* Connection profiles */}
       <Section title="Profiles">
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <select
-            className="vt-select"
+          <SheetSelect
+            sheetTitle="Profiles"
             value={activeConnProfile ?? ""}
-            onChange={(e) => {
-              if (e.target.value) loadProfile(e.target.value);
+            onChange={(name) => {
+              if (name) loadProfile(name);
               else { setActiveConnProfile(null); }
             }}
             disabled={protocol.connected}
-          >
-            <option value="">New profile</option>
-            {connProfiles.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-          </select>
+            options={[{ value: "", label: "New profile" }, ...connProfiles.map((p) => ({ value: p.name, label: p.name }))]}
+          />
 
           {activeConnProfile && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
@@ -311,31 +329,56 @@ export function MasterSidebar({
             <input type="checkbox" checked={useOneBased} onChange={(e) => setUseOneBased(e.target.checked)} />
             1-based addresses
           </label>
-          <Field stacked label="Value format">
-            <Segmented
-              label="Value format"
-              block
-              size="sm"
-              value={displayFormat}
-              onChange={(v) => setDisplayFormat(v)}
-              options={[
-                { value: "dec", label: "Dec" },
-                { value: "hex", label: "Hex" },
-                { value: "bin", label: "Bin" },
-              ]}
-            />
-          </Field>
-          <Field stacked label="Word order">
-            <Segmented
-              label="Word order"
-              block
-              size="sm"
-              value={endianness}
-              onChange={(v) => setEndianness(v)}
-              // The order is applied when the connection is made.
-              options={ENDIAN_OPTS.map((e) => ({ value: e.value, label: e.label, disabled: protocol.connected, title: protocol.connected ? "Disconnect to change the word order" : undefined }))}
-            />
-          </Field>
+          {phone ? (
+            // A phone picks these from a sheet, like every other choice.
+            <>
+              <Field label="Value format">
+                <SheetSelect
+                  sheetTitle="Value format"
+                  value={displayFormat}
+                  onChange={setDisplayFormat}
+                  options={[{ value: "dec", label: "Decimal" }, { value: "hex", label: "Hexadecimal" }, { value: "bin", label: "Binary" }]}
+                />
+              </Field>
+              <Field label="Word order" hint={protocol.connected ? "Disconnect to change the word order." : undefined}>
+                <SheetSelect
+                  sheetTitle="Word order"
+                  value={endianness}
+                  onChange={setEndianness}
+                  disabled={protocol.connected}
+                  options={ENDIAN_OPTS.map((e) => ({ value: e.value, label: e.label, hint: e.hint }))}
+                />
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field stacked label="Value format">
+                <Segmented
+                  label="Value format"
+                  block
+                  size="sm"
+                  value={displayFormat}
+                  onChange={(v) => setDisplayFormat(v)}
+                  options={[
+                    { value: "dec", label: "Dec" },
+                    { value: "hex", label: "Hex" },
+                    { value: "bin", label: "Bin" },
+                  ]}
+                />
+              </Field>
+              <Field stacked label="Word order">
+                <Segmented
+                  label="Word order"
+                  block
+                  size="sm"
+                  value={endianness}
+                  onChange={(v) => setEndianness(v)}
+                  // The order is applied when the connection is made.
+                  options={ENDIAN_OPTS.map((e) => ({ value: e.value, label: e.label, disabled: protocol.connected, title: protocol.connected ? "Disconnect to change the word order" : undefined }))}
+                />
+              </Field>
+            </>
+          )}
         </div>
       </Section>
 
@@ -435,12 +478,13 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
               <input className="vt-input" type="number" value={busScanAddr} onChange={(e) => onSetBusScanAddr(Number(e.target.value))} disabled={busScanning} />
             </Field></div>
             <div style={{ flex: 1 }}><Field stacked label="Area">
-              <select className="vt-select" value={busScanArea} onChange={(e) => onSetBusScanArea(e.target.value)} disabled={busScanning}>
-                <option value="holding">Holding</option>
-                <option value="input">Input</option>
-                <option value="coil">Coil</option>
-                <option value="discrete">Discrete</option>
-              </select>
+              <SheetSelect
+                sheetTitle="Register area"
+                value={busScanArea}
+                onChange={onSetBusScanArea}
+                disabled={busScanning}
+                options={[{ value: "holding", label: "Holding" }, { value: "input", label: "Input" }, { value: "coil", label: "Coil" }, { value: "discrete", label: "Discrete" }]}
+              />
             </Field></div>
           </div>
           <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>

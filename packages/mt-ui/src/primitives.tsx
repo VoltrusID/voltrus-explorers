@@ -7,6 +7,7 @@ import {
   type HTMLAttributes,
   type KeyboardEvent,
   type ReactNode,
+  type TouchEvent,
 } from "react";
 import { X } from "lucide-react";
 
@@ -408,11 +409,44 @@ export function Dialog({ open, onClose, title, children, footer, width }: Dialog
       prev?.focus?.();
     };
   }, [open]);
+  // Phone sheets: a swipe down on the header (or the grabber above it) follows the finger and closes the sheet past 100px,
+  // or past 40px when fast; a shorter drag springs back.
+  const drag = useRef<{ y: number; dy: number; t: number } | null>(null);
+  const onTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    if (document.documentElement.dataset.shell !== "phone") return;
+    const target = e.target as HTMLElement;
+    if (target !== ref.current && !target.closest(".vt-dialog__header")) return;
+    drag.current = { y: e.touches[0].clientY, dy: 0, t: e.timeStamp };
+  };
+  const onTouchMove = (e: TouchEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    const el = ref.current;
+    if (!d || !el) return;
+    d.dy = Math.max(0, e.touches[0].clientY - d.y);
+    el.style.transition = "none";
+    el.style.transform = `translateY(${d.dy}px)`;
+  };
+  const onTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    const el = ref.current;
+    if (!d || !el) return;
+    if (d.dy > 100 || (d.dy > 40 && e.timeStamp - d.t < 250)) {
+      onClose();
+      return;
+    }
+    el.style.transition = "transform 200ms var(--ease-out)";
+    el.style.transform = "";
+  };
   if (!open) return null;
   return (
     <div className="vt-scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={ref}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchEnd}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

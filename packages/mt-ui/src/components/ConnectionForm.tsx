@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { X } from "lucide-react";
 import { Button, Field } from "../primitives";
+import { SheetSelect } from "../sheetSelect";
 
 export interface FormField {
   name: string;
@@ -57,20 +58,13 @@ export function ConnectionForm({
       {fields.map((field) => (
         <Field key={field.name} label={field.label}>
           {field.type === "select" ? (
-            <select
-              className="vt-select"
+            <SheetSelect
+              sheetTitle={field.label}
               value={values[field.name]}
-              onChange={(e) =>
-                update({ ...values, [field.name]: e.target.value })
-              }
+              onChange={(v) => update({ ...values, [field.name]: v })}
               disabled={connected}
-            >
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              options={field.options ?? []}
+            />
           ) : (
             <input
               type={field.type}

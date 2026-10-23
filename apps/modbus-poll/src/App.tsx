@@ -11,6 +11,7 @@ import {
   EmptyState,
   IconButton,
   PageTitle,
+  SheetSelect,
   Tabs,
   usePhoneShell,
   useProStatus,
@@ -43,6 +44,7 @@ import { usePanelResize } from "./hooks/usePanelResize";
 
 // Utilities
 import { buildTableRows, type TableRow } from "./utils/rows";
+import { explainModbusError } from "./utils/format";
 
 // Components
 import { MasterSidebar } from "./components/MasterSidebar";
@@ -477,7 +479,7 @@ function App() {
         if (key === "value") {
           if (r.error) {
             const code = /\(0x([0-9A-Fa-f]{2})\)/.exec(r.error)?.[1];
-            return <span title={r.error} style={{ color: "var(--danger)", fontWeight: 600 }}>{code ? `EXC 0x${code}` : "ERR"}</span>;
+            return <span title={explainModbusError(r.error)} style={{ color: "var(--danger)", fontWeight: 600 }}>{code ? `EXC 0x${code}` : "ERR"}</span>;
           }
           if (isBitArea(r.area) && r.rawValue !== null) {
             const isOn = r.value === "ON";
@@ -572,11 +574,13 @@ function App() {
                 caption={rt.connected ? `${tableData.length} values · ${rt.pollCount.toLocaleString()} polls` : `${tableData.length} values · not connected`}
               />
               {blocks.length > 1 && (
-                <Tabs
-                  label="Read blocks"
+                <SheetSelect
+                  sheetTitle="Read blocks"
+                  aria-label="Read block"
                   value={String(activeBlockTab)}
-                  items={blocks.map((b, i) => ({ value: String(i), label: b.name, count: b.address }))}
                   onChange={(v) => setActiveBlockTab(Number(v))}
+                  display={blocks[activeBlockTab] ? `${blocks[activeBlockTab].name} \u00b7 ${blocks[activeBlockTab].address}` : undefined}
+                  options={blocks.map((b, i) => ({ value: String(i), label: b.name, hint: `${b.address} \u00b7 ${b.quantity}\u00d7 ${b.type} \u00b7 ${b.area}` }))}
                 />
               )}
               <PhoneDataList rows={activeBlockData} trendNames={trendSeries} onRowClick={openEditor} onToggleTrend={toggleTrendPro} />

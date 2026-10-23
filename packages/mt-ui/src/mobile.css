@@ -1170,3 +1170,130 @@ html[data-shell="phone"] .vt-dialog .vt-tab {
 html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) select:not([type="checkbox"]) {
   padding-right: 26px;
 }
+
+/* ── SheetSelect (the phone picker) ──────────────────────────────────────── */
+
+/* The trigger looks like the native select it replaces: fill, 12px radius, chevron at the right. */
+html[data-shell="phone"] .vm-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 12px 0 14px;
+  border-radius: var(--radius);
+  background-color: var(--fill);
+  color: var(--text);
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+html[data-shell="phone"] .vm-select:disabled {
+  opacity: 0.55;
+}
+
+html[data-shell="phone"] .vm-select:active:not(:disabled) {
+  background-color: var(--hover-overlay);
+}
+
+.vm-select__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-select__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* In a card row (label left, value right) the trigger is just the value with its chevron. */
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > .vm-select {
+  flex: 1 1 0;
+  min-width: 0;
+  height: var(--control-h-sm);
+  min-height: var(--control-h-sm);
+  padding: 0 0 0 8px;
+  background-color: transparent;
+  justify-content: flex-end;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > .vm-select .vm-select__value {
+  flex: 0 1 auto;
+  text-align: right;
+}
+
+/* The sheet: search field, then the rows. */
+.vm-sheet-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-muted);
+}
+
+.vm-sheet-search .vt-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.vm-sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.vm-sheet-group {
+  padding: 0 4px 6px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.vm-sheet-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.vm-row--option {
+  cursor: pointer;
+}
+
+.vm-row--option[aria-disabled="true"] {
+  opacity: 0.45;
+}
+
+.vm-row--option:active {
+  background: var(--fill);
+}
+
+/* The sheet is itself a surface: rows sit on a fill, not a second card. */
+html[data-shell="phone"] .vt-dialog .vm-group {
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-dialog__header {
+  touch-action: none;
+}
+
+.vm-row__glyph {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}

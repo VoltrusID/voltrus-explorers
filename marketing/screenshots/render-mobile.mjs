@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import puppeteer from "puppeteer-core";
+import { pickOption } from "./pick.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
@@ -171,7 +172,7 @@ try {
 
   // simulator control panel sheet
   page = await open(phone, IPHONE_UA);
-  await page.select(".vm-body select", "ahu");
+  await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
   await sleep(150);
   await clickText(page, ".vm-body button", "Start simulation");
   await sleep(300);

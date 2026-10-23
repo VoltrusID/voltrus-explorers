@@ -17,6 +17,7 @@ import {
   PhoneTabBar,
   Section,
   Segmented,
+  SheetSelect,
   StatusBar,
   Tabs,
   Toolbar,
@@ -701,16 +702,15 @@ function App() {
           label="Template"
           hint={simTemplate ? TEMPLATES[simTemplate].description : undefined}
         >
-          <select
-            className="vt-select"
+          <SheetSelect
+            sheetTitle="Simulation template"
             value={simTemplate ?? ""}
-            onChange={(e) => { setSimTemplate(e.target.value || null); setSimRunning(false); setSimValues({}); }}
-          >
-            <option value="">Select template&#x2026;</option>
-            {Object.entries(TEMPLATES).map(([id, t]) => (
-              <option key={id} value={id}>{t.name}</option>
-            ))}
-          </select>
+            onChange={(id) => { setSimTemplate(id || null); setSimRunning(false); setSimValues({}); }}
+            options={[
+              { value: "", label: "Select template\u2026" },
+              ...Object.entries(TEMPLATES).map(([id, t]) => ({ value: id, label: t.name, hint: t.description })),
+            ]}
+          />
         </Field>
         {simTemplate && (
           <>

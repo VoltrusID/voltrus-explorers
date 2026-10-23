@@ -1,5 +1,25 @@
 import type { DisplayFormat } from "../types";
 
+const EXCEPTION_02 = /Illegal Data Address \(0x02\) reading (holding|input|coil|discrete) (\d+)\.\.(\d+)/gi;
+
+/** The register table a master should try when the one it asked has nothing at the address. */
+const OTHER_AREA: Record<string, string> = { holding: "input", input: "holding", coil: "discrete", discrete: "coil" };
+
+/**
+ * Adds to an "Illegal Data Address (0x02) reading <area> <from>..<to>" message what to check: the device answered, but has
+ * nothing in that range. The usual causes are an address that is off by one (manuals count registers from 0 or from 1) and a
+ * different register table (holding vs input). Other messages, and every part of a "; "-joined list, are handled separately.
+ */
+export function explainModbusError(message: string): string {
+  return message.replace(EXCEPTION_02, (found, area: string, from: string) => {
+    const a = Number(from);
+    const lower = area.toLowerCase();
+    const alternatives = a > 0 ? `${a + 1} or ${a - 1}` : `${a + 1}`;
+    const what = lower === "coil" || lower === "discrete" ? "bits" : "registers";
+    return `${found}: the device has no ${what} in that range (check the start address, since manuals count from 0 or from 1, so try ${alternatives}, and the register area, so try ${OTHER_AREA[lower]} instead of ${lower})`;
+  });
+}
+
 export function formatValue(raw: number, type: string, displayFormat: DisplayFormat): string {
   if (isNaN(raw)) return "---";
   const is64 = type === "float64";

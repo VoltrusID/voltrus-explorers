@@ -1,11 +1,14 @@
-import { Button, Callout, EmptyState, Field, IconButton, Section, useProStatus } from "@mactools/ui";
+import { Button, Callout, EmptyState, Field, IconButton, Section, SheetSelect, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { AREAS, FREE_VALUES, TYPES } from "../constants";
+import { AREAS, AREA_HINTS, FREE_VALUES, TYPES, TYPE_HINTS } from "../constants";
 import { blockStep, isBitArea, validateBlock } from "../helpers";
 import type { ReadBlock } from "../types";
 import { displayAddr } from "../utils/format";
 import { valueCapNotice } from "../limits";
 import { useStore } from "../store";
+
+const TYPE_OPTIONS = TYPES.map((t) => ({ value: t, label: t, hint: TYPE_HINTS[t] }));
+const AREA_OPTIONS = AREAS.map((a) => ({ value: a, label: a, hint: AREA_HINTS[a] }));
 
 interface Props {
   onExportCsv: () => void;
@@ -124,12 +127,8 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
                   <input className="vt-input" style={{ width: 50, flexShrink: 0 }} placeholder="Qty" value={newQty} onChange={(e) => setNewQty(e.target.value)} />
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <select className="vt-select" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={(e) => setNewType(e.target.value)}>
-                    {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                  <select className="vt-select" style={{ flex: 1 }} value={newArea} onChange={(e) => setNewArea(e.target.value)}>
-                    {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
-                  </select>
+                  <SheetSelect sheetTitle="Register type" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={setNewType} options={TYPE_OPTIONS} />
+                  <SheetSelect sheetTitle="Register area" style={{ flex: 1 }} value={newArea} onChange={setNewArea} options={AREA_OPTIONS} />
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
                   <Button size="sm" variant="primary" style={{ flex: 1 }} onClick={saveEditBlock}>Save</Button>
@@ -189,12 +188,8 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
               </div>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              <select className="vt-select" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={(e) => setNewType(e.target.value)} aria-label="Register type">
-                {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <select className="vt-select" style={{ flex: 1 }} value={newArea} onChange={(e) => setNewArea(e.target.value)} aria-label="Register area">
-                {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
-              </select>
+              <SheetSelect sheetTitle="Register type" aria-label="Register type" style={{ flex: 1 }} value={isBitArea(newArea) ? "uint16" : newType} disabled={isBitArea(newArea)} onChange={setNewType} options={TYPE_OPTIONS} />
+              <SheetSelect sheetTitle="Register area" aria-label="Register area" style={{ flex: 1 }} value={newArea} onChange={setNewArea} options={AREA_OPTIONS} />
             </div>
             <Button variant="primary" onClick={addBlock} icon={<Plus size={14} strokeWidth={1.75} />}>Add block</Button>
           </div>

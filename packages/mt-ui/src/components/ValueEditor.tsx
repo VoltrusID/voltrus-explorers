@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Badge, Button, Callout, Dialog, Field, Segmented } from "../primitives";
+import { SheetSelect } from "../sheetSelect";
 
 const DATA_TYPES = [
   { value: "int16", label: "Int16" },
@@ -69,17 +70,7 @@ export function ValueEditor({ address, currentValue, currentDataType, types, onS
           </div>
         )}
         <Field label="Type">
-          <select
-            className="vt-select"
-            value={dataType}
-            onChange={(e) => changeType(e.target.value)}
-          >
-            {typeOptions.map((dt) => (
-              <option key={dt.value} value={dt.value}>
-                {dt.label}
-              </option>
-            ))}
-          </select>
+          <SheetSelect sheetTitle="Data type" value={dataType} onChange={changeType} options={typeOptions} />
         </Field>
         <Field label="Value">
           {dataType === "bool" ? (

@@ -2,7 +2,7 @@ import {
   BUILTIN_PROFILES,
   numRegisters,
 } from "../templates";
-import { Button, Section } from "@mactools/ui";
+import { Button, Section, SheetSelect } from "@mactools/ui";
 import { Pause, Play, Plus } from "lucide-react";
 import { useStore } from "../store";
 
@@ -22,28 +22,22 @@ export function TemplatePanel({ applyProfile, toggleSimulation, saveCustomTempla
   return (
     <>
       <Section title="Device template">
-      <select
-        className="vt-select"
+      <SheetSelect
+        sheetTitle="Device template"
         value={activeProfile?.id ?? ""}
-        onChange={(e) => {
-          const id = e.target.value;
+        onChange={(id) => {
           if (id === "__custom__") { setShowCustomDialog(true); return; }
           const all = [...BUILTIN_PROFILES, ...customTemplates];
           const p = all.find((t) => t.id === id);
           if (p) applyProfile(p);
         }}
-      >
-        <option value="">Select device…</option>
-        <optgroup label="Built-in">
-          {BUILTIN_PROFILES.map((p) => <option key={p.id} value={p.id}>{p.manufacturer} {p.model}</option>)}
-        </optgroup>
-        {customTemplates.length > 0 && (
-          <optgroup label="Custom">
-            {customTemplates.map((p) => <option key={p.id} value={p.id}>{p.model}</option>)}
-          </optgroup>
-        )}
-        <option value="__custom__">New custom…</option>
-      </select>
+        options={[
+          { value: "", label: "Select device…" },
+          ...BUILTIN_PROFILES.map((p) => ({ value: p.id, label: `${p.manufacturer} ${p.model}`, hint: p.description, group: "Built-in" })),
+          ...customTemplates.map((p) => ({ value: p.id, label: p.model, hint: p.description, group: "Custom" })),
+          { value: "__custom__", label: "New custom…" },
+        ]}
+      />
 
       {activeProfile && (
         <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.5 }}>
@@ -63,16 +57,14 @@ export function TemplatePanel({ applyProfile, toggleSimulation, saveCustomTempla
           >
             {simRunning ? "Pause" : "Simulate"}
           </Button>
-          <select
-            className="vt-select vt-select--narrow" style={{ width: 70 }}
+          <SheetSelect
+            sheetTitle="Update speed"
+            className="vt-select vt-select--narrow"
+            style={{ width: 70 }}
             value={simSpeed}
-            onChange={(e) => setSimSpeed(Number(e.target.value))}
-          >
-            <option value={500}>0.5s</option>
-            <option value={1000}>1s</option>
-            <option value={2000}>2s</option>
-            <option value={5000}>5s</option>
-          </select>
+            onChange={setSimSpeed}
+            options={[{ value: 500, label: "0.5s" }, { value: 1000, label: "1s" }, { value: 2000, label: "2s" }, { value: 5000, label: "5s" }]}
+          />
         </div>
       )}
 
