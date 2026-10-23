@@ -84,26 +84,38 @@ struct SimInfo {
 
 // ── Value coercion ──
 
-/// Build an [`S7Value`] for a given data type from a JSON scalar.
+/// A JSON scalar as a number. The write dialog sends what was typed, a string such as "123456", so a numeric string
+/// counts; without this every typed value read as 0.
+fn json_number(value: &serde_json::Value) -> Option<f64> {
+    value.as_f64().or_else(|| value.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+}
+
+/// Build an [`S7Value`] for a given data type from a JSON scalar (a number, a bool, or text that holds a number).
 fn coerce_value(data_type: &str, value: &serde_json::Value) -> Result<S7Value, String> {
     let dtype = S7DataType::from_str_name(data_type)
         .ok_or_else(|| format!("Unknown data type: '{data_type}'"))?;
+    let number = || json_number(value).ok_or_else(|| format!("'{}' is not a number", value.as_str().map_or_else(|| value.to_string(), str::to_string)));
     Ok(match dtype {
-        S7DataType::Bool => S7Value::Bool(value.as_bool().unwrap_or_else(|| {
-            value.as_f64().map(|f| f != 0.0).unwrap_or(false)
-        })),
-        S7DataType::Byte => S7Value::Byte(value.as_f64().unwrap_or(0.0).round() as u8),
-        S7DataType::Word => S7Value::Word(value.as_f64().unwrap_or(0.0).round() as u16),
-        S7DataType::DWord => S7Value::DWord(value.as_f64().unwrap_or(0.0).round() as u32),
-        S7DataType::Real => S7Value::Real(value.as_f64().unwrap_or(0.0) as f32),
+        S7DataType::Bool => S7Value::Bool(match value.as_bool() {
+            Some(b) => b,
+            None => match value.as_str().map(str::trim) {
+                Some("true") => true,
+                Some("false") => false,
+                _ => number()? != 0.0,
+            },
+        }),
+        S7DataType::Byte => S7Value::Byte(number()?.round() as u8),
+        S7DataType::Word => S7Value::Word(number()?.round() as u16),
+        S7DataType::DWord => S7Value::DWord(number()?.round() as u32),
+        S7DataType::Real => S7Value::Real(number()? as f32),
         S7DataType::String => S7Value::String(
             value
                 .as_str()
                 .map(str::to_string)
                 .unwrap_or_else(|| value.to_string()),
         ),
-        S7DataType::Timer => S7Value::Timer(value.as_f64().unwrap_or(0.0).round() as u32),
-        S7DataType::Counter => S7Value::Counter(value.as_f64().unwrap_or(0.0).round() as u16),
+        S7DataType::Timer => S7Value::Timer(number()?.round() as u32),
+        S7DataType::Counter => S7Value::Counter(number()?.round() as u16),
     })
 }
 
@@ -401,4 +413,26 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn typed_text_from_the_write_dialog_is_a_number() {
+        assert_eq!(coerce_value("DWord", &json!("123456")).unwrap(), S7Value::DWord(123456));
+        assert_eq!(coerce_value("Real", &json!(" 2000.5 ")).unwrap(), S7Value::Real(2000.5));
+        assert_eq!(coerce_value("Word", &json!(77)).unwrap(), S7Value::Word(77));
+        assert_eq!(coerce_value("Bool", &json!("true")).unwrap(), S7Value::Bool(true));
+        assert_eq!(coerce_value("Bool", &json!(0)).unwrap(), S7Value::Bool(false));
+    }
+
+    #[test]
+    fn text_that_is_not_a_number_is_refused_not_written_as_zero() {
+        let error = coerce_value("DWord", &json!("abc")).unwrap_err();
+        assert!(error.contains("abc"), "{error}");
+        assert!(coerce_value("Real", &json!("")).is_err());
+    }
 }
