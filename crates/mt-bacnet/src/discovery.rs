@@ -327,6 +327,9 @@ pub async fn read_object_properties(
                         match (prop_result.property_identifier, values.as_slice()) {
                             (PropertyIdentifier::StatusFlags, [PropertyValue::BitString(bits)]) => status_flags_text(bits),
                             (PropertyIdentifier::Reliability, [PropertyValue::Enumerated(n)]) => reliability_text(*n),
+                            (PropertyIdentifier::PresentValue, [PropertyValue::Enumerated(n)]) if detail.object_type.starts_with("binary") => {
+                                if *n == 0 { "inactive".into() } else { "active".into() }
+                            }
                             _ => values
                                 .iter()
                                 .map(|v| v.as_display_string())
@@ -365,7 +368,7 @@ pub async fn read_object_properties(
                     PropertyIdentifier::PresentValue => {
                         detail.present_value = Some(raw_value);
                     }
-                    PropertyIdentifier::Units => {
+                    PropertyIdentifier::Units if read_ok => {
                         // Map the BACnet engineering-units enum to a human label
                         // + symbol (e.g. 62 -> "Degrees Celsius" / "°C").
                         let (name, symbol) = match &entry.value {
