@@ -454,15 +454,20 @@ pub async fn start_slave_server_rtu_virtual(
 
     // openpty leaves the default cooked line discipline: ICRNL turns a 0x0D data byte into 0x0A,
     // ONLCR inserts a 0x0D before every 0x0A, ICANON withholds input until a newline and
-    // 0x03/0x11/0x13 act as control characters. RTU frames are binary, so both ends must be raw.
-    for fd in [master_fd, slave_fd] {
-        if let Err(e) = set_raw(fd) {
-            unsafe {
-                libc::close(master_fd);
-                libc::close(slave_fd);
-            }
-            return Err(anyhow::anyhow!("setting the virtual port to raw mode failed: {e}"));
+    // 0x03/0x11/0x13 act as control characters. RTU frames are binary, so the line must be raw.
+    // The two ends of a pty pair share one termios, so one successful tcsetattr is enough; the App Sandbox refuses
+    // tcsetattr on a pty with EPERM on some side, so both are tried.
+    let raw_results = [("slave", set_raw(slave_fd)), ("master", set_raw(master_fd))];
+    if raw_results.iter().all(|(_, r)| r.is_err()) {
+        unsafe {
+            libc::close(master_fd);
+            libc::close(slave_fd);
         }
+        let why: Vec<String> = raw_results
+            .iter()
+            .filter_map(|(side, r)| r.as_ref().err().map(|e| format!("{side}: {e}")))
+            .collect();
+        return Err(anyhow::anyhow!("setting the virtual port to raw mode failed ({})", why.join(", ")));
     }
 
     let slave_path = unsafe { CStr::from_ptr(name_buf.as_ptr() as *const libc::c_char) }
