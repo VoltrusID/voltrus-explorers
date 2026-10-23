@@ -114,11 +114,11 @@ try {
   let page = await open(phone, IPHONE_UA);
   await shot(page, "phone-1-devices");
   await audit(page, "phone devices");
-  await clickText(page, ".vt-sidebar button", "Discover devices");
+  await clickText(page, ".vm-body button", "Discover devices");
   await page.waitForSelector(".vt-dialog .vt-btn--primary", { timeout: 5000 });
   await shot(page, "phone-2-discovery");
   await clickText(page, ".vt-dialog button", "Connect", true);
-  await page.waitForFunction(() => document.querySelector('.bx-tab[aria-selected="true"]')?.textContent.includes("Objects"), { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('nav [role="tab"][aria-selected="true"]')?.textContent.includes("Objects"), { timeout: 5000 });
   await clickText(page, "button", "Browse objects");
   await page.waitForSelector(".ob-group");
   await shot(page, "phone-3-objects");
@@ -137,8 +137,8 @@ try {
   await sleep(300);
   await shot(page, "phone-5-properties");
   await audit(page, "phone properties");
-  await clickText(page, ".vt-sidebar ~ div button, button", "Objects", true); // back
-  await clickText(page, ".bx-tab", "Trend");
+  await clickText(page, "button", "Objects", true); // back
+  await clickText(page, "nav [role=tab]", "Trend");
   await page.evaluate(() => document.querySelectorAll('button[title^="Data source: COV"]').forEach((b) => b.click()));
   await page.evaluate(async () => {
     for (let i = 0; i < 40; i++) {
@@ -151,34 +151,34 @@ try {
   });
   await shot(page, "phone-6-trend");
   await audit(page, "phone trend");
-  await clickText(page, ".bx-tab", "Alarms");
+  await clickText(page, "nav [role=tab]", "Alarms");
   await clickText(page, "button", "Refresh");
-  await page.waitForSelector(".bx-page .mono");
+  await page.waitForSelector(".vm-body .mono");
   await clickText(page, "button", "Events");
   await sleep(300);
   await shot(page, "phone-7-alarms");
   await audit(page, "phone alarms");
-  await clickText(page, ".bx-tab", "Log");
+  await clickText(page, "nav [role=tab]", "Log");
   await shot(page, "phone-8-log");
   await page.close();
 
   // iOS discovery without the multicast entitlement: the Who-Is send fails
   page = await open(phone, IPHONE_UA, `window.__discoverFail = "Who-Is broadcast could not be sent: No route to host (os error 65)";`);
-  await clickText(page, ".vt-sidebar button", "Discover devices");
+  await clickText(page, ".vm-body button", "Discover devices");
   await page.waitForSelector(".vt-callout");
   await shot(page, "phone-9-discovery-no-multicast");
   await page.close();
 
   // simulator control panel sheet
   page = await open(phone, IPHONE_UA);
-  await page.select(".vt-sidebar select", "ahu");
+  await page.select(".vm-body select", "ahu");
   await sleep(150);
-  await clickText(page, ".vt-sidebar button", "Start simulation");
+  await clickText(page, ".vm-body button", "Start simulation");
   await sleep(300);
   await page.evaluate(() => window.__simTick(40));
   await shot(page, "phone-10-simulator-sheet");
   await clickText(page, ".bx-sheet button", "Back");
-  await page.evaluate(() => { const a = document.querySelector(".vt-sidebar"); a.scrollTop = a.scrollHeight; });
+  await page.evaluate(() => { const a = document.querySelector(".vm-body"); a.scrollTop = a.scrollHeight; });
   await shot(page, "phone-11-simulator-devices");
   await page.close();
 

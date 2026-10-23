@@ -119,7 +119,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
             return (
               <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 4 }}>
                 <input className="vt-input" placeholder="Block name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-                <div style={{ display: "flex", gap: 4 }}>
+                <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
                   <input className="vt-input" style={{ width: 60, flexShrink: 0 }} placeholder="Start" value={newAddr} onChange={(e) => setNewAddr(e.target.value)} />
                   <input className="vt-input" style={{ width: 50, flexShrink: 0 }} placeholder="Qty" value={newQty} onChange={(e) => setNewQty(e.target.value)} />
                 </div>
@@ -173,17 +173,17 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
         )}
         {editingBlock === null && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 4 }}>
-            <Field label="New block">
+            <Field stacked label="New block">
               <input className="vt-input" placeholder="Block name" value={newName} onChange={(e) => setNewName(e.target.value)} />
             </Field>
-            <div style={{ display: "flex", gap: 4 }}>
+            <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
               <div style={{ width: 76 }}>
-                <Field label="Start">
+                <Field stacked label="Start">
                   <input className="vt-input" placeholder="Address" value={newAddr} onChange={(e) => setNewAddr(e.target.value)} />
                 </Field>
               </div>
               <div style={{ width: 64 }}>
-                <Field label="Qty">
+                <Field stacked label="Qty">
                   <input className="vt-input" placeholder="Count" value={newQty} onChange={(e) => setNewQty(e.target.value)} />
                 </Field>
               </div>

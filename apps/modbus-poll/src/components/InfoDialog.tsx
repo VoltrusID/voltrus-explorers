@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import { Button, ProAboutRow, useProStatus } from "@mactools/ui";
+import { Button, Dialog, ListGroup, ListRow, ProAboutRow, useIsPhone, useProStatus } from "@mactools/ui";
 import { useStore } from "../store";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 export function InfoDialog({ toggleTheme }: Props) {
   const { showInfo, setShowInfo, theme } = useStore();
   const { status } = useProStatus();
+  const phone = useIsPhone();
   const [appVersion, setAppVersion] = useState("");
 
   useEffect(() => { getVersion().then(setAppVersion); }, []);
@@ -21,6 +22,32 @@ export function InfoDialog({ toggleTheme }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showInfo, setShowInfo]);
+
+  if (phone) {
+    return (
+      <Dialog open={showInfo} onClose={() => setShowInfo(false)} title="Modbus Poll">
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <span className="mono" style={{ color: "var(--text-muted)" }}>Version {appVersion}</span>
+          <div style={{ color: "var(--text-dim)", lineHeight: 1.5 }}>
+            Read, write, and simulate Modbus devices over TCP.
+          </div>
+          <ListGroup>
+            <ListRow title="Master" subtitle="Connect to a device, poll registers, tap a row to write" />
+            <ListRow title="Slave" subtitle="Run a Modbus TCP server and simulate a device from a template" />
+          </ListGroup>
+          {status?.store && <ProAboutRow />}
+          {status && !status.store && (
+            <Button block onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>
+              Source on GitHub
+            </Button>
+          )}
+          <div style={{ color: "var(--text-muted)", fontSize: "var(--fs-sm)" }}>
+            Part of the <strong style={{ color: "var(--accent-text)" }}>Voltrus</strong> suite by JoyoDigitama
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
 
   if (!showInfo) return null;
 

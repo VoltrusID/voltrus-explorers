@@ -1,53 +1,23 @@
-import { useStore } from "../store";
+import { PhoneTabBar, type PhoneTabItem } from "@mactools/ui";
+import { ArrowLeftRight, ChartLine, LayoutTemplate, Layers, Plug, ScrollText, Table2 } from "lucide-react";
+import { useStore, type MobileTab } from "../store";
 
+const ICON = { size: 22, strokeWidth: 2 } as const;
+
+/** Phone tabs. Five fit the bar; Log and Traffic sit under More. */
 export function MobileTabBar() {
   const { mobileTab, setMobileTab, mode, slaveRunning, trendSeries } = useStore();
 
-  const tabs = ([
-    { id: "connect" as const, label: "Connect" },
-    { id: "data" as const, label: "Data" },
-    ...(mode === "master" ? [{ id: "blocks" as const, label: "Blocks" }] : [{ id: "template" as const, label: "Template" }]),
-    { id: "log" as const, label: "Log" },
-    { id: "traffic" as const, label: "Traffic" },
-    { id: "trend" as const, label: trendSeries.size > 0 ? `Trend ${trendSeries.size}` : "Trend" },
-  ] as const);
+  const tabs: PhoneTabItem<MobileTab>[] = [
+    { id: "connect", label: "Connect", icon: <Plug {...ICON} />, dot: mode === "slave" && slaveRunning },
+    { id: "data", label: "Data", icon: <Table2 {...ICON} /> },
+    mode === "master"
+      ? { id: "blocks", label: "Blocks", icon: <Layers {...ICON} /> }
+      : { id: "template", label: "Template", icon: <LayoutTemplate {...ICON} /> },
+    { id: "trend", label: "Trend", icon: <ChartLine {...ICON} />, badge: trendSeries.size },
+    { id: "log", label: "Log", icon: <ScrollText {...ICON} /> },
+    { id: "traffic", label: "Traffic", icon: <ArrowLeftRight {...ICON} /> },
+  ];
 
-  return (
-    <nav style={{
-      display: "flex",
-      background: "var(--card)",
-      borderTop: "1px solid var(--border)",
-      flexShrink: 0,
-      paddingBottom: "env(safe-area-inset-bottom, 0px)",
-    }}>
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          onClick={() => setMobileTab(tab.id)}
-          style={{
-            flex: 1,
-            padding: "10px 0",
-            fontSize: "var(--fs-xs)",
-            fontWeight: 600,
-            cursor: "pointer",
-            border: "none",
-            borderBottom: mobileTab === tab.id ? "2px solid var(--accent)" : "2px solid transparent",
-            color: mobileTab === tab.id ? "var(--accent)" : "var(--text-muted)",
-            background: "transparent",
-            transition: "color 0.15s, border-color 0.15s",
-            textAlign: "center",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 4,
-          }}
-        >
-          {tab.label}
-          {mode === "slave" && slaveRunning && tab.id === "connect" && (
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />
-          )}
-        </button>
-      ))}
-    </nav>
-  );
+  return <PhoneTabBar tabs={tabs} active={mobileTab} onChange={setMobileTab} />;
 }

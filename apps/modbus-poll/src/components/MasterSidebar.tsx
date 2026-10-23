@@ -109,7 +109,7 @@ export function MasterSidebar({
             loading={protocol.loading}
           />
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="vt-rows" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Field label="Port">
               <div style={{ display: "flex", gap: 4 }}>
                 {rtuPortManual ? (
@@ -168,20 +168,20 @@ export function MasterSidebar({
                 )}
               </div>
             </Field>
-            <div style={{ display: "flex", gap: 4 }}>
-              <div style={{ flex: 1 }}><Field label="Data bits">
+            <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
+              <div style={{ flex: 1 }}><Field stacked label="Data bits">
                 <select className="vt-select" value={rtuDataBits} onChange={(e) => setRtuDataBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value={7}>7</option>
                   <option value={8}>8</option>
                 </select>
               </Field></div>
-              <div style={{ flex: 1 }}><Field label="Stop bits">
+              <div style={{ flex: 1 }}><Field stacked label="Stop bits">
                 <select className="vt-select" value={rtuStopBits} onChange={(e) => setRtuStopBits(Number(e.target.value))} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value={1}>1</option>
                   <option value={2}>2</option>
                 </select>
               </Field></div>
-              <div style={{ flex: 1 }}><Field label="Parity">
+              <div style={{ flex: 1 }}><Field stacked label="Parity">
                 <select className="vt-select" value={rtuParity} onChange={(e) => setRtuParity(e.target.value)} disabled={protocol.connected || rtuPort === VIRTUAL_PORT}>
                   <option value="none">None</option>
                   <option value="even">Even</option>
@@ -192,11 +192,11 @@ export function MasterSidebar({
             <Field label="Unit ID">
               <input className="vt-input" type="number" min={0} max={247} value={rtuUnitId} onChange={(e) => setRtuUnitId(Number(e.target.value))} disabled={protocol.connected} />
             </Field>
-            <div style={{ display: "flex", gap: 4 }}>
-              <div style={{ flex: 1 }}><Field label="Timeout (ms)">
+            <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
+              <div style={{ flex: 1 }}><Field stacked label="Timeout (ms)">
                 <input className="vt-input" type="number" value={rtuTimeout} onChange={(e) => setRtuTimeout(Number(e.target.value))} min={100} step={100} disabled={protocol.connected} />
               </Field></div>
-              <div style={{ flex: 1 }}><Field label="Poll (ms)">
+              <div style={{ flex: 1 }}><Field stacked label="Poll (ms)">
                 <input className="vt-input" type="number" value={rtuPollInterval} onChange={(e) => setRtuPollInterval(Number(e.target.value))} min={50} step={50} disabled={protocol.connected} />
               </Field></div>
             </div>
@@ -245,14 +245,14 @@ export function MasterSidebar({
                 <br />
                 {csvLog.rows.toLocaleString()} values written
               </div>
-              <Button size="sm" variant="danger" onClick={onStopCsvLog} icon={<Square size={14} strokeWidth={1.75} />}>Stop logging</Button>
+              <Button block size="sm" variant="danger" onClick={onStopCsvLog} icon={<Square size={14} strokeWidth={1.75} />}>Stop logging</Button>
             </>
           ) : (
             <>
               <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
                 Writes every polled value of this connection to a CSV file you choose.
               </div>
-              <Button size="sm" onClick={onStartCsvLog} disabled={!protocol.connected} title={protocol.connected ? undefined : "Connect first"} icon={<FileDown size={14} strokeWidth={1.75} />}>
+              <Button block size="sm" onClick={onStartCsvLog} disabled={!protocol.connected} title={protocol.connected ? undefined : "Connect first"} icon={<FileDown size={14} strokeWidth={1.75} />}>
                 Start logging…
               </Button>
             </>
@@ -311,7 +311,7 @@ export function MasterSidebar({
             <input type="checkbox" checked={useOneBased} onChange={(e) => setUseOneBased(e.target.checked)} />
             1-based addresses
           </label>
-          <Field label="Value format">
+          <Field stacked label="Value format">
             <Segmented
               label="Value format"
               block
@@ -325,7 +325,7 @@ export function MasterSidebar({
               ]}
             />
           </Field>
-          <Field label="Word order">
+          <Field stacked label="Word order">
             <Segmented
               label="Word order"
               block
@@ -379,6 +379,7 @@ export function MasterSidebar({
               {scanResults.filter((r) => r.port_open).map((r) => (
                 <button
                   key={r.ip}
+                  className="vt-pick"
                   onClick={() => { setTcpFormValues({ ...tcpFormValues, host: r.ip }); if (masterFormRef.current) masterFormRef.current.host = r.ip; setFormKey(storeFormKey + 1); addLog("info", `Selected ${r.ip}`); }}
                   style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "4px 8px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", fontSize: "var(--fs-xs)", color: "var(--text)" }}
                 >
@@ -429,11 +430,11 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
       </div>
       {showBusScanner && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            <div style={{ flex: 1 }}><Field label="Register address">
+          <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
+            <div style={{ flex: 1 }}><Field stacked label="Register address">
               <input className="vt-input" type="number" value={busScanAddr} onChange={(e) => onSetBusScanAddr(Number(e.target.value))} disabled={busScanning} />
             </Field></div>
-            <div style={{ flex: 1 }}><Field label="Area">
+            <div style={{ flex: 1 }}><Field stacked label="Area">
               <select className="vt-select" value={busScanArea} onChange={(e) => onSetBusScanArea(e.target.value)} disabled={busScanning}>
                 <option value="holding">Holding</option>
                 <option value="input">Input</option>
@@ -442,11 +443,11 @@ function BusScanner({ busScanning, busScanResults, busScanAddr, busScanArea, bus
               </select>
             </Field></div>
           </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <div style={{ flex: 1 }}><Field label="Start ID">
+          <div className="vt-field-grid" style={{ display: "flex", gap: 4 }}>
+            <div style={{ flex: 1 }}><Field stacked label="Start ID">
               <input className="vt-input" type="number" value={busScanStart} onChange={(e) => onSetBusScanStart(Number(e.target.value))} min={1} max={247} disabled={busScanning} />
             </Field></div>
-            <div style={{ flex: 1 }}><Field label="End ID">
+            <div style={{ flex: 1 }}><Field stacked label="End ID">
               <input className="vt-input" type="number" value={busScanEnd} onChange={(e) => onSetBusScanEnd(Number(e.target.value))} min={1} max={247} disabled={busScanning} />
             </Field></div>
           </div>

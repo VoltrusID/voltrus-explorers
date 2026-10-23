@@ -529,42 +529,10 @@ for (const s of scenes) {
 
 const iosInit = `window.__platform = "ios";`;
 
-// Chromium reports 0 for env(safe-area-inset-*); draw what a device has: a status bar, a taller title bar, a home-indicator gap.
-function iosChromeCss(device) {
-  const top = device === "iphone" ? 54 : 24;
-  const bottom = device === "iphone" ? 28 : 20;
-  return `
-    *::-webkit-scrollbar { display: none; } * { scrollbar-width: none; }
-    .bx-root .vt-titlebar { height: ${top + 48}px !important; padding-top: ${top}px !important; }
-    .bx-tabbar { padding-bottom: ${bottom}px !important; }
-    .bx-root .vt-statusbar { height: ${28 + (device === "ipad" ? bottom : 0)}px !important; padding-bottom: ${device === "ipad" ? bottom : 0}px !important; }
-    .bx-sheet header { padding-top: ${top + 12}px !important; }
-    .bx-sheet footer { padding-bottom: ${bottom + 8}px !important; }
-    .vt-dialog__footer { padding-bottom: ${12 + (device === "iphone" ? bottom : 0)}px !important; }
-    #ios-status { position: fixed; top: 0; left: 0; right: 0; height: ${top}px; z-index: 1000; pointer-events: none;
-      display: flex; align-items: ${device === "iphone" ? "center" : "flex-end"}; justify-content: space-between;
-      padding: ${device === "iphone" ? "6px 34px 0 42px" : "0 22px 4px"}; color: #fff; font: 600 ${device === "iphone" ? 17 : 14}px Inter, sans-serif; }
-    #ios-status .icons { display: flex; align-items: center; gap: 6px; }
-  `;
-}
-
-const STATUS_HTML = `
-  <span>9:41</span>
-  <span class="icons">
-    <svg width="18" height="12" viewBox="0 0 18 12" fill="#fff"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
-    <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0"/><path d="M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#fff" stroke="none"/></svg>
-    <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="22" height="12" rx="3.5" fill="none" stroke="#fff" opacity=".45"/><rect x="2" y="2" width="19" height="9" rx="2.2" fill="#fff"/><rect x="24" y="4.5" width="2" height="4" rx="1" fill="#fff" opacity=".45"/></svg>
-  </span>`;
-
-async function iosPrepare(page, device) {
+// The safe areas (status bar, home indicator) and the status bar glyphs come from render.mjs (--device renders).
+async function iosPrepare(page) {
+  await page.addStyleTag({ content: `*::-webkit-scrollbar { display: none; } * { scrollbar-width: none; }` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await page.addStyleTag({ content: iosChromeCss(device) });
-  await page.evaluate((html) => {
-    const el = document.createElement("div");
-    el.id = "ios-status";
-    el.innerHTML = html;
-    document.body.appendChild(el);
-  }, STATUS_HTML);
   await sleep(150);
 }
 
@@ -598,7 +566,7 @@ async function typeField(page, selector, index, value) {
   await page.keyboard.type(String(value));
 }
 
-const fields = (device) => (device === "iphone" ? ".vt-sidebar input" : "aside input");
+const fields = (device) => (device === "iphone" ? ".vm-body input" : "aside input");
 
 async function iosFillConnection(page, device, ip = "10.20.4.21", deviceId = 2001) {
   await typeField(page, fields(device), 0, ip);
@@ -609,9 +577,9 @@ async function iosFillConnection(page, device, ip = "10.20.4.21", deviceId = 200
 
 async function iosConnect(page, device) {
   await iosFillConnection(page, device);
-  await tap(page, device === "iphone" ? ".vt-sidebar button" : "aside button", "Connect", true);
+  await tap(page, device === "iphone" ? ".vm-body button" : "aside button", "Connect", true);
   await page.waitForFunction(
-    () => document.querySelector('.bx-tab[aria-selected="true"]')?.textContent.includes("Objects") || [...document.querySelectorAll("aside button")].some((b) => b.textContent.trim().startsWith("Alarms")),
+    () => document.querySelector('nav [role="tab"][aria-selected="true"]')?.textContent.includes("Objects") || [...document.querySelectorAll("aside button")].some((b) => b.textContent.trim().startsWith("Alarms")),
     { timeout: 5000 },
   );
   await sleep(200);
@@ -682,7 +650,7 @@ export const iosScenes = [
       await iosBrowse(page);
       if (device === "ipad") await iosSelect(page, "RA-CO2");
       await addTrend(page, ["SA-TEMP", "RA-TEMP", "MA-TEMP", "OA-TEMP"]);
-      if (device === "iphone") await tap(page, ".bx-tab", "Trend");
+      if (device === "iphone") await tap(page, "nav [role=tab]", "Trend");
       await feedCov(page, 4, 96);
     },
   },
@@ -726,9 +694,9 @@ export const iosScenes = [
     init: iosInit,
     setup: async (page, device) => {
       await iosPrepare(page, device);
-      await page.select(device === "iphone" ? ".vt-sidebar select" : "aside select", "ahu");
+      await page.select(device === "iphone" ? ".vm-body select" : "aside select", "ahu");
       await sleep(150);
-      await tap(page, device === "iphone" ? ".vt-sidebar button" : "aside button", "Start simulation");
+      await tap(page, device === "iphone" ? ".vm-body button" : "aside button", "Start simulation");
       await sleep(300);
       await page.evaluate(() => window.__simTick(40));
       await sleep(300);

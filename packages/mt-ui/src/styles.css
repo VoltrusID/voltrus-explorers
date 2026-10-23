@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./components.css";
+@import "./mobile.css";
 
 *, *::before, *::after {
   box-sizing: border-box;

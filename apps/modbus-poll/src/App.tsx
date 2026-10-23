@@ -10,7 +10,9 @@ import {
   ValueEditor,
   EmptyState,
   IconButton,
+  PageTitle,
   Tabs,
+  usePhoneShell,
   useProStatus,
   saveTextFile,
   openTextFile,
@@ -49,6 +51,7 @@ import { BlocksPanel } from "./components/BlocksPanel";
 import { TemplatePanel } from "./components/TemplatePanel";
 import { SlaveTable } from "./components/SlaveTable";
 import { MobileTabBar } from "./components/MobileTabBar";
+import { PhoneDataList } from "./components/PhoneDataList";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
@@ -75,7 +78,7 @@ function App() {
   const connProfiles = useStore((s) => s.connProfiles);
   const {
     mode, setMode, leftWidth, rightWidth, tableHeight,
-    dragSide, isMobile, setIsMobile,
+    dragSide,
     blocks, setBlocks, activeBlockTab, setActiveBlockTab,
     addLog, setLog, editingTag, setEditingTag,
     theme, setTheme,
@@ -84,7 +87,7 @@ function App() {
     rtuPort, rtuBaud, rtuDataBits, rtuStopBits,
     rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval,
     useOneBased, displayFormat, endianness,
-    slaveRunning,
+    slaveRunning, slavePort,
     trendSeries, setTrendSeries, trendWindow, setTrendWindow,
     bottomTab, setBottomTab,
     slaveTransport, busScanning,
@@ -135,10 +138,21 @@ function App() {
   }, []);
 
   // ── Theme ──
+  // On a phone the page follows the system, so the status bar (which iOS draws from the system scheme) stays readable
+  // over the page; a theme saved from the desktop toggle only applies to the desktop layout.
+  const isMobile = usePhoneShell();
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("modbus-poll-theme", theme);
-  }, [theme]);
+    if (!isMobile) localStorage.setItem("modbus-poll-theme", theme);
+  }, [theme, isMobile]);
+  useEffect(() => {
+    if (!isMobile) return;
+    const system = window.matchMedia("(prefers-color-scheme: dark)");
+    const follow = () => setTheme(system.matches ? "dark" : "light");
+    follow();
+    system.addEventListener("change", follow);
+    return () => system.removeEventListener("change", follow);
+  }, [isMobile]);
   if (typeof document !== "undefined" && !document.documentElement.hasAttribute("data-theme")) {
     document.documentElement.setAttribute("data-theme", theme);
   }
@@ -163,12 +177,7 @@ function App() {
     setAutoDetecting(false);
   }, [rtuPort, rtuUnitId, addLog]);
 
-  // ── Mobile detection ──
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  // The phone layout (below 768 px) is switched by `usePhoneShell` above.
 
   // ── Load serial ports ──
   useEffect(() => {
@@ -514,46 +523,105 @@ function App() {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+    <div className={isMobile ? "vm-app" : undefined} style={isMobile ? undefined : { display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       <Toolbar
         title="Modbus Poll"
         icon={appIcon}
         connected={mode === "master" ? rt.connected : slaveRunning}
         onDisconnect={mode === "master" ? handleDisconnect : handleSlaveStop}
         onInfo={() => useStore.getState().setShowInfo(true)}
+        statusLabel={mode === "slave" ? (slaveRunning ? "Server running" : "Server stopped") : undefined}
+        context={isMobile ? (mode === "master" ? (rt.connected ? connectionLabel(activeId) : undefined) : slaveRunning ? `port ${slavePort}` : undefined) : undefined}
+        latency={mode === "master" ? rt.latency : undefined}
+        pollCount={mode === "master" ? rt.pollCount : undefined}
+        error={rt.error}
         actions={
           <>
             <ConnectButton />
-            <IconButton
-              label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-              size="sm"
-              onClick={toggleTheme}
-            >
-              {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
-            </IconButton>
+            {!isMobile && (
+              <IconButton
+                label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                size="sm"
+                onClick={toggleTheme}
+              >
+                {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
+              </IconButton>
+            )}
           </>
         }
       />
 
-      {mode === "master" && (
+      {mode === "master" && !isMobile && (
         <ConnectionTabs sessionCount={sessionCount} onAdd={handleAddConnection} onClose={handleCloseConnection} />
       )}
 
       {isMobile ? (
-        /* ── Mobile layout ── */
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-            {mobileTab === "connect" && <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{sidebarContent}</div>}
-            {mobileTab === "data" && dataTable}
-            {mobileTab === "blocks" && mode === "master" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}><BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} /></div>}
-            {mobileTab === "template" && mode === "slave" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}><TemplatePanel applyProfile={applyProfile} toggleSimulation={toggleSimulation} saveCustomTemplate={saveCustomTemplate} /></div>}
-            {mobileTab === "log" && logPanel}
-            {mobileTab === "traffic" && <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 280 }}><TrafficPanel /></div>}
-            {mobileTab === "trend" && <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 280 }}>{trendPanel}</div>}
-          </div>
+        /* ── Phone layout: header, one page per tab, pill tab bar ── */
+        <>
+          {mobileTab === "connect" && (
+            <div className="vm-body">
+              <PageTitle title="Connect" />
+              {mode === "master" && <ConnectionTabs sessionCount={sessionCount} onAdd={handleAddConnection} onClose={handleCloseConnection} />}
+              {sidebarContent}
+            </div>
+          )}
+          {mobileTab === "data" && mode === "master" && (
+            <div className="vm-body">
+              <PageTitle
+                title="Data"
+                caption={rt.connected ? `${tableData.length} values · ${rt.pollCount.toLocaleString()} polls` : `${tableData.length} values · not connected`}
+              />
+              {blocks.length > 1 && (
+                <Tabs
+                  label="Read blocks"
+                  value={String(activeBlockTab)}
+                  items={blocks.map((b, i) => ({ value: String(i), label: b.name, count: b.address }))}
+                  onChange={(v) => setActiveBlockTab(Number(v))}
+                />
+              )}
+              <PhoneDataList rows={activeBlockData} trendNames={trendSeries} onRowClick={openEditor} onToggleTrend={toggleTrendPro} />
+            </div>
+          )}
+          {mobileTab === "data" && mode === "slave" && (
+            <div className="vm-body vm-body--fill">
+              <PageTitle title="Data" caption={slaveRunning ? "Live registers of the running server" : undefined} />
+              <div className="vm-fill">{dataTable}</div>
+            </div>
+          )}
+          {mobileTab === "blocks" && mode === "master" && (
+            <div className="vm-body">
+              <PageTitle title="Blocks" caption="What is polled from the device" />
+              <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} />
+            </div>
+          )}
+          {mobileTab === "template" && mode === "slave" && (
+            <div className="vm-body">
+              <PageTitle title="Template" caption="Registers the simulated device exposes" />
+              <TemplatePanel applyProfile={applyProfile} toggleSimulation={toggleSimulation} saveCustomTemplate={saveCustomTemplate} />
+            </div>
+          )}
+          {mobileTab === "log" && (
+            <div className="vm-body vm-body--fill">
+              <PageTitle title="Log" caption="Every request and reply of this connection" />
+              <div className="vm-fill">{logPanel}</div>
+            </div>
+          )}
+          {mobileTab === "traffic" && (
+            <div className="vm-body vm-body--fill">
+              <PageTitle title="Traffic" caption="Decoded Modbus frames" />
+              <div className="vm-fill">
+                <TrafficPanel />
+              </div>
+            </div>
+          )}
+          {mobileTab === "trend" && (
+            <div className="vm-body vm-body--fill">
+              <PageTitle title="Trend" caption={trendSeries.size > 0 ? `${trendSeries.size} live` : "Add a value with its chart button on Data"} />
+              <div className="vm-fill">{trendPanel}</div>
+            </div>
+          )}
           <MobileTabBar />
-          <StatusBar connected={mode === "master" ? rt.connected : slaveRunning} latency={rt.latency} pollCount={rt.pollCount} error={rt.error} />
-        </div>
+        </>
       ) : (
         /* ── Desktop layout ── */
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>

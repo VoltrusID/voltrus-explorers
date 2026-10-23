@@ -53,7 +53,7 @@ export function ConnectionForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="vt-stack" style={{ gap: 12 }}>
+    <form onSubmit={handleSubmit} className="vt-stack vt-rows" style={{ gap: 12 }}>
       {fields.map((field) => (
         <Field key={field.name} label={field.label}>
           {field.type === "select" ? (

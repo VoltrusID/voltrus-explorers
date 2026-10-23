@@ -10,7 +10,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { X } from "lucide-react";
-import { IconButton } from "@mactools/ui";
+import { IconButton, ListGroup, ListRow, Segmented, useIsPhone } from "@mactools/ui";
 
 export interface TrendSeries {
   id?: string;
@@ -45,6 +45,7 @@ function getChartColors() {
 }
 
 export default function TrendPanel({ series, onRemove, windowSec, onWindowChange, theme, pollMs, onPollMsChange, onSourceChange, notices }: Props) {
+  const phone = useIsPhone();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRefs = useRef<ISeriesApi<"Line">[]>([]);
@@ -176,7 +177,73 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
           </div>
         ) : null;
       })}
-      {series.length > 0 && (
+      {phone && series.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, flexShrink: 0, paddingBottom: 12 }}>
+          <Segmented
+            block
+            label="Trend window"
+            value={String(windowSec)}
+            onChange={(v) => onWindowChange(Number(v))}
+            options={[{ value: "30", label: "30 s" }, { value: "60", label: "1 min" }, { value: "300", label: "5 min" }]}
+          />
+          <ListGroup>
+            {series.map((s, i) => {
+              const sid = s.id ?? s.name;
+              return (
+                <ListRow
+                  key={sid}
+                  icon={<span style={{ width: 12, height: 12, borderRadius: "50%", background: s.color || COLORS[i % COLORS.length] }} aria-hidden="true" />}
+                  title={s.name}
+                  trailing={
+                    <>
+                      {onSourceChange && (
+                        <div style={{ width: 132, flexShrink: 0 }}>
+                          <Segmented
+                            block
+                            size="sm"
+                            label={`Data source of ${s.name}`}
+                            value={s.source ?? "poll"}
+                            onChange={(v) => onSourceChange(sid, v)}
+                            options={[{ value: "poll", label: "Poll", title: "Data source: Poll" }, { value: "cov", label: "COV", title: "Data source: COV (change-of-value notifications)" }]}
+                          />
+                        </div>
+                      )}
+                      <IconButton label={`Remove ${s.name} from trend`} onClick={() => onRemove(sid)}>
+                        <X size={18} strokeWidth={1.75} />
+                      </IconButton>
+                    </>
+                  }
+                />
+              );
+            })}
+            {onPollMsChange && (
+              <div className="vm-row">
+                <label className="vm-row__text" htmlFor="trend-poll-ms">
+                  <span className="vm-row__title">Poll interval</span>
+                </label>
+                <input
+                  id="trend-poll-ms"
+                  className="vt-input"
+                  type="number"
+                  inputMode="numeric"
+                  min={100}
+                  step={100}
+                  value={pollMs ?? 1000}
+                  onChange={(e) => onPollMsChange(Math.max(100, Number(e.target.value) || 1000))}
+                  style={{ width: 104, textAlign: "right" }}
+                />
+                <span className="vm-row__subtitle">ms</span>
+              </div>
+            )}
+          </ListGroup>
+          {userScrolled && (
+            <button className="vt-btn vt-btn--sm vt-btn--primary" onClick={resetView} aria-label="Reset chart view to follow live data">
+              Follow live
+            </button>
+          )}
+        </div>
+      )}
+      {!phone && series.length > 0 && (
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, flexWrap: "wrap", gap: 4 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {series.map((s, i) => {
@@ -247,7 +314,7 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
         </div>
       </div>
       )}
-      <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} role="img" aria-label="Trend chart showing live data" />
+      <div ref={containerRef} style={{ flex: 1, minHeight: phone ? 200 : 0, ...(phone ? { borderRadius: "var(--radius-lg)", overflow: "hidden", background: "var(--card)" } : null) }} role="img" aria-label="Trend chart showing live data" />
     </div>
   );
 }

@@ -443,13 +443,16 @@ async function waitCalmLog(page, maxMs, n = 5) {
 /** Waits (up to 60 s) for six consecutive polls with a round-trip time of at most `maxMs`; the software-rendered browser jitters. */
 async function waitLatency(page, maxMs) {
   await page.waitForFunction((max) => {
+    // Desktop: the status bar ("12 ms 30 polls"). Phone: the header's endpoint line ("MCC-1 incomer · 12 ms") and the chip's poll count.
     const m = /(\d+) ms\s*([\d,]+) polls/.exec(document.querySelector("footer")?.textContent ?? "");
-    if (!m) return false;
-    const polls = Number(m[2].replace(/,/g, ""));
+    const phone = document.querySelector("[data-polls]");
+    const ms = m ? Number(m[1]) : Number(/(\d+) ms/.exec(document.querySelector(".vm-header__context")?.textContent ?? "")?.[1]);
+    const polls = m ? Number(m[2].replace(/,/g, "")) : Number(phone?.getAttribute("data-polls"));
+    if (!Number.isFinite(ms) || !Number.isFinite(polls)) return false;
     const calm = (window.__calm ??= { last: -1, n: 0 });
     if (polls !== calm.last) {
       calm.last = polls;
-      calm.n = Number(m[1]) <= max ? calm.n + 1 : 0;
+      calm.n = ms <= max ? calm.n + 1 : 0;
     }
     return calm.n >= 6;
   }, { timeout: 60000, polling: 50 }, maxMs).catch(() => {});
@@ -458,7 +461,8 @@ async function waitLatency(page, maxMs) {
 async function waitPolls(page, n) {
   await page.waitForFunction((count) => {
     const m = /([\d,]+) polls/.exec(document.querySelector("footer")?.textContent ?? "");
-    return m && Number(m[1].replace(/,/g, "")) >= count;
+    if (m) return Number(m[1].replace(/,/g, "")) >= count;
+    return Number(document.querySelector("[data-polls]")?.getAttribute("data-polls")) >= count;
   }, { timeout: 90000 }, n);
 }
 
@@ -649,14 +653,20 @@ async function iosPrepare(page) {
   await page.addStyleTag({ content: iosCss });
 }
 
+/** Opens a phone tab; tabs past the fifth (Log, Traffic) sit in the More sheet. */
 async function mobileTab(page, label) {
-  const ok = await page.evaluate((t) => {
-    const b = [...document.querySelectorAll("nav button")].find((el) => el.textContent.trim().startsWith(t));
-    if (!b) return false;
-    b.click();
-    return true;
-  }, label);
-  if (!ok) throw new Error(`tab "${label}" not found`);
+  const click = (selector, t) =>
+    page.evaluate((selector, t) => {
+      const b = [...document.querySelectorAll(selector)].find((el) => el.textContent.trim().startsWith(t));
+      if (!b) return false;
+      b.click();
+      return true;
+    }, selector, t);
+  if (!(await click("nav button", label))) {
+    if (!(await click("nav button", "More"))) throw new Error(`tab "${label}" not found`);
+    await sleep(500);
+    if (!(await click(".vt-dialog [role=button]", label))) throw new Error(`tab "${label}" not found in More`);
+  }
   await sleep(500);
 }
 
@@ -754,7 +764,7 @@ export const iosScenes = [
       await page.click('button[aria-label="Clear all traffic"]');
       await sleep(3500);
       await page.evaluate(() => {
-        const rows = [...document.querySelectorAll('tr[title="Click to expand frame details"]')];
+        const rows = [...document.querySelectorAll('[title="Click to expand frame details"]')];
         rows.find((r, k) => k >= 3 && r.textContent.includes("RX"))?.click();
       });
       await sleep(400);

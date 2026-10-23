@@ -376,17 +376,20 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
               : treePanel
         }
       >
-        <div style={treeHeader}>
-          <span className="vt-panel__title">Objects</span>
-        </div>
+        {/* The phone page already has the "Objects" title. */}
+        {!stacked && (
+          <div style={treeHeader}>
+            <span className="vt-panel__title">Objects</span>
+          </div>
+        )}
 
-        <div style={{ padding: "8px 10px 4px" }}>
+        <div style={{ padding: stacked ? "0 0 8px" : "8px 10px 4px" }}>
           <Button variant="primary" block icon={<ListTree size={14} strokeWidth={1.75} />} loading={loading} onClick={handleBrowse}>
             {loading ? "Browsing…" : "Browse objects"}
           </Button>
         </div>
 
-        <div style={{ padding: "0 10px 4px" }}>
+        <div style={{ padding: stacked ? "0 0 8px" : "0 10px 4px" }}>
           {exportProgress ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
@@ -409,7 +412,7 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
           </div>
         )}
 
-        <div style={treeScroll}>
+        <div style={stacked ? { ...treeScroll, background: "var(--card)", borderRadius: "var(--radius-lg)" } : treeScroll}>
           {objects.length === 0 && !loading && !error && (
             <EmptyState
               compact

@@ -57,7 +57,7 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
 
       {slaveTransport === "tcp" || isIos ? (
         <Section title="Slave server">
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="vt-rows" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Field label="TCP port">
               <input className="vt-input" type="number" value={slavePort} onChange={(e) => setSlavePort(Number(e.target.value))} disabled={slaveRunning} />
             </Field>
@@ -74,7 +74,7 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
         </Section>
       ) : (
         <Section title="Slave RTU">
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="vt-rows" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <Field label="Serial port">
               <select className="vt-select" value={slaveRtuVirtualPort ? "__virtual__" : slaveRtuPort}
                 onChange={(e) => {
@@ -124,20 +124,20 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
                 )}
               </div>
             </Field></div>
-            <div style={{ display: "flex", gap: 4, opacity: slaveRtuVirtualPort ? 0.4 : 1 }}>
-              <div style={{ flex: 1 }}><Field label="Data bits">
+            <div className="vt-field-grid" style={{ display: "flex", gap: 4, opacity: slaveRtuVirtualPort ? 0.4 : 1 }}>
+              <div style={{ flex: 1 }}><Field stacked label="Data bits">
                 <select className="vt-select" value={slaveRtuDataBits} onChange={(e) => setSlaveRtuDataBits(Number(e.target.value))} disabled={slaveRunning || slaveRtuVirtualPort}>
                   <option value={7}>7</option>
                   <option value={8}>8</option>
                 </select>
               </Field></div>
-              <div style={{ flex: 1 }}><Field label="Stop bits">
+              <div style={{ flex: 1 }}><Field stacked label="Stop bits">
                 <select className="vt-select" value={slaveRtuStopBits} onChange={(e) => setSlaveRtuStopBits(Number(e.target.value))} disabled={slaveRunning || slaveRtuVirtualPort}>
                   <option value={1}>1</option>
                   <option value={2}>2</option>
                 </select>
               </Field></div>
-              <div style={{ flex: 1 }}><Field label="Parity">
+              <div style={{ flex: 1 }}><Field stacked label="Parity">
                 <select className="vt-select" value={slaveRtuParity} onChange={(e) => setSlaveRtuParity(e.target.value)} disabled={slaveRunning || slaveRtuVirtualPort}>
                   <option value="none">None</option>
                   <option value="even">Even</option>

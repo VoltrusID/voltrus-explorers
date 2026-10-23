@@ -401,6 +401,11 @@
   border-bottom: none;
 }
 
+/* Transparent on desktop: the children lay out as direct children of the section. The phone shell draws it as a card. */
+.vt-section__body {
+  display: contents;
+}
+
 .vt-section__header {
   display: flex;
   align-items: center;

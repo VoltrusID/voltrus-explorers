@@ -64,7 +64,7 @@ export function TemplatePanel({ applyProfile, toggleSimulation, saveCustomTempla
             {simRunning ? "Pause" : "Simulate"}
           </Button>
           <select
-            className="vt-select" style={{ width: 70 }}
+            className="vt-select vt-select--narrow" style={{ width: 70 }}
             value={simSpeed}
             onChange={(e) => setSimSpeed(Number(e.target.value))}
           >

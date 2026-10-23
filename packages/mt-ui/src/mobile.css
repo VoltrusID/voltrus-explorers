@@ -1,0 +1,1172 @@
+/*
+ * Phone shell skin (Modbus Poll and BACnet Explorer on iPhone).
+ *
+ * Everything under `html[data-shell="phone"]` applies only where an app called usePhoneShell() and the viewport is under
+ * 768 CSS px; desktop and the other explorers never match. The `.vm-*` classes belong to the shell components in
+ * ./phone.tsx and the Toolbar's phone header.
+ *
+ * Design language ported from JoyoFit (watch-fit/src/theme, src/components): page padding 20 -> 16 here, cards with a 20 radius
+ * and no border on a quieter page, bold 17px section titles above the card, pill controls, borderless muted-fill inputs,
+ * 48 / 44 point targets, a pill tab bar with icons and labels. Light and dark follow the system (the app sets data-theme
+ * from prefers-color-scheme on phones).
+ *
+ * Safe areas come from env(safe-area-inset-*); both index.html files set viewport-fit=cover, and the Tauri iOS webview
+ * is edge to edge, so the insets are real on device.
+ */
+
+/* ── Tokens ──────────────────────────────────────────────────────────────── */
+
+html[data-shell="phone"] {
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 20px;
+
+  --control-h: 48px;
+  --control-h-sm: 44px;
+  --control-h-lg: 52px;
+
+  --page-x: 16px;
+  --sheet-radius: 28px;
+
+  /* Dark (the default palette). `--fill` is the muted fill of inputs, tracks and chips; `--switch-off` the off track of a switch. */
+  --fill: #222220;
+  --hairline: rgba(236, 233, 227, 0.1);
+  --switch-off: #3a3935;
+  --focus-ring: 0 0 0 2px var(--accent);
+}
+
+html[data-shell="phone"][data-theme="light"] {
+  --bg: #f4f2ee;
+  --surface: #f4f2ee;
+  --fill: #eeebe5;
+  --hairline: rgba(26, 25, 24, 0.1);
+  --switch-off: #d6d0c6;
+}
+
+@media (prefers-color-scheme: light) {
+  html[data-shell="phone"]:not([data-theme="dark"]) {
+    --bg: #f4f2ee;
+    --surface: #f4f2ee;
+    --fill: #eeebe5;
+    --hairline: rgba(26, 25, 24, 0.1);
+    --switch-off: #d6d0c6;
+  }
+}
+
+html[data-shell="phone"],
+html[data-shell="phone"] body,
+html[data-shell="phone"] #root {
+  font-size: var(--fs-md);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html[data-shell="phone"] body {
+  overscroll-behavior: none;
+}
+
+/* ── Shell: header, body, tab bar ────────────────────────────────────────── */
+
+.vm-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* The webview is edge to edge: the header starts under the status bar / Dynamic Island and pads by its inset. */
+.vm-header {
+  flex-shrink: 0;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(var(--page-x, 16px), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--page-x, 16px), env(safe-area-inset-right, 0px));
+  user-select: none;
+}
+
+.vm-header__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+}
+
+.vm-header__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.vm-header__brand {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.vm-header__title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vm-header__context {
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vm-header__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: -10px;
+}
+
+.vm-header__error {
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+/* Connection status chip: a pill with a dot; the connected state is soft green. */
+.vm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vm-chip--on {
+  background: var(--success-soft);
+  color: var(--accent-text);
+}
+
+/* Scrolling area between the header and the tab bar. */
+.vm-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 4px max(var(--page-x, 16px), env(safe-area-inset-left, 0px)) 24px max(var(--page-x, 16px), env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* A page that fills the body and scrolls inside (table, chart, log) instead of the body scrolling. */
+.vm-body--fill {
+  overflow: hidden;
+  padding-bottom: 12px;
+  gap: 12px;
+}
+
+.vm-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.vm-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  flex-shrink: 0;
+}
+
+.vm-title__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.vm-title__h {
+  margin: 0;
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+
+.vm-title__caption {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 19px;
+  color: var(--text-muted);
+}
+
+.vm-title__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Tab bar: a pill in the flow, tucked 12px into the home-indicator inset (the indicator is a thin line; the whole inset would leave a band). */
+.vm-tabbar {
+  flex-shrink: 0;
+  background: var(--bg);
+  padding-top: 6px;
+  padding-bottom: max(8px, calc(env(safe-area-inset-bottom, 0px) - 12px));
+  padding-left: max(var(--page-x, 16px), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--page-x, 16px), env(safe-area-inset-right, 0px));
+}
+
+.vm-tabbar__pill {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.vm-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  transition-property: background-color, color, scale;
+  transition-duration: 140ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.vm-tab:active {
+  scale: 0.96;
+}
+
+.vm-tab[aria-selected="true"] {
+  background: var(--fill);
+  color: var(--accent-text);
+}
+
+.vm-tab__icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+}
+
+.vm-tab__label {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vm-tab__badge {
+  position: absolute;
+  top: -5px;
+  left: 60%;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.vm-tab__dot {
+  position: absolute;
+  top: -1px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+/* ── Grouped list (ListGroup / ListRow) ──────────────────────────────────── */
+
+.vm-group {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.vm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 16px;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+}
+
+.vm-row + .vm-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.vm-row[role="button"]:active {
+  background: var(--fill);
+}
+
+.vm-row__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--text);
+}
+
+.vm-row__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.vm-row__title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 21px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-row__subtitle {
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-row__value {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.vm-row__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.vm-row__check {
+  flex-shrink: 0;
+  color: var(--accent-text);
+}
+
+.vm-row--selected .vm-row__title {
+  color: var(--accent-text);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+
+html[data-shell="phone"] .vt-btn {
+  height: var(--control-h);
+  padding: 0 20px;
+  gap: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+html[data-shell="phone"] .vt-btn--sm {
+  height: var(--control-h-sm);
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+html[data-shell="phone"] .vt-btn--lg {
+  height: var(--control-h-lg);
+}
+
+html[data-shell="phone"] .vt-btn--primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+html[data-shell="phone"] .vt-btn--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+html[data-shell="phone"] .vt-btn--ghost {
+  background: transparent;
+  color: var(--accent-text);
+}
+
+html[data-shell="phone"] .vt-btn:disabled {
+  background: var(--fill);
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+html[data-shell="phone"] .vt-btn--ghost:disabled {
+  background: transparent;
+}
+
+html[data-shell="phone"] .vt-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* A tap leaves :hover on in the iOS webview; keep the resting look. */
+html[data-shell="phone"] .vt-btn:hover:not(:disabled) {
+  background: var(--fill);
+  border-color: transparent;
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-btn--primary:hover:not(:disabled),
+html[data-shell="phone"] .vt-btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+html[data-shell="phone"] .vt-btn--danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+html[data-shell="phone"] .vt-btn--ghost:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent-text);
+}
+
+html[data-shell="phone"] .vt-icon-btn {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border-radius: 50%;
+  border: 0;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-icon-btn--sm {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border-radius: 50%;
+}
+
+html[data-shell="phone"] .vt-icon-btn--outline {
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-icon-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-icon-btn--outline:hover:not(:disabled) {
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-icon-btn:active:not(:disabled) {
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-icon-btn[aria-pressed="true"],
+html[data-shell="phone"] .vt-icon-btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+html[data-shell="phone"] .vt-icon-btn--danger:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-shell="phone"] select,
+html[data-shell="phone"] textarea {
+  min-height: var(--control-h);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background-color: var(--fill);
+  font-size: 16px;
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-input,
+html[data-shell="phone"] .vt-select {
+  height: var(--control-h);
+  font-size: 16px;
+}
+
+html[data-shell="phone"] .vt-input--sm,
+html[data-shell="phone"] .vt-select--sm {
+  height: var(--control-h-sm);
+  min-height: var(--control-h-sm);
+  font-size: 16px;
+  border-radius: var(--radius);
+}
+
+html[data-shell="phone"] textarea {
+  min-height: 96px;
+  padding: 12px 14px;
+}
+
+html[data-shell="phone"] input:hover:not(:disabled):not(:focus),
+html[data-shell="phone"] select:hover:not(:disabled):not(:focus),
+html[data-shell="phone"] textarea:hover:not(:disabled):not(:focus) {
+  border-color: transparent;
+}
+
+html[data-shell="phone"] select {
+  padding-right: 34px;
+  background-position: right 12px center;
+  background-size: 14px;
+}
+
+html[data-shell="phone"] .vt-input[aria-invalid="true"] {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+
+html[data-shell="phone"] .vt-label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-hint {
+  font-size: var(--fs-sm);
+}
+
+/* Checkbox -> iOS switch. The label sits left and the switch right. */
+html[data-shell="phone"] input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 51px;
+  height: 31px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--switch-off);
+  box-shadow: none;
+  transition: background-color 160ms var(--ease-out);
+}
+
+html[data-shell="phone"] input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 160ms var(--ease-out);
+}
+
+html[data-shell="phone"] input[type="checkbox"]:checked {
+  background: var(--accent);
+}
+
+html[data-shell="phone"] input[type="checkbox"]:checked::after {
+  transform: translateX(20px);
+}
+
+html[data-shell="phone"] input[type="checkbox"]:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+html[data-shell="phone"] .vt-check {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--control-h);
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+
+/* Segmented control: a pill track; the selected option is a full pill in the accent (JoyoFit `Segmented`). The track
+   is as tall as its options plus the 3px padding, so the pill can not overflow it. */
+html[data-shell="phone"] .vt-segmented {
+  height: auto;
+  min-height: calc(var(--control-h) + 6px);
+  padding: 3px;
+  gap: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-segmented--sm {
+  height: auto;
+  min-height: calc(var(--control-h-sm) + 6px);
+}
+
+html[data-shell="phone"] .vt-segmented__item {
+  flex: 1 1 0;
+  min-height: var(--control-h);
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-segmented--sm .vt-segmented__item {
+  min-height: var(--control-h-sm);
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+html[data-shell="phone"] .vt-segmented__item:hover:not([aria-checked="true"]):not(:disabled) {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-segmented__item[aria-checked="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: none;
+}
+
+html[data-shell="phone"] .vt-segmented__item[aria-checked="true"] .vt-badge {
+  background: rgba(0, 0, 0, 0.16);
+  color: inherit;
+}
+
+/* Tabs -> a row of chips that scrolls sideways. */
+html[data-shell="phone"] .vt-tabs {
+  height: auto;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 0;
+  align-items: center;
+}
+
+html[data-shell="phone"] .vt-tab {
+  min-height: var(--control-h-sm);
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .vt-tab:hover {
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-tab[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+html[data-shell="phone"] .vt-tab[aria-selected="true"]::after {
+  display: none;
+}
+
+html[data-shell="phone"] .vt-tab[aria-selected="true"] .vt-tab__count {
+  color: inherit;
+  opacity: 0.75;
+}
+
+/* ── Grouped inset sections ──────────────────────────────────────────────── */
+
+html[data-shell="phone"] .vt-sidebar {
+  background: transparent;
+  overflow: visible;
+}
+
+html[data-shell="phone"] .vt-section {
+  gap: 8px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+html[data-shell="phone"] .vt-section__header {
+  min-height: 28px;
+  padding: 0 4px;
+}
+
+html[data-shell="phone"] .vt-section__title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+html[data-shell="phone"] .vt-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+
+/* Fields in a card are rows: label left, value right, a hairline between rows (iOS settings). `vt-rows` marks the
+   wrapper whose gap the rows replace; `vt-field--stacked` keeps a label above its control. */
+html[data-shell="phone"] .vt-rows {
+  gap: 0 !important;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 12px;
+  row-gap: 0;
+  min-height: var(--control-h);
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > .vt-label {
+  flex: 0 0 auto;
+  max-width: 45%;
+  font-size: var(--fs-md);
+  font-weight: 400;
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > :is(input, select),
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > div:not(.vt-hint) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) :is(input, select):not([type="checkbox"]) {
+  height: var(--control-h-sm);
+  min-height: var(--control-h-sm);
+  padding: 0 0 0 8px;
+  background-color: transparent;
+  box-shadow: none;
+  text-align: right;
+  text-align-last: right;
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) select {
+  padding-right: 22px;
+  background-position: right 0 center;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) > .vt-hint {
+  flex: 0 0 100%;
+  padding-bottom: 8px;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field--stacked {
+  gap: 8px;
+  padding: 10px 0;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field + .vt-field,
+html[data-shell="phone"] .vt-section__body .vt-field + .vt-check,
+html[data-shell="phone"] .vt-section__body .vt-check + .vt-field {
+  border-top: 1px solid var(--hairline);
+}
+
+html[data-shell="phone"] .vt-section__body .vt-rows > .vt-divider {
+  display: none;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-rows > .vt-btn,
+html[data-shell="phone"] .vt-section__body .vt-rows > div:last-child {
+  margin-top: 12px;
+}
+
+html[data-shell="phone"] .vt-section__body > .vt-select,
+html[data-shell="phone"] .vt-section__body > .vt-input {
+  width: 100%;
+}
+
+/* Two fields side by side that would be too narrow as rows. */
+html[data-shell="phone"] .vt-field-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px !important;
+}
+
+html[data-shell="phone"] .vt-field-grid > * {
+  width: auto !important;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .vt-toolbar-row {
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+/* ── Surfaces ────────────────────────────────────────────────────────────── */
+
+html[data-shell="phone"] .vt-panel {
+  border: 0;
+  border-radius: var(--radius-lg);
+}
+
+html[data-shell="phone"] .vt-panel__header {
+  height: 48px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+html[data-shell="phone"] .vt-callout {
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+}
+
+html[data-shell="phone"] .vt-badge {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+html[data-shell="phone"] .vt-dot {
+  width: 8px;
+  height: 8px;
+}
+
+html[data-shell="phone"] .vt-divider {
+  background: var(--hairline);
+}
+
+html[data-shell="phone"] .vt-table th {
+  height: 40px;
+  background: var(--card);
+  border-bottom: 1px solid var(--hairline);
+}
+
+html[data-shell="phone"] .vt-table td {
+  height: 48px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+html[data-shell="phone"] .vt-table tbody tr:hover {
+  background: transparent;
+}
+
+html[data-shell="phone"] .vt-table tbody tr:active {
+  background: var(--fill);
+}
+
+/* Empty state: a round icon chip, a bold title, muted text (JoyoFit `States`). */
+html[data-shell="phone"] .vt-empty {
+  gap: 8px;
+  padding: 40px 24px;
+}
+
+html[data-shell="phone"] .vt-empty__icon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .vt-empty__title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+
+html[data-shell="phone"] .vt-empty__desc {
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  max-width: 300px;
+}
+
+html[data-shell="phone"] .vt-empty--compact {
+  padding: 28px 20px;
+}
+
+html[data-shell="phone"] .vt-empty--compact .vt-empty__icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+}
+
+html[data-shell="phone"] .vt-empty--compact .vt-empty__title {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-empty--compact .vt-empty__desc {
+  font-size: var(--fs-sm);
+}
+
+html[data-shell="phone"] .vt-empty__action .vt-btn {
+  height: var(--control-h);
+}
+
+/* Menus open as a card under their button, rows 48 tall. */
+html[data-shell="phone"] .vt-popover {
+  padding: 6px;
+  border-radius: 16px;
+  min-width: 220px;
+}
+
+html[data-shell="phone"] .vt-menu-item {
+  height: var(--control-h);
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: var(--fs-md);
+  gap: 10px;
+}
+
+html[data-shell="phone"] .vt-menu-item:hover:not(:disabled) {
+  background: transparent;
+}
+
+html[data-shell="phone"] .vt-menu-item:active:not(:disabled) {
+  background: var(--fill);
+}
+
+/* ── Sheets (Dialog) ─────────────────────────────────────────────────────── */
+
+@keyframes vm-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes vm-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+html[data-shell="phone"] .vt-scrim {
+  align-items: flex-end;
+  padding: 0;
+  animation: vm-scrim-in 200ms var(--ease-out);
+}
+
+html[data-shell="phone"] .vt-dialog {
+  width: 100% !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 16px);
+  border-radius: var(--sheet-radius) var(--sheet-radius) 0 0;
+  box-shadow: none;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  animation: vm-sheet-in 280ms var(--ease-out);
+}
+
+/* Grabber. */
+html[data-shell="phone"] .vt-dialog::before {
+  content: "";
+  flex-shrink: 0;
+  width: 36px;
+  height: 5px;
+  margin: 8px auto 0;
+  border-radius: 3px;
+  background: var(--hairline);
+}
+
+html[data-shell="phone"] .vt-dialog__header {
+  padding: 8px 12px 8px 20px;
+}
+
+html[data-shell="phone"] .vt-dialog__title {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+
+html[data-shell="phone"] .vt-dialog__header .vt-icon-btn {
+  background: var(--fill);
+}
+
+html[data-shell="phone"] .vt-dialog__body {
+  padding: 0 20px 20px;
+  font-size: var(--fs-md);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+html[data-shell="phone"] .vt-dialog__footer {
+  flex-direction: column-reverse;
+  gap: 8px;
+  padding: 12px 20px 8px;
+  border-top: 0;
+  background: var(--card);
+}
+
+html[data-shell="phone"] .vt-dialog__footer .vt-btn {
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-shell="phone"] .vt-dialog,
+  html[data-shell="phone"] .vt-scrim {
+    animation: none;
+  }
+}
+
+/* The log's own title repeats the page title. */
+html[data-shell="phone"] .vt-toolbar-row__title {
+  display: none;
+}
+
+html[data-shell="phone"] .vt-toolbar-row > .vt-segmented {
+  flex: 1 1 auto;
+}
+
+/* Tappable list entries that are plain buttons in the desktop markup (network scan results). */
+html[data-shell="phone"] .vt-pick {
+  min-height: var(--control-h-sm);
+  padding: 0 14px !important;
+  border: 0 !important;
+  border-radius: var(--radius) !important;
+  background: var(--fill) !important;
+  font-size: var(--fs-md) !important;
+}
+
+/* A select that is 70px wide in the desktop sidebar needs room for 16px text and the chevron. */
+html[data-shell="phone"] .vt-select--narrow {
+  width: 112px !important;
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .vt-dialog:focus-visible {
+  outline: none;
+}
+
+/* Connection switcher (Modbus Poll): chips on the page, not a desktop tab strip. */
+html[data-shell="phone"] .vt-tabs--conn {
+  background: transparent !important;
+  overflow-x: auto;
+  padding: 0;
+}
+
+html[data-shell="phone"] .vt-tabs--conn > div {
+  flex-shrink: 0;
+}
+
+html[data-shell="phone"] .vt-tabs--conn .vt-tab {
+  background: var(--card);
+  color: var(--text);
+}
+
+html[data-shell="phone"] .vt-tabs--conn .vt-tab[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+html[data-shell="phone"] .vt-tabs--conn .vt-btn--ghost {
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+/* A ListGroup inside a card (the card is already a surface): no second card, a fill behind the rows instead. */
+.vm-group--flat {
+  background: var(--fill);
+}
+
+/* Inline links (Terms of Use, Privacy Policy) are still 44pt targets. */
+html[data-shell="phone"] .vt-dialog a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h-sm);
+}
+
+/* Sections inside a sheet stay flat (the sheet is already the surface): hairline between them, no inner card. */
+html[data-shell="phone"] .vt-dialog .vt-section {
+  gap: 10px;
+  padding: 14px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+html[data-shell="phone"] .vt-dialog .vt-section:last-child {
+  border-bottom: 0;
+}
+
+html[data-shell="phone"] .vt-dialog .vt-section__header {
+  padding: 0;
+}
+
+html[data-shell="phone"] .vt-dialog .vt-section__title {
+  font-size: var(--fs-md);
+}
+
+html[data-shell="phone"] .vt-dialog .vt-section__body {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html[data-shell="phone"] .vt-dialog .vt-tab {
+  padding: 0 14px;
+}
+
+html[data-shell="phone"] .vt-section__body .vt-field:not(.vt-field--stacked) select:not([type="checkbox"]) {
+  padding-right: 26px;
+}

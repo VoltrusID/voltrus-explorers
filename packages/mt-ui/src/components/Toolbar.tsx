@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Download, Info, LogOut, Settings } from "lucide-react";
 import { Button, IconButton } from "../primitives";
+import { StatusChip, useIsPhone } from "../phone";
 
 // Every app's macOS window uses titleBarStyle "Overlay" (tauri.conf.json), so
 // this header IS the title bar there: it reserves room for the traffic lights
@@ -22,6 +23,13 @@ interface ToolbarProps {
   onExport?: () => void;
   onSettings?: () => void;
   onInfo?: () => void;
+  /** Phone header only (where there is no status bar): overrides "Connected"/"Disconnected", e.g. "Server running". */
+  statusLabel?: string;
+  /** Phone header only: round-trip time and poll count of the connection, shown under the title while connected. */
+  latency?: number;
+  pollCount?: number;
+  /** Phone header only: the last error, shown as a banner under the header. */
+  error?: string | null;
 }
 
 export function Toolbar({
@@ -34,7 +42,12 @@ export function Toolbar({
   onExport,
   onSettings,
   onInfo,
+  statusLabel,
+  latency,
+  pollCount,
+  error,
 }: ToolbarProps) {
+  const phone = useIsPhone();
   // Native fullscreen hides the traffic lights, so the inset goes with them.
   const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
@@ -44,6 +57,40 @@ export function Toolbar({
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
+
+  if (phone) {
+    const meta = [context, connected && latency !== undefined ? `${latency} ms` : null].filter(Boolean);
+    return (
+      <header className="vm-header">
+        <div className="vm-header__row">
+          {icon && <img src={icon} alt="" className="vm-header__icon" draggable={false} />}
+          <div className="vm-header__brand">
+            <span className="vm-header__title">{title}</span>
+            {meta.length > 0 && <span className="vm-header__context">{meta.join(" · ")}</span>}
+          </div>
+          <StatusChip connected={connected} label={statusLabel} polls={pollCount} />
+          <div className="vm-header__actions">
+            {actions}
+            {onSettings && (
+              <IconButton label="Settings" onClick={onSettings}>
+                <Settings size={20} strokeWidth={1.75} />
+              </IconButton>
+            )}
+            {onInfo && (
+              <IconButton label="About" onClick={onInfo}>
+                <Info size={20} strokeWidth={1.75} />
+              </IconButton>
+            )}
+          </div>
+        </div>
+        {error && (
+          <div className="vm-header__error" role="alert">
+            {error}
+          </div>
+        )}
+      </header>
+    );
+  }
 
   return (
     <header

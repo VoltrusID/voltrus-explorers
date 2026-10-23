@@ -32,8 +32,6 @@ export interface AppState {
   setDragSide: (s: "left" | "right" | "table" | null) => void;
   mobileTab: MobileTab;
   setMobileTab: (t: MobileTab) => void;
-  isMobile: boolean;
-  setIsMobile: (m: boolean) => void;
   platform: string;
   setPlatform: (p: string) => void;
 
@@ -246,8 +244,6 @@ export const useStore = create<AppState>((set, get) => ({
   setDragSide: (dragSide) => set({ dragSide }),
   mobileTab: "connect",
   setMobileTab: (mobileTab) => set({ mobileTab }),
-  isMobile: typeof window !== "undefined" && window.innerWidth < 768,
-  setIsMobile: (isMobile) => set({ isMobile }),
   platform: "",
   setPlatform: (platform) => set({ platform }),
 

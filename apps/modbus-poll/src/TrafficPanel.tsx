@@ -1,5 +1,6 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
-import { EmptyState, saveTextFile, useProStatus } from "@mactools/ui";
+import { ArrowDownToLine, ArrowLeft, ArrowRight, Download, Trash2 } from "lucide-react";
+import { EmptyState, IconButton, Segmented, saveTextFile, useIsPhone, useProStatus } from "@mactools/ui";
 import { NO_TRAFFIC, useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
 import { useStore } from "./store";
 
@@ -41,6 +42,7 @@ export default function TrafficPanel() {
   const { entries, tcpEvents } = useTrafficStore((s) => s.byConn[activeId] ?? NO_TRAFFIC);
   const clearTraffic = useTrafficStore((s) => s.clear);
   const { requirePro } = useProStatus();
+  const phone = useIsPhone();
   const [filterDir, setFilterDir] = useState<string>("all");
   const [filterText, setFilterText] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
@@ -184,34 +186,110 @@ export default function TrafficPanel() {
     }
   }, [filtered, tcpEvents, tab, formatTimeFull, requirePro]);
 
+  const detailBody = (e: TrafficEntry, size: number) => (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: "2px 8px", fontSize: size, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
+        <span style={{ color: "var(--text-muted)" }}>Direction:</span>
+        <span style={{ color: e.direction === "TX" ? "var(--warn)" : "var(--accent)", fontWeight: 600 }}>{e.direction}</span>
+        <span style={{ color: "var(--text-muted)" }}>Function:</span>
+        <span style={{ color: "var(--text)" }}>{`${fcName(e.function_code)} (FC${e.function_code.toString(16).toUpperCase().padStart(2, "0")})`}</span>
+        <span style={{ color: "var(--text-muted)" }}>Address:</span>
+        <span style={{ color: "var(--text)" }}>{formatAddr(e.address, e.length)} (0x{e.address.toString(16).toUpperCase().padStart(4, "0")})</span>
+        <span style={{ color: "var(--text-muted)" }}>Registers:</span>
+        <span style={{ color: "var(--text)" }}>{e.length} word{e.length > 1 ? "s" : ""}</span>
+        <span style={{ color: "var(--text-muted)" }}>Time:</span>
+        <span style={{ color: "var(--text)" }}>{new Date(e.timestamp).toISOString()}</span>
+      </div>
+      {e.data.startsWith("[") ? (
+        parseRawData(e.data).length > 0 && (
+          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3, fontSize: size, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
+            {parseRawData(e.data).map((hex, i) => (
+              <span key={i} style={{ padding: "1px 4px", borderRadius: 2, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}>0x{hex.toUpperCase()}</span>
+            ))}
+          </div>
+        )
+      ) : (
+        e.data && <div style={{ marginTop: 4, fontSize: size, color: e.function_code & 0x80 ? "var(--danger)" : "var(--text)", fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>{e.data}</div>
+      )}
+    </>
+  );
+
   const renderDetail = (e: TrafficEntry) => (
     <tr>
       <td colSpan={7} style={{ padding: "6px 12px 8px", background: "var(--card)", borderBottom: "1px solid var(--border)" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: "2px 8px", fontSize: 10, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
-          <span style={{ color: "var(--text-muted)" }}>Direction:</span>
-          <span style={{ color: e.direction === "TX" ? "var(--warn)" : "var(--accent)", fontWeight: 600 }}>{e.direction}</span>
-          <span style={{ color: "var(--text-muted)" }}>Function:</span>
-          <span style={{ color: "var(--text)" }}>{`${fcName(e.function_code)} (FC${e.function_code.toString(16).toUpperCase().padStart(2, "0")})`}</span>
-          <span style={{ color: "var(--text-muted)" }}>Address:</span>
-          <span style={{ color: "var(--text)" }}>{formatAddr(e.address, e.length)} (0x{e.address.toString(16).toUpperCase().padStart(4, "0")})</span>
-          <span style={{ color: "var(--text-muted)" }}>Registers:</span>
-          <span style={{ color: "var(--text)" }}>{e.length} word{e.length > 1 ? "s" : ""}</span>
-          <span style={{ color: "var(--text-muted)" }}>Time:</span>
-          <span style={{ color: "var(--text)" }}>{new Date(e.timestamp).toISOString()}</span>
-        </div>
-        {e.data.startsWith("[") ? (
-          parseRawData(e.data).length > 0 && (
-            <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 3, fontSize: 10, fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>
-              {parseRawData(e.data).map((hex, i) => (
-                <span key={i} style={{ padding: "1px 4px", borderRadius: 2, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}>0x{hex.toUpperCase()}</span>
-              ))}
-            </div>
-          )
-        ) : (
-          e.data && <div style={{ marginTop: 4, fontSize: 10, color: e.function_code & 0x80 ? "var(--danger)" : "var(--text)", fontFamily: '"SF Mono", "JetBrains Mono", monospace' }}>{e.data}</div>
-        )}
+        {detailBody(e, 10)}
       </td>
     </tr>
+  );
+
+  /** Phone: one row per frame (arrow, function and address, the data under it, time and gap at the right); a tap opens the detail. */
+  const renderModbusPhone = () => (
+    <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: "var(--radius-lg)", background: "var(--card)" }}>
+      {filtered.length === 0 ? (
+        <EmptyState compact title="No frames" description={entries.length === 0 ? "Requests and replies appear here while the app talks to a device." : "No frames match the filter."} />
+      ) : (
+        filtered.map((e, i) => {
+          const isExpanded = expandedRows.has(i);
+          const tx = e.direction === "TX";
+          const exception = (e.function_code & 0x80) !== 0;
+          return (
+            <div key={i} style={{ borderTop: i > 0 ? "1px solid var(--hairline)" : undefined }}>
+              <div
+                role="button"
+                tabIndex={0}
+                title="Click to expand frame details"
+                onClick={() => toggleRow(i)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleRow(i); } }}
+                style={{ display: "flex", alignItems: "center", gap: 12, minHeight: 56, padding: "8px 16px", background: isExpanded ? "var(--fill)" : undefined }}
+              >
+                <span aria-label={tx ? "Request" : "Reply"} style={{ width: 32, height: 32, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: tx ? "var(--warn-soft)" : "var(--success-soft)", color: tx ? "var(--warn)" : "var(--accent-text)" }}>
+                  {tx ? <ArrowRight size={16} strokeWidth={2.25} /> : <ArrowLeft size={16} strokeWidth={2.25} />}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, color: exception ? "var(--danger)" : "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {fcName(e.function_code)} · {formatAddr(e.address, e.length)}
+                  </span>
+                  <span className="mono" style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {e.data}
+                  </span>
+                </span>
+                <span className="mono" style={{ flexShrink: 0, textAlign: "right", fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.45 }}>
+                  {formatTime(e.timestamp).slice(0, 8)}
+                  <br />
+                  {formatDelta(e.timestamp, i > 0 ? filtered[i - 1].timestamp : null) || "\u00a0"}
+                </span>
+              </div>
+              {isExpanded && <div style={{ padding: "4px 16px 14px 60px", background: "var(--fill)" }}>{detailBody(e, 12)}</div>}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
+  const renderTcpPhone = () => (
+    <div ref={scrollRef} style={{ flex: 1, minHeight: 0, overflow: "auto", borderRadius: "var(--radius-lg)", background: "var(--card)" }}>
+      {tcpEvents.length === 0 ? (
+        <EmptyState compact title="No TCP events" description="Events appear here once a client connects to the slave server." />
+      ) : (
+        tcpEvents.map((e, i) => {
+          const color = e.event_type.includes("error") || e.event_type.includes("fail") || e.event_type === "disconnect"
+            ? "var(--danger)"
+            : e.event_type === "connect" ? "var(--accent-text)"
+            : e.event_type.includes("timeout") ? "var(--warn)"
+            : "var(--text-muted)";
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, minHeight: 56, padding: "8px 16px", borderTop: i > 0 ? "1px solid var(--hairline)" : undefined }}>
+              <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+                <span style={{ fontSize: "var(--fs-md)", fontWeight: 600, color }}>{e.event_type}</span>
+                <span style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", overflowWrap: "anywhere" }}>{e.detail}</span>
+              </span>
+              <span className="mono" style={{ flexShrink: 0, fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>{formatTime(e.timestamp).slice(0, 8)}</span>
+            </div>
+          );
+        })
+      )}
+    </div>
   );
 
   const renderModbusTab = () => (
@@ -295,6 +373,71 @@ export default function TrafficPanel() {
       )}
     </div>
   );
+
+  if (phone) {
+    const exportMenu = (entries.length > 0 || tcpEvents.length > 0) && (
+      <div style={{ position: "relative" }} ref={exportRef}>
+        <IconButton outline label="Export traffic" aria-haspopup="true" aria-expanded={showExport} pressed={showExport} onClick={() => setShowExport((v) => !v)}>
+          <Download size={18} strokeWidth={1.75} />
+        </IconButton>
+        {showExport && (
+          <div className="vt-popover" style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, zIndex: 100 }} role="menu">
+            <button onClick={copyAll} role="menuitem" className="vt-menu-item">Copy all to clipboard</button>
+            <button onClick={exportCsv} role="menuitem" className="vt-menu-item">Export to CSV</button>
+          </div>
+        )}
+      </div>
+    );
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 12 }}>
+        <Segmented
+          block
+          label="Traffic view"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "modbus", label: `Modbus ${filtered.length}` },
+            { value: "tcp", label: `TCP ${tcpEvents.length}` },
+          ]}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {tab === "modbus" && (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Segmented
+                block
+                size="sm"
+                label="Filter direction"
+                value={filterDir}
+                onChange={setFilterDir}
+                options={[{ value: "all", label: "All" }, { value: "TX", label: "TX" }, { value: "RX", label: "RX" }]}
+              />
+            </div>
+          )}
+          {tab === "tcp" && <div style={{ flex: 1 }} />}
+          <IconButton outline label="Auto-scroll" pressed={autoScroll} onClick={() => setAutoScroll((v) => !v)}>
+            <ArrowDownToLine size={18} strokeWidth={1.75} />
+          </IconButton>
+          {exportMenu}
+          <IconButton outline label="Clear all traffic" onClick={() => { clearTraffic(activeId); setExpandedRows(new Set()); }}>
+            <Trash2 size={18} strokeWidth={1.75} />
+          </IconButton>
+        </div>
+        {tab === "modbus" && (
+          <input
+            className="vt-input"
+            placeholder="Filter by function, address or data"
+            aria-label="Filter traffic entries"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+          />
+        )}
+        {exportMsg && (
+          <span style={{ fontSize: "var(--fs-sm)", color: exportMsg.failed ? "var(--danger)" : "var(--accent-text)" }} role={exportMsg.failed ? "alert" : "status"} aria-live="polite">{exportMsg.text}</span>
+        )}
+        {tab === "modbus" ? renderModbusPhone() : renderTcpPhone()}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>

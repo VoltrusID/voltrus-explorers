@@ -21,7 +21,7 @@ export function ConnectionTabs({ sessionCount, onAdd, onClose }: Props) {
   const runtime = useConnRuntime((s) => s.byId);
 
   return (
-    <div role="tablist" aria-label="Connections" className="vt-tabs" style={{ flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
+    <div role="tablist" aria-label="Connections" className="vt-tabs vt-tabs--conn" style={{ flexShrink: 0, background: "var(--card)", alignItems: "center" }}>
       {entries.split("\u0002").map((entry) => {
         const [id, label] = entry.split(SEP);
         const selected = id === activeId;

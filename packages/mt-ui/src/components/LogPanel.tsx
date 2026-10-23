@@ -149,7 +149,7 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
       overflow: "hidden",
     }}>
       <div className="vt-toolbar-row" style={{ background: "var(--card)" }}>
-        <span style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)", marginRight: "auto" }}>
+        <span className="vt-toolbar-row__title" style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: "var(--text)", marginRight: "auto" }}>
           Communication log
         </span>
         <Segmented

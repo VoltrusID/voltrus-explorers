@@ -33,8 +33,8 @@ if (!app) throw new Error("usage: bun marketing/screenshots/render.mjs <app> [--
 const sceneModule = await import(pathToFileURL(join(here, app, "scenes.mjs")).href);
 // --device=iphone|ipad renders the scene file's `iosScenes` at App Store size (iPhone 6.9" 1320x2868, iPad 13" 2064x2752).
 const DEVICES = {
-  iphone: { css: [390, 844], out: [1320, 2868], ua: "iPhone; CPU iPhone OS 18_0 like Mac OS X", cls: "phone" },
-  ipad: { css: [834, 1112], out: [2064, 2752], ua: "iPad; CPU OS 18_0 like Mac OS X", cls: "tablet" },
+  iphone: { css: [390, 844], out: [1320, 2868], ua: "iPhone; CPU iPhone OS 18_0 like Mac OS X", cls: "phone", inset: [54, 28] },
+  ipad: { css: [834, 1112], out: [2064, 2752], ua: "iPad; CPU OS 18_0 like Mac OS X", cls: "tablet", inset: [24, 20] },
 };
 const device = deviceArg ? DEVICES[deviceArg] : null;
 if (deviceArg && !device) throw new Error(`unknown device ${deviceArg}`);
@@ -66,6 +66,32 @@ const MAC_UA =
 const FONT_CSS = `:root { --font-sans: "Inter", system-ui, sans-serif !important; --font-mono: "JetBrains Mono", ui-monospace, monospace !important; }
   * { caret-color: transparent !important; }`;
 
+const STATUS_HTML = `
+  <span>9:41</span>
+  <span class="icons">
+    <svg width="18" height="12" viewBox="0 0 18 12" fill="#fff"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+    <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0"/><path d="M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#fff" stroke="none"/></svg>
+    <svg width="27" height="13" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="22" height="12" rx="3.5" fill="none" stroke="#fff" opacity=".45"/><rect x="2" y="2" width="19" height="9" rx="2.2" fill="#fff"/><rect x="24" y="4.5" width="2" height="4" rx="1" fill="#fff" opacity=".45"/></svg>
+  </span>`;
+
+/** The device's status bar over the page (its own safe-area inset keeps the app clear of it). */
+async function drawStatusBar(page, device) {
+  const phone = device.cls === "phone";
+  const top = device.inset[0];
+  await page.addStyleTag({
+    content: `#ios-status { position: fixed; top: 0; left: 0; right: 0; height: ${top}px; z-index: 2147483647; pointer-events: none;
+      display: flex; align-items: ${phone ? "center" : "flex-end"}; justify-content: space-between;
+      padding: ${phone ? "6px 34px 0 42px" : "0 22px 4px"}; color: #fff; font: 600 ${phone ? 17 : 14}px Inter, sans-serif; }
+      #ios-status .icons { display: flex; align-items: center; gap: 6px; }`,
+  });
+  await page.evaluate((html) => {
+    const el = document.createElement("div");
+    el.id = "ios-status";
+    el.innerHTML = html;
+    document.body.appendChild(el);
+  }, STATUS_HTML);
+}
+
 try {
   const list = only.length ? scenes.filter((s) => only.includes(s.id)) : scenes.filter((s) => !s.review);
   for (const scene of list) {
@@ -77,12 +103,16 @@ try {
       await page.setUserAgent(MAC_UA);
       await page.setViewport({ width: Math.round(1180 / uiScale), height: Math.round(740 / uiScale), deviceScaleFactor: 2 * uiScale });
     }
-    if (bare) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
+    // The iOS apps follow the system scheme on a phone; their store screenshots are dark.
+    if (bare || device) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
+    // Chromium reports 0 for env(safe-area-inset-*); give the page what the device has.
+    if (device) await (await page.createCDPSession()).send("Emulation.setSafeAreaInsetsOverride", { insets: { top: device.inset[0], bottom: device.inset[1], left: 0, right: 0 } });
     await page.evaluateOnNewDocument(mock);
     if (scene.init) await page.evaluateOnNewDocument(scene.init);
     page.on("pageerror", (e) => console.error(`[${scene.id}] page error:`, e.message));
     await page.goto(`http://localhost:${PORT}/${scene.hash ?? ""}`, { waitUntil: "networkidle0" });
     await page.addStyleTag({ content: FONT_CSS });
+    if (device) await drawStatusBar(page, device);
     await scene.setup(page, deviceArg);
     await new Promise((r) => setTimeout(r, scene.settleMs ?? 600));
     const shot = await page.screenshot({ type: "png" });

@@ -11,11 +11,16 @@ import {
   EmptyState,
   Field,
   IconButton,
+  ListGroup,
+  ListRow,
+  PageTitle,
+  PhoneTabBar,
   Section,
   Segmented,
   StatusBar,
   Tabs,
   Toolbar,
+  usePhoneShell,
   ProBadge,
   ProAboutRow,
   ConnectButton,
@@ -24,13 +29,12 @@ import {
   ValueEditor,
   useProtocol,
 } from "@mactools/ui";
-import type { LogEntry } from "@mactools/ui";
+import type { LogEntry, PhoneTabItem } from "@mactools/ui";
 import type { BacnetConfig, BacnetObject, BacnetValue, BacnetDiscoveredDevice, SimPoint, SimPointDef, SimInfo, DeviceTemplate } from "./types";
 import { bacnetValueToNumber } from "./types";
 import { WRITE_KIND_TYPES, parseWriteValue, writeKindFor, type WriteKind } from "./writeValue";
 import { ObjectBrowser } from "./components/ObjectBrowser";
 import { DevicePanel } from "./components/DevicePanel";
-import { MobileTabBar, type PhoneTab, type PhoneTabItem } from "./components/MobileTabBar";
 import { AlarmPanel } from "./components/AlarmPanel";
 import TrendPanel from "./components/TrendPanel";
 import { trendKey, useBacnetTrend } from "./hooks/useBacnetTrend";
@@ -38,6 +42,8 @@ import { useConnectSync } from "./hooks/useConnectSync";
 import { TrendLogDialog } from "./components/TrendLogDialog";
 import { ScheduleDialog } from "./components/ScheduleDialog";
 import { WatchPanel, type WatchItem } from "./components/WatchPanel";
+
+type PhoneTab = "devices" | "objects" | "trend" | "alarms" | "log";
 
 /** Free opens one device at a time; several at once is Pro. */
 const FREE_DEVICE_LIMIT = 1;
@@ -200,7 +206,20 @@ function App() {
   // Phone layout (< 768px): bottom tabs. Wider touch screens (iPad) keep the two-pane layout with touch-size controls.
   const [phoneTab, setPhoneTab] = useState<PhoneTab>("devices");
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
-  const isMobile = viewportWidth < 768;
+  const isMobile = usePhoneShell();
+  // On a phone the page follows the system (iOS draws the status bar from it) and the chart reads the theme from <html>.
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() => (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+  useEffect(() => {
+    const system = window.matchMedia("(prefers-color-scheme: light)");
+    const follow = () => setSystemTheme(system.matches ? "light" : "dark");
+    system.addEventListener("change", follow);
+    return () => system.removeEventListener("change", follow);
+  }, []);
+  useEffect(() => {
+    if (!isMobile) return;
+    document.documentElement.setAttribute("data-theme", systemTheme);
+    return () => document.documentElement.removeAttribute("data-theme");
+  }, [isMobile, systemTheme]);
   const isTouch = useRef(window.matchMedia("(pointer: coarse)").matches).current;
   const [alarmsOpened, setAlarmsOpened] = useState(false);
   const [platform, setPlatform] = useState("");
@@ -606,6 +625,27 @@ function App() {
       </Section>
       {connected && (
         <Section title="Open devices" meta={pro ? undefined : <ProBadge />}>
+          {isMobile ? (
+            <ListGroup className="vm-group--flat">
+              {devices.map((d) => {
+                const key = deviceKeyOf(d);
+                return (
+                  <ListRow
+                    key={key}
+                    title={<span className="mono">{d.ip}:{d.port}</span>}
+                    subtitle={`Device ${d.device_id}`}
+                    selected={key === activeKey}
+                    onClick={() => void activateDevice(key)}
+                    trailing={
+                      <IconButton label={`Close ${d.ip}:${d.port}`} onClick={(e) => { e.stopPropagation(); void closeDevice(key); }}>
+                        <X size={18} strokeWidth={1.75} />
+                      </IconButton>
+                    }
+                  />
+                );
+              })}
+            </ListGroup>
+          ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {devices.map((d) => {
               const key = deviceKeyOf(d);
@@ -642,6 +682,7 @@ function App() {
               );
             })}
           </div>
+          )}
           {!pro && (
             <span className="vt-hint">One device at a time. Connecting a second device needs Pro.</span>
           )}
@@ -674,7 +715,7 @@ function App() {
         {simTemplate && (
           <>
             <div className="vt-field-row">
-              <Field label="Device ID">
+              <Field stacked label="Device ID">
                 <input
                   className="vt-input"
                   type="number"
@@ -683,7 +724,7 @@ function App() {
                   onChange={(e) => setSimDeviceId(Number(e.target.value))}
                 />
               </Field>
-              <Field label="UDP port">
+              <Field stacked label="UDP port">
                 <input
                   className="vt-input"
                   type="number"
@@ -796,7 +837,7 @@ function App() {
             onPollMsChange={trend.setPollMs}
             onSourceChange={trend.setSource}
             notices={Object.fromEntries(trend.errors)}
-            theme="dark"
+            theme={isMobile ? systemTheme : "dark"}
           />
         ) : (
           <EmptyState
@@ -841,12 +882,13 @@ function App() {
   );
 
   // ── Phone pages (bottom tabs) ──
-  const phoneTabs: PhoneTabItem[] = [
-    { id: "devices", label: "Devices", icon: <Radar size={20} strokeWidth={1.75} /> },
-    { id: "objects", label: "Objects", icon: <ListTree size={20} strokeWidth={1.75} /> },
-    { id: "trend", label: "Trend", icon: <LineChart size={20} strokeWidth={1.75} />, badge: trend.series.length },
-    { id: "alarms", label: "Alarms", icon: <Bell size={20} strokeWidth={1.75} /> },
-    { id: "log", label: "Log", icon: <ScrollText size={20} strokeWidth={1.75} /> },
+  const ICON = { size: 22, strokeWidth: 2 } as const;
+  const phoneTabs: PhoneTabItem<PhoneTab>[] = [
+    { id: "devices", label: "Devices", icon: <Radar {...ICON} /> },
+    { id: "objects", label: "Objects", icon: <ListTree {...ICON} /> },
+    { id: "trend", label: "Trend", icon: <LineChart {...ICON} />, badge: trend.series.length },
+    { id: "alarms", label: "Alarms", icon: <Bell {...ICON} /> },
+    { id: "log", label: "Log", icon: <ScrollText {...ICON} /> },
   ];
 
   const selectPhoneTab = (tab: PhoneTab) => {
@@ -859,7 +901,7 @@ function App() {
 
   const needsConnection = (what: string) => (
     <EmptyState
-      icon={<Radar size={20} strokeWidth={1.75} />}
+      icon={<Radar size={22} strokeWidth={1.75} />}
       title="Not connected"
       description={`Connect to a BACnet device to ${what}.`}
       action={
@@ -871,19 +913,23 @@ function App() {
   );
 
   // Every page stays mounted (hidden when inactive) so a browsed object list, loaded alarms and the trend survive tab switches.
-  const phonePage = (tab: PhoneTab, children: React.ReactNode, className = "bx-page") => (
-    <div className={className} style={phoneTab === tab ? undefined : { display: "none" }}>
-      {children}
+  // `fill` pages scroll inside (lists, charts); the others scroll as a whole.
+  const phonePage = (tab: PhoneTab, title: string, caption: string | undefined, children: React.ReactNode, fill = true) => (
+    <div className={fill ? "vm-body vm-body--fill" : "vm-body"} style={phoneTab === tab ? undefined : { display: "none" }}>
+      <PageTitle title={title} caption={caption} />
+      {fill ? <div className="vm-fill">{children}</div> : children}
     </div>
   );
 
   const phoneLayout = (
-    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {phonePage("devices", sidebarContent, "bx-page vt-sidebar")}
+    <>
+      {phonePage("devices", "Devices", connected && connectedDevice ? `Device ${connectedDevice.device_id}` : undefined, sidebarContent, false)}
       {phonePage(
         "objects",
+        "Objects",
+        connected ? `${devices.length} open ${devices.length === 1 ? "device" : "devices"}` : undefined,
         connected ? (
-          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 12 }}>
             <Segmented
               label="Objects view"
               block
@@ -909,6 +955,8 @@ function App() {
       )}
       {phonePage(
         "trend",
+        "Trend",
+        trend.hasSeries ? `${trend.series.length} live` : undefined,
         !connected ? (
           needsConnection("trend its points")
         ) : trend.hasSeries ? (
@@ -921,11 +969,11 @@ function App() {
             onPollMsChange={trend.setPollMs}
             onSourceChange={trend.setSource}
             notices={Object.fromEntries(trend.errors)}
-            theme="dark"
+            theme={isMobile ? systemTheme : "dark"}
           />
         ) : (
           <EmptyState
-            icon={<LineChart size={20} strokeWidth={1.75} />}
+            icon={<LineChart size={22} strokeWidth={1.75} />}
             title="No trend series"
             description="On the Objects tab, tap the chart icon next to an object to add it here."
           />
@@ -933,27 +981,21 @@ function App() {
       )}
       {phonePage(
         "alarms",
+        "Alarms",
+        undefined,
         connected && alarmsOpened ? (
-          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex", flexDirection: "column" }}>
-            <AlarmPanel key={activeKey ?? ""} connected={connected} compact />
-          </div>
+          <AlarmPanel key={activeKey ?? ""} connected={connected} compact />
         ) : (
           needsConnection("read its alarms")
         ),
       )}
-      {phonePage(
-        "log",
-        <div style={{ flex: 1, minHeight: 0, padding: 8, display: "flex", flexDirection: "column" }}>
-          <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
-        </div>,
-      )}
-      <StatusBar connected={connected} error={protocol.error} device={connectedDevice} />
-      <MobileTabBar tabs={phoneTabs} active={phoneTab} onChange={selectPhoneTab} />
-    </div>
+      {phonePage("log", "Log", "Every request and reply", <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />)}
+      <PhoneTabBar tabs={phoneTabs} active={phoneTab} onChange={selectPhoneTab} />
+    </>
   );
 
   return (
-    <div className={isMobile ? "bx-root bx-phone" : "bx-root"} style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+    <div className={isMobile ? "vm-app" : "bx-root"} style={isMobile ? undefined : { display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
       <Toolbar
         title="BACnet Explorer"
         icon={appIcon}
@@ -962,6 +1004,7 @@ function App() {
         connected={connected}
         onDisconnect={handleDisconnect}
         onInfo={() => setShowInfo(true)}
+        error={protocol.error}
       />
 
       {isMobile ? (
@@ -1084,33 +1127,31 @@ function App() {
           />
         )}
         {discoveredDevices.length > 0 && isMobile && (
-          <div style={{ overflowY: "auto", margin: "0 -18px", maxHeight: "52vh" }}>
-            {discoveredDevices.map((d) => (
-              <div
-                key={d.device_instance}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", borderTop: "1px solid var(--border)" }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>Device {d.device_instance}</div>
-                  <div className="mono" style={{ fontSize: "var(--fs-sm)" }}>{d.ip}:{d.port}</div>
-                  <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {d.vendor_name ?? "—"}
-                  </div>
-                </div>
-                <Button
-                  variant="primary"
-                  loading={connectingDevice === d.device_instance}
-                  onClick={async () => {
-                    setConnectingDevice(d.device_instance);
-                    const ok = await handleConnect({ ip: d.ip, port: d.port, deviceId: d.device_instance });
-                    setConnectingDevice(null);
-                    if (ok) setShowDiscovery(false);
-                  }}
-                >
-                  {connectingDevice === d.device_instance ? "Connecting…" : "Connect"}
-                </Button>
-              </div>
-            ))}
+          <div style={{ overflowY: "auto", maxHeight: "52vh" }}>
+            <ListGroup>
+              {discoveredDevices.map((d) => (
+                <ListRow
+                  key={d.device_instance}
+                  title={`Device ${d.device_instance}`}
+                  subtitle={`${d.ip}:${d.port}${d.vendor_name ? ` · ${d.vendor_name}` : ""}`}
+                  trailing={
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={connectingDevice === d.device_instance}
+                      onClick={async () => {
+                        setConnectingDevice(d.device_instance);
+                        const ok = await handleConnect({ ip: d.ip, port: d.port, deviceId: d.device_instance });
+                        setConnectingDevice(null);
+                        if (ok) setShowDiscovery(false);
+                      }}
+                    >
+                      {connectingDevice === d.device_instance ? "Connecting…" : "Connect"}
+                    </Button>
+                  }
+                />
+              ))}
+            </ListGroup>
           </div>
         )}
         {discoveredDevices.length > 0 && !isMobile && (

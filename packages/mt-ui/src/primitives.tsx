@@ -96,15 +96,17 @@ export interface FieldProps {
   htmlFor?: string;
   hint?: ReactNode;
   error?: ReactNode;
+  /** On phones a field in a grouped section is a row (label left, value right); this keeps the label above the control. */
+  stacked?: boolean;
   className?: string;
   children: ReactNode | ((id: string) => ReactNode);
 }
 
-export function Field({ label, htmlFor, hint, error, className, children }: FieldProps) {
+export function Field({ label, htmlFor, hint, error, stacked, className, children }: FieldProps) {
   const auto = useId();
   const id = htmlFor ?? auto;
   return (
-    <div className={cx("vt-field", className)}>
+    <div className={cx("vt-field", stacked && "vt-field--stacked", className)}>
       <label className="vt-label" htmlFor={id}>
         {label}
       </label>
@@ -271,7 +273,7 @@ export function Section({ title, meta, actions, className, children, ...rest }: 
           {actions && <div style={{ display: "flex", alignItems: "center", gap: 4 }}>{actions}</div>}
         </div>
       )}
-      {children}
+      <div className="vt-section__body">{children}</div>
     </section>
   );
 }
