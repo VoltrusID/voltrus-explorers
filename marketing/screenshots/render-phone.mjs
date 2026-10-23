@@ -384,7 +384,7 @@ async function modbus(scheme) {
     await setStore(page, `({ mobileTab: "template" })`);
     await sleep(300);
     await shot(page, scheme, "22-slave-template");
-    await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
+    await pickOption(page, "Select device…", "Schneider Electric PM5560");
     await sleep(500);
     await clickSel(page, "button", "Simulate", { exact: true });
     await sleep(2500);
@@ -497,7 +497,7 @@ async function bacnet(scheme) {
   if (wants("sim")) {
     // The simulator: starting it opens the control panel as a full-screen sheet (iOS has a single window).
     page = await open(scheme, init);
-    await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
+    await pickOption(page, "Select template…", "AHU-1 (Air Handling Unit)");
     await sleep(300);
     await shot(page, scheme, "20-simulator-setup");
     await clickSel(page, ".vm-body button", "Start simulation");
@@ -700,7 +700,7 @@ async function s7(scheme) {
     await sheetRow(page, "Simulator");
     await sleep(500);
     await shot(page, scheme, "63-sim-setup");
-    await pickOption(page, "Choose", "process", "S7-300 Process Control (DB1)");
+    await pickOption(page, "Choose", "S7-300 Process Control (DB1)");
     await shot(page, scheme, "64-sim-template");
     await press(page, "Start server");
     await sleep(1500);

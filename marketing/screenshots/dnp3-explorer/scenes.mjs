@@ -5,6 +5,8 @@
 //   outstation_* (read_points -> [analogs, binaries, counters]), sim_* (sim_read_values -> f64[]), store_status.
 // The outstation is a 13.8 kV feeder RTU: line voltages, phase currents, frequency, MW, breaker status, kWh counter.
 
+import { pickOption } from "../pick.mjs";
+
 function installMock() {
   const T0 = Date.now();
   const callbacks = new Map();
@@ -225,11 +227,7 @@ async function scrollSidebarTo(page, title) {
 }
 
 async function connect(page) {
-  await page.evaluate(() => {
-    const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "New profile"));
-    s.setAttribute("data-profile-select", "1");
-  });
-  await page.select("[data-profile-select]", "Feeder 12 RTU");
+  await pickOption(page, "New profile", "Feeder 12 RTU");
   await sleep(300);
   await clickButton(page, "Connect");
   await sleep(2500);
@@ -287,10 +285,6 @@ export const scenes = [
     sub: "Run a built-in outstation from a feeder template with live simulated values and an event buffer.",
     init,
     async setup(page) {
-      await page.evaluate(() => {
-        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "Outstation"));
-        s.setAttribute("data-mode", "1");
-      }).catch(() => {});
       const clicked = await page.evaluate(() => {
         const b = [...document.querySelectorAll("button, [role=tab], [role=radio]")].find((el) => el.textContent.trim().startsWith("Outstation"));
         if (b) { b.click(); return true; }
@@ -300,11 +294,7 @@ export const scenes = [
       await sleep(500);
       await clickButton(page, "Start server");
       await sleep(600);
-      await page.evaluate(() => {
-        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.value === "feeder"));
-        s.setAttribute("data-template", "1");
-      });
-      await page.select("[data-template]", "feeder");
+      await pickOption(page, "Select device", "Feeder-1 (13.8kV Distribution)");
       await sleep(600);
       await clickButton(page, "Simulate");
       for (let i = 0; i < 6; i++) {

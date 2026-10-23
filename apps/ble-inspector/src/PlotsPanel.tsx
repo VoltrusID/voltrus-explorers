@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { X } from "lucide-react";
-import { Badge, EmptyState, IconButton, saveTextFile } from "@mactools/ui";
+import { Badge, EmptyState, IconButton, SheetSelect, saveTextFile } from "@mactools/ui";
 import ChartToolbar, { NumInput, useClock, type WindowSec } from "./ChartToolbar";
 import LineChart, { SERIES_COLORS, type ChartSeries } from "./LineChart";
-import { NUMERIC_FORMATS, describeValue, hexToBytes, isFormatId, plotValue, toCsv, type FormatId } from "./decode";
+import { NUMERIC_FORMATS, NUMERIC_FORMAT_OPTIONS, describeValue, hexToBytes, plotValue, toCsv } from "./decode";
 import { defaultDecode, gattName, shortUuid } from "./gatt";
 import { notifyStore, type DecodePref } from "./store";
 
@@ -142,21 +142,15 @@ export default function PlotsPanel({ subscribed, deviceName, formats, onFormat, 
                   {deviceName(deviceId)} · {notifyStore.get(s.id).length} samples
                 </div>
               </div>
-              <select
-                className="vt-select vt-select--sm"
+              <SheetSelect
+                size="sm"
                 style={{ width: 120 }}
                 aria-label={`Number format for ${s.name}`}
+                sheetTitle="Number format"
                 value={pref.format}
-                onChange={(e) => {
-                  if (isFormatId(e.target.value)) onFormat(charUuid, { ...pref, format: e.target.value as FormatId });
-                }}
-              >
-                {NUMERIC_FORMATS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
+                options={NUMERIC_FORMAT_OPTIONS}
+                onChange={(v) => onFormat(charUuid, { ...pref, format: v })}
+              />
               <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>at byte</span>
               <NumInput
                 label={`Byte offset for ${s.name}`}

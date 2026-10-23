@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Send, Settings2 } from "lucide-react";
-import { Button, Dialog, Field, Tabs, Callout, HexViewer, ProBadge, useProStatus } from "@mactools/ui";
+import { Button, Dialog, Field, Tabs, Callout, HexViewer, ProBadge, SheetSelect, useProStatus } from "@mactools/ui";
 import { DecoderEditor } from "./DecoderEditor";
 import { decodeStruct, loadDecoders, type Decoder } from "./decoders";
 import { CipTree } from "./CipTree";
@@ -210,29 +210,26 @@ export function CipBrowser({ onClose, onLog, eds }: Props) {
               <Button disabled={busy} onClick={() => exec(0x10, true)}>Set Attr <ProBadge /></Button>
               <Button loading={instBusy} onClick={listInstances}>List Inst</Button>
               <span style={{ flex: 1 }} />
-              <select
-                className="vt-select"
+              <SheetSelect
                 style={{ height: 28, fontSize: 12 }}
                 value={activeDecoderId}
-                onChange={(e) => setActiveDecoderId(e.target.value)}
+                onChange={(v) => setActiveDecoderId(v)}
                 aria-label="Response decoder"
-              >
-                <option value="">No decoder</option>
-                {decoders.map((d) => <option key={d.id} value={d.id}>{d.name || "(unnamed)"}</option>)}
-              </select>
+                sheetTitle="Response decoder"
+                options={[{ value: "", label: "No decoder" }, ...decoders.map((d) => ({ value: d.id, label: d.name || "(unnamed)" }))]}
+              />
               <Button icon={<Settings2 size={14} />} onClick={() => { if (requirePro("Custom response decoders")) setShowEditor(true); }}>Decoders <ProBadge /></Button>
             </div>
 
             {instances && instances.length > 0 && (
               <Field label={`Instances (${instances.length})`}>
-                <select
-                  className="vt-select"
+                <SheetSelect
+                  sheetTitle="Load instance"
+                  placeholder="Load instance"
                   value=""
-                  onChange={(e) => { const idx = Number(e.target.value); const it = instances[idx]; if (it) setResult(it.data); }}
-                >
-                  <option value="" disabled>Load instance</option>
-                  {instances.map((it, i) => <option key={i} value={i}>Instance {it.instance} ({it.data.length}B)</option>)}
-                </select>
+                  options={instances.map((it, i) => ({ value: String(i), label: `Instance ${it.instance} (${it.data.length}B)` }))}
+                  onChange={(v) => { const it = instances[Number(v)]; if (it) setResult(it.data); }}
+                />
               </Field>
             )}
 

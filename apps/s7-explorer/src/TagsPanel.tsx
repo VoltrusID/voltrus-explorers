@@ -1,9 +1,11 @@
 import { Download, FileDown, FileUp, Pencil, Trash2 } from "lucide-react";
-import { Button, Dialog, Field, IconButton, ProBadge, Section } from "@mactools/ui";
+import { Button, Dialog, Field, IconButton, ProBadge, Section, SheetSelect } from "@mactools/ui";
 import type { Device } from "./types";
 import { DATA_TYPES } from "./types";
 import { FREE_TAG_LIMIT } from "./helpers";
 import { useTagsEditor } from "./useTagsEditor";
+
+const DATA_TYPE_OPTIONS = DATA_TYPES.map((dt) => ({ value: dt, label: dt }));
 
 interface Props {
   device: Device;
@@ -54,9 +56,7 @@ export default function TagsPanel({ device, onLoadSim }: Props) {
           </Field>
           <Field label="Type">
             {(id) => (
-              <select id={id} className="vt-select" value={newType} onChange={(e) => setNewType(e.target.value)}>
-                {DATA_TYPES.map((dt) => <option key={dt} value={dt}>{dt}</option>)}
-              </select>
+              <SheetSelect id={id} sheetTitle="Type" value={newType} options={DATA_TYPE_OPTIONS} onChange={(v) => setNewType(v)} />
             )}
           </Field>
           {editingTagId ? (

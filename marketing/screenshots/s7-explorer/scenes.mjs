@@ -5,6 +5,8 @@
 // in tag order, get_cpu_info / get_plc_mode / get_diag_buffer, list_blocks -> { block_type, block_number }[],
 // sim_start -> { port, point_count }. The PLC is a filling line controller with a pump data block (DB10).
 
+import { pickOption } from "../pick.mjs";
+
 function installMock() {
   const T0 = Date.now();
   const callbacks = new Map();
@@ -325,11 +327,7 @@ export const scenes = [
     ...common,
     async setup(page) {
       await prepare(page, 1.0);
-      await page.evaluate(() => {
-        const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === "Select…"));
-        s.setAttribute("data-template-select", "1");
-      });
-      await page.select("[data-template-select]", "process");
+      await pickOption(page, "Select…", "S7-300 Process Control (DB1)");
       await sleep(300);
       await layout(page, 2.1);
       await clickButton(page, "Start server");

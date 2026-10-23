@@ -37,10 +37,12 @@ export function ConnectionForm({
   for (const f of fields) {
     defaults[f.name] = f.default ?? (f.type === "number" ? 0 : "");
   }
-  const [values, setValues] = useState(externalValues ?? defaults);
+  // Fields the caller does not supply (an empty `initialValues`, a partial profile) show their default.
+  const [values, setValues] = useState({ ...defaults, ...externalValues });
 
   useEffect(() => {
-    if (externalValues) setValues(externalValues);
+    if (externalValues) setValues({ ...defaults, ...externalValues });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalValues]);
 
   const update = (next: Record<string, string | number>) => {

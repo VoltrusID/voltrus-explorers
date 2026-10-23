@@ -1,7 +1,7 @@
 import { RotateCcw, RefreshCw, Play, Square } from "lucide-react";
 import type { PortInfo } from "../types";
 import { BAUD_PRESETS, PARITY_OPTIONS, DATA_BITS_OPTIONS, STOP_BITS_OPTIONS, TEMPLATES } from "../constants";
-import { Button, Field, IconButton, Section } from "@mactools/ui";
+import { Button, Field, IconButton, Section, SheetSelect } from "@mactools/ui";
 import { ConnectionHealth } from "./ConnectionHealth";
 import { ProfilesSection } from "./ProfilesSection";
 import type { PortProfile } from "../profiles";
@@ -43,6 +43,11 @@ interface MonitorSidebarProps {
   applyProfile: (p: PortProfile) => void;
 }
 
+const BAUD_SELECT = [...BAUD_PRESETS.map((b) => ({ value: b, label: String(b) })), { value: 0, label: "Custom..." }];
+const PARITY_SELECT = PARITY_OPTIONS.map((p) => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) }));
+const DATA_BITS_SELECT = DATA_BITS_OPTIONS.map((d) => ({ value: d, label: String(d) }));
+const STOP_BITS_SELECT = STOP_BITS_OPTIONS.map((s) => ({ value: s, label: String(s) }));
+
 export function MonitorSidebar({
   connected,
   connecting,
@@ -80,23 +85,20 @@ export function MonitorSidebar({
         <Field label="Port">
           {(id) => (
             <div style={{ display: "flex", gap: 6 }}>
-              <select
+              <SheetSelect
                 id={id}
-                className="vt-select"
+                sheetTitle="Port"
                 value={portName}
-                onChange={(e) => setPortName(e.target.value)}
+                options={ports.map((p) => ({
+                  value: p.port_name,
+                  label: p.port_name,
+                  hint: [p.product, p.manufacturer, busyPorts.includes(p.port_name) ? "in use" : ""].filter(Boolean).join(" - ") || undefined,
+                  disabled: busyPorts.includes(p.port_name),
+                }))}
+                placeholder="Select port..."
+                onChange={(v) => setPortName(v)}
                 disabled={connected}
-              >
-                <option value="">Select port...</option>
-                {ports.map((p) => (
-                  <option key={p.port_name} value={p.port_name} disabled={busyPorts.includes(p.port_name)}>
-                    {p.port_name}
-                    {p.product ? ` (${p.product})` : ""}
-                    {p.manufacturer ? ` - ${p.manufacturer}` : ""}
-                    {busyPorts.includes(p.port_name) ? " (in use)" : ""}
-                  </option>
-                ))}
-              </select>
+              />
               <IconButton
                 label="Refresh ports"
                 onClick={() => refreshPorts()}
@@ -135,37 +137,27 @@ export function MonitorSidebar({
                   </IconButton>
                 </div>
               ) : (
-                <select
+                <SheetSelect
                   id={id}
-                  className="vt-select"
+                  sheetTitle="Baud rate"
                   value={baudRate}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setBaudRate(v === "custom" ? 0 : Number(v));
-                  }}
+                  options={BAUD_SELECT}
+                  onChange={(v) => setBaudRate(v)}
                   disabled={connected}
-                >
-                  {BAUD_PRESETS.map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                  <option value="custom">Custom...</option>
-                </select>
+                />
               )
             }
           </Field>
           <Field label="Parity">
             {(id) => (
-              <select
+              <SheetSelect
                 id={id}
-                className="vt-select"
+                sheetTitle="Parity"
                 value={parity}
-                onChange={(e) => setParity(e.target.value)}
+                options={PARITY_SELECT}
+                onChange={(v) => setParity(v)}
                 disabled={connected}
-              >
-                {PARITY_OPTIONS.map((p) => (
-                  <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                ))}
-              </select>
+              />
             )}
           </Field>
         </div>
@@ -173,32 +165,26 @@ export function MonitorSidebar({
         <div className="vt-field-row">
           <Field label="Data bits">
             {(id) => (
-              <select
+              <SheetSelect
                 id={id}
-                className="vt-select"
+                sheetTitle="Data bits"
                 value={dataBits}
-                onChange={(e) => setDataBits(Number(e.target.value))}
+                options={DATA_BITS_SELECT}
+                onChange={(v) => setDataBits(v)}
                 disabled={connected}
-              >
-                {DATA_BITS_OPTIONS.map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
+              />
             )}
           </Field>
           <Field label="Stop bits">
             {(id) => (
-              <select
+              <SheetSelect
                 id={id}
-                className="vt-select"
+                sheetTitle="Stop bits"
                 value={stopBits}
-                onChange={(e) => setStopBits(Number(e.target.value))}
+                options={STOP_BITS_SELECT}
+                onChange={(v) => setStopBits(v)}
                 disabled={connected}
-              >
-                {STOP_BITS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
+              />
             )}
           </Field>
         </div>
@@ -246,21 +232,17 @@ export function MonitorSidebar({
       <Section title="Frame simulation">
         <Field label="Template">
           {(id) => (
-            <select
+            <SheetSelect
               id={id}
-              className="vt-select"
+              sheetTitle="Template"
               value={simTemplate ?? ""}
-              onChange={(e) => {
-                const val = e.target.value || null;
-                setSimTemplate(val);
-                if (simRunning && !val) setSimRunning(false);
+              options={Object.entries(TEMPLATES).map(([key, tmpl]) => ({ value: key, label: tmpl.name }))}
+              placeholder="Select template..."
+              onChange={(v) => {
+                setSimTemplate(v || null);
+                if (simRunning && !v) setSimRunning(false);
               }}
-            >
-              <option value="">Select template...</option>
-              {Object.entries(TEMPLATES).map(([key, tmpl]) => (
-                <option key={key} value={key}>{tmpl.name}</option>
-              ))}
-            </select>
+            />
           )}
         </Field>
         {simTemplate && (

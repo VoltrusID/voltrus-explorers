@@ -4,10 +4,10 @@ import { filterSheetOptions, groupSheetOptions, isSearchable, SEARCH_THRESHOLD, 
 const opts = (n: number): SheetOption<number>[] => Array.from({ length: n }, (_, i) => ({ value: i, label: `Item ${i}` }));
 
 describe("SheetSelect options", () => {
-  it("shows a search field above ten choices unless forced", () => {
-    expect(SEARCH_THRESHOLD).toBe(10);
-    expect(isSearchable(10, undefined)).toBe(false);
-    expect(isSearchable(11, undefined)).toBe(true);
+  it("shows a search field above five choices unless forced", () => {
+    expect(SEARCH_THRESHOLD).toBe(5);
+    expect(isSearchable(5, undefined)).toBe(false);
+    expect(isSearchable(6, undefined)).toBe(true);
     expect(isSearchable(3, true)).toBe(true);
     expect(isSearchable(40, false)).toBe(false);
   });

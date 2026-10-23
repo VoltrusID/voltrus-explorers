@@ -26,6 +26,14 @@ import {
   type RegisterMapResult,
 } from "./assistantLogic";
 
+type DiagnoseKind = "exception" | "timeout" | "other";
+
+const KIND_OPTIONS: { value: DiagnoseKind; label: string }[] = [
+  { value: "exception", label: "The device answered with an error" },
+  { value: "timeout", label: "No answer (timeout)" },
+  { value: "other", label: "Something else" },
+];
+
 export interface AssistantPanelProps {
   protocol: AssistantProtocol;
   /** Which tasks this app offers, in tab order. */
@@ -401,7 +409,7 @@ function ManualView({ onAddBlocks }: AssistantPanelProps) {
 
 function DiagnoseView({ protocol, getContext }: AssistantPanelProps) {
   const ctx = getContext?.();
-  const [kind, setKind] = useState<"exception" | "timeout" | "other">(ctx?.error?.kind ?? "timeout");
+  const [kind, setKind] = useState<DiagnoseKind>(ctx?.error?.kind ?? "timeout");
   const [code, setCode] = useState(ctx?.error?.code !== undefined ? String(ctx.error.code) : "");
   const [message, setMessage] = useState(ctx?.error?.message ?? "");
   const t = useTask<Diagnosis>("diagnose");
@@ -421,11 +429,13 @@ function DiagnoseView({ protocol, getContext }: AssistantPanelProps) {
       <div style={dim}>Explains an error or a timeout using your current connection settings and the last log lines.</div>
       <Field label="What happened">
         {(id) => (
-          <select id={id} className="vt-select" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-            <option value="exception">The device answered with an error</option>
-            <option value="timeout">No answer (timeout)</option>
-            <option value="other">Something else</option>
-          </select>
+          <SheetSelect
+            id={id}
+            sheetTitle="What happened"
+            value={kind}
+            options={KIND_OPTIONS}
+            onChange={setKind}
+          />
         )}
       </Field>
       {kind === "exception" && (

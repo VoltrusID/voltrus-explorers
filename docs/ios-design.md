@@ -44,10 +44,12 @@ JoyoFit (`~/Documents/JoyoDigitama/watch-fit`, Expo / React Native) is the refer
 ## Pickers: `SheetSelect`
 
 Every list or select on a phone opens as a bottom sheet (`packages/mt-ui/src/sheetSelect.tsx`): the trigger is a button that looks
-like the field, the sheet has a title, a search field when there are more than ten choices (`SEARCH_THRESHOLD`), 56px rows with
+like the field, the sheet has a title, a search field when there are more than five choices (`SEARCH_THRESHOLD`), 56px rows with
 a checkmark on the current one, optional group headers, hints and a footer action, and it closes on a tap outside, the close
-button or a swipe down on its header (`Dialog` handles the swipe for every sheet). On macOS and iPad `SheetSelect` renders the
-same native `<select>` as before, so the desktop DOM is unchanged. Used for: profiles, device templates, update speed, register
+button or a swipe down on its header (`Dialog` handles the swipe for every sheet). On macOS and iPad `SheetSelect` renders a
+shadcn/ui-style popover instead (`desktopSelect.tsx`, Radix): a `Select` for up to five choices (type to jump to one) and a
+searchable `Combobox` above that or whenever there is a footer action. The same file family holds `Popover` and `DropdownMenu`
+(`popover.tsx`, `dropdownMenu.tsx`), which replace every hand-rolled menu; styles live in `overlay.css`. Used for: profiles, device templates, update speed, register
 type and area, serial settings, bus-scan area, the write dialog's data type, BACnet simulation templates, the Connect share
 target, the connection picker, the read-block picker and (phone only) value format and word order, which are segmented controls on
 the desktop.

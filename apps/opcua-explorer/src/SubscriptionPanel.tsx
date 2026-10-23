@@ -17,8 +17,13 @@ interface NotificationValue {
 
 type Dir = "tx" | "rx" | "info" | "error";
 
-const TRIGGERS = ["Status", "StatusValue", "StatusValueTimestamp"];
-const MODES = ["Reporting", "Sampling", "Disabled"];
+const TRIGGER_OPTIONS = ["Status", "StatusValue", "StatusValueTimestamp"].map((t) => ({ value: t, label: t }));
+const MODE_OPTIONS = ["Reporting", "Sampling", "Disabled"].map((m) => ({ value: m, label: m }));
+const DEADBAND_OPTIONS = [
+  { value: 0, label: "None (0)" },
+  { value: 1, label: "Absolute (1)" },
+  { value: 2, label: "Percent (2)" },
+];
 const COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
 
 const CAP = 500;
@@ -272,25 +277,17 @@ export function SubscriptionPanel({
         </Field>
         <Field label="Monitoring mode">
           {(id) => (
-            <select id={id} className="vt-select vt-select--sm" disabled={running} value={mode} onChange={(e) => setMode(e.target.value)}>
-              {MODES.map((m) => <option key={m}>{m}</option>)}
-            </select>
+            <SheetSelect id={id} size="sm" sheetTitle="Monitoring mode" disabled={running} value={mode} options={MODE_OPTIONS} onChange={setMode} />
           )}
         </Field>
         <Field label="Data change trigger">
           {(id) => (
-            <select id={id} className="vt-select vt-select--sm" disabled={running} value={trigger} onChange={(e) => setTrigger(e.target.value)}>
-              {TRIGGERS.map((t) => <option key={t}>{t}</option>)}
-            </select>
+            <SheetSelect id={id} size="sm" sheetTitle="Data change trigger" disabled={running} value={trigger} options={TRIGGER_OPTIONS} onChange={setTrigger} />
           )}
         </Field>
         <Field label="Deadband type">
           {(id) => (
-            <select id={id} className="vt-select vt-select--sm" disabled={running} value={deadbandType} onChange={(e) => setDeadbandType(Number(e.target.value))}>
-              <option value={0}>None (0)</option>
-              <option value={1}>Absolute (1)</option>
-              <option value={2}>Percent (2)</option>
-            </select>
+            <SheetSelect id={id} size="sm" sheetTitle="Deadband type" disabled={running} value={deadbandType} options={DEADBAND_OPTIONS} onChange={setDeadbandType} />
           )}
         </Field>
         <Field label="Deadband value">

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ChevronDown, ChevronRight, Play, Square } from "lucide-react";
-import { Badge, Button, Callout, Dialog, EmptyState, Field, HexViewer } from "@mactools/ui";
+import { Badge, Button, Callout, Dialog, EmptyState, Field, HexViewer, SheetSelect } from "@mactools/ui";
 import { decodeStruct, loadDecoders, type Decoder } from "./decoders";
 
 interface IoSample {
@@ -34,6 +34,11 @@ interface Props {
   onLog?: (direction: "tx" | "rx" | "error" | "info", message: string) => void;
   onClose: () => void;
 }
+
+const IO_MODES = [
+  { value: "implicit", label: "Implicit I/O (class 1, UDP)" },
+  { value: "explicit", label: "Explicit (class 3)" },
+] as const;
 
 function fmtTime(ms: number) {
   return new Date(ms).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3 });
@@ -210,19 +215,14 @@ export function IoPump({ onLog, onClose }: Props) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
           <Field label="Connection">
-            <select className="vt-select" value={mode} disabled={running} onChange={(e) => setMode(e.target.value as "implicit" | "explicit")}>
-              <option value="implicit">Implicit I/O (class 1, UDP)</option>
-              <option value="explicit">Explicit (class 3)</option>
-            </select>
+            <SheetSelect sheetTitle="Connection" value={mode} disabled={running} onChange={(v) => setMode(v)} options={IO_MODES} />
           </Field>
           <Field label="RPI (ms)">
             <input className="vt-input" type="number" min={10} value={rpiMs} disabled={running} onChange={(e) => setRpiMs(Math.max(10, Number(e.target.value)))} />
           </Field>
           <Field label="Decoder">
-            <select className="vt-select" value={decoderId} onChange={(e) => setDecoderId(e.target.value)}>
-              <option value="">None (raw)</option>
-              {decoders.map((d) => <option key={d.id} value={d.id}>{d.name || "(unnamed)"}</option>)}
-            </select>
+            <SheetSelect sheetTitle="Decoder" value={decoderId} onChange={(v) => setDecoderId(v)}
+              options={[{ value: "", label: "None (raw)" }, ...decoders.map((d) => ({ value: d.id, label: d.name || "(unnamed)" }))]} />
           </Field>
         </div>
 

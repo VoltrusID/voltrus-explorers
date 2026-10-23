@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, Dialog, Field, IconButton, openTextFile } from "@mactools/ui";
+import { Button, Dialog, Field, IconButton, SheetSelect, openTextFile } from "@mactools/ui";
 import { Plus, Trash2 } from "lucide-react";
 import type { ProtoRule, ProtoSettings } from "./protoStore";
 
@@ -170,18 +170,16 @@ export function DecoderDialog({ open, onClose, settings, onApply }: Props) {
                 onChange={(e) => patchRule(i, { filter: e.target.value })}
                 aria-label="Topic filter"
               />
-              <select
-                className="vt-select vt-select--sm"
+              <SheetSelect
+                size="sm"
+                sheetTitle="Message type"
                 style={{ flex: 1, minWidth: 0 }}
                 value={r.message}
-                onChange={(e) => patchRule(i, { message: e.target.value })}
+                options={messages.map((m) => ({ value: m, label: m }))}
+                placeholder={r.message || "Choose a message"}
+                onChange={(v) => patchRule(i, { message: v })}
                 aria-label="Message type"
-              >
-                {!messages.includes(r.message) && <option value={r.message}>{r.message || "Choose a message"}</option>}
-                {messages.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              />
               <IconButton label="Remove rule" size="sm" danger onClick={() => setRules((x) => x.filter((_, j) => j !== i))}>
                 <Trash2 size={16} strokeWidth={1.75} />
               </IconButton>

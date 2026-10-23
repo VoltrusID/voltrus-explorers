@@ -2,6 +2,8 @@
 // (client_connect / client_subscribe / client_publish emit "client-message" like the Rust side),
 // plus a local broker with a few devices publishing to it.
 
+import { pickOption } from "../pick.mjs";
+
 export const uiScale = 1;
 
 // [topic, factory(i) -> payload string, retain]
@@ -297,7 +299,7 @@ export const scenes = [
     setup: async (page) => {
       await prep(page);
       await connectAndSubscribe(page, "factory/line1/#");
-      await page.select('select[aria-label="Payload format"]', "json");
+      await pickOption(page, "Raw", "JSON");
       await sleep(300);
     },
   },
@@ -324,6 +326,34 @@ export const scenes = [
       await sleep(300);
       await page.evaluate(() => window.__brokerFeed(6));
       await sleep(1500);
+    },
+  },
+];
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "advanced",
+    async setup(page) {
+      await prep(page);
+      await clickText(page, "aside button", "TLS, LWT, Keep-alive");
+      await sleep(300);
+      await clickText(page, "aside button", "Last Will and Testament");
+      await sleep(300);
+    },
+  },
+  {
+    id: "decoders",
+    // The mock has no protobuf engine: a saved schema with one topic rule, and proto_inspect / proto_configure answered here.
+    init: `localStorage.setItem("mqtt-explorer:proto:v1", ${JSON.stringify(JSON.stringify({ source: 'syntax = "proto3";\nmessage Reading { string sensor = 1; double value = 2; }\nmessage Status { bool ok = 1; }', rules: [{ filter: "factory/line1/#", message: "Reading" }] }))});
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (cmd, args) => (cmd === "proto_inspect" ? ["Reading", "Status"] : cmd === "proto_configure" ? null : invoke(cmd, args));`,
+    async setup(page) {
+      await prep(page);
+      await connectAndSubscribe(page);
+      await clickText(page, "button", "Decoders");
+      await page.waitForSelector('[aria-label="Message type"]');
+      await sleep(300);
     },
   },
 ];

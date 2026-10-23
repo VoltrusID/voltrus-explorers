@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   ConnectionForm,
   DataTable,
   Dialog,
@@ -214,7 +218,6 @@ function App() {
   const [valueLog] = useState(() => new ValueLog());
   const unlistenMainRef = useRef<(() => void) | null>(null);
   const [showExport, setShowExport] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
   const clientConnected = activeSession !== null;
   const clientValues = activeSession?.values ?? [];
@@ -664,15 +667,6 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    if (!showExport) return;
-    const onDown = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [showExport]);
-
   const tableToolbar = (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, background: "var(--surface)", borderBottom: "1px solid var(--border)", paddingRight: 8 }}>
       <div className="vt-tabs" role="tablist" aria-label="Sessions" style={{ flex: 1, minWidth: 0, borderBottom: "none" }}>
@@ -703,23 +697,21 @@ function App() {
           </IconButton>
         )}
       </div>
-      <div style={{ position: "relative" }} ref={exportRef}>
-        <Button size="sm" icon={<Download size={14} strokeWidth={1.75} />} aria-haspopup="menu" aria-expanded={showExport} onClick={() => setShowExport((v) => !v)}>
-          Export <ProBadge />
-        </Button>
-        {showExport && (
-          <div className="vt-popover" style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20 }}>
-            <button type="button" className="vt-menu-item" onClick={() => exportCsv("values")}>
-              <FileDown size={14} strokeWidth={1.75} />
-              Current values (CSV)
-            </button>
-            <button type="button" className="vt-menu-item" disabled={valueLog.size === 0} onClick={() => exportCsv("changes")}>
-              <FileDown size={14} strokeWidth={1.75} />
-              {`Recorded changes, ${valueLog.size} (CSV)`}
-            </button>
-          </div>
-        )}
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" icon={<Download size={14} strokeWidth={1.75} />}>
+            Export <ProBadge />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem icon={<FileDown size={14} strokeWidth={1.75} />} onSelect={() => exportCsv("values")}>
+            Current values (CSV)
+          </DropdownMenuItem>
+          <DropdownMenuItem icon={<FileDown size={14} strokeWidth={1.75} />} disabled={valueLog.size === 0} onSelect={() => exportCsv("changes")}>
+            {`Recorded changes, ${valueLog.size} (CSV)`}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 
@@ -768,17 +760,14 @@ function App() {
           <Section title="Device template" meta={<ProBadge />}>
             <Field label="Template">
               {(id) => (
-                <select
+                <SheetSelect
                   id={id}
-                  className="vt-select"
+                  sheetTitle="Device template"
+                  placeholder="Select template"
                   value={simTemplate}
-                  onChange={(e) => { setSimTemplate(e.target.value); if (simRunning) handleSimToggle(); }}
-                >
-                  <option value="">Select template</option>
-                  {Object.entries(PROFILES).map(([k, p]) => (
-                    <option key={k} value={k}>{p.name}</option>
-                  ))}
-                </select>
+                  options={Object.entries(PROFILES).map(([k, p]) => ({ value: k, label: p.name }))}
+                  onChange={(v) => { setSimTemplate(v); if (simRunning) handleSimToggle(); }}
+                />
               )}
             </Field>
             {simTemplate && (

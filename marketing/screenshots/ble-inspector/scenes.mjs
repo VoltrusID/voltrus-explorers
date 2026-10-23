@@ -433,3 +433,33 @@ export const scenes = [
     },
   },
 ];
+
+/** Extra states for render-selects.mjs: the preset and macro dialogs of the Presets tab (saved presets come from the presets scene). */
+const presetsInit = scenes.find((s) => s.id === "presets").init;
+async function presetsTab(page) {
+  await scan(page, 10);
+  await connect(page, "Polar H10");
+  await openTab(page, "Presets");
+}
+export const selectScenes = [
+  {
+    id: "preset-dialog",
+    init: presetsInit,
+    async setup(page) {
+      await presetsTab(page);
+      await page.click('button[aria-label="Edit Lamp on"]');
+      await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+      await sleep(400);
+    },
+  },
+  {
+    id: "macro-dialog",
+    init: presetsInit,
+    async setup(page) {
+      await presetsTab(page);
+      await page.click('button[aria-label="Edit Blink three times"]');
+      await page.waitForSelector(".vt-dialog", { timeout: 5000 });
+      await sleep(400);
+    },
+  },
+];

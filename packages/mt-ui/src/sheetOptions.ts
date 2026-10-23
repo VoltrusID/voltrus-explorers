@@ -3,21 +3,21 @@ import type { ReactNode } from "react";
 /** One choice of a `SheetSelect`. */
 export interface SheetOption<T extends string | number = string> {
   value: T;
-  /** Shown on the row and, when the control is closed, in the trigger. Plain text: the desktop fallback is a native <select>. */
+  /** Shown on the row and, when the control is closed, in the trigger. Plain text (it is also what type-ahead matches). */
   label: string;
-  /** Second line under the label (a template's description, an address range). */
+  /** Description: a second line under the label (a template's summary, an address range). Searchable. */
   hint?: string;
   /** Header the row sits under. Neighbouring rows with the same group are drawn together; the order of the list is kept. */
   group?: string;
   disabled?: boolean;
-  /** Sheet only (the native fallback ignores it): a glyph before the label. */
+  /** A glyph before the label, in the list and in the trigger. */
   icon?: ReactNode;
-  /** Sheet only: a control after the label, e.g. a close button. Stop its click from reaching the row, or it also picks the row. */
+  /** Phone sheet only: a control after the label, e.g. a close button. Stop its click from reaching the row, or it also picks the row. */
   trailing?: ReactNode;
 }
 
-/** A list with more choices than this gets a search field. */
-export const SEARCH_THRESHOLD = 10;
+/** A list with more choices than this is a searchable combobox (a search field on the phone sheet) instead of a plain select. */
+export const SEARCH_THRESHOLD = 5;
 
 export function isSearchable(count: number, searchable: boolean | undefined): boolean {
   return searchable ?? count > SEARCH_THRESHOLD;

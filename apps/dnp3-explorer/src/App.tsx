@@ -23,6 +23,7 @@ import {
   openTextFile,
   useProStatus,
   useProtocol,
+  SheetSelect,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import {
@@ -77,6 +78,13 @@ interface ConnProfile {
   masterAddress: number;
   outstationAddress: number;
 }
+
+const SIM_SPEEDS = [
+  { value: 500, label: "0.5s" },
+  { value: 1000, label: "1s" },
+  { value: 2000, label: "2s" },
+  { value: 5000, label: "5s" },
+];
 
 const CONN_PROFILES_KEY = "dnp3-explorer-conn-profiles";
 
@@ -594,19 +602,17 @@ function App() {
         <>
           {/* Connection profiles */}
           <Section title="Profiles">
-            <select
-              className="vt-select"
+            <SheetSelect
               aria-label="Connection profile"
+              sheetTitle="Connection profile"
               value={activeConnProfile ?? ""}
-              onChange={(e) => {
-                if (e.target.value) loadProfile(e.target.value);
+              options={[{ value: "", label: "New profile" }, ...connProfiles.map((p) => ({ value: p.name, label: p.name }))]}
+              onChange={(v) => {
+                if (v) loadProfile(v);
                 else { setActiveConnProfile(null); setProfileDirty(false); }
               }}
               disabled={protocol.connected}
-            >
-              <option value="">New profile</option>
-              {connProfiles.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
-            </select>
+            />
 
             {activeConnProfile && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: "var(--radius-sm)", background: "var(--sunken)", border: "1px solid var(--border)" }}>
@@ -669,10 +675,9 @@ function App() {
               onChange={(e) => setNewPoint((n) => ({ ...n, name: e.target.value }))}
               onKeyDown={(e) => { if (e.key === "Enter") addPoint(); }} />
             <div style={{ display: "flex", gap: 6 }}>
-              <select className="vt-select" aria-label="Point type" value={newPoint.type} disabled={protocol.connected}
-                onChange={(e) => setNewPoint((n) => ({ ...n, type: e.target.value }))}>
-                {POINT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
+              <SheetSelect aria-label="Point type" sheetTitle="Point type" value={newPoint.type} disabled={protocol.connected}
+                options={POINT_TYPES}
+                onChange={(v) => setNewPoint((n) => ({ ...n, type: v }))} />
               <input className="vt-input vt-input--mono" style={{ width: 64, flexShrink: 0 }} type="number" min={0} aria-label="Point index" value={newPoint.index} disabled={protocol.connected}
                 onChange={(e) => setNewPoint((n) => ({ ...n, index: e.target.value }))} />
             </div>
@@ -769,27 +774,21 @@ function App() {
   // ── Template/simulation section (sidebar in desktop, own mobile tab) ──
   const templateContent = (
     <Section title="Device template" meta={<ProBadge />}>
-      <select
-        className="vt-select"
+      <SheetSelect
         aria-label="Device template"
+        sheetTitle="Device template"
+        placeholder="Select device"
         value={activeTemplate?.id ?? ""}
-        onChange={(e) => {
-          const id = e.target.value;
+        options={[
+          ...BUILTIN_TEMPLATES.map((t) => ({ value: t.id, label: t.name, group: "Built-in" })),
+          ...customTemplates.map((t) => ({ value: t.id, label: t.name, group: "Custom" })),
+        ]}
+        onChange={(id) => {
           const all = [...BUILTIN_TEMPLATES, ...customTemplates];
           const t = all.find((t) => t.id === id);
           if (t && requirePro("Device templates and simulation")) applyTemplate(t);
         }}
-      >
-        <option value="">Select device</option>
-        <optgroup label="Built-in">
-          {BUILTIN_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </optgroup>
-        {customTemplates.length > 0 && (
-          <optgroup label="Custom">
-            {customTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </optgroup>
-        )}
-      </select>
+      />
 
       {activeTemplate && (
         <p style={{ margin: 0, fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.5 }}>
@@ -805,18 +804,15 @@ function App() {
           ) : (
             <Button size="sm" block variant="primary" icon={<Play size={14} strokeWidth={1.75} />} onClick={toggleSimulation}>Simulate</Button>
           )}
-          <select
-            className="vt-select vt-select--sm"
+          <SheetSelect
+            size="sm"
             style={{ width: 72, flexShrink: 0 }}
             aria-label="Simulation tick interval"
+            sheetTitle="Tick interval"
             value={simSpeed}
-            onChange={(e) => setSimSpeed(Number(e.target.value))}
-          >
-            <option value={500}>0.5s</option>
-            <option value={1000}>1s</option>
-            <option value={2000}>2s</option>
-            <option value={5000}>5s</option>
-          </select>
+            options={SIM_SPEEDS}
+            onChange={(v) => setSimSpeed(v)}
+          />
         </div>
       )}
 

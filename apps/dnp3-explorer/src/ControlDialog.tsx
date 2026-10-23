@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Badge, Button, Callout, Dialog, Field, Segmented } from "@mactools/ui";
+import { Badge, Button, Callout, Dialog, Field, Segmented, SheetSelect } from "@mactools/ui";
 
 export type ControlMode = "select" | "direct";
 
@@ -12,6 +12,12 @@ const CROB_OPERATIONS = [
   { value: "4", label: "Latch off" },
   { value: "1", label: "Pulse on" },
   { value: "2", label: "Pulse off" },
+];
+
+const TCC_OPTIONS = [
+  { value: "0", label: "None" },
+  { value: "64", label: "Close" },
+  { value: "128", label: "Trip" },
 ];
 
 const MODE_KEY = "dnp3-explorer-control-mode";
@@ -116,16 +122,10 @@ export function ControlDialog({ address, binary, currentValue, onSubmit, onCance
         {binary ? (
           <>
             <Field label="Operation">
-              <select className="vt-select" value={operation} onChange={(e) => setOperation(e.target.value)}>
-                {CROB_OPERATIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <SheetSelect sheetTitle="Operation" value={operation} options={CROB_OPERATIONS} onChange={(v) => setOperation(v)} />
             </Field>
             <Field label="Trip / close" hint="Pairs the operation with a trip or close code, as breaker controls expect.">
-              <select className="vt-select" value={tcc} onChange={(e) => setTcc(e.target.value)}>
-                <option value="0">None</option>
-                <option value="64">Close</option>
-                <option value="128">Trip</option>
-              </select>
+              <SheetSelect sheetTitle="Trip / close" value={tcc} options={TCC_OPTIONS} onChange={(v) => setTcc(v)} />
             </Field>
             <div className="vt-field-row">
               <Field label="Count">

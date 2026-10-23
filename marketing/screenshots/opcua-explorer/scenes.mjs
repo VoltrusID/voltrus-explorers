@@ -7,6 +7,8 @@
 //   create_subscription -> id, create_monitored_items -> count, "opcua://notification" events
 //   ({ node_id, value, source_ts, server_ts, status } with Unix-ms timestamps), server_read_nodes for the simulator.
 
+import { pickOption } from "../pick.mjs";
+
 export const uiScale = 1.1;
 
 function mockMain() {
@@ -329,13 +331,12 @@ async function typeInto(handle, value) {
 
 async function connect(page) {
   await clickText(page, "button", "Client");
-  await page.waitForSelector("aside select", { timeout: 5000 });
+  await page.waitForSelector("aside button.vt-select-trigger", { timeout: 5000 });
   await sleep(200);
   const inputs = await page.$$("aside input");
   await typeInto(inputs[0], "opc.tcp://192.168.20.30:4840");
-  const selects = await page.$$("aside select");
-  await selects[0].select("Basic256Sha256");
-  await selects[1].select("SignAndEncrypt");
+  await pickOption(page, "None", "Basic256Sha256");
+  await pickOption(page, "None", "SignAndEncrypt");
   await typeInto(inputs[1], "operator");
   await typeInto(inputs[2], "plantfloor");
   await clickText(page, "aside button", "Connect", "equals");
@@ -441,9 +442,7 @@ export const scenes = [
       }
       const num = await page.$$('.vt-dialog input[type="number"]');
       await typeInto(num[2], 20);
-      await page.evaluate(() => document.querySelectorAll(".vt-dialog select")[2].dispatchEvent(new Event("change", { bubbles: true })));
-      const sels = await page.$$(".vt-dialog select");
-      await sels[2].select("1");
+      await pickOption(page, "None (0)", "Absolute (1)");
       await sleep(100);
       await typeInto((await page.$$('.vt-dialog input[type="number"]'))[3], 0.2);
       await clickText(page, ".vt-dialog button", "Start", "equals");
@@ -459,7 +458,7 @@ export const scenes = [
     setup: async (page) => {
       await clickText(page, "aside button", "Start server", "equals");
       await sleep(400);
-      await page.select("aside select", "reactor");
+      await pickOption(page, "Select template", "Process Plant (Reactor R-101)");
       await sleep(200);
       await clickText(page, "aside button", "Start simulation", "equals");
       await sleep(500);
@@ -476,3 +475,24 @@ for (const s of scenes) {
     await run(page);
   };
 }
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "client-form",
+    async setup(page) {
+      await clickText(page, "button", "Client");
+      await page.waitForSelector("aside button.vt-select-trigger", { timeout: 5000 });
+      await sleep(300);
+    },
+  },
+  {
+    id: "subscribe-dialog",
+    async setup(page) {
+      await connect(page);
+      await clickText(page, "aside button", "Subscriptions");
+      await page.waitForSelector(".vt-dialog", { timeout: 3000 });
+      await sleep(300);
+    },
+  },
+];

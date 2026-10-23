@@ -19,6 +19,7 @@ import {
   usePhoneShell,
   useProStatus,
   type PhoneTabItem,
+  SheetSelect,
 } from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { useStore } from "./store";
@@ -405,16 +406,15 @@ function SimulatorPanel({ template, running, port, portInput, starting, onPort, 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 14 }}>
         <Field label="Template" hint={template ? TEMPLATES[template].description : undefined}>
           {(id) => (
-            <select
+            <SheetSelect
               id={id}
-              className="vt-select"
+              sheetTitle="Template"
+              placeholder="Select…"
               value={template ?? ""}
               disabled={running}
-              onChange={(e) => onTemplate(e.target.value || null)}
-            >
-              <option value="">Select…</option>
-              {Object.entries(TEMPLATES).map(([tid, t]) => <option key={tid} value={tid}>{t.name}</option>)}
-            </select>
+              options={Object.entries(TEMPLATES).map(([tid, t]) => ({ value: tid, label: t.name }))}
+              onChange={(v) => onTemplate(v || null)}
+            />
           )}
         </Field>
 

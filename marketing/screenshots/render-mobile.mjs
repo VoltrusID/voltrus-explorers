@@ -172,7 +172,7 @@ try {
 
   // simulator control panel sheet
   page = await open(phone, IPHONE_UA);
-  await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
+  await pickOption(page, "Select template…", "AHU-1 (Air Handling Unit)");
   await sleep(150);
   await clickText(page, ".vm-body button", "Start simulation");
   await sleep(300);

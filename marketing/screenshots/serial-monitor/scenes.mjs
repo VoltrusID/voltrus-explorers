@@ -5,6 +5,8 @@
 //   ({ hex, bytes, timestamp }). The mocked device is a Modbus RTU energy meter at slave address 1 (FC03 and FC06
 //   with real CRC-16) that also answers a few AT commands, so what the screenshots show is what a real port returns.
 
+import { pickOption } from "../pick.mjs";
+
 function installMock() {
   const callbacks = new Map();
   let nextCallback = 1;
@@ -159,17 +161,6 @@ async function clickButton(page, text) {
   if (!ok) throw new Error(`button "${text}" not found`);
 }
 
-async function selectByLabel(page, ariaOrFirstOption, value) {
-  await page.evaluate((first) => {
-    const s = [...document.querySelectorAll("select")].find((el) => el.getAttribute("aria-label") === first || el.options[0]?.textContent === first);
-    if (!s) throw new Error("select " + first);
-    s.setAttribute("data-pick", "1");
-  }, ariaOrFirstOption);
-  await page.select("[data-pick]", value);
-  await page.evaluate(() => document.querySelector("[data-pick]").removeAttribute("data-pick"));
-  await sleep(200);
-}
-
 async function setSendMode(page, label) {
   await clickButton(page, label);
   await sleep(100);
@@ -184,18 +175,11 @@ async function typeSend(page, text) {
 }
 
 async function connect(page, port, baud, parity) {
-  await selectByLabel(page, "Select port...", port);
-  if (baud) {
-    await page.evaluate((b, p) => {
-      const sels = [...document.querySelectorAll("select")];
-      const pick = (el, v) => { el.value = String(v); el.dispatchEvent(new Event("change", { bubbles: true })); };
-      const baudSel = sels.find((s) => [...s.options].some((o) => o.value === "115200"));
-      if (baudSel) pick(baudSel, b);
-      const paritySel = sels.find((s) => [...s.options].some((o) => o.value === "even"));
-      if (paritySel && p) pick(paritySel, p);
-    }, baud, parity);
-    await sleep(200);
-  }
+  const showing = await page.evaluate(() => [...document.querySelectorAll("button.vt-select-trigger")].map((b) => b.textContent.trim()).find((t) => t.startsWith("/dev/") || t === "Select port..."));
+  await pickOption(page, showing, port);
+  if (baud) await pickOption(page, "115200", String(baud));
+  if (parity) await pickOption(page, "None", parity[0].toUpperCase() + parity.slice(1));
+  await sleep(200);
   await clickButton(page, "Connect");
   await sleep(500);
 }
@@ -248,7 +232,7 @@ export const scenes = [
     settleMs: 400,
     async setup(page) {
       await prepare(page, 0.88);
-      await selectByLabel(page, "Select template...", "modbus_master");
+      await pickOption(page, "Select template...", "Modbus RTU Master");
       await clickButton(page, "Start simulation");
       await sleep(12500);
     },
@@ -261,17 +245,17 @@ export const scenes = [
     settleMs: 400,
     async setup(page) {
       await prepare(page, 0.88);
-      await selectByLabel(page, "Select profile...", "Energy meter RS-485");
+      await pickOption(page, "Select profile...", "Energy meter RS-485");
       await clickButton(page, "Connect");
       await sleep(400);
       await setSendMode(page, "HEX");
-      await selectByLabel(page, "Send macro", "Read voltages");
+      await pickOption(page, "Send macro", "Read voltages");
       await clickButton(page, "Send");
       await sleep(400);
-      await selectByLabel(page, "Send macro", "Read power");
+      await pickOption(page, "Send macro", "Read power");
       await clickButton(page, "Send");
       await sleep(400);
-      await selectByLabel(page, "Send macro", "Read voltages");
+      await pickOption(page, "Send macro", "Read voltages");
       await sleep(300);
     },
   },

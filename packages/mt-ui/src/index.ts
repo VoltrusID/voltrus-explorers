@@ -67,6 +67,18 @@ export {
   type StatusChipProps,
 } from "./phone";
 export { SheetSelect, type SheetOption, type SheetSelectProps } from "./sheetSelect";
+export { Select, Combobox } from "./desktopSelect";
+export { Popover, PopoverAnchor, PopoverClose, PopoverContent, PopoverTrigger } from "./popover";
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  type DropdownMenuItemProps,
+} from "./dropdownMenu";
 export { AssistantPanel, type AssistantPanelProps } from "./AssistantPanel";
 export { AssistantProvider, useAssistant, useAssistantAccess, type AssistantAccess } from "./assistantProvider";
 export { commonWordOrder } from "./assistantLogic";

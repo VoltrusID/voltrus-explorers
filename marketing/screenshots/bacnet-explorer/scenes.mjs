@@ -503,7 +503,7 @@ export const scenes = [
     headline: "Test without <em>any hardware</em>",
     sub: "Run a virtual AHU on UDP 47808, then browse it, write setpoints and trend it like a real controller.",
     setup: async (page) => {
-      await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
+      await pickOption(page, "Select template…", "AHU-1 (Air Handling Unit)");
       await sleep(150);
       await clickText(page, "aside button", "Start simulation");
       await sleep(250);
@@ -695,7 +695,7 @@ export const iosScenes = [
     init: iosInit,
     setup: async (page, device) => {
       await iosPrepare(page, device);
-      await pickOption(page, "Select template…", "ahu", "AHU-1 (Air Handling Unit)");
+      await pickOption(page, "Select template…", "AHU-1 (Air Handling Unit)");
       await sleep(150);
       await tap(page, device === "iphone" ? ".vm-body button" : "aside button", "Start simulation");
       await sleep(300);
@@ -754,3 +754,19 @@ iosScenes.push(
 );
 scenes.push(connectReviewScene("bacnet-explorer", "com.joyodigitama.bacnetexplorer"));
 scenes.push(connectReviewScene("bacnet-explorer", "com.joyodigitama.bacnetexplorer", { signedIn: false }));
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "write-dialog",
+    async setup(page) {
+      await connect(page);
+      await browse(page);
+      await expand(page, "Analog Value");
+      await selectObject(page, "SA-TEMP-SP");
+      await page.evaluate(() => document.querySelector('button[aria-label="Write presentValue"]').click());
+      await page.waitForSelector(".vt-dialog", { timeout: 3000 });
+      await sleep(300);
+    },
+  },
+];

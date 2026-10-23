@@ -49,6 +49,10 @@ export const FORMATS: readonly FormatInfo[] = [
 
 export const NUMERIC_FORMATS: readonly FormatInfo[] = FORMATS.filter((f) => f.kind === "number");
 
+const toOptions = (formats: readonly FormatInfo[]) => formats.map((f) => ({ value: f.id, label: f.label }));
+export const FORMAT_OPTIONS = toOptions(FORMATS);
+export const NUMERIC_FORMAT_OPTIONS = toOptions(NUMERIC_FORMATS);
+
 const BY_ID = new Map(FORMATS.map((f) => [f.id, f]));
 
 export function formatInfo(id: FormatId): FormatInfo {

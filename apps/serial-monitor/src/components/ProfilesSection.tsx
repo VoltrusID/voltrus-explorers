@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
-import { Button, Field, IconButton, ProBadge, Section, useProStatus } from "@mactools/ui";
+import { Button, Field, IconButton, ProBadge, Section, SheetSelect, useProStatus } from "@mactools/ui";
 import { FREE_PROFILE_LIMIT, upsertByName, type PortProfile } from "../profiles";
 
 interface Props {
@@ -32,22 +32,19 @@ export function ProfilesSection({ profiles, setProfiles, current, onApply, disab
         <Field label="Profile">
           {(id) => (
             <div style={{ display: "flex", gap: 6 }}>
-              <select
+              <SheetSelect
                 id={id}
-                className="vt-select"
+                sheetTitle="Profile"
                 value={selected}
                 disabled={disabled}
-                onChange={(e) => {
-                  setSelected(e.target.value);
-                  const p = profiles.find((x) => x.name === e.target.value);
+                options={profiles.map((p) => ({ value: p.name, label: p.name }))}
+                placeholder="Select profile..."
+                onChange={(v) => {
+                  setSelected(v);
+                  const p = profiles.find((x) => x.name === v);
                   if (p) onApply(p);
                 }}
-              >
-                <option value="">Select profile...</option>
-                {profiles.map((p) => (
-                  <option key={p.name} value={p.name}>{p.name}</option>
-                ))}
-              </select>
+              />
               <IconButton
                 label="Delete profile"
                 disabled={!selected}

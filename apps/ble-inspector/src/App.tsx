@@ -15,6 +15,7 @@ import {
   StatusBar,
   Tabs,
   Toolbar,
+  SheetSelect,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import { BluetoothSearching, BookmarkPlus, ChevronDown, ChevronRight, Radar } from "lucide-react";
@@ -22,7 +23,7 @@ import appIcon from "../src-tauri/icons/128x128.png";
 import PlotsPanel from "./PlotsPanel";
 import PresetsPanel, { PresetDialog } from "./PresetsPanel";
 import RssiPanel from "./RssiPanel";
-import { FORMATS, describeValue, hexToBytes, isFormatId, type FormatId } from "./decode";
+import { FORMAT_OPTIONS, describeValue, hexToBytes } from "./decode";
 import { defaultDecode, gattName, shortUuid } from "./gatt";
 import {
   loadStored,
@@ -494,21 +495,15 @@ function App() {
           )}
           {showDecoded && bytes && (
             <div className="ble-decoded">
-              <select
-                className="vt-select vt-select--sm"
+              <SheetSelect
+                size="sm"
                 style={{ width: 112 }}
                 aria-label={`Decode format for ${ch.uuid}`}
+                sheetTitle="Decode format"
                 value={pref.format}
-                onChange={(e) => {
-                  if (isFormatId(e.target.value)) setFormat(ch.uuid, { ...pref, format: e.target.value as FormatId });
-                }}
-              >
-                {FORMATS.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
+                options={FORMAT_OPTIONS}
+                onChange={(v) => setFormat(ch.uuid, { ...pref, format: v })}
+              />
               <span className="mono" style={{ color: "var(--text)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {describeValue(bytes, { ...pref, fallback: known?.format })}
               </span>

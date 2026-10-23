@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileUp, X } from "lucide-react";
-import { Badge, Button, Callout, EmptyState, Field, IconButton } from "@mactools/ui";
+import { Badge, Button, Callout, EmptyState, Field, IconButton, SheetSelect } from "@mactools/ui";
 
 import * as api from "../nats-client";
 
@@ -191,14 +191,14 @@ export function SchemaPanel({ addLog }: { addLog: (dir: "info" | "error", msg: s
         <div style={{ flex: 1, minWidth: 140 }}>
           <Field label="Message">
             {(id) => (
-              <select id={id} className="vt-select" value={msgName} onChange={(e) => setMsgName(e.target.value)}>
-                <option value="">Select a message</option>
-                {messages.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+              <SheetSelect
+                id={id}
+                sheetTitle="Message"
+                value={msgName}
+                options={messages.map((m) => ({ value: m, label: m }))}
+                placeholder="Select a message"
+                onChange={(v) => setMsgName(v)}
+              />
             )}
           </Field>
         </div>

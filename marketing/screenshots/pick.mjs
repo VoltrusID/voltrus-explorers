@@ -1,19 +1,21 @@
-// Picks a choice of a SheetSelect from a script. On desktop and iPad it is a native <select> (chosen by value); on the iPhone
-// layout it is a button that opens a bottom sheet (chosen by the row's label).
-//   current: what the control shows now ("New profile"); value: the <option> value; label: the sheet row's title (default value).
+// Picks a choice of a SheetSelect from a script. On desktop and iPad it is a trigger button (`.vt-select-trigger`) that opens a
+// Radix Select or, with more than five options, a Combobox; on the iPhone layout it is a button that opens a bottom sheet. Both are
+// chosen by the row's label.
+//   current: what the control shows now ("New profile") or its aria-label; label: the row's title.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function pickOption(page, current, value, label = value) {
-  const native = await page.evaluate((current) => {
-    const s = [...document.querySelectorAll("select")].find((el) => [...el.options].some((o) => o.textContent === current));
-    if (!s) return false;
-    s.setAttribute("data-pick", "1");
-    return true;
-  }, current);
-  if (native) {
-    await page.select("[data-pick]", value);
-    await page.evaluate(() => document.querySelector("[data-pick]")?.removeAttribute("data-pick"));
-    await sleep(300);
+export async function pickOption(page, current, label) {
+  const desktop = await page.evaluateHandle((current) => [...document.querySelectorAll("button.vt-select-trigger")].find((el) => el.textContent.trim() === current || el.getAttribute("aria-label") === current) ?? null, current);
+  const trigger = desktop.asElement();
+  if (trigger) {
+    await trigger.click();
+    await page.waitForSelector('[role="option"]', { timeout: 5000 });
+    await sleep(250);
+    const row = await page.evaluateHandle((label) => [...document.querySelectorAll('[role="option"]')].find((el) => el.querySelector(".vt-option__label")?.textContent === label) ?? null, label);
+    const el = row.asElement();
+    if (!el) throw new Error(`no option "${label}"`);
+    await el.click();
+    await sleep(350);
     return;
   }
   const opened = await page.evaluate((current) => {

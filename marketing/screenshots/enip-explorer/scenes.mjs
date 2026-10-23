@@ -4,6 +4,8 @@
 // Mock command shapes follow apps/enip-explorer/src-tauri/src/lib.rs and crates/mt-enip/src/types.rs
 // (CipValue serializes as {Real: 1.2}, {Dint: 3}, {Bool: true}; CipDataType as a lowercase string).
 
+import { pickOption } from "../pick.mjs";
+
 export const uiScale = 1.1;
 
 // [name, type, value fn key]
@@ -334,11 +336,65 @@ export const scenes = [
       await prep(page);
       await clickText(page, "button", "Adapter");
       await dragHandle(page, "row-resize", 0, 120);
-      await page.select("aside select", "motor");
+      await pickOption(page, "Default tags", "MotorDrive-1 (ABB ACS880)");
       await sleep(150);
       await clickText(page, "aside button", "Start simulator");
       await page.waitForFunction(() => document.body.textContent.includes("Motor1.Speed"), { timeout: 90000 });
       await sleep(800);
+    },
+  },
+];
+
+/** One saved decoder, so the decoder selects list more than their "none" row. */
+const SEED_DECODERS = `localStorage.setItem("enip.decoders", ${JSON.stringify(JSON.stringify([{ id: "d1", name: "Drive status", fields: [{ name: "state", type: "uint16", size: 0 }, { name: "speed", type: "real", size: 0 }] }]))});`;
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "adapter-ready",
+    async setup(page) {
+      await prep(page);
+      await clickText(page, "button", "Adapter");
+      await sleep(400);
+    },
+  },
+  {
+    id: "cip-browser",
+    init: SEED_DECODERS,
+    async setup(page) {
+      await prep(page);
+      await connect(page);
+      await clickText(page, "aside button", "CIP Object");
+      await page.waitForSelector(".vt-dialog");
+      await clickText(page, ".vt-dialog button, .vt-dialog [role=tab]", "Console");
+      await clickText(page, ".vt-dialog button", "List Inst");
+      await page.waitForFunction(() => document.querySelector(".vt-dialog")?.textContent.includes("Instances (1)"), { timeout: 10000 });
+      await sleep(300);
+    },
+  },
+  {
+    id: "decoder-editor",
+    init: SEED_DECODERS,
+    async setup(page) {
+      await prep(page);
+      await connect(page);
+      await clickText(page, "aside button", "CIP Object");
+      await page.waitForSelector(".vt-dialog");
+      await clickText(page, ".vt-dialog button, .vt-dialog [role=tab]", "Console");
+      await clickText(page, ".vt-dialog button", "Decoders");
+      await page.waitForSelector('[aria-label="Field type"]');
+      await sleep(300);
+    },
+  },
+  {
+    id: "io-pump",
+    init: SEED_DECODERS,
+    async setup(page) {
+      await prep(page);
+      await connect(page);
+      await clickText(page, "aside button", "IO");
+      await page.waitForSelector(".vt-dialog");
+      await sleep(300);
     },
   },
 ];

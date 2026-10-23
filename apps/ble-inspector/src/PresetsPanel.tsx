@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Pencil, Play, Plus, Square, Trash2, X } from "lucide-react";
-import { Button, Callout, Dialog, EmptyState, Field, IconButton, Section, Segmented } from "@mactools/ui";
+import { Button, Callout, Dialog, EmptyState, Field, IconButton, Section, Segmented, SheetSelect } from "@mactools/ui";
 import { NumInput } from "./ChartToolbar";
 import { hexToBytes, presetToHex } from "./decode";
 import { gattName, shortUuid } from "./gatt";
@@ -73,13 +73,13 @@ export function PresetDialog({ draft, chars, onSave, onClose }: PresetDialogProp
         <Field label="Characteristic" hint={options.length === 0 ? "Connect to a device to pick from its writable characteristics, or type a UUID." : undefined}>
           {(id) =>
             options.length > 0 ? (
-              <select id={id} className="vt-select" value={charUuid} onChange={(e) => setCharUuid(e.target.value)}>
-                {options.map((u) => (
-                  <option key={u} value={u}>
-                    {charLabel(u)}
-                  </option>
-                ))}
-              </select>
+              <SheetSelect
+                id={id}
+                sheetTitle="Characteristic"
+                value={charUuid}
+                options={options.map((u) => ({ value: u, label: charLabel(u) }))}
+                onChange={(v) => setCharUuid(v)}
+              />
             ) : (
               <input id={id} className="vt-input vt-input--mono" value={charUuid} onChange={(e) => setCharUuid(e.target.value)} placeholder="6e400002-b5a3-f393-e0a9-e50e24dcca9e" />
             )
@@ -177,19 +177,15 @@ function MacroDialog({ draft, presets, onSave, onClose }: MacroDialogProps) {
             <span className="mono" style={{ width: 20, color: "var(--text-muted)" }}>
               {i + 1}
             </span>
-            <select
-              className="vt-select vt-select--sm"
+            <SheetSelect
+              size="sm"
               style={{ flex: 1, minWidth: 0 }}
               aria-label={`Preset for step ${i + 1}`}
+              sheetTitle="Preset"
               value={s.presetId}
-              onChange={(e) => setSteps((prev) => prev.map((x, j) => (j === i ? { ...x, presetId: e.target.value } : x)))}
-            >
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              options={presets.map((p) => ({ value: p.id, label: p.name }))}
+              onChange={(v) => setSteps((prev) => prev.map((x, j) => (j === i ? { ...x, presetId: v } : x)))}
+            />
             <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>then wait</span>
             <NumInput
               label={`Delay after step ${i + 1} in milliseconds`}

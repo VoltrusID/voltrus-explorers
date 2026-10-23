@@ -531,7 +531,7 @@ export const scenes = [
       await sleep(300);
       await clickButton(page, "Start server");
       await sleep(400);
-      await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
+      await pickOption(page, "Select device…", "Schneider Electric PM5560");
       await sleep(600);
       await clickButton(page, "Simulate");
       await sleep(1500);
@@ -712,7 +712,7 @@ export const iosScenes = [
       await clickButton(page, "Start server");
       await sleep(400);
       if (device === "iphone") await mobileTab(page, "Template");
-      await pickOption(page, "Select device…", "pm5560", "Schneider Electric PM5560");
+      await pickOption(page, "Select device…", "Schneider Electric PM5560");
       await sleep(600);
       await clickButton(page, "Simulate");
       await sleep(1500);
@@ -826,3 +826,38 @@ iosScenes.push(
 );
 scenes.push(connectReviewScene("modbus-poll", "com.joyodigitama.modbuspoll"));
 scenes.push(connectReviewScene("modbus-poll", "com.joyodigitama.modbuspoll", { signedIn: false }));
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "slave-rtu",
+    init: initCommon,
+    async setup(page) {
+      await prepare(page, 1.0);
+      await setStore(page, `({ mode: "slave" })`);
+      await sleep(300);
+      await clickButton(page, "RTU");
+      await sleep(400);
+    },
+  },
+  {
+    id: "master-rtu",
+    init: initCommon,
+    async setup(page) {
+      await prepare(page, 1.0);
+      await chooseProfile(page, "Panel board RS-485");
+      await sleep(600);
+    },
+  },
+  {
+    id: "export-scada",
+    init: initCommon,
+    settleMs: 400,
+    async setup(page) {
+      await scenes.find((s) => s.id === "live-polling").setup(page);
+      await clickButton(page, "Export to SCADA");
+      await page.waitForSelector(".vt-dialog");
+      await sleep(400);
+    },
+  },
+];

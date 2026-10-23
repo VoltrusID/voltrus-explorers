@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
-import { Button, Dialog, EmptyState, IconButton } from "@mactools/ui";
+import { Button, Dialog, EmptyState, IconButton, SheetSelect } from "@mactools/ui";
 import {
   FIELD_TYPES,
   loadDecoders,
@@ -20,8 +20,6 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
   width: "100%",
 };
-
-const selectStyle: React.CSSProperties = { ...inputStyle, cursor: "default" };
 
 interface Props {
   onClose: () => void;
@@ -126,16 +124,13 @@ export function DecoderEditor({ onClose }: Props) {
                 {selected.fields.map((f, i) => (
                   <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 120px 70px 28px", gap: 6, marginBottom: 6 }}>
                     <input style={inputStyle} value={f.name} onChange={(e) => updateField(i, { name: e.target.value })} aria-label="Field name" />
-                    <select
-                      style={selectStyle}
+                    <SheetSelect
                       value={f.type}
-                      onChange={(e) => updateField(i, { type: e.target.value as FieldType })}
+                      options={FIELD_TYPES}
+                      onChange={(v) => updateField(i, { type: v })}
                       aria-label="Field type"
-                    >
-                      {FIELD_TYPES.map((t) => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
-                      ))}
-                    </select>
+                      sheetTitle="Field type"
+                    />
                     <input
                       style={inputStyle}
                       type="number"

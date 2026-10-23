@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Bookmark, Repeat, SendHorizontal, Trash2 } from "lucide-react";
-import { Button, IconButton, ProBadge, Segmented, useProStatus } from "@mactools/ui";
+import { Button, IconButton, ProBadge, Segmented, SheetSelect, useProStatus } from "@mactools/ui";
 import type { SendMacro } from "../profiles";
 
 interface SendComposerProps {
@@ -56,20 +56,19 @@ export function SendComposer({
     <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
     {extras && (
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
-        <select
-          className="vt-select"
+        <SheetSelect
+          sheetTitle="Send macro"
           aria-label="Send macro"
           style={{ width: 160 }}
           value={macroSel}
-          onChange={(e) => {
-            setMacroSel(e.target.value);
-            const m = macros.find((x) => x.name === e.target.value);
+          options={macros.map((m) => ({ value: m.name, label: m.name }))}
+          placeholder={macros.length ? "Macros..." : "No macros yet"}
+          onChange={(v) => {
+            setMacroSel(v);
+            const m = macros.find((x) => x.name === v);
             if (m) { onFormatChange(m.format); onValueChange(m.data); }
           }}
-        >
-          <option value="">{macros.length ? "Macros..." : "No macros yet"}</option>
-          {macros.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
-        </select>
+        />
         <IconButton
           label="Delete macro"
           size="sm"

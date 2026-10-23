@@ -1,6 +1,6 @@
 import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import { ArrowDownToLine, ArrowLeft, ArrowRight, Download, Trash2 } from "lucide-react";
-import { EmptyState, IconButton, Segmented, saveTextFile, useIsPhone, useProStatus } from "@mactools/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, EmptyState, IconButton, Segmented, saveTextFile, useIsPhone, useProStatus } from "@mactools/ui";
 import { NO_TRAFFIC, useTrafficStore, type TcpEvent, type TrafficEntry } from "./trafficStore";
 import { useStore } from "./store";
 
@@ -48,26 +48,13 @@ export default function TrafficPanel() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [tab, setTab] = useState<"modbus" | "tcp">("modbus");
-  const [showExport, setShowExport] = useState(false);
   const [exportMsg, setExportMsg] = useState<{ text: string; failed?: boolean } | null>(null);
-  const exportRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [entries, tcpEvents, autoScroll, filterDir, filterText, tab]);
-
-  useEffect(() => {
-    if (!showExport) return;
-    const onClick = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setShowExport(false);
-      }
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [showExport]);
 
   const filtered = entries.filter((e) => {
     if (filterDir !== "all" && e.direction !== filterDir) return false;
@@ -150,11 +137,9 @@ export default function TrafficPanel() {
     navigator.clipboard.writeText(text);
     setExportMsg({ text: "Copied to clipboard" });
     setTimeout(() => setExportMsg(null), 1500);
-    setShowExport(false);
   }, [filtered, tcpEvents, tab, formatTime, requirePro]);
 
   const exportCsv = useCallback(async () => {
-    setShowExport(false);
     if (!requirePro("Traffic CSV export")) return;
     let csv: string;
     const ts = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
@@ -376,17 +361,17 @@ export default function TrafficPanel() {
 
   if (phone) {
     const exportMenu = (entries.length > 0 || tcpEvents.length > 0) && (
-      <div style={{ position: "relative" }} ref={exportRef}>
-        <IconButton outline label="Export traffic" aria-haspopup="true" aria-expanded={showExport} pressed={showExport} onClick={() => setShowExport((v) => !v)}>
-          <Download size={18} strokeWidth={1.75} />
-        </IconButton>
-        {showExport && (
-          <div className="vt-popover" style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, zIndex: 100 }} role="menu">
-            <button onClick={copyAll} role="menuitem" className="vt-menu-item">Copy all to clipboard</button>
-            <button onClick={exportCsv} role="menuitem" className="vt-menu-item">Export to CSV</button>
-          </div>
-        )}
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <IconButton outline label="Export traffic">
+            <Download size={18} strokeWidth={1.75} />
+          </IconButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={copyAll}>Copy all to clipboard</DropdownMenuItem>
+          <DropdownMenuItem onSelect={exportCsv}>Export to CSV</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     );
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 12 }}>
@@ -489,26 +474,15 @@ export default function TrafficPanel() {
             Auto
           </label>
           {(entries.length > 0 || tcpEvents.length > 0) && (
-            <div style={{ position: "relative" }} ref={exportRef}>
-              <button
-                onClick={() => setShowExport((v) => !v)}
-                aria-haspopup="true"
-                aria-expanded={showExport}
-                className="vt-btn vt-btn--sm vt-btn--ghost"
-              >
-                Export
-              </button>
-              {showExport && (
-                <div className="vt-popover" style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, zIndex: 100, minWidth: 170 }} role="menu">
-                  <button onClick={copyAll} role="menuitem" className="vt-menu-item">
-                    Copy all to clipboard
-                  </button>
-                  <button onClick={exportCsv} role="menuitem" className="vt-menu-item">
-                    Export to CSV
-                  </button>
-                </div>
-              )}
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="vt-btn vt-btn--sm vt-btn--ghost">Export</button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={copyAll}>Copy all to clipboard</DropdownMenuItem>
+                <DropdownMenuItem onSelect={exportCsv}>Export to CSV</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           {exportMsg && (
             <span style={{ fontSize: "var(--fs-xs)", color: exportMsg.failed ? "var(--danger)" : "var(--accent-text)" }} role={exportMsg.failed ? "alert" : "status"} aria-live="polite">{exportMsg.text}</span>

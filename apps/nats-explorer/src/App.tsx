@@ -31,6 +31,7 @@ import {
   LogPanel,
   Section,
   Segmented,
+  SheetSelect,
   StatusBar,
   StatusDot,
   Tabs,
@@ -164,6 +165,16 @@ function DragHandle({
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
+
+const AUTH_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "userpass", label: "Username / Password" },
+  { value: "token", label: "Token" },
+  { value: "creds_file", label: "Credentials file (.creds)" },
+  { value: "creds", label: "Credentials (inline)" },
+  { value: "nkey", label: "NKey seed" },
+  { value: "jwt", label: "User JWT + NKey" },
+] as const;
 
 export default function App() {
   const [mode, setMode] = useState<"server" | "client">("server");
@@ -1031,20 +1042,18 @@ export default function App() {
     <>
       <Section title="Connect to server">
         <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-          <select
-            className="vt-select vt-select--sm"
+          <SheetSelect
+            size="sm"
+            sheetTitle="Saved profiles"
             style={{ flex: 1, minWidth: 0 }}
             value={selectedProfile}
-            onChange={(e) => handleLoadProfile(e.target.value)}
+            options={profiles.map((p) => ({ value: p.name, label: p.name }))}
+            placeholder="Saved profiles…"
+            onChange={(v) => handleLoadProfile(v)}
             disabled={clientConnected}
             title="Load a saved connection profile"
             aria-label="Saved profiles"
-          >
-            <option value="">Saved profiles…</option>
-            {profiles.map((p) => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </select>
+          />
           <IconButton
             label="Save current fields as a profile"
             size="sm"
@@ -1111,21 +1120,14 @@ export default function App() {
         </label>
         <Field label="Auth">
           {(id) => (
-            <select
+            <SheetSelect
               id={id}
-              className="vt-select"
+              sheetTitle="Auth"
               value={clientAuthMode}
-              onChange={(e) => setClientAuthMode(e.target.value as typeof clientAuthMode)}
+              options={AUTH_OPTIONS}
+              onChange={(v) => setClientAuthMode(v)}
               disabled={clientConnected}
-            >
-              <option value="none">None</option>
-              <option value="userpass">Username / Password</option>
-              <option value="token">Token</option>
-              <option value="creds_file">Credentials file (.creds)</option>
-              <option value="creds">Credentials (inline)</option>
-              <option value="nkey">NKey seed</option>
-              <option value="jwt">User JWT + NKey</option>
-            </select>
+            />
           )}
         </Field>
         {clientAuthMode === "userpass" && (

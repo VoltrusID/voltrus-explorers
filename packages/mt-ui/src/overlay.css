@@ -1,0 +1,331 @@
+/*
+ * Floating surfaces: Popover, DropdownMenu, Select and Combobox (popover.tsx, dropdownMenu.tsx, desktopSelect.tsx).
+ * Styled after shadcn/ui on the mt-ui tokens: a bordered, rounded card with a soft shadow, rows that highlight under the
+ * pointer or the keyboard, an accent checkmark on the chosen row, muted group labels, hairline separators.
+ */
+
+/* ── Surface ─────────────────────────────────────────────────────────────── */
+
+.vt-popover {
+  z-index: 200;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--fs-sm);
+  outline: none;
+  transform-origin: var(--radix-popper-transform-origin);
+}
+
+.vt-popover[data-state="open"] {
+  animation: vt-pop-in 130ms var(--ease-out);
+}
+
+.vt-popover[data-state="closed"] {
+  animation: vt-pop-out 90ms ease-in;
+}
+
+.vt-popover[data-side="bottom"] { --vt-pop-dy: -4px; }
+.vt-popover[data-side="top"] { --vt-pop-dy: 4px; }
+
+@keyframes vt-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--vt-pop-dy, 0)) scale(0.96);
+  }
+}
+
+@keyframes vt-pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* ── Rows (menu items, select options, combobox options) ─────────────────── */
+
+.vt-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: default;
+  user-select: none;
+  outline: none;
+}
+
+.vt-menu-item:focus-visible,
+.vt-popover:focus-visible,
+.vt-combo__search input:focus-visible {
+  outline: none;
+}
+
+.vt-menu-item > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.vt-menu-item:hover:not(:disabled),
+.vt-menu-item[data-highlighted],
+.vt-menu-item[data-selected="true"] {
+  background: var(--active-overlay);
+}
+
+.vt-menu-item[data-disabled=""],
+.vt-menu-item[data-disabled="true"],
+.vt-menu-item[aria-disabled="true"],
+.vt-menu-item:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.vt-menu-item--danger,
+.vt-menu-item--danger > svg {
+  color: var(--danger);
+}
+
+.vt-menu-item--danger[data-highlighted] {
+  background: var(--danger-soft);
+}
+
+/* An option of a Select or Combobox: room on the right for the checkmark, an optional description under the label. */
+.vt-option {
+  padding-right: 28px;
+}
+
+.vt-option--described {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.vt-option__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.vt-option__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vt-option__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vt-option__hint {
+  margin-top: 1px;
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
+.vt-option__check {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  color: var(--accent-text);
+}
+
+.vt-menu-label {
+  padding: 6px 8px 3px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+
+.vt-menu-sep {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--border);
+}
+
+/* ── Select trigger (a button that looks like the old native select, with the shadcn chevron) ── */
+
+.vt-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+  transition-property: border-color, box-shadow;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-out);
+}
+
+.vt-select-trigger.vt-select--auto {
+  width: auto;
+}
+
+.vt-select-trigger:hover:not(:disabled) {
+  border-color: var(--border-light);
+}
+
+.vt-select-trigger:focus-visible,
+.vt-select-trigger[data-state="open"] {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.vt-select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vt-trigger__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vt-trigger__value[data-placeholder] {
+  color: var(--text-muted);
+}
+
+.vt-trigger__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+/* ── Select content ──────────────────────────────────────────────────────── */
+
+.vt-select-content {
+  display: flex;
+  flex-direction: column;
+  min-width: max(var(--radix-select-trigger-width), 120px);
+  max-width: min(420px, 90vw);
+  max-height: min(340px, var(--radix-select-content-available-height));
+  overflow: hidden;
+  transform-origin: var(--radix-select-content-transform-origin);
+}
+
+.vt-select-content [data-radix-select-viewport] {
+  min-height: 0;
+}
+
+.vt-scroll-btn {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* ── Combobox content ────────────────────────────────────────────────────── */
+
+.vt-combo {
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: max(var(--radix-popover-trigger-width), 200px);
+  max-width: min(420px, 90vw);
+  padding: 0;
+  overflow: hidden;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+.vt-combo__search {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.vt-combo__search > svg {
+  flex-shrink: 0;
+}
+
+.vt-combo__search input,
+.vt-combo__search input:hover,
+.vt-combo__search input:focus {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+/* Type-ahead for a short list: the input still takes the keys, only the field is not drawn. */
+.vt-combo__search--hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vt-combo [cmdk-list] {
+  max-height: min(300px, var(--radix-popover-content-available-height));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.vt-combo [cmdk-group] + [cmdk-group],
+.vt-combo [cmdk-item] + [cmdk-group] {
+  margin-top: 2px;
+}
+
+.vt-combo [cmdk-group-heading] {
+  padding: 6px 8px 3px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-muted);
+}
+
+.vt-combo__empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.vt-combo__footer {
+  flex-shrink: 0;
+  padding: 4px;
+  border-top: 1px solid var(--border);
+}

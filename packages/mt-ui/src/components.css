@@ -736,39 +736,7 @@
   font-family: var(--font-mono);
 }
 
-/* ── Popover / menu / dialog ─────────────────────────────────────────────── */
-
-.vt-popover {
-  background: var(--card);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-  padding: 4px;
-  min-width: 160px;
-  z-index: 50;
-}
-
-.vt-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-  color: var(--text);
-  text-align: left;
-}
-
-.vt-menu-item:hover:not(:disabled),
-.vt-menu-item:focus-visible {
-  background: var(--hover-overlay);
-  outline: none;
-}
-
-.vt-menu-item--danger {
-  color: var(--danger);
-}
+/* ── Dialog (popovers, menus and selects live in overlay.css) ───────────── */
 
 .vt-scrim {
   position: fixed;

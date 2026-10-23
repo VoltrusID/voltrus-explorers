@@ -41,6 +41,7 @@ import {
   useProStatus,
   saveTextFile,
   openTextFile,
+  SheetSelect,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
@@ -705,15 +706,16 @@ function App() {
           )}
 
           <Section title="Watch lists" meta={watchLists.length > 0 ? watchLists.length : undefined}>
-            <select
-              className="vt-select"
+            <SheetSelect
               aria-label="Watch list"
+              sheetTitle="Watch list"
               value={watch?.name && watchLists.some((l) => l.name === watch.name) ? watch.name : ""}
-              onChange={(e) => selectWatch(e.target.value)}
-            >
-              <option value="">{watch && !watch.name ? `Unsaved selection (${watch.tags.length})` : "All tags"}</option>
-              {watchLists.map((l) => (<option key={l.name} value={l.name}>{l.name} ({l.tags.length})</option>))}
-            </select>
+              options={[
+                { value: "", label: watch && !watch.name ? `Unsaved selection (${watch.tags.length})` : "All tags" },
+                ...watchLists.map((l) => ({ value: l.name, label: `${l.name} (${l.tags.length})` })),
+              ]}
+              onChange={(v) => selectWatch(v)}
+            />
             <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
               {!watch
                 ? "Star tags in the list below to poll only those, or import a list from CSV."
@@ -808,15 +810,14 @@ function App() {
           </Section>
 
           <Section title="Template">
-            <select
-              className="vt-select"
+            <SheetSelect
+              sheetTitle="Template"
+              aria-label="Template"
               value={simTemplate ?? ""}
-              onChange={(e) => setSimTemplate(e.target.value || null)}
+              options={[{ value: "", label: "Default tags" }, ...Object.entries(TEMPLATES).map(([k, t]) => ({ value: k, label: t.name }))]}
+              onChange={(v) => setSimTemplate(v || null)}
               disabled={adapterRunning}
-            >
-              <option value="">Default tags</option>
-              {Object.entries(TEMPLATES).map(([k, t]) => (<option key={k} value={k}>{t.name}</option>))}
-            </select>
+            />
             {simTemplate && TEMPLATES[simTemplate] && (
               <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}>
                 {TEMPLATES[simTemplate].description}<br />{TEMPLATES[simTemplate].points.length} tags

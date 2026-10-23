@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Archive, Download, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
-import { Button, Callout, DataTable, EmptyState, Field, IconButton, Panel, type Column } from "@mactools/ui";
+import { Button, Callout, DataTable, EmptyState, Field, IconButton, Panel, SheetSelect, type Column } from "@mactools/ui";
 
 import * as api from "../nats-client";
 import type { NatsObjectInfo } from "../nats-types";
@@ -176,20 +176,16 @@ export function ObjPanel({
       <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
         <Field label="Bucket">
           {(id) => (
-            <select
+            <SheetSelect
               id={id}
-              className="vt-select vt-select--sm"
+              size="sm"
+              sheetTitle="Bucket"
               style={{ minWidth: 160 }}
               value={bucket}
-              onChange={(e) => setBucket(e.target.value)}
-            >
-              <option value="">Select a bucket</option>
-              {buckets.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
+              options={buckets.map((b) => ({ value: b, label: b }))}
+              placeholder="Select a bucket"
+              onChange={(v) => setBucket(v)}
+            />
           )}
         </Field>
         <Button size="sm" variant="ghost" icon={<RefreshCw size={14} strokeWidth={1.75} />} onClick={refreshObjs} disabled={!bucket}>

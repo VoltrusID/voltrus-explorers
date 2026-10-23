@@ -399,7 +399,8 @@ export function Dialog({ open, onClose, title, children, footer, width }: Dialog
     dialogStack.push(token);
     const prev = document.activeElement as HTMLElement | null;
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && dialogStack[dialogStack.length - 1] === token) onCloseRef.current();
+      // A popover or select open inside the dialog takes this Escape (it calls preventDefault); the dialog stays.
+      if (e.key === "Escape" && !e.defaultPrevented && dialogStack[dialogStack.length - 1] === token) onCloseRef.current();
     };
     window.addEventListener("keydown", onKey);
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();

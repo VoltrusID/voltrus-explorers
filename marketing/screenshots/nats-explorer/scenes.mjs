@@ -326,3 +326,25 @@ export const scenes = [
     },
   },
 ];
+
+/** Extra states for render-selects.mjs: selects the App Store scenes never show enabled. */
+export const selectScenes = [
+  {
+    id: "client-form",
+    async setup(page) {
+      await clickText(page, "button", "Client");
+      await sleep(300);
+    },
+  },
+  {
+    id: "schema",
+    // The mock has no protobuf registry: answer the two schema reads the panel makes on mount.
+    init: `const invoke = window.__TAURI_INTERNALS__.invoke;
+      window.__TAURI_INTERNALS__.invoke = async (cmd, args) => (cmd === "schema_message_names" ? ["shop.Order", "shop.Payment", "shop.Shipment"] : cmd === "schema_bindings" ? {} : invoke(cmd, args));`,
+    async setup(page) {
+      await connectClient(page);
+      await clickText(page, "[role=tab]", "Schema");
+      await sleep(500);
+    },
+  },
+];

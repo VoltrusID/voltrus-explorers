@@ -21,8 +21,9 @@ import {
   ProAboutRow,
   useProStatus,
   saveTextFile,
+  SheetSelect,
 } from "@mactools/ui";
-import type { LogEntry } from "@mactools/ui";
+import type { LogEntry, SheetOption } from "@mactools/ui";
 import {
   Trash2,
   Plus,
@@ -145,6 +146,11 @@ const payloadCellStyle: React.CSSProperties = {
   fontSize: "var(--fs-xs)",
 };
 
+const QOS_OPTIONS = [
+  { value: "atmostonce", label: "QoS 0" },
+  { value: "atleastonce", label: "QoS 1" },
+  { value: "exactlyonce", label: "QoS 2" },
+];
 
 function App() {
   const { requirePro, pro, status: proStatus } = useProStatus();
@@ -1073,24 +1079,25 @@ function App() {
         ]}
         trailing={
           <>
-            <select
-              className="vt-select vt-select--sm"
+            <SheetSelect
+              size="sm"
+              sheetTitle="Payload format"
               style={{ width: 110 }}
               value={payloadFormat}
-              onChange={(e) => {
-                const v = e.target.value as PayloadFormat; // option values below are exactly PayloadFormat
+              options={[
+                { value: "raw", label: "Raw" },
+                { value: "json", label: "JSON" },
+                { value: "hex", label: "Hex" },
+                { value: "base64", label: "Base64" },
+                { value: "decoded", label: pro ? "Decoded" : "Decoded (Pro)" },
+              ] satisfies SheetOption<PayloadFormat>[]}
+              onChange={(v) => {
                 if (v === "decoded" && !requirePro("Sparkplug B and protobuf decoding")) return;
                 setPayloadFormat(v);
               }}
               aria-label="Payload format"
               title="Payload format"
-            >
-              <option value="raw">Raw</option>
-              <option value="json">JSON</option>
-              <option value="hex">Hex</option>
-              <option value="base64">Base64</option>
-              <option value="decoded">{pro ? "Decoded" : "Decoded (Pro)"}</option>
-            </select>
+            />
             <Button size="sm" variant="ghost" onClick={openDecoders} title="Sparkplug B and protobuf decoders">
               Decoders {!pro && <ProBadge />}
             </Button>
@@ -1253,20 +1260,18 @@ function App() {
             {!pro && <ProBadge />}
           </div>
           <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-            <select
-              className="vt-select vt-select--sm"
+            <SheetSelect
+              size="sm"
+              sheetTitle="Saved profiles"
               style={{ flex: 1, minWidth: 0 }}
               value={selectedProfile}
-              onChange={(e) => handleLoadProfile(e.target.value)}
+              options={profiles.map((p) => ({ value: p.name, label: p.name }))}
+              placeholder="Saved profiles…"
+              onChange={(v) => handleLoadProfile(v)}
               disabled={clientConnected}
               title="Load a saved connection profile"
               aria-label="Saved profiles"
-            >
-              <option value="">Saved profiles…</option>
-              {profiles.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
+            />
             <IconButton
               label="Save current fields as a profile"
               size="sm"
@@ -1423,11 +1428,7 @@ function App() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ flex: 1 }}>
                   <Field label="Will QoS">
-                    <select className="vt-select vt-select--sm" value={lwtQos} onChange={(e) => setLwtQos(e.target.value)}>
-                      <option value="atmostonce">QoS 0</option>
-                      <option value="atleastonce">QoS 1</option>
-                      <option value="exactlyonce">QoS 2</option>
-                    </select>
+                    <SheetSelect size="sm" sheetTitle="Will QoS" value={lwtQos} options={QOS_OPTIONS} onChange={(v) => setLwtQos(v)} />
                   </Field>
                 </div>
                 <label className="vt-check" style={{ marginTop: 18 }}>
@@ -1614,17 +1615,15 @@ function App() {
               onKeyDown={(e) => { if (e.key === "Enter") handleSubscribe(); }}
               aria-label="Topic filter"
             />
-            <select
-              className="vt-select vt-select--sm"
+            <SheetSelect
+              size="sm"
+              sheetTitle="Subscribe QoS"
               style={{ width: 84, flexShrink: 0 }}
               value={subscribeQos}
-              onChange={(e) => setSubscribeQos(e.target.value)}
+              options={QOS_OPTIONS}
+              onChange={(v) => setSubscribeQos(v)}
               aria-label="Subscribe QoS"
-            >
-              <option value="atmostonce">QoS 0</option>
-              <option value="atleastonce">QoS 1</option>
-              <option value="exactlyonce">QoS 2</option>
-            </select>
+            />
           </div>
           <Button variant="primary" block size="sm" onClick={handleSubscribe}>Subscribe</Button>
           <div style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.4 }}>
@@ -1672,11 +1671,7 @@ function App() {
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
             <div style={{ flex: 1 }}>
               <Field label="QoS">
-                <select className="vt-select vt-select--sm" value={publishQos} onChange={(e) => setPublishQos(e.target.value)}>
-                  <option value="atmostonce">QoS 0</option>
-                  <option value="atleastonce">QoS 1</option>
-                  <option value="exactlyonce">QoS 2</option>
-                </select>
+                <SheetSelect size="sm" sheetTitle="QoS" value={publishQos} options={QOS_OPTIONS} onChange={(v) => setPublishQos(v)} />
               </Field>
             </div>
             <label className="vt-check" style={{ paddingBottom: 7 }}>

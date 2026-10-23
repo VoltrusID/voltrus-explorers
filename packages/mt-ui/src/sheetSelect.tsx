@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { Dialog } from "./primitives";
 import { useIsPhone } from "./phone";
+import { Combobox, Select } from "./desktopSelect";
 import { filterSheetOptions, groupSheetOptions, isSearchable, type SheetOption } from "./sheetOptions";
 
 export type { SheetOption } from "./sheetOptions";
@@ -21,63 +22,29 @@ export interface SheetSelectProps<T extends string | number> {
   placeholder?: string;
   /** Replaces the selected option's label in the trigger (e.g. a label plus an address). */
   display?: ReactNode;
-  /** Force the search field on or off; by default it shows with more than ten options. */
+  /** Force the search field on or off; by default it shows with more than five options (a combobox on desktop). */
   searchable?: boolean;
-  /** Extra content under the list (an "add" action). Gets a function that closes the sheet. */
+  /** Extra content under the list (an "add" action). Gets a function that closes the list. */
   footer?: (close: () => void) => ReactNode;
+  /** Trigger height: "sm" is the 24px control, "md" (default) the 28px one. */
+  size?: "sm" | "md";
+  /** Whether the trigger fills its container (default). Pass false for a trigger as wide as its value. */
+  fullWidth?: boolean;
   "aria-label"?: string;
   title?: string;
 }
 
 /**
- * The one picker of the phone shell. On a phone it is a button that opens the choices as a bottom sheet: a title, a search
- * field when there are more than ten, 56px rows with a checkmark on the current one, dismissed by a tap outside, the close
- * button or a swipe down. Everywhere else (macOS, iPad) it is a native <select>, so the desktop UI does not change.
+ * The one picker of the apps. On a phone it is a button that opens the choices as a bottom sheet: a title, a search
+ * field when there are more than five, 56px rows with a checkmark on the current one, dismissed by a tap outside, the
+ * close button or a swipe down. On the desktop (macOS, iPad) it is a shadcn-style popover: a plain Select for up to five
+ * options (type to jump to one), a Combobox with a search field above that or whenever there is a footer action.
  */
 export function SheetSelect<T extends string | number>(props: SheetSelectProps<T>) {
   const phone = useIsPhone();
-  if (!phone) return <NativeSelect {...props} />;
-  return <SheetPicker {...props} />;
-}
-
-function NativeSelect<T extends string | number>({ value, options, onChange, id, className, style, disabled, placeholder, title, ...rest }: SheetSelectProps<T>) {
-  const groups = groupSheetOptions(options);
-  const known = options.some((o) => o.value === value);
-  const row = (o: SheetOption<T>) => (
-    <option key={String(o.value)} value={String(o.value)} disabled={o.disabled}>
-      {o.label}
-    </option>
-  );
-  return (
-    <select
-      id={id}
-      className={className ?? "vt-select"}
-      style={style}
-      value={String(value)}
-      disabled={disabled}
-      title={title}
-      aria-label={rest["aria-label"]}
-      onChange={(e) => {
-        const next = options.find((o) => String(o.value) === e.target.value);
-        if (next) onChange(next.value);
-      }}
-    >
-      {!known && placeholder !== undefined && (
-        <option value={String(value)} disabled>
-          {placeholder}
-        </option>
-      )}
-      {groups.map((g, i) =>
-        g.group ? (
-          <optgroup key={`${i}:${g.group}`} label={g.group}>
-            {g.items.map(row)}
-          </optgroup>
-        ) : (
-          g.items.map(row)
-        ),
-      )}
-    </select>
-  );
+  if (phone) return <SheetPicker {...props} />;
+  if (props.footer || isSearchable(props.options.length, props.searchable)) return <Combobox {...props} />;
+  return <Select {...props} />;
 }
 
 function SheetPicker<T extends string | number>({

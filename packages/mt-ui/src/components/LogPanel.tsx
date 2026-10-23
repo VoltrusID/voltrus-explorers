@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Copy, FileDown, Download, Trash2 } from "lucide-react";
 import { Badge, EmptyState, IconButton, Segmented, type Tone } from "../primitives";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../dropdownMenu";
 import { saveTextFile } from "../files";
 
 export interface LogEntry {
@@ -64,10 +65,8 @@ const VISIBLE_LIMIT = 500;
 
 export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, beforeCopyAll, filterDirection, exportPrefix = "comm-log" }: LogPanelProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [showExport, setShowExport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [exportMsg, setExportMsg] = useState<{ text: string; failed?: boolean } | null>(null);
-  const exportRef = useRef<HTMLDivElement>(null);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter | null>(() =>
     filterDirection === "tx" || filterDirection === "rx" || filterDirection === "info" ? filterDirection : null,
   );
@@ -84,18 +83,6 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [filtered.length]);
 
-  // Close export dropdown on outside click
-  useEffect(() => {
-    if (!showExport) return;
-    const onClick = (e: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
-        setShowExport(false);
-      }
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [showExport]);
-
   const copyRow = useCallback((entry: LogEntry, index: number) => {
     const d = dirConfig[entry.direction];
     const text = `${fmtTs(entry.timestamp)} ${d.label} ${entry.message}`;
@@ -106,7 +93,6 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
   }, []);
 
   const copyAll = useCallback(() => {
-    setShowExport(false);
     if (beforeCopyAll && !beforeCopyAll()) return;
     const text = filtered.map((e) => {
       const d = dirConfig[e.direction];
@@ -118,7 +104,6 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
   }, [filtered, beforeCopyAll]);
 
   const exportCsv = useCallback(async () => {
-    setShowExport(false);
     if (beforeExport && !beforeExport()) return;
     const header = "Timestamp,Direction,Message";
     const rows = filtered.map((e) => {
@@ -178,30 +163,21 @@ export function LogPanel({ entries, maxHeight, onExport, onClear, beforeExport, 
           </IconButton>
         )}
         {entries.length > 0 && (
-          <div style={{ position: "relative" }} ref={exportRef}>
-            <IconButton
-              size="sm"
-              label="Export log"
-              aria-haspopup="menu"
-              aria-expanded={showExport}
-              pressed={showExport}
-              onClick={() => setShowExport((v) => !v)}
-            >
-              <Download size={14} strokeWidth={1.75} />
-            </IconButton>
-            {showExport && (
-              <div className="vt-popover" style={{ position: "absolute", right: 0, top: "calc(100% + 4px)" }}>
-                <button type="button" className="vt-menu-item" onClick={copyAll}>
-                  <Copy size={14} strokeWidth={1.75} />
-                  Copy all to clipboard
-                </button>
-                <button type="button" className="vt-menu-item" onClick={exportCsv}>
-                  <FileDown size={14} strokeWidth={1.75} />
-                  Export to CSV
-                </button>
-              </div>
-            )}
-          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <IconButton size="sm" label="Export log">
+                <Download size={14} strokeWidth={1.75} />
+              </IconButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem icon={<Copy size={14} strokeWidth={1.75} />} onSelect={copyAll}>
+                Copy all to clipboard
+              </DropdownMenuItem>
+              <DropdownMenuItem icon={<FileDown size={14} strokeWidth={1.75} />} onSelect={exportCsv}>
+                Export to CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
