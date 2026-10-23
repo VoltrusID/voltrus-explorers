@@ -1,5 +1,6 @@
 import type { ExportFormat, ModbusTag, ModbusTagList, TagList } from "../model";
-import { fileStem, toJson, typeWidth } from "../util";
+import { fileStem, nodeId, toJson, typeWidth } from "../util";
+import { buildBacnetRustredFlow } from "./bacnetflow";
 
 /**
  * Node-RED and RustRED flow JSON for a Modbus tag list.
@@ -52,16 +53,6 @@ export function groupReads(tags: ModbusTag[]): Read[] {
     reads.push({ area: t.area, type: t.type, address: t.address, tags: [t] });
   }
   return reads;
-}
-
-/** Same 16 hex digits every export, so the file does not change when nothing else did. */
-function nodeId(seed: string): string {
-  let a = 0x811c9dc5, b = 0x01000193;
-  for (let i = 0; i < seed.length; i++) {
-    a = Math.imul(a ^ seed.charCodeAt(i), 16777619) >>> 0;
-    b = Math.imul(b ^ seed.charCodeAt(i), 2246822519) >>> 0;
-  }
-  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
 }
 
 const RUSTRED_FUNCTION = {
@@ -182,12 +173,11 @@ function build(list: ModbusTagList, variant: "rustred" | "nodered"): Built {
 export const rustredFormat: ExportFormat = {
   id: "rustred",
   label: "RustRED flow (JSON)",
-  hint: "Modbus read nodes and a Modbus config for RustRED's editor",
+  hint: "Read nodes and a device config for RustRED's editor",
   extension: "json",
-  protocols: ["modbus"],
+  protocols: ["modbus", "bacnet"],
   export(list: TagList) {
-    if (list.protocol !== "modbus") throw new Error("Flow export is for Modbus tag lists");
-    const { nodes, warnings } = build(list, "rustred");
+    const { nodes, warnings } = list.protocol === "bacnet" ? buildBacnetRustredFlow(list) : build(list, "rustred");
     return { fileName: `${fileStem(list.source.name)}-rustred-flow.json`, content: toJson(nodes), warnings };
   },
 };

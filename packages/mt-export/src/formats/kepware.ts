@@ -1,9 +1,9 @@
-import type { ExportFormat, ModbusTag, TagList } from "../model";
+import type { BacnetObjectType, BacnetTag, ExportFormat, ModbusTag, TagList } from "../model";
 import { reference6 } from "../modbusAddress";
 import { csvLine, fileStem } from "../util";
 
 /**
- * Kepware (PTC KEPServerEX / Kepware Server) tag CSV for a Modbus TCP/IP Ethernet device.
+ * Kepware (PTC KEPServerEX / Kepware Server) tag CSV for a Modbus TCP/IP Ethernet device or a BACnet/IP device.
  *
  * - Column list and meaning ("Tag Name" ... "Negate Value", Respect Data Type 1/0, Client Access, Scan Rate in ms,
  *   Scaling None/Linear/Square Root): https://support.ptc.com/help/kepware/kepware_server/en/kepware/server/csv-import-export.html
@@ -17,6 +17,18 @@ import { csvLine, fileStem } from "../util";
  * - Data types Boolean, Word (unsigned 16), Short (signed 16), DWord, Long (signed 32), Float, Double:
  *   https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/MODBUSETHERNET/data-types-description.html
  *   Float and Long take the word order from the device's "First Word Low" setting, which defaults to on (low word first).
+ *
+ * BACnet/IP driver addresses are `<object type>.<object instance>.<property identifier>`, for example
+ * `AnalogValue.100.PresentValue` (Address Descriptions and Addressing Examples):
+ * https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/BACNET/address-descriptions.html
+ * The object type mnemonics are AnalogInput, AnalogOutput, AnalogValue, BinaryInput, BinaryOutput, BinaryValue,
+ * MultistateInput, MultistateOutput and MultistateValue (note the lower case s in Multistate; list in the Object Identifier
+ * format of the Schedule object, BACnet/IP driver manual, https://downloads.softwaretoolbox.com/demodnld/prod_docs/topserver_help_pdf/common/bacnet-ip-manual.pdf).
+ * Property mnemonics are the BACnet names without spaces (PresentValue, ObjectName, Units, ...). The data type of
+ * PresentValue: REAL is Float, Boolean (binary objects) is Boolean, Unsigned Integer (multi-state objects) is DWord or Long
+ * (Analog Input, Binary Input and Multi-State Input property tables of the same manual; Data Types Description:
+ * https://support.ptc.com/help/kepware/drivers/en/kepware/drivers/BACNET/data-types-description.html).
+ * The device instance, IP address and port belong to the device, not to the tag file.
  */
 
 const HEADER = [
@@ -35,19 +47,62 @@ function dataType(t: ModbusTag): string {
   }
 }
 
+const BACNET_OBJECT: Record<BacnetObjectType, string> = {
+  analogInput: "AnalogInput",
+  analogOutput: "AnalogOutput",
+  analogValue: "AnalogValue",
+  binaryInput: "BinaryInput",
+  binaryOutput: "BinaryOutput",
+  binaryValue: "BinaryValue",
+  multiStateInput: "MultistateInput",
+  multiStateOutput: "MultistateOutput",
+  multiStateValue: "MultistateValue",
+};
+
+/** `presentValue` becomes `PresentValue`. */
+const bacnetProperty = (property: string): string => property.charAt(0).toUpperCase() + property.slice(1);
+
+/** Data type of a BACnet property as the driver presents it. Only PresentValue depends on the object type. */
+function bacnetDataType(t: BacnetTag): string {
+  switch (t.property) {
+    case "objectName":
+    case "description":
+      return "String";
+    case "units":
+    case "numberOfStates":
+      return "DWord";
+    case "outOfService":
+      return "Boolean";
+    default:
+      if (t.objectType.startsWith("analog")) return "Float";
+      if (t.objectType.startsWith("binary")) return "Boolean";
+      return "DWord";
+  }
+}
+
 /** A tag name may not hold a period (that is the group separator). */
 const tagName = (name: string): string => name.replace(/\./g, "_");
 
 export const kepwareFormat: ExportFormat = {
   id: "kepware",
   label: "Kepware tags (CSV)",
-  hint: "Static tags for a Modbus TCP/IP Ethernet device, for Import CSV",
+  hint: "Static tags for a Modbus TCP/IP Ethernet or BACnet/IP device, for Import CSV",
   extension: "csv",
-  protocols: ["modbus"],
+  protocols: ["modbus", "bacnet"],
   export(list: TagList) {
-    if (list.protocol !== "modbus") throw new Error("Kepware export is for Modbus tag lists");
-    const s = list.source;
     const warnings: string[] = [];
+    if (list.protocol === "bacnet") {
+      const s = list.source;
+      const rows = list.tags.map((t) =>
+        csvLine([
+          tagName(t.name), `${BACNET_OBJECT[t.objectType]}.${t.instance}.${bacnetProperty(t.property)}`, bacnetDataType(t), 1,
+          t.writable ? "R/W" : "RO", Math.max(10, s.pollMs), "None", "", "", "", "", "", "", "", t.unit ?? "", t.description ?? "", "",
+        ]),
+      );
+      warnings.push(`Kepware reads the device instance, the IP address and the port from the device, not the tag file: set Device ID ${s.deviceId} and ${s.host}:${s.port} on the BACnet/IP device.`);
+      return { fileName: `${fileStem(s.name)}-kepware-tags.csv`, content: [csvLine(HEADER), ...rows].join("\n") + "\n", warnings };
+    }
+    const s = list.source;
     const rows = list.tags.map((t) => {
       const scaled = t.scale !== 1 && t.area !== "coil" && t.area !== "discrete";
       return csvLine([

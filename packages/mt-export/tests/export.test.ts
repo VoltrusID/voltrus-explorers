@@ -1,8 +1,11 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { exportTags, FORMATS, formatsFor, groupReads, reference6 } from "../src";
-import type { FormatId, ModbusTagList, TagList } from "../src";
-import { BACNET_LIST, MODBUS_LIST, MODBUS_LITTLE, MODBUS_RTU } from "./fixtures";
+import type { BacnetTagList, FormatId, ModbusTagList, TagList } from "../src";
+import { BACNET_LIST, MODBUS_HIGH, MODBUS_LIST, MODBUS_LITTLE, MODBUS_RTU } from "./fixtures";
 import { expectGolden } from "./golden";
 
 const MODBUS_CASES: [string, FormatId, TagList][] = [
@@ -15,6 +18,7 @@ const MODBUS_CASES: [string, FormatId, TagList][] = [
   ["modbus-tcp", "homeassistant", MODBUS_LIST],
   ["modbus-tcp", "voltrus-scada", MODBUS_LIST],
   ["modbus-tcp", "voltrus-gateway", MODBUS_LIST],
+  ["modbus-high", "voltrus-scada", MODBUS_HIGH],
   ["modbus-little", "ignition", MODBUS_LITTLE],
   ["modbus-little", "kepware", MODBUS_LITTLE],
   ["modbus-little", "rustred", MODBUS_LITTLE],
@@ -25,6 +29,8 @@ const MODBUS_CASES: [string, FormatId, TagList][] = [
   ["bacnet", "csv", BACNET_LIST],
   ["bacnet", "json", BACNET_LIST],
   ["bacnet", "ignition", BACNET_LIST],
+  ["bacnet", "kepware", BACNET_LIST],
+  ["bacnet", "rustred", BACNET_LIST],
   ["bacnet", "voltrus-scada", BACNET_LIST],
   ["bacnet", "voltrus-gateway", BACNET_LIST],
 ];
@@ -41,12 +47,13 @@ describe("golden files", () => {
 });
 
 describe("format registry", () => {
-  it("offers Kepware and Home Assistant for Modbus only", () => {
+  it("offers Home Assistant for Modbus only and Kepware for both", () => {
+    expect(formatsFor("modbus").map((f) => f.id)).toContain("homeassistant");
     expect(formatsFor("modbus").map((f) => f.id)).toContain("kepware");
-    expect(formatsFor("bacnet").map((f) => f.id)).toEqual(["csv", "json", "ignition", "voltrus-scada", "voltrus-gateway"]);
+    expect(formatsFor("bacnet").map((f) => f.id)).toEqual(["csv", "json", "ignition", "kepware", "rustred", "voltrus-scada", "voltrus-gateway"]);
   });
   it("refuses a protocol the format cannot write", () => {
-    expect(() => exportTags("kepware", BACNET_LIST)).toThrow(/does not support bacnet/);
+    expect(() => exportTags("homeassistant", BACNET_LIST)).toThrow(/does not support bacnet/);
   });
   it("builds 6-digit references", () => {
     expect(reference6("holding", 0)).toBe("400001");
@@ -112,8 +119,30 @@ describe("Kepware CSV", () => {
     expect(byName.Run_state_0.slice(1, 3)).toEqual(["000001", "Boolean"]);
     expect(byName.Door_5.slice(1, 3)).toEqual(["100006", "Boolean"]);
   });
-  it("does not support BACnet", () => {
-    expect(formatsFor("bacnet").some((f) => f.id === "kepware")).toBe(false);
+  it("addresses BACnet objects as <object type>.<instance>.<property> with the driver's data types", () => {
+    const out = exportTags("kepware", BACNET_LIST);
+    const lines = out.content.trimEnd().split("\n");
+    expect(lines[0]).toBe(rows[0]);
+    const f = lines.slice(1).map((l) => l.split(","));
+    expect(f.map((r) => r.slice(0, 6))).toEqual([
+      ["Zone temp", "AnalogInput.1.PresentValue", "Float", "1", "RO", "5000"],
+      ["Fan cmd", "BinaryOutput.2.PresentValue", "Boolean", "1", "R/W", "5000"],
+      ["Mode", "MultistateValue.3.PresentValue", "DWord", "1", "R/W", "5000"],
+    ]);
+    expect(f[0][14]).toBe("°C");
+    expect(out.warnings).toEqual(["Kepware reads the device instance, the IP address and the port from the device, not the tag file: set Device ID 1001 and 192.168.1.60:47808 on the BACnet/IP device."]);
+  });
+  it("types other properties", () => {
+    const list: BacnetTagList = {
+      ...BACNET_LIST,
+      tags: [
+        { name: "n", objectType: "analogInput", instance: 1, property: "objectName", writable: false },
+        { name: "u", objectType: "analogInput", instance: 1, property: "units", writable: false },
+        { name: "o", objectType: "binaryValue", instance: 9, property: "outOfService", writable: true },
+      ],
+    };
+    const f = exportTags("kepware", list).content.trimEnd().split("\n").slice(1).map((l) => l.split(",").slice(1, 3));
+    expect(f).toEqual([["AnalogInput.1.ObjectName", "String"], ["AnalogInput.1.Units", "DWord"], ["BinaryValue.9.OutOfService", "Boolean"]]);
   });
 });
 
@@ -133,6 +162,37 @@ describe("flows", () => {
       }
     });
   }
+
+  it("rustred BACnet: reads are wired to the config, the inject node and the naming function", () => {
+    const nodes = JSON.parse(exportTags("rustred", BACNET_LIST).content) as Record<string, any>[];
+    const ids = new Set(nodes.map((n) => n.id));
+    expect(ids.size).toBe(nodes.length);
+    for (const n of nodes) for (const out of n.wires ?? []) for (const to of out) expect(ids.has(to)).toBe(true);
+    const cfg = nodes.find((n) => n.type === "bacnet-config")!;
+    expect(cfg).toMatchObject({ deviceId: 1001, targetHost: "192.168.1.60", targetPort: 47808 });
+    const reads = nodes.filter((n) => n.type === "bacnet read");
+    expect(reads.map((r) => [r.name, r.objectType, r.objectInstance, r.property, r.configNode])).toEqual([
+      ["Zone temp", "analogInput", 1, "presentValue", cfg.id],
+      ["Fan cmd", "binaryOutput", 2, "presentValue", cfg.id],
+      ["Mode", "multiStateValue", 3, "presentValue", cfg.id],
+    ]);
+    const inject = nodes.find((n) => n.type === "inject")!;
+    expect(inject).toMatchObject({ repeat: "5", once: true });
+    expect(inject.wires[0]).toEqual(reads.map((r) => r.id));
+  });
+  it("rustred BACnet: the function node names a value from msg.bacnet", () => {
+    const nodes = JSON.parse(exportTags("rustred", BACNET_LIST).content) as Record<string, any>[];
+    const fn = new Function("msg", nodes.find((n) => n.type === "function")!.func);
+    const out = fn({ payload: 21.5, bacnet: { objectType: "binaryOutput", objectInstance: 2, property: "presentValue" } });
+    expect(out.payload).toEqual({ "Fan cmd": 21.5 });
+    expect(out.topic).toBe("AHU-1");
+  });
+  it("rustred BACnet: warns about writable tags", () => {
+    expect(exportTags("rustred", BACNET_LIST).warnings[0]).toMatch(/^2 writable tags are read only/);
+  });
+  it("has no Node-RED variant for BACnet", () => {
+    expect(formatsFor("bacnet").some((f) => f.id === "nodered")).toBe(false);
+  });
 
   it("folds neighbouring tags into one read and splits at the protocol limit", () => {
     expect(groupReads(MODBUS_LIST.tags).map((r) => [r.area, r.address, r.tags.length])).toEqual([
@@ -274,17 +334,52 @@ describe("Voltrus formats", () => {
     const d = JSON.parse(exportTags("voltrus-scada", MODBUS_LIST).content);
     expect(d).toMatchObject({ id: "pm5560_meter", name: "PM5560 meter", ip: "192.168.1.50", port: 502, unit_id: 3, interval_ms: 1000, endianness: "big" });
     expect(d.registers).toHaveLength(8);
-    expect(d.registers[6]).toEqual({ name: "Run_state_0", address: 0, register_type: "uint16", register_area: "coil", scale: 1 });
+    expect(d.registers[6]).toEqual({ name: "Run_state_0", register_area: "coil", offset: 0, register_type: "uint16", scale: 1 });
+    expect(d.registers.every((r: Record<string, unknown>) => !("address" in r))).toBe(true);
   });
-  it("leaves out addresses the SCADA would shift", () => {
-    const list: ModbusTagList = { ...MODBUS_LIST, tags: [{ name: "far", area: "holding", address: 40000, type: "uint16", scale: 1, writable: true }, MODBUS_LIST.tags[0]] };
+  it("keeps every address, including those above 30000, as an explicit offset", () => {
+    const list: ModbusTagList = {
+      ...MODBUS_LIST,
+      tags: [
+        { name: "far", area: "holding", address: 40000, type: "uint16", scale: 1, writable: true },
+        { name: "last", area: "input", address: 65535, type: "uint16", scale: 1, writable: false },
+        { name: "edge", area: "holding", address: 30000, type: "uint16", scale: 1, writable: true },
+      ],
+    };
     const out = exportTags("voltrus-scada", list);
-    expect(JSON.parse(out.content).registers).toHaveLength(1);
-    expect(out.warnings[0]).toMatch(/^far: address 40000/);
+    expect(JSON.parse(out.content).registers.map((r: any) => [r.name, r.register_area, r.offset])).toEqual([
+      ["far", "holding", 40000], ["last", "input", 65535], ["edge", "holding", 30000],
+    ]);
+    expect(out.warnings).toEqual([]);
   });
   it("gateway file is proto3 JSON for ConnectRequest and TagAddress", () => {
     const g = JSON.parse(exportTags("voltrus-gateway", MODBUS_LIST).content);
     expect(g.connect.modbus).toMatchObject({ ip: "192.168.1.50", unitId: 3, endianness: "big" });
     expect(g.tags[0]).toEqual({ modbus: { name: "Voltage_3000", address: 3000, regType: "float32", scale: 1, registerArea: "holding" } });
   });
+});
+
+/**
+ * The SCADA's own device file parser (voltrus/client/src/deviceFileImport.ts) reads what the SCADA format writes and gets
+ * the same tags back. Runs when a Voltrus checkout is next to this repo (or VOLTRUS_CLIENT_SRC points at client/src); the
+ * SCADA repo runs the import into its register model against a copy of this export (src/storage/tests/modbus_tests.rs).
+ */
+const parserPath = resolve(
+  process.env.VOLTRUS_CLIENT_SRC ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../../../voltrus/client/src"),
+  "deviceFileImport.ts",
+);
+describe.skipIf(!existsSync(parserPath))("SCADA import round trip", () => {
+  for (const [name, list] of [["modbus-tcp", MODBUS_LIST], ["modbus-high", MODBUS_HIGH]] as const) {
+    it(`${name}: the SCADA importer returns the exported tags`, async () => {
+      const { parseModbusDeviceFile } = await import(/* @vite-ignore */ parserPath);
+      const { devices, errors } = parseModbusDeviceFile(exportTags("voltrus-scada", list).content);
+      expect(errors).toEqual([]);
+      expect(devices).toHaveLength(1);
+      const s = list.source;
+      expect(devices[0]).toMatchObject({ name: s.name, ip: s.host, port: s.port, unit_id: s.unitId, interval_ms: s.pollMs, endianness: s.wordOrder });
+      expect(devices[0].registers).toEqual(
+        list.tags.map((t) => ({ name: t.name, offset: t.address, register_type: t.type === "bool" ? "uint16" : t.type, register_area: t.area, scale: t.scale })),
+      );
+    });
+  }
 });

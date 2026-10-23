@@ -1,0 +1,4 @@
+Tag Name,Address,Data Type,Respect Data Type,Client Access,Scan Rate,Scaling,Raw Low,Raw High,Scaled Low,Scaled High,Scaled Data Type,Clamp Low,Clamp High,Eng Units,Description,Negate Value
+Zone temp,AnalogInput.1.PresentValue,Float,1,RO,5000,None,,,,,,,,°C,Zone temperature,
+Fan cmd,BinaryOutput.2.PresentValue,Boolean,1,R/W,5000,None,,,,,,,,,,
+Mode,MultistateValue.3.PresentValue,DWord,1,R/W,5000,None,,,,,,,,,,

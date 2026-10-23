@@ -9,58 +9,58 @@
   "registers": [
     {
       "name": "Voltage_3000",
-      "address": 3000,
-      "register_type": "float32",
       "register_area": "holding",
+      "offset": 3000,
+      "register_type": "float32",
       "scale": 1
     },
     {
       "name": "Voltage_3002",
-      "address": 3002,
-      "register_type": "float32",
       "register_area": "holding",
+      "offset": 3002,
+      "register_type": "float32",
       "scale": 1
     },
     {
       "name": "Counter_10",
-      "address": 10,
-      "register_type": "uint16",
       "register_area": "holding",
+      "offset": 10,
+      "register_type": "uint16",
       "scale": 1
     },
     {
       "name": "Temperature_20",
-      "address": 20,
-      "register_type": "int16",
       "register_area": "holding",
+      "offset": 20,
+      "register_type": "int16",
       "scale": 0.1
     },
     {
       "name": "Energy_100",
-      "address": 100,
-      "register_type": "int32",
       "register_area": "input",
+      "offset": 100,
+      "register_type": "int32",
       "scale": 1
     },
     {
       "name": "Flow_200",
-      "address": 200,
-      "register_type": "float64",
       "register_area": "input",
+      "offset": 200,
+      "register_type": "float64",
       "scale": 1
     },
     {
       "name": "Run_state_0",
-      "address": 0,
-      "register_type": "uint16",
       "register_area": "coil",
+      "offset": 0,
+      "register_type": "uint16",
       "scale": 1
     },
     {
       "name": "Door_5",
-      "address": 5,
-      "register_type": "uint16",
       "register_area": "discrete",
+      "offset": 5,
+      "register_type": "uint16",
       "scale": 1
     }
   ]

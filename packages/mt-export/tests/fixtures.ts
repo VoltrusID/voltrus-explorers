@@ -22,6 +22,22 @@ export const MODBUS_LITTLE: ModbusTagList = {
   tags: MODBUS_LIST.tags.slice(0, 5),
 };
 
+/** Addresses the SCADA's 5-digit references would shift: 30000 and below, and every area above it up to 65535. */
+export const MODBUS_HIGH: ModbusTagList = {
+  protocol: "modbus",
+  source: { name: "Big map", transport: "tcp", host: "10.1.2.3", port: 1502, unitId: 1, pollMs: 2000, wordOrder: "swapped" },
+  tags: [
+    { name: "Edge_30000", area: "holding", address: 30000, type: "uint16", scale: 1, writable: true },
+    { name: "Float_35000", area: "holding", address: 35000, type: "float32", scale: 0.5, unit: "kW", writable: true },
+    { name: "Count_40000", area: "holding", address: 40000, type: "int32", scale: 1, writable: true },
+    { name: "Input_30001", area: "input", address: 30001, type: "int16", scale: 1, writable: false },
+    { name: "Input_65534", area: "input", address: 65534, type: "uint16", scale: 1, writable: false },
+    { name: "Coil_40000", area: "coil", address: 40000, type: "bool", scale: 1, writable: true },
+    { name: "Discrete_50000", area: "discrete", address: 50000, type: "bool", scale: 1, writable: false },
+    { name: "Low_5", area: "holding", address: 5, type: "float64", scale: 1, writable: true },
+  ],
+};
+
 export const MODBUS_RTU: ModbusTagList = {
   protocol: "modbus",
   source: {
@@ -41,5 +57,19 @@ export const BACNET_LIST: BacnetTagList = {
     { name: "Zone temp", objectType: "analogInput", instance: 1, property: "presentValue", unit: "°C", description: "Zone temperature", writable: false },
     { name: "Fan cmd", objectType: "binaryOutput", instance: 2, property: "presentValue", writable: true },
     { name: "Mode", objectType: "multiStateValue", instance: 3, property: "presentValue", writable: true },
+  ],
+};
+
+/** The points of `crates/mt-bacnet/examples/sim_headless.rs`, for validating the BACnet flow against a running device. */
+export const BACNET_SIM_LIST: BacnetTagList = {
+  protocol: "bacnet",
+  source: { name: "Sim", host: "127.0.0.1", port: 47808, deviceId: 1234, pollMs: 1000 },
+  tags: [
+    { name: "Supply temp", objectType: "analogInput", instance: 1, property: "presentValue", unit: "°C", writable: false },
+    { name: "Voltage", objectType: "analogValue", instance: 2, property: "presentValue", unit: "V", writable: false },
+    { name: "Fan status", objectType: "binaryInput", instance: 3, property: "presentValue", writable: false },
+    { name: "Mode", objectType: "multiStateValue", instance: 4, property: "presentValue", writable: false },
+    { name: "Valve", objectType: "analogOutput", instance: 5, property: "presentValue", writable: true },
+    { name: "Supply temp name", objectType: "analogInput", instance: 1, property: "objectName", writable: false },
   ],
 };

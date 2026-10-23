@@ -8,15 +8,15 @@ import { fileStem, slug, toJson } from "../util";
  * `name`, `address` (u16), `register_type` (int16 | uint16 | int32 | float32 | float64), `register_area`
  * (holding | input | coil | discrete) and `scale`. The Modbus devices page of the SCADA imports this file by drag and drop.
  *
- * `RegisterConfig::protocol_address` (src/models/config_types.rs) treats an address of 30001 or more as a 5-digit reference
- * and subtracts 30001 or 40001, so a 0-based address from 30001 up cannot be stored; those tags are left out.
+ * Each register is written with `offset`, the explicit 0-based address inside `register_area` (0-65535). The legacy
+ * `address` field is not used: the SCADA reads an `address` of 30001 or more as a 5-digit reference
+ * (`RegisterConfig::protocol_address`, src/models/config_types.rs), while `offset` is stored with `zero_based` set and
+ * used as is (`ModbusRegisterInput::resolve_address`, src/models/protocol_device_types.rs).
  *
  * BACnet lists use the two calls the BACnet devices page makes: the file is a `CreateBacnetDeviceRequest` (`name`, `ip`,
  * `port`, `device_instance`, `interval_ms`) plus `objects`, each a `CreateBacnetObjectRequest` (`object_type` as analogInput
  * and so on, `object_instance`, `property`, `name`) for `POST /api/v1/bacnet/devices/{id}/objects` (src/models/bacnet_types.rs).
  */
-
-const MAX_PLAIN_ADDRESS = 30000;
 
 export const voltrusScadaFormat: ExportFormat = {
   id: "voltrus-scada",
@@ -40,13 +40,9 @@ export const voltrusScadaFormat: ExportFormat = {
     }
 
     const s = list.source;
-    const registers = list.tags.flatMap((t: ModbusTag) => {
-      if (t.address > MAX_PLAIN_ADDRESS) {
-        warnings.push(`${t.name}: address ${t.address} is above ${MAX_PLAIN_ADDRESS}, which the SCADA reads as a 5-digit reference. Left out.`);
-        return [];
-      }
-      return [{ name: t.name, address: t.address, register_type: t.type === "bool" ? "uint16" : t.type, register_area: t.area, scale: t.scale }];
-    });
+    const registers = list.tags.map((t: ModbusTag) => ({
+      name: t.name, register_area: t.area, offset: t.address, register_type: t.type === "bool" ? "uint16" : t.type, scale: t.scale,
+    }));
     if (s.transport === "rtu") warnings.push("The SCADA polls Modbus TCP only. Put the IP address of a serial gateway in the device after import.");
     const body = { id: slug(s.name, "modbus_device"), name: s.name, ip: s.host, port: s.port, unit_id: s.unitId, interval_ms: s.pollMs, endianness: s.wordOrder, registers };
     return { fileName: `${fileStem(s.name)}-voltrus-device.json`, content: toJson(body), warnings };

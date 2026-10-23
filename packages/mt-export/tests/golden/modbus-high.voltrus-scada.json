@@ -1,0 +1,67 @@
+{
+  "id": "big_map",
+  "name": "Big map",
+  "ip": "10.1.2.3",
+  "port": 1502,
+  "unit_id": 1,
+  "interval_ms": 2000,
+  "endianness": "swapped",
+  "registers": [
+    {
+      "name": "Edge_30000",
+      "register_area": "holding",
+      "offset": 30000,
+      "register_type": "uint16",
+      "scale": 1
+    },
+    {
+      "name": "Float_35000",
+      "register_area": "holding",
+      "offset": 35000,
+      "register_type": "float32",
+      "scale": 0.5
+    },
+    {
+      "name": "Count_40000",
+      "register_area": "holding",
+      "offset": 40000,
+      "register_type": "int32",
+      "scale": 1
+    },
+    {
+      "name": "Input_30001",
+      "register_area": "input",
+      "offset": 30001,
+      "register_type": "int16",
+      "scale": 1
+    },
+    {
+      "name": "Input_65534",
+      "register_area": "input",
+      "offset": 65534,
+      "register_type": "uint16",
+      "scale": 1
+    },
+    {
+      "name": "Coil_40000",
+      "register_area": "coil",
+      "offset": 40000,
+      "register_type": "uint16",
+      "scale": 1
+    },
+    {
+      "name": "Discrete_50000",
+      "register_area": "discrete",
+      "offset": 50000,
+      "register_type": "uint16",
+      "scale": 1
+    },
+    {
+      "name": "Low_5",
+      "register_area": "holding",
+      "offset": 5,
+      "register_type": "float64",
+      "scale": 1
+    }
+  ]
+}

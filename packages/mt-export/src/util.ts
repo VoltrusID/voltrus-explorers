@@ -44,3 +44,13 @@ export const isScaled = (t: ModbusTag): boolean => t.scale !== 1;
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** Same 16 hex digits every export, so the file does not change when nothing else did. */
+export function nodeId(seed: string): string {
+  let a = 0x811c9dc5, b = 0x01000193;
+  for (let i = 0; i < seed.length; i++) {
+    a = Math.imul(a ^ seed.charCodeAt(i), 16777619) >>> 0;
+    b = Math.imul(b ^ seed.charCodeAt(i), 2246822519) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
