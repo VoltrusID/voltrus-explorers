@@ -324,16 +324,21 @@ pub async fn read_object_properties(
                 let prop_name = property_id_name(prop_id_u32);
                 let raw_value = match &prop_result.value {
                     bacnet_rs::service::PropertyResultValue::Value(values) => {
-                        values
-                            .iter()
-                            .map(|v| v.as_display_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        match (prop_result.property_identifier, values.as_slice()) {
+                            (PropertyIdentifier::StatusFlags, [PropertyValue::BitString(bits)]) => status_flags_text(bits),
+                            (PropertyIdentifier::Reliability, [PropertyValue::Enumerated(n)]) => reliability_text(*n),
+                            _ => values
+                                .iter()
+                                .map(|v| v.as_display_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        }
                     }
                     bacnet_rs::service::PropertyResultValue::Error(c, code) => {
                         format!("Error({c}, {code})")
                     }
                 };
+                let read_ok = matches!(prop_result.value, bacnet_rs::service::PropertyResultValue::Value(_));
 
                 let parsed_value = match &prop_result.value {
                     bacnet_rs::service::PropertyResultValue::Value(values) => {
@@ -376,10 +381,12 @@ pub async fn read_object_properties(
                         detail.units = Some(name);
                         detail.units_symbol = symbol;
                     }
-                    PropertyIdentifier::StatusFlags => {
+                    // statusFlags and reliability are optional: a device that lacks them answers with an error, which is
+                    // no value to show in the object list or the CSV (the property list keeps the error text).
+                    PropertyIdentifier::StatusFlags if read_ok => {
                         detail.status_flags = Some(raw_value);
                     }
-                    PropertyIdentifier::Reliability => {
+                    PropertyIdentifier::Reliability if read_ok => {
                         detail.reliability = Some(raw_value);
                     }
                     PropertyIdentifier::OutOfService => {
@@ -588,6 +595,28 @@ fn extract_bool(value: &bacnet_rs::service::PropertyResultValue) -> Option<bool>
             }
         }
         bacnet_rs::service::PropertyResultValue::Error(_, _) => None,
+    }
+}
+
+/// Status flags as words: `normal`, or the set bits (BACnetStatusFlags: in-alarm, fault, overridden, out-of-service).
+fn status_flags_text(bits: &[bool]) -> String {
+    const NAMES: [&str; 4] = ["in-alarm", "fault", "overridden", "out-of-service"];
+    let set: Vec<&str> = NAMES.iter().zip(bits).filter(|(_, on)| **on).map(|(name, _)| *name).collect();
+    if set.is_empty() { "normal".into() } else { set.join(", ") }
+}
+
+/// BACnetReliability as a word; unknown (vendor) values keep their number.
+fn reliability_text(value: u32) -> String {
+    const NAMES: [&str; 25] = [
+        "no-fault-detected", "no-sensor", "over-range", "under-range", "open-loop", "shorted-loop", "no-output",
+        "unreliable-other", "process-error", "multi-state-fault", "configuration-error", "", "communication-failure",
+        "member-fault", "monitored-object-fault", "tripped", "lamp-failure", "activation-failed", "renew-dhcp-failure",
+        "renew-fd-registration-failure", "restart-auto-negotiation-failure", "restart-failure",
+        "proprietary-command-failure", "faults-listed", "referenced-object-fault",
+    ];
+    match NAMES.get(value as usize) {
+        Some(name) if !name.is_empty() => (*name).into(),
+        _ => format!("reliability {value}"),
     }
 }
 
@@ -1116,6 +1145,21 @@ pub(crate) fn decode_read_property_ack(data: &[u8]) -> Option<ReadPropertyAck> {
 mod tests {
     use super::*;
     use crate::transport::{apdu_of_frame, unicast_frame};
+
+    #[test]
+    fn status_flags_read_as_words() {
+        assert_eq!(status_flags_text(&[false, false, false, false]), "normal");
+        assert_eq!(status_flags_text(&[true, false, false, true]), "in-alarm, out-of-service");
+        assert_eq!(status_flags_text(&[false, true, true, false]), "fault, overridden");
+    }
+
+    #[test]
+    fn reliability_reads_as_a_word_and_keeps_vendor_numbers() {
+        assert_eq!(reliability_text(0), "no-fault-detected");
+        assert_eq!(reliability_text(12), "communication-failure");
+        assert_eq!(reliability_text(11), "reliability 11");
+        assert_eq!(reliability_text(300), "reliability 300");
+    }
 
     /// BVLC header (type 0x81, function, total length) + body.
     fn bvlc(function: u8, body: &[u8]) -> Vec<u8> {
