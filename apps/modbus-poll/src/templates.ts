@@ -1,3 +1,5 @@
+import type { ReadBlock } from "./types";
+
 export interface RegisterDef {
   name: string;
   unit: string;
@@ -189,6 +191,36 @@ export function initialValues(profile: DeviceProfile): number[] {
 
 export function numRegisters(profile: DeviceProfile): number {
   return profile.registers.reduce((sum, r) => sum + (r.isCounter ? 4 : 2), 0);
+}
+
+/**
+ * The master read blocks that poll a device template's register map the way the slave simulator lays it out: measurements
+ * are float32 (2 registers each), counters are float64 (4 registers each), all holding registers, big-endian. Registers of
+ * the same kind that follow each other become one block, so a template of mixed kinds gives one block per run.
+ */
+export function templateBlocks(profile: DeviceProfile): ReadBlock[] {
+  const runs: { counter: boolean; address: number; quantity: number }[] = [];
+  let address = profile.baseAddress;
+  for (const reg of profile.registers) {
+    const last = runs[runs.length - 1];
+    if (last && last.counter === reg.isCounter) last.quantity += 1;
+    else runs.push({ counter: reg.isCounter, address, quantity: 1 });
+    address += reg.isCounter ? 4 : 2;
+  }
+  const total = { true: 0, false: 0 };
+  for (const r of runs) total[String(r.counter) as "true" | "false"] += 1;
+  const seen = { true: 0, false: 0 };
+  return runs.map((r) => {
+    const key = String(r.counter) as "true" | "false";
+    const suffix = total[key] > 1 ? ` ${++seen[key]}` : "";
+    return {
+      name: `${profile.model} ${r.counter ? "counters" : "values"}${suffix}`,
+      address: r.address,
+      quantity: r.quantity,
+      type: r.counter ? "float64" : "float32",
+      area: "holding",
+    };
+  });
 }
 
 /** Decode raw u16 register array into labeled values based on a profile. */

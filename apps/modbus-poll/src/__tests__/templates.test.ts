@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { blockStep, validateBlock } from "../helpers";
 import {
+  BUILTIN_PROFILES,
+  PM5560,
+  templateBlocks,
   type DeviceProfile,
   type RegisterDef,
   initialValues,
@@ -140,5 +144,40 @@ describe("custom template storage", () => {
     saveCustomTemplates([makeProfile([floatReg("v2", 0, 0, 10, 0)]), makeProfile([floatReg("v3", 0, 0, 10, 0)])]);
     const loaded = loadCustomTemplates();
     expect(loaded).toHaveLength(2);
+  });
+});
+
+describe("templateBlocks", () => {
+  it("polls every built-in template across exactly its register map, with valid blocks", () => {
+    for (const profile of BUILTIN_PROFILES) {
+      const blocks = templateBlocks(profile);
+      let next = profile.baseAddress;
+      for (const b of blocks) {
+        expect(validateBlock(b), `${profile.id}: ${b.name}`).toBeNull();
+        expect(b.address).toBe(next);
+        expect(b.area).toBe("holding");
+        next += b.quantity * blockStep(b);
+      }
+      expect(next - profile.baseAddress).toBe(numRegisters(profile));
+    }
+  });
+
+  it("reads measurements as float32 and counters as float64, one block per run", () => {
+    const blocks = templateBlocks(PM5560);
+    expect(blocks.map((b) => [b.name, b.type, b.address, b.quantity])).toEqual([
+      ["PM5560 values", "float32", 2999, 14],
+      ["PM5560 counters", "float64", 3027, 2],
+    ]);
+  });
+
+  it("numbers blocks when a template alternates kinds", () => {
+    const profile = makeProfile([
+      floatReg("a", 0, 0, 1, 0),
+      counterReg("c", 0, 0),
+      floatReg("b", 0, 0, 1, 0),
+    ]);
+    const blocks = templateBlocks(profile);
+    expect(blocks.map((b) => b.name)).toEqual([`${profile.model} values 1`, `${profile.model} counters`, `${profile.model} values 2`]);
+    expect(blocks.map((b) => b.address)).toEqual([profile.baseAddress, profile.baseAddress + 2, profile.baseAddress + 6]);
   });
 });

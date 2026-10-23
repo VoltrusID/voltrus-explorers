@@ -1,4 +1,5 @@
-import { Button, Callout, EmptyState, Field, IconButton, Section, SheetSelect, useProStatus } from "@mactools/ui";
+import { useState } from "react";
+import { Button, Callout, Dialog, EmptyState, Field, IconButton, Section, SheetSelect, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { AREAS, AREA_HINTS, FREE_VALUES, TYPES, TYPE_HINTS } from "../constants";
 import { blockStep, isBitArea, validateBlock } from "../helpers";
@@ -6,9 +7,17 @@ import type { ReadBlock } from "../types";
 import { displayAddr } from "../utils/format";
 import { valueCapNotice } from "../limits";
 import { useStore } from "../store";
+import { BUILTIN_PROFILES, loadCustomTemplates, templateBlocks, type DeviceProfile } from "../templates";
 
 const TYPE_OPTIONS = TYPES.map((t) => ({ value: t, label: t, hint: TYPE_HINTS[t] }));
 const AREA_OPTIONS = AREAS.map((a) => ({ value: a, label: a, hint: AREA_HINTS[a] }));
+
+function templateOptions() {
+  return [
+    ...BUILTIN_PROFILES.map((p) => ({ value: p.id, label: `${p.manufacturer} ${p.model}`, hint: p.description, group: "Built-in" })),
+    ...loadCustomTemplates().map((p) => ({ value: p.id, label: p.model, hint: p.description, group: "Custom" })),
+  ];
+}
 
 interface Props {
   onExportCsv: () => void;
@@ -24,6 +33,9 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     useOneBased, addLog,
   } = useStore();
   const { pro, requirePro, openUpsell } = useProStatus();
+  const [pendingTemplate, setPendingTemplate] = useState<DeviceProfile | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
+  const options = templateOptions();
   const capNotice = valueCapNotice(blocks, pro);
   const totalValues = (list: ReadBlock[]) => list.reduce((n, b) => n + b.quantity, 0);
   const overFreeCap = (list: ReadBlock[]) => !pro && totalValues(list) > FREE_VALUES && !requirePro(`More than ${FREE_VALUES} polled values`);
@@ -90,6 +102,24 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
     setBlocks(blocks.filter((_, i) => i !== index));
   };
 
+  const applyTemplate = (profile: DeviceProfile, mode: "replace" | "append") => {
+    const added = templateBlocks(profile);
+    const next = mode === "replace" ? added : [...blocks, ...added];
+    setPendingTemplate(null);
+    setConfirmReplace(false);
+    if (overFreeCap(next)) return;
+    setEditingBlock(null);
+    setBlocks(next);
+    addLog("info", `${mode === "replace" ? "Loaded" : "Added"} ${profile.model} template: ${added.length} read block${added.length === 1 ? "" : "s"}`);
+  };
+
+  const pickTemplate = (id: string) => {
+    const profile = [...BUILTIN_PROFILES, ...loadCustomTemplates()].find((p) => p.id === id);
+    if (!profile) return;
+    if (blocks.length === 0) applyTemplate(profile, "replace");
+    else setPendingTemplate(profile);
+  };
+
   const moveBlock = (index: number, direction: -1 | 1) => {
     const next = [...blocks];
     const target = index + direction;
@@ -108,6 +138,38 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
           </Callout>
         </div>
       )}
+      <div style={{ marginBottom: 8 }}>
+        <SheetSelect
+          sheetTitle="Load device template"
+          aria-label="Load device template"
+          style={{ width: "100%" }}
+          value=""
+          placeholder="Load device template…"
+          options={options}
+          onChange={pickTemplate}
+        />
+      </div>
+      <Dialog
+        open={pendingTemplate !== null}
+        onClose={() => { setPendingTemplate(null); setConfirmReplace(false); }}
+        title={pendingTemplate ? `Load ${pendingTemplate.model}` : ""}
+        footer={pendingTemplate && (confirmReplace ? (
+          <>
+            <Button variant="ghost" onClick={() => setConfirmReplace(false)}>Back</Button>
+            <Button variant="danger" onClick={() => applyTemplate(pendingTemplate, "replace")}>Replace {blocks.length} block{blocks.length === 1 ? "" : "s"}</Button>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={() => setPendingTemplate(null)}>Cancel</Button>
+            <Button onClick={() => setConfirmReplace(true)}>Replace</Button>
+            <Button variant="primary" onClick={() => applyTemplate(pendingTemplate, "append")}>Append</Button>
+          </>
+        ))}
+      >
+        {confirmReplace
+          ? `This removes your ${blocks.length} read block${blocks.length === 1 ? "" : "s"} and polls only the ${pendingTemplate?.model} map. Continue?`
+          : `Replace your ${blocks.length} read block${blocks.length === 1 ? "" : "s"} with the ${pendingTemplate?.model} map, or append it after them?`}
+      </Dialog>
       <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
         <Button size="sm" variant="ghost" onClick={onImportCsv} icon={<Upload size={14} strokeWidth={1.75} />}>Import CSV</Button>
         {blocks.length > 0 && (
