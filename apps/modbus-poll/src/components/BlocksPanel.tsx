@@ -171,7 +171,7 @@ export function BlocksPanel({ onExportCsv, onImportCsv, onExportScada }: Props) 
           ? `This removes your ${blocks.length} read block${blocks.length === 1 ? "" : "s"} and polls only the ${pendingTemplate?.model} map. Continue?`
           : `Replace your ${blocks.length} read block${blocks.length === 1 ? "" : "s"} with the ${pendingTemplate?.model} map, or append it after them?`}
       </Dialog>
-      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
         <Button size="sm" variant="ghost" onClick={onImportCsv} icon={<Upload size={14} strokeWidth={1.75} />}>Import CSV</Button>
         {blocks.length > 0 && (
           <Button size="sm" variant="ghost" onClick={onExportCsv} icon={<Download size={14} strokeWidth={1.75} />}>Export CSV</Button>
