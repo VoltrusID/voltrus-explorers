@@ -339,7 +339,7 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
   // Write a typed property value. Rejects with the device's error so the
   // inspector can show it; on success the properties are re-read.
   const handleWrite = useCallback(
-    async (propertyName: string, value: BacnetValue) => {
+    async (propertyName: string, value: BacnetValue, priority: number | null) => {
       if (!selectedObject) throw new Error("No object selected");
       await invoke("write_tag", {
         tag: {
@@ -349,6 +349,7 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
           property: propertyName,
         },
         value,
+        priority,
       });
       await loadProperties(selectedObject);
     },

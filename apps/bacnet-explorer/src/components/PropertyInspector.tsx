@@ -1,17 +1,18 @@
 import { useEffect, useState } from "react";
 import { Pencil } from "lucide-react";
-import { Badge, EmptyState, IconButton, ValueEditor, useProStatus } from "@mactools/ui";
+import { Badge, EmptyState, IconButton, useProStatus } from "@mactools/ui";
 import type { BacnetPropertyEntry, BacnetValue } from "../types";
 import { bacnetValueToString, formatObjectType } from "../types";
-import { WRITE_KIND_TYPES, parseWriteValue, writeInitialText, writeKindFor } from "../writeValue";
+import { RELINQUISH_VALUE, WRITE_KIND_TYPES, parsePriority, parseWriteValue, writeInitialText, writeKindFor } from "../writeValue";
+import { WriteDialog } from "./WriteDialog";
 
 interface PropertyInspectorProps {
   objectType: string;
   objectInstance: number;
   properties: BacnetPropertyEntry[];
   loading: boolean;
-  /** Writes a typed value; must reject with the backend error so it can be shown. */
-  onWrite?: (propertyName: string, value: BacnetValue) => Promise<void>;
+  /** Writes a typed value, at a command priority 1-16 or the device default (`null`); must reject with the backend error so it can be shown. */
+  onWrite?: (propertyName: string, value: BacnetValue, priority: number | null) => Promise<void>;
   unitName?: string | null;
   unitSymbol?: string | null;
 }
@@ -53,21 +54,25 @@ export function PropertyInspector({
   const writeKind = writeKindFor(objectType);
   const [editing, setEditing] = useState<{ propertyName: string; currentText: string } | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   // A different object invalidates any open editor and its error.
   useEffect(() => {
     setEditing(null);
     setWriteError(null);
+    setDialogError(null);
   }, [objectType, objectInstance]);
 
-  const submitWrite = async (propertyName: string, input: string) => {
-    setEditing(null);
+  const submitWrite = async (propertyName: string, input: string | null, priorityText: string) => {
     if (!onWrite) return;
+    // A failed write leaves the dialog open with the reason in it; the user can fix the value and retry.
     try {
-      await onWrite(propertyName, parseWriteValue(writeKind, input));
+      const value = input === null ? RELINQUISH_VALUE : parseWriteValue(writeKind, input);
+      await onWrite(propertyName, value, parsePriority(priorityText));
+      setEditing(null);
       setWriteError(null);
     } catch (e) {
-      setWriteError(`Write ${propertyName} failed: ${e instanceof Error ? e.message : String(e)}`);
+      setDialogError(`${input === null ? "Relinquish" : "Write"} ${propertyName} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -172,6 +177,7 @@ export function PropertyInspector({
                           style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)" }}
                           onClick={() => {
                             if (!requirePro("Writing properties")) return;
+                            setDialogError(null);
                             setEditing({
                               propertyName: entry.property_name,
                               currentText: writeInitialText(writeKind, value),
@@ -191,12 +197,13 @@ export function PropertyInspector({
       )}
 
       {editing && (
-        <ValueEditor
+        <WriteDialog
           address={`${label} #${objectInstance} · ${formatPropertyName(editing.propertyName)}`}
           currentValue={editing.currentText}
-          currentDataType={writeKind}
           types={WRITE_KIND_TYPES[writeKind]}
-          onSubmit={(input) => submitWrite(editing.propertyName, input)}
+          error={dialogError}
+          onWrite={(input, priority) => submitWrite(editing.propertyName, input, priority)}
+          onRelinquish={(priority) => submitWrite(editing.propertyName, null, priority)}
           onCancel={() => setEditing(null)}
         />
       )}

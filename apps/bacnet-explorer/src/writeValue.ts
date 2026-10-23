@@ -59,3 +59,30 @@ export function writeInitialText(kind: WriteKind, value: BacnetValue): string {
   if ("Enum" in value) return String(value.Enum);
   return "";
 }
+
+/** The value that clears a command priority slot: a WriteProperty carrying Null (ASHRAE 135 clause 19.2). */
+export const RELINQUISH_VALUE: BacnetValue = { Null: null };
+
+/** Priorities that have a standard meaning (ASHRAE 135 table 19-1); the others are "available". 1 is the highest. */
+const PRIORITY_NAMES: Record<number, string> = {
+  1: "Manual life safety",
+  2: "Automatic life safety",
+  5: "Critical equipment control",
+  6: "Minimum on/off",
+  8: "Manual operator",
+  16: "Lowest, the usual default",
+};
+
+/** Picker contents for the command priority: the device default first, then 1 to 16. */
+export const PRIORITY_OPTIONS: { value: string; label: string; hint?: string }[] = [
+  { value: "", label: "Device default", hint: "No priority is sent; a commandable object uses 16" },
+  ...Array.from({ length: 16 }, (_, i) => ({ value: String(i + 1), label: String(i + 1), hint: PRIORITY_NAMES[i + 1] })),
+];
+
+/** Command priority from the picker's text: `null` for "device default", otherwise 1 to 16. Throws on anything else. */
+export function parsePriority(text: string): number | null {
+  if (text === "") return null;
+  const n = Number(text);
+  if (!Number.isInteger(n) || n < 1 || n > 16) throw new Error(`Priority "${text}" is not between 1 and 16.`);
+  return n;
+}
