@@ -1,12 +1,21 @@
 import { create } from "zustand";
 import type { LogEntry } from "@mactools/ui";
-import type { Device, MainTab, MobileTab, TagConfig } from "./types";
+import type { Device, MainTab, PhoneTab, TagConfig } from "./types";
 import { loadDevices, newDevice, saveDevices } from "./helpers";
 
 interface SimState {
   running: boolean;
   template: string | null;
   port: number | null; // bound port reported by backend
+}
+
+/** What the phone header and tab bar show about the active device. */
+export interface LiveState {
+  connected: boolean;
+  latency: number;
+  pollCount: number;
+  error: string | null;
+  trendCount: number;
 }
 
 interface AppState {
@@ -22,12 +31,14 @@ interface AppState {
   setDeviceTags: (id: string, tags: TagConfig[] | ((prev: TagConfig[]) => TagConfig[])) => void;
 
   // Layout
-  isMobile: boolean;
-  setIsMobile: (m: boolean) => void;
   mainTab: MainTab;
   setMainTab: (t: MainTab) => void;
-  mobileTab: MobileTab;
-  setMobileTab: (t: MobileTab) => void;
+  /** The phone shell's current tab. */
+  phoneTab: PhoneTab;
+  setPhoneTab: (t: PhoneTab) => void;
+  /** Connection state of the active device, for the phone header and tab bar (the device panels own the real state). */
+  live: LiveState;
+  setLive: (s: LiveState) => void;
 
   // Log (global, across all devices)
   log: LogEntry[];
@@ -98,12 +109,12 @@ export const useStore = create<AppState>((set, get) => {
     },
 
     // Layout
-    isMobile: typeof window !== "undefined" && window.innerWidth < 768,
-    setIsMobile: (m) => set({ isMobile: m }),
     mainTab: "tags",
     setMainTab: (t) => set({ mainTab: t }),
-    mobileTab: "connect",
-    setMobileTab: (t) => set({ mobileTab: t }),
+    phoneTab: "connect",
+    setPhoneTab: (t) => set({ phoneTab: t }),
+    live: { connected: false, latency: 0, pollCount: 0, error: null, trendCount: 0 },
+    setLive: (live) => set({ live }),
 
     // Log
     log: [],

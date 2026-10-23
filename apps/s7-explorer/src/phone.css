@@ -1,0 +1,207 @@
+/*
+ * S7 Explorer on iPhone: what the shared phone shell (packages/mt-ui/src/mobile.css) does not cover.
+ * Everything is under html[data-shell="phone"], so the desktop and iPad layouts never match.
+ */
+
+/* Watch rows: the value is the point of the row. */
+html[data-shell="phone"] .s7-value {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 24px;
+}
+
+html[data-shell="phone"] .s7-value--idle {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+html[data-shell="phone"] .s7-unit {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .s7-bool {
+  min-width: 52px;
+  justify-content: center;
+  height: 28px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Type badge, address and state under a tag's name. */
+html[data-shell="phone"] .s7-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+html[data-shell="phone"] .s7-sub > .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-shell="phone"] .s7-sub > span:not(.vt-badge):not(.mono) {
+  flex-shrink: 0;
+}
+
+/* A one-line notice above a list: icon, text, one action. */
+html[data-shell="phone"] .s7-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 8px 6px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+}
+
+html[data-shell="phone"] .s7-note > svg {
+  flex-shrink: 0;
+  color: var(--accent-text);
+}
+
+html[data-shell="phone"] .s7-note > span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Block type (OB, FC, FB, DB) inside the round icon of a row. */
+html[data-shell="phone"] .s7-typechip {
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+html[data-shell="phone"] .s7-hex {
+  font-size: 16px;
+  letter-spacing: 1px;
+}
+
+html[data-shell="phone"] .s7-plain {
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+html[data-shell="phone"] .s7-plain.mono {
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+html[data-shell="phone"] .s7-pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Operating mode. */
+html[data-shell="phone"] .s7-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+}
+
+html[data-shell="phone"] .s7-mode__value {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .s7-mode__value--success {
+  color: var(--success);
+}
+
+html[data-shell="phone"] .s7-mode__value--danger {
+  color: var(--danger);
+}
+
+/* Long diagnostic texts wrap instead of being cut off. */
+html[data-shell="phone"] .s7-wrap {
+  display: block;
+  white-space: normal;
+  line-height: 20px;
+}
+
+html[data-shell="phone"] .vm-row:has(.s7-wrap) .vm-row__title {
+  white-space: normal;
+}
+
+html[data-shell="phone"] .vm-row:has(.s7-wrap) .vm-row__subtitle {
+  white-space: normal;
+}
+
+html[data-shell="phone"] .s7-muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-md);
+}
+
+html[data-shell="phone"] .s7-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Running text on a page or in a sheet. */
+html[data-shell="phone"] .s7-copy {
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+html[data-shell="phone"] .s7-copy p {
+  margin: 0;
+}
+
+html[data-shell="phone"] .s7-copy p + p {
+  margin-top: 8px;
+}
+
+html[data-shell="phone"] .s7-copy--muted {
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
+html[data-shell="phone"] .s7-copy strong {
+  color: var(--text);
+}
+
+/* Sheets with several cards. */
+html[data-shell="phone"] .s7-sheet-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+html[data-shell="phone"] .s7-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Destructive text button under a form. */
+html[data-shell="phone"] .s7-remove {
+  color: var(--danger);
+}
+
+/* Children of a scrolling page keep their height: a long list scrolls with the page instead of shrinking into a clipped card. */
+html[data-shell="phone"] .vm-body:not(.vm-body--fill) > * {
+  flex-shrink: 0;
+}
+
+/* A section whose body is a list: the list is the card. */
+html[data-shell="phone"] .s7-bare > .vt-section__body {
+  padding: 0;
+  background: transparent;
+  gap: 0;
+}

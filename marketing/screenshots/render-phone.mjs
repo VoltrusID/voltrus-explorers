@@ -1,7 +1,7 @@
-// Drives the iPhone layout of Modbus Poll or BACnet Explorer in Chromium (iPhone 15: 393x852 @3x, touch, iOS user agent)
+// Drives the iPhone layout of Modbus Poll, BACnet Explorer or S7 Explorer in Chromium (iPhone 15: 393x852 @3x, touch, iOS user agent)
 // with the mocked Tauri runtime the App Store scenes use, and saves one plain screenshot per screen, light and dark.
 //
-//   bun marketing/screenshots/render-phone.mjs <modbus-poll|bacnet-explorer> [outDir] [--scheme=light|dark|both] [--only=a,b]
+//   bun marketing/screenshots/render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer> [outDir] [--scheme=light|dark|both] [--only=a,b]
 //
 // Default outDir is /tmp/<app>-phone. Safe areas are simulated through CDP Emulation.setSafeAreaInsetsOverride with the
 // iPhone 15 portrait insets (status bar / Dynamic Island 59, home indicator 34), so `env(safe-area-inset-*)` is real here.
@@ -21,7 +21,7 @@ const root = join(here, "../..");
 const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const [app, outArg] = args.filter((a) => !a.startsWith("--"));
-if (!["modbus-poll", "bacnet-explorer"].includes(app ?? "")) throw new Error("usage: render-phone.mjs <modbus-poll|bacnet-explorer> [outDir]");
+if (!["modbus-poll", "bacnet-explorer", "s7-explorer"].includes(app ?? "")) throw new Error("usage: render-phone.mjs <modbus-poll|bacnet-explorer|s7-explorer> [outDir]");
 const outDir = outArg ?? `/tmp/${app}-phone`;
 const schemes = flag("scheme") === "light" ? ["light"] : flag("scheme") === "dark" ? ["dark"] : ["light", "dark"];
 const only = flag("only")?.split(",");
@@ -525,8 +525,200 @@ async function bacnet(scheme) {
   }
 }
 
+// ── S7 Explorer ───────────────────────────────────────────────────────────────────────────────────
+async function s7(scheme) {
+  const { seedDevices, seedPhoneDevices } = sceneModule;
+  const store = (status) => `window.__storeStatus = ${JSON.stringify(status)};`;
+  const seed = `(${seedDevices})(); (${seedPhoneDevices})();`;
+  const init = `${seed} ${store({ store: true, pro: true, reason: "purchase", price: null })}`;
+  const free = `${seed} ${store({ store: true, pro: false, reason: "none", price: null })}`;
+  const tab = (page, t) => clickSel(page, "nav [role=tab]", t);
+  const press = (page, t, sel = ".vm-body button") => clickSel(page, sel, t, { exact: true });
+  const type = async (page, label, value) => {
+    const ok = await page.evaluate((label) => {
+      const f = [...document.querySelectorAll(".vt-dialog .vt-field, .vm-body .vt-field")].filter((e) => e.offsetParent !== null).reverse().find((e) => e.querySelector("label")?.textContent.trim() === label);
+      const input = f?.querySelector("input");
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    }, label);
+    if (!ok) throw new Error(`no input labelled ${label}`);
+    await page.keyboard.type(String(value));
+    await sleep(150);
+  };
+  const connect = async (page) => {
+    await tab(page, "Connect");
+    await press(page, "Connect");
+    await waitPolls(page, 3);
+  };
+  const sheetRow = (page, title) => clickSel(page, ".vt-dialog .vm-row", title);
+  const closeSheet = async (page) => {
+    await page.click('.vt-dialog:last-of-type button[aria-label="Close"]').catch(() => {});
+    await sleep(350);
+  };
+
+  let page = await open(scheme, init);
+  if (wants("connect")) {
+    await shot(page, scheme, "01-connect");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "02-connect-end");
+    await scrollMain(page, 0);
+    await press(page, "Connect", ".vm-body form button");
+    await page.waitForSelector('[data-connected="true"]', { timeout: 8000 });
+    await sleep(500);
+    await shot(page, scheme, "03-connect-connected");
+  }
+  if (wants("watch")) {
+    if (!wants("connect")) await connect(page);
+    await tab(page, "Watch");
+    await sleep(800);
+    await shot(page, scheme, "10-watch-live");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "11-watch-end");
+    await scrollMain(page, 0);
+  }
+  if (wants("blocks")) {
+    if (!wants("connect") && !wants("watch")) await connect(page);
+    await tab(page, "Blocks");
+    await sleep(700);
+    await shot(page, scheme, "20-blocks-types");
+    await clickSel(page, ".vm-row", "DBData blocks");
+    await shot(page, scheme, "21-blocks-db");
+    await clickSel(page, ".vm-row", "DBDB 10");
+    await sleep(700);
+    await shot(page, scheme, "22-block-sheet");
+    await press(page, "Next 16", ".vt-dialog button");
+    await sleep(600);
+    await press(page, "Save to file", ".vt-dialog button");
+    await sleep(700);
+    await shot(page, scheme, "23-block-saved");
+    await press(page, "Delete from PLC", ".vt-dialog button");
+    await sleep(500);
+    await shot(page, scheme, "24-block-delete-confirm");
+    await press(page, "Cancel", ".vt-dialog button");
+    await closeSheet(page);
+    await press(page, "Blocks", ".vm-body button");
+    await sleep(300);
+    await shot(page, scheme, "25-blocks-back");
+  }
+  if (wants("trend")) {
+    if (!wants("connect") && !wants("watch") && !wants("blocks")) await connect(page);
+    await tab(page, "Trend");
+    await shot(page, scheme, "30-trend-empty");
+    await tab(page, "Watch");
+    for (const name of ["Pump speed rpm", "Pump current A", "Motor temp C"]) {
+      await page.click(`button[aria-label="Add ${name} to trend"]`);
+      await sleep(120);
+    }
+    await sleep(7000);
+    await tab(page, "Trend");
+    await sleep(600);
+    await shot(page, scheme, "31-trend");
+    await tab(page, "Watch");
+  }
+  if (wants("sheets")) {
+    if (!wants("connect") && !wants("watch") && !wants("blocks") && !wants("trend")) await connect(page);
+    await tab(page, "Watch");
+    await clickSel(page, ".vm-row", "Pump speed rpm");
+    await sleep(500);
+    await shot(page, scheme, "40-write-real");
+    await press(page, "Cancel", ".vt-dialog button");
+    await clickSel(page, ".vm-row", "Pump running");
+    await sleep(500);
+    await shot(page, scheme, "41-write-bool");
+    await press(page, "Write FALSE", ".vt-dialog button");
+    await sleep(500);
+    await clickSel(page, ".vm-row", "Cycle count");
+    await sleep(300);
+    await press(page, "Cancel", ".vt-dialog button");
+    await press(page, "Tags", ".vm-body button");
+    await sleep(500);
+    await shot(page, scheme, "42-tags-sheet");
+    await press(page, "Add tag", ".vt-dialog button");
+    await sleep(500);
+    await shot(page, scheme, "43-tag-new");
+    await type(page, "Name", "Mixer speed");
+    await type(page, "Address", "DB20.DBD0");
+    await shot(page, scheme, "44-tag-filled");
+    await press(page, "Cancel", ".vt-dialog button");
+    await clickSel(page, ".vt-dialog .vm-row", "Tank level %");
+    await sleep(400);
+    await shot(page, scheme, "45-tag-edit");
+    await press(page, "Cancel", ".vt-dialog button");
+    await press(page, "Import CSV", ".vt-dialog button").catch(async () => clickSel(page, ".vt-dialog button", "Import CSV"));
+    await sleep(900);
+    await shot(page, scheme, "46-tags-import");
+    await press(page, "Cancel", ".vt-dialog button");
+    await closeSheet(page);
+    await tab(page, "Connect");
+    await scrollMain(page, "end");
+    await press(page, "Remove Filling line", ".vm-body button");
+    await sleep(450);
+    await shot(page, scheme, "47-remove-confirm");
+    await press(page, "Cancel", ".vt-dialog button");
+    await page.click('button[aria-label="About"]');
+    await sleep(500);
+    await shot(page, scheme, "48-about");
+    await closeSheet(page);
+  }
+  if (wants("pickers")) {
+    await page.close();
+    page = await open(scheme, init);
+    await openTrigger(page, "S7-1200 / S7-1500");
+    await shot(page, scheme, "50-picker-cpu");
+    await closeSheetBySwipe(page);
+    await openTrigger(page, "1 s");
+    await shot(page, scheme, "51-picker-poll");
+    await closeSheetByTapOutside(page);
+    await openTrigger(page, "S7-1200 / S7-1500").catch(() => {});
+  }
+  if (wants("more")) {
+    await page.close();
+    page = await open(scheme, init);
+    await connect(page);
+    await tab(page, "More");
+    await sleep(500);
+    await shot(page, scheme, "60-more-sheet");
+    await sheetRow(page, "Diagnostics");
+    await sleep(1200);
+    await shot(page, scheme, "61-diagnostics");
+    await scrollMain(page, "end");
+    await shot(page, scheme, "62-diagnostics-end");
+    await tab(page, "More");
+    await sheetRow(page, "Simulator");
+    await sleep(500);
+    await shot(page, scheme, "63-sim-setup");
+    await pickOption(page, "Choose", "process", "S7-300 Process Control (DB1)");
+    await shot(page, scheme, "64-sim-template");
+    await press(page, "Start server");
+    await sleep(1500);
+    await shot(page, scheme, "65-sim-running");
+    await press(page, "Load its tags");
+    await sleep(500);
+    await shot(page, scheme, "66-watch-sim-tags");
+    await tab(page, "More");
+    await sheetRow(page, "Log");
+    await sleep(400);
+    await shot(page, scheme, "67-log");
+    await page.close();
+    // The App Store build with Pro locked: the upsell on a Pro tab, the live tag limit on Watch.
+    page = await open(scheme, free);
+    await tab(page, "Blocks");
+    await sleep(600);
+    await shot(page, scheme, "70-pro-upsell");
+    await page.click('.vt-dialog button[aria-label="Close"]');
+    await connect(page);
+    await tab(page, "Watch");
+    await sleep(600);
+    await shot(page, scheme, "71-watch-free");
+    await page.close();
+  }
+  await page.close().catch(() => {});
+}
+
 try {
-  for (const scheme of schemes) await (app === "modbus-poll" ? modbus(scheme) : bacnet(scheme));
+  for (const scheme of schemes) await (app === "modbus-poll" ? modbus(scheme) : app === "s7-explorer" ? s7(scheme) : bacnet(scheme));
   const bad = results.filter((r) => r.bad > 0);
   console.log(`\n${results.length} screens audited, ${bad.length} with findings${bad.length ? ": " + bad.map((r) => r.label).join(", ") : ""}`);
 } finally {

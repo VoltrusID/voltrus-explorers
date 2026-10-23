@@ -1,13 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import { Database, Download, RefreshCw, Trash2 } from "lucide-react";
 import { Button, Callout, EmptyState, IconButton } from "@mactools/ui";
-
-interface BlockListEntry {
-  block_type: string;
-  block_number: number;
-}
+import { useBlocks, type BlockListEntry } from "./useBlocks";
 
 interface Props {
   deviceId: string;
@@ -15,70 +8,11 @@ interface Props {
 }
 
 export default function BlocksPanel({ deviceId, connected }: Props) {
-  const [blocks, setBlocks] = useState<BlockListEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [uploading, setUploading] = useState<number | null>(null);
-
-  const refreshBlocks = useCallback(async () => {
-    if (!connected) return;
-    setLoading(true);
-    setError("");
-    try {
-      const result = await invoke<BlockListEntry[]>("list_blocks", { deviceId });
-      setBlocks(result);
-    } catch (e) {
-      setError(String(e));
-      setBlocks([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [connected, deviceId]);
-
-  useEffect(() => {
-    if (connected) refreshBlocks();
-    else {
-      setBlocks([]);
-      setError("");
-    }
-  }, [connected, refreshBlocks]);
-
-  const handleUpload = async (block: BlockListEntry) => {
-    setUploading(block.block_number);
-    try {
-      const filePath = await save({
-        defaultPath: `${block.block_type}_${block.block_number}.mc7`,
-        filters: [{ name: "S7 Block", extensions: ["mc7", "blk", "s7"] }],
-      });
-      if (!filePath) {
-        setUploading(null);
-        return;
-      }
-      await invoke("upload_block_to_file", {
-        deviceId,
-        blockType: block.block_type.split("/")[0],
-        blockNumber: block.block_number,
-        filePath,
-      });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setUploading(null);
-    }
-  };
+  const { blocks, loading, error, uploading, refreshBlocks, handleUpload, deleteBlock } = useBlocks(deviceId, connected);
 
   const handleDelete = async (block: BlockListEntry) => {
     if (!confirm(`Delete ${block.block_type} ${block.block_number} from PLC?`)) return;
-    try {
-      await invoke("delete_plc_block", {
-        deviceId,
-        blockType: block.block_type.split("/")[0],
-        blockNumber: block.block_number,
-      });
-      setBlocks((prev) => prev.filter((b) => b !== block));
-    } catch (e) {
-      setError(String(e));
-    }
+    await deleteBlock(block);
   };
 
   return (

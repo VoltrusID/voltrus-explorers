@@ -55,7 +55,14 @@ function installMock() {
   const state = { connected: false, simRunning: false };
 
   const commands = {
-    store_status: () => ({ store: false, pro: true, reason: "build", price: null }),
+    // `window.__storeStatus` lets the phone harness render the App Store build (no outside links, Pro locked or unlocked).
+    store_status: () => window.__storeStatus ?? { store: false, pro: true, reason: "build", price: null },
+    store_purchase: () => ({ store: true, pro: true, reason: "purchase", price: null }),
+    store_restore: () => ({ store: true, pro: true, reason: "purchase", price: null }),
+    "plugin:dialog|open": () => "/private/var/mobile/Documents/line-tags.csv",
+    "plugin:dialog|save": ({ options }) => `/private/var/mobile/Documents/${options?.defaultPath ?? "export"}`,
+    "plugin:fs|read_text_file": () =>
+      Array.from(new TextEncoder().encode("Name,Address,Type\nMixer speed,DB20.DBD0,Real\nMixer run,DB20.DBX4.0,Bool\nBatch count,DB20.DBW6,Word\nHopper level,DB20.DBD8,Real\n")),
     platform: () => "macos",
     open_url: () => null,
     connect: () => {
@@ -71,6 +78,9 @@ function installMock() {
       await new Promise((r) => setTimeout(r, 3 + Math.random() * 2));
       const t = (Date.now() - T0) / 1000;
       return tags.map((tag) => {
+        // Raw bytes of a data block (DB10.DBB4): a fixed pattern.
+        const raw = /^DB(\d+)\.DBB(\d+)$/.exec(tag.address);
+        if (raw) return (Number(raw[1]) * 31 + Number(raw[2]) * 17) % 256;
         const f = MODEL[tag.address];
         if (!f) return 0;
         const v = f(t);
@@ -200,6 +210,19 @@ function initDevice() {
     ]),
   );
 }
+
+/** Seeds two PLCs for the phone harness, so the connection chips have something to switch between. */
+export function seedPhoneDevices() {
+  const first = JSON.parse(localStorage.getItem("s7-explorer-devices") ?? "[]");
+  localStorage.setItem(
+    "s7-explorer-devices",
+    JSON.stringify([
+      ...first,
+      { id: "10000000-0000-4000-8000-000000000002", label: "Packaging", host: "192.168.10.31", port: 102, rack: 0, slot: 2, tags: [{ id: "00000000-0000-4000-8000-0000000000a1", name: "Belt speed", address: "DB1.DBD0", data_type: "Real" }] },
+    ]),
+  );
+}
+export { initDevice as seedDevices };
 
 const CROP_PX = 54;
 const sceneCss = (scale) => `

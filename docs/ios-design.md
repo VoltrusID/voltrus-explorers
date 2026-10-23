@@ -1,6 +1,6 @@
-# iPhone layout (Modbus Poll and BACnet Explorer)
+# iPhone layout (Modbus Poll, BACnet Explorer and S7 Explorer)
 
-Below 768 CSS px the two iOS apps switch to a phone shell. It is opt-in: an app calls `usePhoneShell()` (`packages/mt-ui/src/phone.tsx`),
+Below 768 CSS px the iOS apps switch to a phone shell. It is opt-in: an app calls `usePhoneShell()` (`packages/mt-ui/src/phone.tsx`),
 which sets `data-shell="phone"` on `<html>` and turns on `packages/mt-ui/src/mobile.css`. Desktop (macOS), iPad and the other
 explorers never match the selector, so their layout is untouched.
 
@@ -52,11 +52,33 @@ type and area, serial settings, bus-scan area, the write dialog's data type, BAC
 target, the connection picker, the read-block picker and (phone only) value format and word order, which are segmented controls on
 the desktop.
 
+## S7 Explorer
+
+`apps/s7-explorer` has the same shell. The desktop and iPad layout (device tab strip, simulator and tags in the right sidebar) is
+untouched; the phone layout is `src/phone/*` plus `src/phone.css` (scoped to `html[data-shell="phone"]`).
+
+| Tab | What it is |
+|---|---|
+| Connect | The saved PLCs as chips (a `+ PLC` chip adds one, Pro for more than one). A grouped card with Name, IP address, Port, **CPU type** (`SheetSelect`: S7-1200 / S7-1500, S7-300, S7-400 set rack and slot; the hint under it says what each family needs, e.g. PUT/GET on a 1200/1500), Rack, Slot and a full-width Connect button. A second card holds the poll interval (`SheetSelect`). Remove PLC asks in a sheet (no `window.confirm`, which WKWebView does not show). |
+| Watch | One row per tag: name, type badge and address under it, the value in 20px type on the right (Bool as an ON / OFF badge, Timer with ms), a trend toggle. Tap a row for the write sheet (`ValueEditor`, or TRUE / FALSE buttons for a Bool); timers and counters are read-only. The **Tags** button opens a sheet with the tag list (tap a tag to edit or delete it), Add tag, Import CSV, Export CSV and Load from simulator. A one-line notice offers Connect when offline and Pro for more when the free tag limit hides tags. |
+| Blocks | Block types as rows (OB, FC, FB, DB, then the rest) with a count; a type drills into its blocks; a block opens a sheet with Save to file, Delete from PLC (confirmed in a second sheet) and, for a DB, a 16 byte window of its contents (start byte, Previous 16 / Next 16) read with `read_tags` on `DBn.DBBk`. |
+| Trend | The chart, with the window as a segmented control and the series as removable chips. |
+| More | Diagnostics (operating mode, CPU rows, diagnostic buffer), Simulator (template and port, Start / Stop, "Connect this PLC to it", "Load its tags") and Log. |
+
+Shared logic lives in hooks that both layouts use (`useTagsEditor`, `useBlocks`, `useDiagnostics`), so the desktop panels keep their markup.
+
+On a phone: no continuous CSV value logging (it appends to a file the user picked, which iOS does not keep open for an app; the Pro
+feature list drops it too). Everything else works. The simulator is a plain TCP listener on `0.0.0.0:<port>` (default 1102), so it
+needs no desktop API and no privileged port; iOS suspends it with the app, which the Simulator page says.
+
+Checking it: `bun marketing/screenshots/render-phone.mjs s7-explorer [outDir] [--scheme=light|dark] [--only=connect,watch,blocks,trend,sheets,pickers,more]`.
+
 ## Checking it
 
 ```
 bun marketing/screenshots/render-phone.mjs modbus-poll   [outDir] [--scheme=light|dark] [--only=connect,live,slave,sheets,pickers]
 bun marketing/screenshots/render-phone.mjs bacnet-explorer [outDir] [--scheme=light|dark] [--only=devices,tabs,live,sim,sheets]
+bun marketing/screenshots/render-phone.mjs s7-explorer   [outDir] [--scheme=light|dark] [--only=connect,watch,blocks,trend,sheets,pickers,more]
 ```
 
 iPhone 15 viewport (393x852 @3x, touch, iOS user agent), mocked Tauri runtime, simulated safe areas through CDP

@@ -10,14 +10,18 @@ import {
   ProBadge,
   StatusBar,
   StatusDot,
+  PageTitle,
   Tabs,
   ValueEditor,
   saveTextFile,
+  useIsPhone,
   useProStatus,
 } from "@mactools/ui";
-import { FileDown, Minus, Plus, Square, Tags as TagsIcon } from "lucide-react";
+import { FileDown, LineChart, Minus, Plus, Square, Tags as TagsIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useStore } from "./store";
-import { useS7Device, toSpecs, type S7Value } from "./useS7Device";
+import { useS7Device, toSpecs } from "./useS7Device";
+import { formatS7Value } from "./format";
 import type { Device } from "./types";
 import { DATA_TYPES, READ_ONLY_TYPES } from "./types";
 import DiagnosticsPanel from "./DiagnosticsPanel";
@@ -26,28 +30,38 @@ import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
 import { FREE_TAG_LIMIT } from "./helpers";
 import { ValueLogWriter, valueLogHeader, valueLogRow } from "./valueLog";
+import PhoneConnect from "./phone/PhoneConnect";
+import PhoneWatch from "./phone/PhoneWatch";
+import PhoneBlocks from "./phone/PhoneBlocks";
+import PhoneDiagnostics from "./phone/PhoneDiagnostics";
+import PhoneTagsSheet from "./phone/PhoneTagsSheet";
+import { useSystemScheme } from "./phone/scheme";
 
 type LogDir = "info" | "rx" | "tx" | "error";
-
-function formatS7Value(v: S7Value | undefined): string {
-  if (v === undefined || v === null) return "—";
-  if (typeof v === "boolean") return v ? "On (1)" : "Off (0)";
-  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(3);
-  return String(v);
-}
 
 interface Props {
   device: Device;
   active: boolean;
   onLog: (dir: LogDir, msg: string) => void;
+  /** Phone shell: the saved PLCs as chips for the top of the Connect tab. */
+  phoneChips?: ReactNode;
+  /** Phone shell: remove this PLC (offered when there is more than one). */
+  onRemove?: () => void;
+  /** Phone shell: copy the simulator template's points into this PLC (offered while the simulator has a template). */
+  onLoadSim?: () => void;
 }
 
-export default function DevicePanel({ device, active, onLog }: Props) {
+export default function DevicePanel({ device, active, onLog, phoneChips, onRemove, onLoadSim }: Props) {
   const s7 = useS7Device(device.id);
   const { pro, requirePro } = useProStatus();
   const updateDevice = useStore((st) => st.updateDevice);
-  const isMobile = useStore((st) => st.isMobile);
-  const mobileTab = useStore((st) => st.mobileTab);
+  const renameDevice = useStore((st) => st.renameDevice);
+  const phone = useIsPhone();
+  const scheme = useSystemScheme();
+  const phoneTab = useStore((st) => st.phoneTab);
+  const setPhoneTab = useStore((st) => st.setPhoneTab);
+  const setLive = useStore((st) => st.setLive);
+  const [tagsOpen, setTagsOpen] = useState(false);
 
   const [pollMs, setPollMs] = useState(1000);
   const [mainTab, setMainTab] = useState<"tags" | "diagnostics" | "blocks">("tags");
@@ -176,6 +190,12 @@ export default function DevicePanel({ device, active, onLog }: Props) {
   const lockedCount = allTags.length - tags.length;
 
   const { trendSeries, setTrendSeries, trendWindow, setTrendWindow, toggleTrend } = useTrend(tableData);
+
+  // The phone header and tab bar show the active device's state; the panels own it.
+  const trendCount = trendSeries.size;
+  useEffect(() => {
+    if (phone && active) setLive({ connected: s7.connected, latency: s7.latency, pollCount: s7.pollCount, error: s7.error, trendCount });
+  }, [phone, active, s7.connected, s7.latency, s7.pollCount, s7.error, trendCount, setLive]);
 
   const onRowClick = (row: Record<string, unknown>) => {
     if (READ_ONLY_TYPES.includes(String(row.type))) {
@@ -311,84 +331,125 @@ export default function DevicePanel({ device, active, onLog }: Props) {
     </>
   );
 
+
+  const writeDialog = writing && (() => {
+    const doWrite = async (value: string | number | boolean, dataType: string) => {
+      const ok = await s7.writeTag(writing.address, dataType, value);
+      if (ok) onLog("tx", `[${device.label}] Write ${value} (${dataType}) to ${writing.address}`);
+      else onLog("error", `[${device.label}] Write failed to ${writing.address}`);
+      if (ok && s7.connected && tags.length > 0) void s7.readTags(toSpecs(tags));
+      setWriting(null);
+    };
+    if (writing.dataType === "Bool") {
+      return (
+        <Dialog open onClose={() => setWriting(null)} title="Write BOOL" width={280}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="mono" style={{ fontSize: "var(--fs-md)", color: "var(--text)" }}>{writing.address}</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button variant="primary" style={{ flex: 1 }} onClick={() => doWrite(true, "Bool")}>Write TRUE</Button>
+              <Button style={{ flex: 1 }} onClick={() => doWrite(false, "Bool")}>Write FALSE</Button>
+            </div>
+          </div>
+        </Dialog>
+      );
+    }
+    return (
+      <ValueEditor
+        address={writing.address}
+        currentValue={writing.value || undefined}
+        currentDataType={writing.dataType}
+        types={DATA_TYPES.filter((d) => d !== "Bool" && !READ_ONLY_TYPES.includes(d)).map((d) => ({ value: d, label: d }))}
+        onSubmit={(value, dataType) => doWrite(value, dataType)}
+        onCancel={() => setWriting(null)}
+      />
+    );
+  })();
+
+  const phoneTrend = (
+    <div className="vm-body vm-body--fill">
+      <PageTitle title="Trend" caption={trendSeries.size > 0 ? `${trendSeries.size} live` : "Add a tag with its chart button on Watch"} />
+      <div className="vm-fill">
+        <TrendPanel series={Array.from(trendSeries.values())} onRemove={(n) => setTrendSeries((p) => { const m = new Map(p); m.delete(n); return m; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme={scheme} />
+      </div>
+    </div>
+  );
+
+  if (phone) {
+    // Every device keeps its panel mounted (so its connection and polling survive a switch); only the active one shows pages.
+    return (
+      <div style={{ display: active ? "contents" : "none" }}>
+        {phoneTab === "connect" && (
+          <PhoneConnect
+            device={device}
+            connected={s7.connected}
+            loading={s7.loading}
+            pollMs={pollMs}
+            onPollMs={setPollMs}
+            chips={phoneChips}
+            onConnect={(c) => void handleConnect({ host: c.host, port: c.port, rack: c.rack, slot: c.slot })}
+            onDisconnect={handleDisconnect}
+            onRename={(label) => renameDevice(device.id, label)}
+            onRemove={onRemove}
+          />
+        )}
+        {phoneTab === "watch" && (
+          <PhoneWatch
+            tags={allTags}
+            polledCount={tags.length}
+            values={s7.values}
+            connected={s7.connected}
+            pollCount={s7.pollCount}
+            trendNames={trendSeries}
+            freeLimit={pro ? null : FREE_TAG_LIMIT}
+            onRowClick={(t, formatted) => onRowClick({ name: t.name, address: t.address, type: t.data_type, value: formatted || "—" })}
+            onToggleTrend={(name) => { if (trendSeries.has(name) || requirePro("Live trends")) toggleTrend(name); }}
+            onEditTags={() => setTagsOpen(true)}
+            onConnect={() => setPhoneTab("connect")}
+            onPro={() => requirePro("More than 10 live tags")}
+          />
+        )}
+        {phoneTab === "blocks" && <PhoneBlocks deviceId={device.id} connected={s7.connected} onConnect={() => setPhoneTab("connect")} />}
+        {phoneTab === "trend" && phoneTrend}
+        {phoneTab === "diagnostics" && (
+          <PhoneDiagnostics deviceId={device.id} deviceLabel={device.label} connected={s7.connected} onLog={onLog} onConnect={() => setPhoneTab("connect")} />
+        )}
+        {tagsOpen && <PhoneTagsSheet device={device} onLoadSim={onLoadSim} onClose={() => setTagsOpen(false)} />}
+        {writeDialog}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: active ? "flex" : "none", flex: 1, overflow: "hidden", flexDirection: "column", minHeight: 0 }}>
-      {isMobile ? (
-        <>
-          <div style={{ flex: 1, overflow: "auto", padding: 16, minHeight: 0 }}>
-            {mobileTab === "connect" && sidebar}
-            {mobileTab === "data" && <>{logBar}{dataTableEl}</>}
-            {mobileTab === "diagnostics" && <DiagnosticsPanel deviceId={device.id} connected={s7.connected} onLog={onLog} deviceLabel={device.label} />}
-            {mobileTab === "blocks" && <BlocksPanel deviceId={device.id} connected={s7.connected} />}
-            {mobileTab === "log" && <LogPanel entries={log} onExport={(f) => onLog("info", `Log exported to ${f}`)} />}
-            {mobileTab === "trend" && <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 300 }}><TrendPanel series={Array.from(trendSeries.values())} onRemove={(n) => setTrendSeries((p) => { const m = new Map(p); m.delete(n); return m; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme="dark" /></div>}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
+        <aside className="vt-sidebar" style={{ width: 264, flexShrink: 0, borderRight: "1px solid var(--border)" }}>
+          {sidebar}
+        </aside>
+        <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+          <div style={{ flex: 1, minHeight: 160, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {main}
           </div>
-          <StatusBar connected={s7.connected} latency={s7.latency} pollCount={s7.pollCount} error={s7.error} />
-        </>
-      ) : (
-        <>
-          <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
-            <aside className="vt-sidebar" style={{ width: 264, flexShrink: 0, borderRight: "1px solid var(--border)" }}>
-              {sidebar}
-            </aside>
-            <main style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-              <div style={{ flex: 1, minHeight: 160, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                {main}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 140, borderTop: "1px solid var(--border)", overflow: "hidden" }}>
-                <Tabs
-                  label="Bottom views"
-                  value={bottomTab}
-                  onChange={(v) => { if (v === "trend" && !requirePro("Live trends")) return; setBottomTab(v); }}
-                  items={[
-                    { value: "log", label: "Comm log" },
-                    { value: "trend", label: <>Trend <ProBadge /></>, count: trendSeries.size > 0 ? trendSeries.size : undefined },
-                  ]}
-                />
-                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                  {bottomTab === "log"
-                    ? <LogPanel entries={log} onExport={(f) => onLog("info", `Log exported to ${f}`)} />
-                    : <TrendPanel series={Array.from(trendSeries.values())} onRemove={(n) => setTrendSeries((p) => { const m = new Map(p); m.delete(n); return m; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme="dark" />}
-                </div>
-              </div>
-            </main>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 140, borderTop: "1px solid var(--border)", overflow: "hidden" }}>
+            <Tabs
+              label="Bottom views"
+              value={bottomTab}
+              onChange={(v) => { if (v === "trend" && !requirePro("Live trends")) return; setBottomTab(v); }}
+              items={[
+                { value: "log", label: "Comm log" },
+                { value: "trend", label: <>Trend <ProBadge /></>, count: trendSeries.size > 0 ? trendSeries.size : undefined },
+              ]}
+            />
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {bottomTab === "log"
+                ? <LogPanel entries={log} onExport={(f) => onLog("info", `Log exported to ${f}`)} />
+                : <TrendPanel series={Array.from(trendSeries.values())} onRemove={(n) => setTrendSeries((p) => { const m = new Map(p); m.delete(n); return m; })} windowSec={trendWindow} onWindowChange={setTrendWindow} theme="dark" />}
+            </div>
           </div>
-          <StatusBar connected={s7.connected} latency={s7.latency} pollCount={s7.pollCount} error={s7.error} />
-        </>
-      )}
+        </main>
+      </div>
+      <StatusBar connected={s7.connected} latency={s7.latency} pollCount={s7.pollCount} error={s7.error} />
 
-      {writing && (() => {
-        const doWrite = async (value: string | number | boolean, dataType: string) => {
-          const ok = await s7.writeTag(writing.address, dataType, value);
-          if (ok) onLog("tx", `[${device.label}] Write ${value} (${dataType}) to ${writing.address}`);
-          else onLog("error", `[${device.label}] Write failed to ${writing.address}`);
-          if (ok && s7.connected && tags.length > 0) void s7.readTags(toSpecs(tags));
-          setWriting(null);
-        };
-        if (writing.dataType === "Bool") {
-          return (
-            <Dialog open onClose={() => setWriting(null)} title="Write BOOL" width={280}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div className="mono" style={{ fontSize: "var(--fs-md)", color: "var(--text)" }}>{writing.address}</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Button variant="primary" style={{ flex: 1 }} onClick={() => doWrite(true, "Bool")}>Write TRUE</Button>
-                  <Button style={{ flex: 1 }} onClick={() => doWrite(false, "Bool")}>Write FALSE</Button>
-                </div>
-              </div>
-            </Dialog>
-          );
-        }
-        return (
-          <ValueEditor
-            address={writing.address}
-            currentValue={writing.value || undefined}
-            currentDataType={writing.dataType}
-            types={DATA_TYPES.filter((d) => d !== "Bool" && !READ_ONLY_TYPES.includes(d)).map((d) => ({ value: d, label: d }))}
-            onSubmit={(value, dataType) => doWrite(value, dataType)}
-            onCancel={() => setWriting(null)}
-          />
-        );
-      })()}
+      {writeDialog}
     </div>
   );
 }

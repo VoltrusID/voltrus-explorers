@@ -1,32 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Activity, RefreshCw } from "lucide-react";
 import { Button, Callout, EmptyState, Panel, StatusDot } from "@mactools/ui";
-
-interface CpuInfo {
-  module_type: string;
-  serial_number: string;
-  as_name: string;
-  module_name: string;
-  firmware_version: string;
-}
-
-interface PlcMode {
-  mode: string;
-}
-
-interface DiagEntry {
-  event_number: number;
-  timestamp: string;
-  event_text: string;
-}
-
-interface DiagBuffer {
-  entry_count: number;
-  entries: DiagEntry[];
-}
-
-type LogDir = "info" | "rx" | "tx" | "error";
+import { useDiagnostics, type LogDir } from "./useDiagnostics";
 
 interface Props {
   deviceId: string;
@@ -36,53 +10,7 @@ interface Props {
 }
 
 export default function DiagnosticsPanel({ deviceId, connected, deviceLabel, onLog }: Props) {
-  const [cpuInfo, setCpuInfo] = useState<CpuInfo | null>(null);
-  const [plcMode, setPlcMode] = useState<PlcMode | null>(null);
-  const [diagBuffer, setDiagBuffer] = useState<DiagBuffer | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const refreshAll = useCallback(async () => {
-    if (!connected) return;
-    setLoading(true);
-    setError("");
-    try {
-      const [cpu, mode, diag] = await Promise.allSettled([
-        invoke<CpuInfo>("get_cpu_info", { deviceId }),
-        invoke<PlcMode>("get_plc_mode", { deviceId }),
-        invoke<DiagBuffer>("get_diag_buffer", { deviceId }),
-      ]);
-      if (cpu.status === "fulfilled") setCpuInfo(cpu.value);
-      else setCpuInfo(null);
-      if (mode.status === "fulfilled") setPlcMode(mode.value);
-      else setPlcMode(null);
-      if (diag.status === "fulfilled") setDiagBuffer(diag.value);
-      else setDiagBuffer(null);
-
-      const errs = [cpu, mode, diag]
-        .filter((r): r is PromiseRejectedResult => r.status === "rejected")
-        .map((r) => String(r.reason));
-      if (errs.length > 0) {
-        setError(errs.join("; "));
-        onLog("error", `[${deviceLabel}] Diagnostics: ${errs.join("; ")}`);
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [connected, deviceId, deviceLabel, onLog]);
-
-  useEffect(() => {
-    if (connected) refreshAll();
-    else {
-      setCpuInfo(null);
-      setPlcMode(null);
-      setDiagBuffer(null);
-    }
-  }, [connected, refreshAll]);
-
-  const modeTone = plcMode?.mode === "RUN" ? "success" : plcMode?.mode === "STOP" ? "danger" : "neutral";
+  const { cpuInfo, plcMode, diagBuffer, loading, error, refreshAll, modeTone } = useDiagnostics(deviceId, connected, deviceLabel, onLog);
 
   return (
     <div style={{ padding: 12, overflow: "auto", height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>

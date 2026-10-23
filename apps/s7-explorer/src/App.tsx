@@ -1,87 +1,64 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Play, Plus, Square, X } from "lucide-react";
-import { Button, Dialog, Field, IconButton, ProAboutRow, ProBadge, Section, StatusDot, Toolbar, useProStatus } from "@mactools/ui";
+import { Activity, ChartLine, Eye, Layers, Play, Plug, Plus, ScrollText, Server, Square, X } from "lucide-react";
+import {
+  Button,
+  Dialog,
+  Field,
+  IconButton,
+  LogPanel,
+  PageTitle,
+  PhoneTabBar,
+  ProAboutRow,
+  ProBadge,
+  Section,
+  StatusDot,
+  Tabs,
+  Toolbar,
+  usePhoneShell,
+  useProStatus,
+  type PhoneTabItem,
+} from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { useStore } from "./store";
 import { uid } from "./helpers";
+import type { Device } from "./types";
 import DevicePanel from "./DevicePanel";
 import TagsPanel from "./TagsPanel";
-
-// ── Simulator templates ──
-
-interface SimPoint {
-  key: string;
-  address: string;
-  data_type: string;
-  base: number;
-  variance: number;
-  noise: number;
-  period: number;
-  min?: number;
-  max?: number;
-  decimals?: number;
-  isBool?: boolean;
-  invert?: number; // seconds between boolean toggles (0 = static)
-}
-
-const TEMPLATES: Record<string, { name: string; description: string; points: SimPoint[] }> = {
-  motor: {
-    name: "S7-1500 Motor Control (DB1)",
-    description: "VFD motor control data block: speed, current, temp, torque, power, status flags.",
-    points: [
-      { key: "speed", address: "DB1.DBD0", data_type: "Real", base: 1450, variance: 12, noise: 3, period: 15, min: 1400, max: 1500, decimals: 1 },
-      { key: "current", address: "DB1.DBD4", data_type: "Real", base: 12.4, variance: 0.8, noise: 0.2, period: 12, min: 8, max: 18, decimals: 1 },
-      { key: "temp", address: "DB1.DBD8", data_type: "Real", base: 67.2, variance: 1.5, noise: 0.3, period: 60, min: 50, max: 90, decimals: 1 },
-      { key: "torque", address: "DB1.DBD12", data_type: "Real", base: 45.8, variance: 2.5, noise: 0.8, period: 14, min: 30, max: 60, decimals: 1 },
-      { key: "power", address: "DB1.DBD16", data_type: "Real", base: 7.5, variance: 0.4, noise: 0.1, period: 13, min: 5, max: 10, decimals: 2 },
-      { key: "running", address: "DB1.DBX20.0", data_type: "Bool", base: 1, variance: 0, noise: 0, period: 1, isBool: true },
-      { key: "fault", address: "DB1.DBX20.1", data_type: "Bool", base: 0, variance: 0, noise: 0, period: 1, isBool: true },
-      { key: "runtime", address: "DB1.DBW22", data_type: "Word", base: 15234, variance: 0, noise: 0, period: 3600, decimals: 0 },
-      { key: "freq", address: "DB1.DBD24", data_type: "Real", base: 50, variance: 0.02, noise: 0.01, period: 10, min: 49.9, max: 50.1, decimals: 2 },
-    ],
-  },
-  process: {
-    name: "S7-300 Process Control (DB1)",
-    description: "Chemical reactor: temperatures, pressures, levels, flow, pH, agitator/valve states.",
-    points: [
-      { key: "rtemp", address: "DB1.DBD0", data_type: "Real", base: 185.4, variance: 1.2, noise: 0.3, period: 25, min: 175, max: 195, decimals: 1 },
-      { key: "rpress", address: "DB1.DBD4", data_type: "Real", base: 4.21, variance: 0.08, noise: 0.02, period: 20, min: 3.5, max: 5, decimals: 2 },
-      { key: "rlvl", address: "DB1.DBD8", data_type: "Real", base: 72.5, variance: 1.5, noise: 0.5, period: 30, min: 50, max: 90, decimals: 1 },
-      { key: "feed", address: "DB1.DBD12", data_type: "Real", base: 12.4, variance: 0.3, noise: 0.1, period: 18, min: 10, max: 15, decimals: 1 },
-      { key: "ph", address: "DB1.DBD16", data_type: "Real", base: 7.12, variance: 0.05, noise: 0.02, period: 15, min: 6.5, max: 7.8, decimals: 2 },
-      { key: "agitator", address: "DB1.DBX20.0", data_type: "Bool", base: 1, variance: 0, noise: 0, period: 1, isBool: true },
-      { key: "valve_in", address: "DB1.DBX20.1", data_type: "Bool", base: 1, variance: 0, noise: 0, period: 1, isBool: true },
-      { key: "valve_out", address: "DB1.DBX20.2", data_type: "Bool", base: 0, variance: 0, noise: 0, period: 1, isBool: true },
-      { key: "cycle", address: "DB1.DBW24", data_type: "Word", base: 1247, variance: 0, noise: 0, period: 60, decimals: 0 },
-    ],
-  },
-};
+import { TEMPLATES } from "./simTemplates";
+import type { PhoneTab } from "./types";
+import PhoneSimulator from "./phone/PhoneSimulator";
+import { useSystemScheme } from "./phone/scheme";
 
 function App() {
   const store = useStore();
   const {
     devices, activeDeviceId, addDevice, setActiveDevice,
-    isMobile, setIsMobile, mobileTab, setMobileTab,
+    phoneTab, setPhoneTab, live,
     log, addLog,
     sim, setSim,
   } = store;
 
   const { requirePro, status: proStatus } = useProStatus();
   const [showInfo, setShowInfo] = useState(false);
+  const [removing, setRemoving] = useState<Device | null>(null);
 
   // Sim UI
   const [simPort, setSimPort] = useState(1102);
   const [simStarting, setSimStarting] = useState(false);
+  const [simError, setSimError] = useState<string | null>(null);
   const simStartRef = useRef(0);
 
-  // ── Mobile detection ──
+  // Below 768 px the phone shell is on. It follows the system colour scheme (iOS draws the status bar from it), so the
+  // page sets data-theme from it; the desktop layout keeps the dark default.
+  const phone = usePhoneShell();
+  const scheme = useSystemScheme();
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [setIsMobile]);
+    if (!phone) return;
+    document.documentElement.setAttribute("data-theme", scheme);
+    return () => document.documentElement.removeAttribute("data-theme");
+  }, [phone, scheme]);
 
   // ── Sim log listener ──
   useEffect(() => {
@@ -97,6 +74,7 @@ function App() {
     const tmpl = sim.template;
     if (!tmpl || !requirePro("S7 simulator")) return;
     setSimStarting(true);
+    setSimError(null);
     try {
       const points = TEMPLATES[tmpl].points.map((p) => ({
         address: p.address,
@@ -108,6 +86,7 @@ function App() {
       setSim({ running: true, port: info.port });
       addLog("info", `Simulator started: ${TEMPLATES[tmpl].name} on port ${info.port}`);
     } catch (e) {
+      setSimError(`The simulator did not start: ${String(e)}`);
       addLog("error", `Simulator failed to start: ${String(e)}`);
     } finally {
       setSimStarting(false);
@@ -120,6 +99,7 @@ function App() {
       setSim({ running: false, port: null });
       addLog("info", "Simulator stopped");
     } catch (e) {
+      setSimError(`The simulator did not stop: ${String(e)}`);
       addLog("error", `Simulator stop failed: ${String(e)}`);
     }
   };
@@ -168,86 +148,196 @@ function App() {
   // active id) always shows a pane instead of a blank workspace.
   const activeDevice = devices.find((d) => d.id === activeDeviceId) ?? devices[0];
 
+  const addPlc = () => {
+    if (devices.length === 0 || requirePro("Multiple PLC connections")) addDevice();
+  };
+
+  const useSimulator = () => {
+    if (!sim.port) return;
+    store.updateDevice(activeDevice.id, { host: "127.0.0.1", port: sim.port, rack: 0, slot: 0 });
+    setPhoneTab("connect");
+  };
+
+  // ── Phone shell: header, one page per tab, pill tab bar ──
+  const ICON = { size: 22, strokeWidth: 2 } as const;
+  const phoneTabs: PhoneTabItem<PhoneTab>[] = [
+    { id: "connect", label: "Connect", icon: <Plug {...ICON} />, dot: live.connected },
+    { id: "watch", label: "Watch", icon: <Eye {...ICON} /> },
+    { id: "blocks", label: "Blocks", icon: <Layers {...ICON} /> },
+    { id: "trend", label: "Trend", icon: <ChartLine {...ICON} />, badge: live.trendCount },
+    { id: "diagnostics", label: "Diagnostics", icon: <Activity {...ICON} /> },
+    { id: "sim", label: "Simulator", icon: <Server {...ICON} />, badge: sim.running ? 1 : undefined },
+    { id: "log", label: "Log", icon: <ScrollText {...ICON} /> },
+  ];
+  const selectPhoneTab = (t: PhoneTab) => {
+    if (t === "blocks" && !requirePro("Block manager")) return;
+    if (t === "trend" && !requirePro("Live trends")) return;
+    setPhoneTab(t);
+  };
+
+  // The saved PLCs as chips on the Connect page.
+  const phoneChips = (
+    <Tabs
+      className="vt-tabs--conn"
+      label="PLC connections"
+      value={activeDevice.id}
+      onChange={setActiveDevice}
+      items={devices.map((d) => ({
+        value: d.id,
+        label: (
+          <>
+            <span className={d.id === activeDevice.id && live.connected ? "vt-dot vt-dot--success" : "vt-dot"} aria-hidden="true" />
+            {d.label || "PLC"}
+          </>
+        ),
+      }))}
+      trailing={
+        <Button size="sm" variant="ghost" icon={<Plus size={16} strokeWidth={1.75} />} onClick={addPlc} aria-label="Add PLC">
+          PLC <ProBadge />
+        </Button>
+      }
+    />
+  );
+
+  const panels = devices.map((d) => (
+    <DevicePanel
+      key={d.id}
+      device={d}
+      active={d === activeDevice}
+      onLog={addLog}
+      phoneChips={phoneChips}
+      onRemove={devices.length > 1 ? () => setRemoving(d) : undefined}
+      onLoadSim={sim.template ? () => { loadSimTags(d.id, sim.template!); setPhoneTab("watch"); } : undefined}
+    />
+  ));
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
-      <Toolbar title="S7 Explorer" icon={appIcon} connected={false} onInfo={() => setShowInfo(true)} />
+    <div className={phone ? "vm-app" : undefined} style={phone ? undefined : { display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg)", color: "var(--text)" }}>
+      <Toolbar
+        title="S7 Explorer"
+        icon={appIcon}
+        connected={phone ? live.connected : false}
+        context={phone && live.connected ? `${activeDevice.host}:${activeDevice.port}` : undefined}
+        latency={phone ? live.latency : undefined}
+        pollCount={phone ? live.pollCount : undefined}
+        error={phone ? live.error : undefined}
+        onInfo={() => setShowInfo(true)}
+      />
 
-      {/* Device tab strip */}
-      <div className="vt-tabs" role="tablist" aria-label="PLC connections" style={{ background: "var(--surface)" }}>
-        {devices.map((d) => (
-          <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <button
-              role="tab"
-              aria-selected={d === activeDevice}
-              className="vt-tab"
-              onClick={() => setActiveDevice(d.id)}
-              title={`${d.host}:${d.port}`}
-            >
-              <span className="vt-dot" aria-hidden="true" />
-              {d.label}
-            </button>
-            {devices.length > 1 && (
-              <IconButton
-                size="sm"
-                label={`Close ${d.label}`}
-                onClick={() => { if (confirm(`Remove ${d.label}?`)) store.removeDevice(d.id); }}
-              >
-                <X size={14} strokeWidth={1.75} />
-              </IconButton>
-            )}
+      {phone ? (
+        <>
+          {panels}
+          {phoneTab === "sim" && (
+            <PhoneSimulator
+              template={sim.template}
+              running={sim.running}
+              port={sim.port}
+              portInput={simPort}
+              starting={simStarting}
+              error={simError}
+              onPort={setSimPort}
+              onTemplate={(t) => setSim({ template: t })}
+              onStart={startSim}
+              onStop={stopSim}
+              onUse={useSimulator}
+              onLoadTags={() => {
+                if (!sim.template) return;
+                loadSimTags(activeDevice.id, sim.template);
+                setPhoneTab("watch");
+              }}
+            />
+          )}
+          {phoneTab === "log" && (
+            <div className="vm-body vm-body--fill">
+              <PageTitle title="Log" caption="Every request and reply" />
+              <div className="vm-fill">
+                <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} />
+              </div>
+            </div>
+          )}
+          <PhoneTabBar tabs={phoneTabs} active={phoneTab} onChange={selectPhoneTab} />
+        </>
+      ) : (
+        <>
+          {/* Device tab strip */}
+          <div className="vt-tabs" role="tablist" aria-label="PLC connections" style={{ background: "var(--surface)" }}>
+            {devices.map((d) => (
+              <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <button
+                  role="tab"
+                  aria-selected={d === activeDevice}
+                  className="vt-tab"
+                  onClick={() => setActiveDevice(d.id)}
+                  title={`${d.host}:${d.port}`}
+                >
+                  <span className="vt-dot" aria-hidden="true" />
+                  {d.label}
+                </button>
+                {devices.length > 1 && (
+                  <IconButton
+                    size="sm"
+                    label={`Close ${d.label}`}
+                    onClick={() => { if (confirm(`Remove ${d.label}?`)) store.removeDevice(d.id); }}
+                  >
+                    <X size={14} strokeWidth={1.75} />
+                  </IconButton>
+                )}
+              </div>
+            ))}
+            <IconButton label="Add PLC (Pro for more than one)" onClick={addPlc}>
+              <Plus size={16} strokeWidth={1.75} />
+            </IconButton>
           </div>
-        ))}
-        <IconButton label="Add PLC (Pro for more than one)" onClick={() => { if (devices.length === 0 || requirePro("Multiple PLC connections")) addDevice(); }}>
-          <Plus size={16} strokeWidth={1.75} />
-        </IconButton>
-      </div>
 
-      {/* Workspace: devices (left/center) + simulator (right sidebar / mobile bottom) */}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: isMobile ? "column" : "row", minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
-          {devices.map((d) => (
-            <DevicePanel key={d.id} device={d} active={d === activeDevice} onLog={addLog} />
-          ))}
-        </div>
-        <aside
-          className="vt-sidebar"
-          style={{
-            width: isMobile ? undefined : 280,
-            flexShrink: 0,
-            borderLeft: isMobile ? "none" : "1px solid var(--border)",
-            borderTop: isMobile ? "1px solid var(--border)" : "none",
-          }}
-        >
-          <SimulatorPanel
-            template={sim.template}
-            running={sim.running}
-            port={sim.port}
-            portInput={simPort}
-            starting={simStarting}
-            onPort={setSimPort}
-            onTemplate={(t) => setSim({ template: t })}
-            onStart={startSim}
-            onStop={stopSim}
-          />
-          <TagsPanel
-            device={activeDevice}
-            onLoadSim={sim.template ? () => loadSimTags(activeDevice.id, sim.template!) : undefined}
-          />
-        </aside>
-      </div>
-
-      {/* Mobile tab bar */}
-      {isMobile && (
-        <nav style={{ display: "flex", borderTop: "1px solid var(--border)", background: "var(--surface)", flexShrink: 0 }}>
-          {(["connect", "data", "diagnostics", "blocks", "log", "trend"] as const).map((t) => (
-            <button key={t} onClick={() => { if (t === "blocks" && !requirePro("Block manager")) return; if (t === "trend" && !requirePro("Live trends")) return; setMobileTab(t); }} style={{
-              flex: 1, padding: "10px 0 8px", fontSize: "var(--fs-xs)", fontWeight: 600, background: "none", border: "none",
-              color: mobileTab === t ? "var(--accent-text)" : "var(--text-muted)",
-              borderTop: mobileTab === t ? "2px solid var(--accent)" : "2px solid transparent", cursor: "pointer",
-            }}>{t === "connect" ? "Connect" : t[0].toUpperCase() + t.slice(1)}</button>
-          ))}
-        </nav>
+          {/* Workspace: devices (left/center) + simulator and tags (right sidebar) */}
+          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "row", minHeight: 0 }}>
+            <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
+              {panels}
+            </div>
+            <aside className="vt-sidebar" style={{ width: 280, flexShrink: 0, borderLeft: "1px solid var(--border)", borderTop: "none" }}>
+              <SimulatorPanel
+                template={sim.template}
+                running={sim.running}
+                port={sim.port}
+                portInput={simPort}
+                starting={simStarting}
+                onPort={setSimPort}
+                onTemplate={(t) => setSim({ template: t })}
+                onStart={startSim}
+                onStop={stopSim}
+              />
+              <TagsPanel
+                device={activeDevice}
+                onLoadSim={sim.template ? () => loadSimTags(activeDevice.id, sim.template!) : undefined}
+              />
+            </aside>
+          </div>
+        </>
       )}
+
+      <Dialog
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title={`Remove ${removing?.label ?? "PLC"}?`}
+        footer={
+          <>
+            <Button onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (removing) store.removeDevice(removing.id);
+                setRemoving(null);
+              }}
+            >
+              Remove
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: "var(--fs-md)", color: "var(--text-dim)", lineHeight: 1.5 }}>
+          This deletes the saved connection and its tag list from this device. The PLC itself is not touched.
+        </p>
+      </Dialog>
 
       <Dialog
         open={showInfo}
@@ -269,8 +359,11 @@ function App() {
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
           <p style={{ margin: 0 }}>Connect to S7-compatible PLCs (S7-300, S7-400, S7-1200, S7-1500) over Ethernet (ISO-on-TCP, port 102).</p>
-          <p style={{ margin: 0 }}><strong style={{ color: "var(--text)", fontWeight: 600 }}>Multi-PLC:</strong> open several PLCs in tabs, each polls independently.</p>
-          <p style={{ margin: 0 }}><strong style={{ color: "var(--text)", fontWeight: 600 }}>Simulator:</strong> run a real S7 server on this Mac for testing clients.</p>
+          <p style={{ margin: 0 }}>
+            <strong style={{ color: "var(--text)", fontWeight: 600 }}>Multi-PLC:</strong>{" "}
+            {phone ? "save several PLCs and switch between them on the Connect tab, each polls independently." : "open several PLCs in tabs, each polls independently."}
+          </p>
+          <p style={{ margin: 0 }}><strong style={{ color: "var(--text)", fontWeight: 600 }}>Simulator:</strong> run a real S7 server on this {phone ? "phone" : "Mac"} for testing clients.</p>
           <p style={{ margin: 0 }}>Read DB, I, Q, M, T and C addresses (timers and counters are read-only). Diagnostics, block manager, live trend.</p>
           <p style={{ margin: 0, color: "var(--text-muted)" }}>
             Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama. Siemens, SIMATIC, S7-300, S7-400, S7-1200,

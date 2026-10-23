@@ -24,7 +24,8 @@ export interface Device {
 }
 
 export type MainTab = "tags" | "diagnostics" | "blocks";
-export type MobileTab = "connect" | "data" | "diagnostics" | "blocks" | "log" | "trend";
+/** Phone tabs: the first four are in the tab bar, the rest under More. */
+export type PhoneTab = "connect" | "watch" | "blocks" | "trend" | "diagnostics" | "sim" | "log";
 
 export const DATA_TYPES = ["Bool", "Byte", "Word", "DWord", "Real", "String", "Timer", "Counter"];
 
