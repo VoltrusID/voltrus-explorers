@@ -1,0 +1,2 @@
+Device settings: switch off First Word Low in 32-Bit Data Types (and First DWord Low in 64-Bit Data Types). This device sends the high word first (AB CD).
+Kepware reads the unit id and the port from the device, not the tag file: set Unit ID 3 and Port 502 on the device.

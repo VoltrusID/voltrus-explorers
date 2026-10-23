@@ -1,0 +1,37 @@
+{
+  "tags": [
+    {
+      "name": "AHU-1",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "Zone temp",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Float4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[AHU-1]AnalogInput1.Present_Value",
+          "readOnly": true,
+          "engUnit": "°C",
+          "documentation": "Zone temperature"
+        },
+        {
+          "name": "Fan cmd",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Boolean",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[AHU-1]BinaryOutput2.Present_Value"
+        },
+        {
+          "name": "Mode",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Int4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "ns=1;s=[AHU-1]MultiStateValue3.Present_Value"
+        }
+      ]
+    }
+  ]
+}

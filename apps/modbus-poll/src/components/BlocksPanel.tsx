@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button, Callout, Dialog, EmptyState, Field, IconButton, Section, SheetSelect, useProStatus } from "@mactools/ui";
-import { ChevronDown, ChevronUp, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Pencil, Plus, Share, Trash2, Upload } from "lucide-react";
 import { AREAS, AREA_HINTS, FREE_VALUES, TYPES, TYPE_HINTS } from "../constants";
 import { blockStep, isBitArea, validateBlock } from "../helpers";
 import type { ReadBlock } from "../types";
@@ -22,9 +22,10 @@ function templateOptions() {
 interface Props {
   onExportCsv: () => void;
   onImportCsv: () => void;
+  onExportScada: () => void;
 }
 
-export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
+export function BlocksPanel({ onExportCsv, onImportCsv, onExportScada }: Props) {
   const {
     blocks, setBlocks,
     editingBlock, setEditingBlock,
@@ -174,6 +175,9 @@ export function BlocksPanel({ onExportCsv, onImportCsv }: Props) {
         <Button size="sm" variant="ghost" onClick={onImportCsv} icon={<Upload size={14} strokeWidth={1.75} />}>Import CSV</Button>
         {blocks.length > 0 && (
           <Button size="sm" variant="ghost" onClick={onExportCsv} icon={<Download size={14} strokeWidth={1.75} />}>Export CSV</Button>
+        )}
+        {blocks.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={onExportScada} icon={<Share size={14} strokeWidth={1.75} />}>Export to SCADA</Button>
         )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

@@ -1,0 +1,2 @@
+Tick Reverse Word Order on the Ignition device: this device sends the low word first (CD AB).
+Name the Ignition device "Inverter", or edit the [Inverter] part of each OPC item path. Leave Zero-based Addressing unticked.

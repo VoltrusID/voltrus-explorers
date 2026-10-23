@@ -1,0 +1,86 @@
+{
+  "format": "voltrus-tag-list",
+  "version": 1,
+  "protocol": "modbus",
+  "device": {
+    "name": "PM5560 meter",
+    "transport": "tcp",
+    "host": "192.168.1.50",
+    "port": 502,
+    "unitId": 3,
+    "pollMs": 1000,
+    "wordOrder": "big"
+  },
+  "tags": [
+    {
+      "name": "Voltage_3000",
+      "area": "holding",
+      "address": 3000,
+      "type": "float32",
+      "scale": 1,
+      "unit": "V",
+      "description": "L1-N voltage",
+      "writable": true
+    },
+    {
+      "name": "Voltage_3002",
+      "area": "holding",
+      "address": 3002,
+      "type": "float32",
+      "scale": 1,
+      "unit": "V",
+      "writable": true
+    },
+    {
+      "name": "Counter_10",
+      "area": "holding",
+      "address": 10,
+      "type": "uint16",
+      "scale": 1,
+      "writable": true
+    },
+    {
+      "name": "Temperature_20",
+      "area": "holding",
+      "address": 20,
+      "type": "int16",
+      "scale": 0.1,
+      "unit": "°C",
+      "writable": true
+    },
+    {
+      "name": "Energy_100",
+      "area": "input",
+      "address": 100,
+      "type": "int32",
+      "scale": 1,
+      "unit": "kWh",
+      "writable": false
+    },
+    {
+      "name": "Flow_200",
+      "area": "input",
+      "address": 200,
+      "type": "float64",
+      "scale": 1,
+      "writable": false
+    },
+    {
+      "name": "Run_state_0",
+      "area": "coil",
+      "address": 0,
+      "type": "bool",
+      "scale": 1,
+      "description": "Run, \"auto\" mode",
+      "writable": true
+    },
+    {
+      "name": "Door_5",
+      "area": "discrete",
+      "address": 5,
+      "type": "bool",
+      "scale": 1,
+      "writable": false
+    }
+  ]
+}

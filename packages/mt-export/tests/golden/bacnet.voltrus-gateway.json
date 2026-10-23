@@ -1,0 +1,38 @@
+{
+  "connect": {
+    "bacnet": {
+      "id": "ahu_1",
+      "ip": "192.168.1.60",
+      "port": 47808,
+      "deviceId": 1001,
+      "pollIntervalMs": 5000
+    }
+  },
+  "intervalMs": 5000,
+  "tags": [
+    {
+      "bacnet": {
+        "name": "Zone temp",
+        "objectType": "analogInput",
+        "objectInstance": 1,
+        "property": "presentValue"
+      }
+    },
+    {
+      "bacnet": {
+        "name": "Fan cmd",
+        "objectType": "binaryOutput",
+        "objectInstance": 2,
+        "property": "presentValue"
+      }
+    },
+    {
+      "bacnet": {
+        "name": "Mode",
+        "objectType": "multiStateValue",
+        "objectInstance": 3,
+        "property": "presentValue"
+      }
+    }
+  ]
+}

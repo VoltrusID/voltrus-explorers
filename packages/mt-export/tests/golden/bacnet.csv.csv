@@ -1,0 +1,4 @@
+name,device,host,port,device_instance,object_type,object_instance,property,unit,access,description
+Zone temp,AHU-1,192.168.1.60,47808,1001,analogInput,1,presentValue,°C,read-only,Zone temperature
+Fan cmd,AHU-1,192.168.1.60,47808,1001,binaryOutput,2,presentValue,,read-write,
+Mode,AHU-1,192.168.1.60,47808,1001,multiStateValue,3,presentValue,,read-write,

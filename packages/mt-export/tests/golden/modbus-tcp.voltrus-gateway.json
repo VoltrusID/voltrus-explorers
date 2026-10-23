@@ -1,0 +1,87 @@
+{
+  "connect": {
+    "modbus": {
+      "id": "pm5560_meter",
+      "ip": "192.168.1.50",
+      "port": 502,
+      "unitId": 3,
+      "intervalMs": 1000,
+      "endianness": "big"
+    }
+  },
+  "intervalMs": 1000,
+  "tags": [
+    {
+      "modbus": {
+        "name": "Voltage_3000",
+        "address": 3000,
+        "regType": "float32",
+        "scale": 1,
+        "registerArea": "holding"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Voltage_3002",
+        "address": 3002,
+        "regType": "float32",
+        "scale": 1,
+        "registerArea": "holding"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Counter_10",
+        "address": 10,
+        "regType": "uint16",
+        "scale": 1,
+        "registerArea": "holding"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Temperature_20",
+        "address": 20,
+        "regType": "int16",
+        "scale": 0.1,
+        "registerArea": "holding"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Energy_100",
+        "address": 100,
+        "regType": "int32",
+        "scale": 1,
+        "registerArea": "input"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Flow_200",
+        "address": 200,
+        "regType": "float64",
+        "scale": 1,
+        "registerArea": "input"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Run_state_0",
+        "address": 0,
+        "regType": "uint16",
+        "scale": 1,
+        "registerArea": "coil"
+      }
+    },
+    {
+      "modbus": {
+        "name": "Door_5",
+        "address": 5,
+        "regType": "uint16",
+        "scale": 1,
+        "registerArea": "discrete"
+      }
+    }
+  ]
+}

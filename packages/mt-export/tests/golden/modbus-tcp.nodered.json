@@ -1,0 +1,427 @@
+[
+  {
+    "id": "0a7e166c416b242a",
+    "type": "tab",
+    "label": "PM5560 meter",
+    "disabled": false,
+    "info": "Exported from Modbus Poll"
+  },
+  {
+    "id": "a02314612d0a7af3",
+    "type": "modbus-client",
+    "name": "PM5560 meter",
+    "clienttype": "tcp",
+    "bufferCommands": true,
+    "stateLogEnabled": false,
+    "queueLogEnabled": false,
+    "failureLogEnabled": true,
+    "tcpHost": "192.168.1.50",
+    "tcpPort": "502",
+    "tcpType": "DEFAULT",
+    "serialPort": "/dev/ttyUSB0",
+    "serialType": "RTU-BUFFERD",
+    "serialBaudrate": "9600",
+    "serialDatabits": "8",
+    "serialStopbits": "1",
+    "serialParity": "none",
+    "serialConnectionDelay": "100",
+    "serialAsciiResponseStartDelimiter": "0x3A",
+    "unit_id": 3,
+    "commandDelay": "1",
+    "clientTimeout": "5000",
+    "reconnectOnTimeout": true,
+    "reconnectTimeout": "2000",
+    "parallelUnitIdsAllowed": true,
+    "showErrors": false,
+    "showWarnings": true,
+    "showLogs": true
+  },
+  {
+    "id": "9e0318a5f151c74f",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Voltage_3000 +1",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "HoldingRegister",
+    "adr": "3000",
+    "quantity": "4",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 80,
+    "wires": [
+      [
+        "276060239dd50519"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "276060239dd50519",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Voltage_3000 +1",
+    "func": "const specs = [[\"Voltage_3000\",\"float32\",1],[\"Voltage_3002\",\"float32\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 80,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "9d0317126b65fcd8",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Counter_10",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "HoldingRegister",
+    "adr": "10",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 140,
+    "wires": [
+      [
+        "26605e9017e93aa2"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "26605e9017e93aa2",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Counter_10",
+    "func": "const specs = [[\"Counter_10\",\"uint16\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 140,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "9c03157ffd295c3d",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Temperature_20",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "HoldingRegister",
+    "adr": "20",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 200,
+    "wires": [
+      [
+        "2960634991fd702b"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "2960634991fd702b",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Temperature_20",
+    "func": "const specs = [[\"Temperature_20\",\"int16\",0.1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 200,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "9b0313ec773d91c6",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Energy_100",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "InputRegister",
+    "adr": "100",
+    "quantity": "2",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 260,
+    "wires": [
+      [
+        "286061b60c11a5b4"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "286061b60c11a5b4",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Energy_100",
+    "func": "const specs = [[\"Energy_100\",\"int32\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 260,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "9a0312590900f12b",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Flow_200",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "InputRegister",
+    "adr": "200",
+    "quantity": "4",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 320,
+    "wires": [
+      [
+        "2b60666f8625db3d"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "2b60666f8625db3d",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Flow_200",
+    "func": "const specs = [[\"Flow_200\",\"float64\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 320,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "990310c6831526b4",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Run_state_0",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "Coil",
+    "adr": "0",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 380,
+    "wires": [
+      [
+        "2a6064dc003a10c6"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "2a6064dc003a10c6",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Run_state_0",
+    "func": "const names = [\"Run_state_0\"];\nconst values = {};\nnames.forEach((n, i) => { values[n] = msg.payload[i]; });\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 380,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "98030f3314d88619",
+    "type": "modbus-read",
+    "z": "0a7e166c416b242a",
+    "name": "Door_5",
+    "topic": "",
+    "showStatusActivities": false,
+    "logIOActivities": false,
+    "showErrors": false,
+    "showWarnings": true,
+    "unitid": "3",
+    "dataType": "Input",
+    "adr": "5",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "delayOnStart": false,
+    "enableDeformedMessages": false,
+    "startDelayTime": "",
+    "server": "a02314612d0a7af3",
+    "useIOFile": false,
+    "ioFile": "",
+    "useIOForPayload": false,
+    "emptyMsgOnFail": false,
+    "x": 200,
+    "y": 440,
+    "wires": [
+      [
+        "2d6069957a4e464f"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "2d6069957a4e464f",
+    "type": "function",
+    "z": "0a7e166c416b242a",
+    "name": "name Door_5",
+    "func": "const names = [\"Door_5\"];\nconst values = {};\nnames.forEach((n, i) => { values[n] = msg.payload[i]; });\nmsg.payload = values;\nmsg.topic = \"PM5560 meter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 440,
+    "wires": [
+      [
+        "b78f46601aae770e"
+      ]
+    ]
+  },
+  {
+    "id": "b78f46601aae770e",
+    "type": "debug",
+    "z": "0a7e166c416b242a",
+    "name": "values",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 740,
+    "y": 80,
+    "wires": []
+  }
+]

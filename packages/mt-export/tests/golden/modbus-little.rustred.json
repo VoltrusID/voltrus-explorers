@@ -1,0 +1,188 @@
+[
+  {
+    "id": "a588235df08eca4b",
+    "type": "tab",
+    "label": "Inverter",
+    "disabled": false,
+    "info": "Exported from Modbus Poll"
+  },
+  {
+    "id": "0e8f254ca9b7a4ae",
+    "type": "modbus-config",
+    "name": "Inverter",
+    "transport": "tcp",
+    "host": "192.168.1.50",
+    "port": 502,
+    "unitId": 3,
+    "timeoutMs": 5000
+  },
+  {
+    "id": "6a262008b0573d1a",
+    "type": "modbus read",
+    "z": "a588235df08eca4b",
+    "name": "Voltage_3000 +1",
+    "configNode": "0e8f254ca9b7a4ae",
+    "functionCode": "readHoldingRegisters",
+    "address": 3000,
+    "quantity": 4,
+    "pollIntervalMs": 2500,
+    "x": 200,
+    "y": 80,
+    "wires": [
+      [
+        "4fb9abb65027e3b4"
+      ]
+    ]
+  },
+  {
+    "id": "4fb9abb65027e3b4",
+    "type": "function",
+    "z": "a588235df08eca4b",
+    "name": "name Voltage_3000 +1",
+    "func": "const specs = [[\"Voltage_3000\",\"float32\",1],[\"Voltage_3002\",\"float32\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.reverse();\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Inverter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 80,
+    "wires": [
+      [
+        "b8d57fe9fd280757"
+      ]
+    ]
+  },
+  {
+    "id": "6b26219b36430791",
+    "type": "modbus read",
+    "z": "a588235df08eca4b",
+    "name": "Counter_10",
+    "configNode": "0e8f254ca9b7a4ae",
+    "functionCode": "readHoldingRegisters",
+    "address": 10,
+    "quantity": 1,
+    "pollIntervalMs": 2500,
+    "x": 200,
+    "y": 140,
+    "wires": [
+      [
+        "50b9ad49d613ae2b"
+      ]
+    ]
+  },
+  {
+    "id": "50b9ad49d613ae2b",
+    "type": "function",
+    "z": "a588235df08eca4b",
+    "name": "name Counter_10",
+    "func": "const specs = [[\"Counter_10\",\"uint16\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.reverse();\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Inverter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 140,
+    "wires": [
+      [
+        "b8d57fe9fd280757"
+      ]
+    ]
+  },
+  {
+    "id": "6c26232ea47fa82c",
+    "type": "modbus read",
+    "z": "a588235df08eca4b",
+    "name": "Temperature_20",
+    "configNode": "0e8f254ca9b7a4ae",
+    "functionCode": "readHoldingRegisters",
+    "address": 20,
+    "quantity": 1,
+    "pollIntervalMs": 2500,
+    "x": 200,
+    "y": 200,
+    "wires": [
+      [
+        "4db9a8905bff78a2"
+      ]
+    ]
+  },
+  {
+    "id": "4db9a8905bff78a2",
+    "type": "function",
+    "z": "a588235df08eca4b",
+    "name": "name Temperature_20",
+    "func": "const specs = [[\"Temperature_20\",\"int16\",0.1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.reverse();\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Inverter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 200,
+    "wires": [
+      [
+        "b8d57fe9fd280757"
+      ]
+    ]
+  },
+  {
+    "id": "6d2624c12a6b72a3",
+    "type": "modbus read",
+    "z": "a588235df08eca4b",
+    "name": "Energy_100",
+    "configNode": "0e8f254ca9b7a4ae",
+    "functionCode": "readInputRegisters",
+    "address": 100,
+    "quantity": 2,
+    "pollIntervalMs": 2500,
+    "x": 200,
+    "y": 260,
+    "wires": [
+      [
+        "4eb9aa23e1eb4319"
+      ]
+    ]
+  },
+  {
+    "id": "4eb9aa23e1eb4319",
+    "type": "function",
+    "z": "a588235df08eca4b",
+    "name": "name Energy_100",
+    "func": "const specs = [[\"Energy_100\",\"int32\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.reverse();\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Inverter\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 260,
+    "wires": [
+      [
+        "b8d57fe9fd280757"
+      ]
+    ]
+  },
+  {
+    "id": "b8d57fe9fd280757",
+    "type": "debug",
+    "z": "a588235df08eca4b",
+    "name": "values",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 740,
+    "y": 80,
+    "wires": []
+  }
+]

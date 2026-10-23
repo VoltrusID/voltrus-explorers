@@ -1,0 +1,57 @@
+# Modbus Poll tag list for Home Assistant. Merge this into configuration.yaml, then restart Home Assistant.
+# Reference: https://www.home-assistant.io/integrations/modbus/
+modbus:
+  - name: "inverter"
+    type: tcp
+    host: "192.168.1.50"
+    port: 502
+    timeout: 5
+    sensors:
+      - name: "Voltage_3000"
+        unique_id: "inverter_voltage_3000"
+        address: 3000
+        device_address: 3
+        input_type: holding
+        data_type: float32
+        swap: word
+        precision: 3
+        scan_interval: 3
+        unit_of_measurement: "V"
+      - name: "Voltage_3002"
+        unique_id: "inverter_voltage_3002"
+        address: 3002
+        device_address: 3
+        input_type: holding
+        data_type: float32
+        swap: word
+        precision: 3
+        scan_interval: 3
+        unit_of_measurement: "V"
+      - name: "Counter_10"
+        unique_id: "inverter_counter_10"
+        address: 10
+        device_address: 3
+        input_type: holding
+        data_type: uint16
+        precision: 0
+        scan_interval: 3
+      - name: "Temperature_20"
+        unique_id: "inverter_temperature_20"
+        address: 20
+        device_address: 3
+        input_type: holding
+        data_type: int16
+        scale: 0.1
+        precision: 1
+        scan_interval: 3
+        unit_of_measurement: "°C"
+      - name: "Energy_100"
+        unique_id: "inverter_energy_100"
+        address: 100
+        device_address: 3
+        input_type: input
+        data_type: int32
+        swap: word
+        precision: 0
+        scan_interval: 3
+        unit_of_measurement: "kWh"

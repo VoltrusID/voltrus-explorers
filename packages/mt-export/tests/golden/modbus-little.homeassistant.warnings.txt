@@ -1,0 +1,1 @@
+Writable holding registers and coils are exported as read-only sensors. Add a switch or number entity by hand to write to them.

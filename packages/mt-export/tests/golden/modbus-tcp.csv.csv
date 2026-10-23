@@ -1,0 +1,9 @@
+name,device,host,port,unit_id,area,function_code,address,reference,registers,type,word_order,scale,unit,access,description
+Voltage_3000,PM5560 meter,192.168.1.50,502,3,holding,3,3000,403001,2,float32,big,1,V,read-write,L1-N voltage
+Voltage_3002,PM5560 meter,192.168.1.50,502,3,holding,3,3002,403003,2,float32,big,1,V,read-write,
+Counter_10,PM5560 meter,192.168.1.50,502,3,holding,3,10,400011,1,uint16,big,1,,read-write,
+Temperature_20,PM5560 meter,192.168.1.50,502,3,holding,3,20,400021,1,int16,big,0.1,°C,read-write,
+Energy_100,PM5560 meter,192.168.1.50,502,3,input,4,100,300101,2,int32,big,1,kWh,read-only,
+Flow_200,PM5560 meter,192.168.1.50,502,3,input,4,200,300201,4,float64,big,1,,read-only,
+Run_state_0,PM5560 meter,192.168.1.50,502,3,coil,1,0,000001,1,bool,big,1,,read-write,"Run, ""auto"" mode"
+Door_5,PM5560 meter,192.168.1.50,502,3,discrete,2,5,100006,1,bool,big,1,,read-only,

@@ -1,0 +1,27 @@
+{
+  "name": "AHU-1",
+  "ip": "192.168.1.60",
+  "port": 47808,
+  "device_instance": 1001,
+  "interval_ms": 5000,
+  "objects": [
+    {
+      "name": "Zone temp",
+      "object_type": "analogInput",
+      "object_instance": 1,
+      "property": "presentValue"
+    },
+    {
+      "name": "Fan cmd",
+      "object_type": "binaryOutput",
+      "object_instance": 2,
+      "property": "presentValue"
+    },
+    {
+      "name": "Mode",
+      "object_type": "multiStateValue",
+      "object_instance": 3,
+      "property": "presentValue"
+    }
+  ]
+}

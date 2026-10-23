@@ -1,0 +1,1 @@
+RustRED opens serial ports only in builds with the nodes_modbus_serial feature.

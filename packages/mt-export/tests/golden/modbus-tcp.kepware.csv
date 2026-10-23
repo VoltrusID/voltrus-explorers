@@ -1,0 +1,9 @@
+Tag Name,Address,Data Type,Respect Data Type,Client Access,Scan Rate,Scaling,Raw Low,Raw High,Scaled Low,Scaled High,Scaled Data Type,Clamp Low,Clamp High,Eng Units,Description,Negate Value
+Voltage_3000,403001,Float,1,R/W,1000,None,,,,,,,,V,L1-N voltage,
+Voltage_3002,403003,Float,1,R/W,1000,None,,,,,,,,V,,
+Counter_10,400011,Word,1,R/W,1000,None,,,,,,,,,,
+Temperature_20,400021,Short,1,R/W,1000,Linear,0,1,0,0.1,Double,0,0,°C,,0
+Energy_100,300101,Long,1,RO,1000,None,,,,,,,,kWh,,
+Flow_200,300201,Double,1,RO,1000,None,,,,,,,,,,
+Run_state_0,000001,Boolean,1,R/W,1000,None,,,,,,,,,"Run, ""auto"" mode",
+Door_5,100006,Boolean,1,RO,1000,None,,,,,,,,,,

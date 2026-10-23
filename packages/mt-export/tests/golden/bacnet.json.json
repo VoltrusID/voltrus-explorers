@@ -1,0 +1,37 @@
+{
+  "format": "voltrus-tag-list",
+  "version": 1,
+  "protocol": "bacnet",
+  "device": {
+    "name": "AHU-1",
+    "host": "192.168.1.60",
+    "port": 47808,
+    "deviceId": 1001,
+    "pollMs": 5000
+  },
+  "tags": [
+    {
+      "name": "Zone temp",
+      "objectType": "analogInput",
+      "instance": 1,
+      "property": "presentValue",
+      "unit": "°C",
+      "description": "Zone temperature",
+      "writable": false
+    },
+    {
+      "name": "Fan cmd",
+      "objectType": "binaryOutput",
+      "instance": 2,
+      "property": "presentValue",
+      "writable": true
+    },
+    {
+      "name": "Mode",
+      "objectType": "multiStateValue",
+      "instance": 3,
+      "property": "presentValue",
+      "writable": true
+    }
+  ]
+}

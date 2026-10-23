@@ -1,0 +1,1 @@
+Name the BACnet remote device "AHU-1" in Ignition, or edit the [AHU-1] part of each OPC item path.

@@ -1,0 +1,88 @@
+{
+  "tags": [
+    {
+      "name": "PM5560 meter",
+      "tagType": "Folder",
+      "tags": [
+        {
+          "name": "Voltage_3000",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Float4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.HRF3001",
+          "engUnit": "V",
+          "documentation": "L1-N voltage"
+        },
+        {
+          "name": "Voltage_3002",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Float4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.HRF3003",
+          "engUnit": "V"
+        },
+        {
+          "name": "Counter_10",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Int4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.HRUS11"
+        },
+        {
+          "name": "Temperature_20",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Float8",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.HR21",
+          "scaleMode": "Linear",
+          "rawLow": 0,
+          "rawHigh": 1,
+          "scaledLow": 0,
+          "scaledHigh": 0.1,
+          "engUnit": "°C"
+        },
+        {
+          "name": "Energy_100",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Int4",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.IRI101",
+          "readOnly": true,
+          "engUnit": "kWh"
+        },
+        {
+          "name": "Flow_200",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Float8",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.IRD201",
+          "readOnly": true
+        },
+        {
+          "name": "Run_state_0",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Boolean",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.C1",
+          "documentation": "Run, \"auto\" mode"
+        },
+        {
+          "name": "Door_5",
+          "tagType": "AtomicTag",
+          "valueSource": "opc",
+          "dataType": "Boolean",
+          "opcServer": "Ignition OPC UA Server",
+          "opcItemPath": "[PM5560 meter]3.DI6",
+          "readOnly": true
+        }
+      ]
+    }
+  ]
+}

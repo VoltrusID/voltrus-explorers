@@ -57,6 +57,7 @@ import { PhoneDataList } from "./components/PhoneDataList";
 import { ConnectionTabs } from "./components/ConnectionTabs";
 import { InfoDialog } from "./components/InfoDialog";
 import { CustomTemplateDialog } from "./components/CustomTemplateDialog";
+import { ExportDialog } from "./components/ExportDialog";
 
 const NO_VALUES: unknown[] = [];
 
@@ -88,7 +89,7 @@ function App() {
     setSerialPorts,
     rtuPort, rtuBaud, rtuDataBits, rtuStopBits,
     rtuParity, rtuUnitId, rtuTimeout, rtuPollInterval,
-    useOneBased, displayFormat, endianness,
+    useOneBased, displayFormat, endianness, tcpFormValues, activeConnProfile,
     slaveRunning, slavePort,
     trendSeries, setTrendSeries, trendWindow, setTrendWindow,
     bottomTab, setBottomTab,
@@ -388,6 +389,13 @@ function App() {
     } catch (e) { addLog("error", `CSV import failed: ${String(e)}`); }
   }, [addLog, requirePro]);
 
+  // ── Export to SCADA ──
+  const [showScadaExport, setShowScadaExport] = useState(false);
+  const openScadaExport = useCallback(() => {
+    if (!requirePro("Export to SCADA")) return;
+    setShowScadaExport(true);
+  }, [requirePro]);
+
   // ── Table columns & trend ──
   const columns = [
     { key: "name", label: "Name", width: "140px" },
@@ -595,7 +603,7 @@ function App() {
           {mobileTab === "blocks" && mode === "master" && (
             <div className="vm-body">
               <PageTitle title="Blocks" caption="What is polled from the device" />
-              <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} />
+              <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} onExportScada={openScadaExport} />
             </div>
           )}
           {mobileTab === "template" && mode === "slave" && (
@@ -678,7 +686,7 @@ function App() {
             padding: 16, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, cursor: dragSide ? "col-resize" : undefined,
           }}>
             {mode === "master"
-              ? <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} />
+              ? <BlocksPanel onExportCsv={exportBlocksCsv} onImportCsv={importBlocksCsv} onExportScada={openScadaExport} />
               : <TemplatePanel applyProfile={applyProfile} toggleSimulation={toggleSimulation} saveCustomTemplate={saveCustomTemplate} />
             }
           </aside>
@@ -701,6 +709,14 @@ function App() {
 
       <InfoDialog toggleTheme={toggleTheme} />
       <CustomTemplateDialog onSave={saveCustomTemplate} />
+      <ExportDialog
+        open={showScadaExport}
+        onClose={() => setShowScadaExport(false)}
+        blocks={blocks}
+        connection={{ transport, tcpFormValues, rtuPort, rtuBaud, rtuDataBits, rtuStopBits, rtuParity, rtuUnitId, rtuPollInterval, endianness }}
+        defaultName={activeConnProfile ?? String(tcpFormValues.host ?? "Modbus device")}
+        onLog={addLog}
+      />
     </div>
   );
 }

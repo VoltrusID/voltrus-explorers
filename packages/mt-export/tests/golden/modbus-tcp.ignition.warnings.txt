@@ -1,0 +1,1 @@
+Name the Ignition device "PM5560 meter", or edit the [PM5560 meter] part of each OPC item path. Leave Zero-based Addressing unticked.

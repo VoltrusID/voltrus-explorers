@@ -1,0 +1,117 @@
+[
+  {
+    "id": "ebed4f0d447179eb",
+    "type": "tab",
+    "label": "Pump RTU",
+    "disabled": false,
+    "info": "Exported from Modbus Poll"
+  },
+  {
+    "id": "93d7b4e423cbe9ce",
+    "type": "modbus-config",
+    "name": "Pump RTU",
+    "transport": "serial",
+    "host": "",
+    "port": 502,
+    "unitId": 7,
+    "timeoutMs": 5000,
+    "serialPort": "/dev/ttyUSB0",
+    "baudRate": 19200,
+    "dataBits": "8",
+    "stopBits": "1",
+    "parity": "even"
+  },
+  {
+    "id": "be819394bb3ca2b6",
+    "type": "modbus read",
+    "z": "ebed4f0d447179eb",
+    "name": "Speed_0",
+    "configNode": "93d7b4e423cbe9ce",
+    "functionCode": "readHoldingRegisters",
+    "address": 0,
+    "quantity": 1,
+    "pollIntervalMs": 500,
+    "x": 200,
+    "y": 80,
+    "wires": [
+      [
+        "92a779be43933c54"
+      ]
+    ]
+  },
+  {
+    "id": "92a779be43933c54",
+    "type": "function",
+    "z": "ebed4f0d447179eb",
+    "name": "name Speed_0",
+    "func": "const specs = [[\"Speed_0\",\"uint16\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.map((w) => ((w & 0xff) << 8) | (w >> 8));\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Pump RTU\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 80,
+    "wires": [
+      [
+        "998cde5199ba9acf"
+      ]
+    ]
+  },
+  {
+    "id": "bf81952741286d2d",
+    "type": "modbus read",
+    "z": "ebed4f0d447179eb",
+    "name": "Power_1",
+    "configNode": "93d7b4e423cbe9ce",
+    "functionCode": "readHoldingRegisters",
+    "address": 1,
+    "quantity": 2,
+    "pollIntervalMs": 500,
+    "x": 200,
+    "y": 140,
+    "wires": [
+      [
+        "93a77b51c97f06cb"
+      ]
+    ]
+  },
+  {
+    "id": "93a77b51c97f06cb",
+    "type": "function",
+    "z": "ebed4f0d447179eb",
+    "name": "name Power_1",
+    "func": "const specs = [[\"Power_1\",\"float32\",1]];\nconst width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };\nconst values = {};\nlet at = 0;\nfor (const [name, type, scale] of specs) {\n  let words = msg.payload.slice(at, at + width[type]);\n  at += width[type];\n  words = words.map((w) => ((w & 0xff) << 8) | (w >> 8));\n  const view = new DataView(new ArrayBuffer(8));\n  words.forEach((w, i) => view.setUint16(i * 2, w));\n  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)\n    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);\n  values[name] = raw * scale;\n}\nmsg.payload = values;\nmsg.topic = \"Pump RTU\";\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 140,
+    "wires": [
+      [
+        "998cde5199ba9acf"
+      ]
+    ]
+  },
+  {
+    "id": "998cde5199ba9acf",
+    "type": "debug",
+    "z": "ebed4f0d447179eb",
+    "name": "values",
+    "active": true,
+    "tosidebar": true,
+    "console": true,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 740,
+    "y": 80,
+    "wires": []
+  }
+]

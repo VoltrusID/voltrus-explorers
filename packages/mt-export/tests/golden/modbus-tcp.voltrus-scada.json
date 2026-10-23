@@ -1,0 +1,67 @@
+{
+  "id": "pm5560_meter",
+  "name": "PM5560 meter",
+  "ip": "192.168.1.50",
+  "port": 502,
+  "unit_id": 3,
+  "interval_ms": 1000,
+  "endianness": "big",
+  "registers": [
+    {
+      "name": "Voltage_3000",
+      "address": 3000,
+      "register_type": "float32",
+      "register_area": "holding",
+      "scale": 1
+    },
+    {
+      "name": "Voltage_3002",
+      "address": 3002,
+      "register_type": "float32",
+      "register_area": "holding",
+      "scale": 1
+    },
+    {
+      "name": "Counter_10",
+      "address": 10,
+      "register_type": "uint16",
+      "register_area": "holding",
+      "scale": 1
+    },
+    {
+      "name": "Temperature_20",
+      "address": 20,
+      "register_type": "int16",
+      "register_area": "holding",
+      "scale": 0.1
+    },
+    {
+      "name": "Energy_100",
+      "address": 100,
+      "register_type": "int32",
+      "register_area": "input",
+      "scale": 1
+    },
+    {
+      "name": "Flow_200",
+      "address": 200,
+      "register_type": "float64",
+      "register_area": "input",
+      "scale": 1
+    },
+    {
+      "name": "Run_state_0",
+      "address": 0,
+      "register_type": "uint16",
+      "register_area": "coil",
+      "scale": 1
+    },
+    {
+      "name": "Door_5",
+      "address": 5,
+      "register_type": "uint16",
+      "register_area": "discrete",
+      "scale": 1
+    }
+  ]
+}

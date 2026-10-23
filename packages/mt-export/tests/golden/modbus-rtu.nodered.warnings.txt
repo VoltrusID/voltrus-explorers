@@ -1,0 +1,1 @@
+Install node-red-contrib-modbus in Node-RED before importing the flow.

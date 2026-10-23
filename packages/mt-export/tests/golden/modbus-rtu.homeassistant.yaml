@@ -1,0 +1,31 @@
+# Modbus Poll tag list for Home Assistant. Merge this into configuration.yaml, then restart Home Assistant.
+# Reference: https://www.home-assistant.io/integrations/modbus/
+modbus:
+  - name: "pump_rtu"
+    type: serial
+    port: "/dev/ttyUSB0"
+    baudrate: 19200
+    bytesize: 8
+    method: rtu
+    parity: E
+    stopbits: 1
+    timeout: 5
+    sensors:
+      - name: "Speed_0"
+        unique_id: "pump_rtu_speed_0"
+        address: 0
+        device_address: 7
+        input_type: holding
+        data_type: uint16
+        swap: byte
+        precision: 0
+        scan_interval: 1
+      - name: "Power_1"
+        unique_id: "pump_rtu_power_1"
+        address: 1
+        device_address: 7
+        input_type: holding
+        data_type: float32
+        swap: byte
+        precision: 3
+        scan_interval: 1

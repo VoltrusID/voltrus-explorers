@@ -1,0 +1,1 @@
+Kepware reads the unit id and the port from the device, not the tag file: set Unit ID 3 and Port 502 on the device.
