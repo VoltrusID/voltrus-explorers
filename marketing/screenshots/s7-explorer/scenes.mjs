@@ -123,7 +123,7 @@ function installMock() {
       { block_type: "DB", block_number: 11 },
       { block_type: "DB", block_number: 20 },
     ],
-    upload_block_to_file: () => null,
+    upload_block: () => [0, 1, 2],
     delete_plc_block: () => null,
     sim_start: ({ points, port }) => {
       state.simRunning = true;

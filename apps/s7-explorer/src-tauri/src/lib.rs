@@ -220,20 +220,18 @@ async fn list_blocks(
 }
 
 #[tauri::command]
-async fn upload_block_to_file(
+async fn upload_block(
     state: State<'_, AppState>,
     device_id: String,
     block_type: String,
     block_number: u16,
-    file_path: String,
-) -> Result<(), String> {
+) -> Result<Vec<u8>, String> {
     let bt = BlockType::from_str_name(&block_type).ok_or("Invalid block type")?;
     let client = state.client(&device_id).await?;
-    let data = client
+    client
         .upload_block(&bt, block_number)
         .await
-        .map_err(|e| e.to_string())?;
-    std::fs::write(&file_path, data).map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -389,7 +387,7 @@ pub fn run() {
             get_plc_mode,
             get_diag_buffer,
             list_blocks,
-            upload_block_to_file,
+            upload_block,
             delete_plc_block,
             sim_start,
             sim_stop,

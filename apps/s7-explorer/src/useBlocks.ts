@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 
 export interface BlockListEntry {
   block_type: string;
@@ -37,7 +38,7 @@ export function useBlocks(deviceId: string, connected: boolean) {
     }
   }, [connected, refreshBlocks]);
 
-  /** Asks where to save the block, then uploads it from the PLC to that file. Resolves true when a file was written. */
+  /** Asks where to save the block, then uploads it from the PLC and writes it to that file. Resolves true when a file was written. */
   const handleUpload = async (block: BlockListEntry): Promise<boolean> => {
     setUploading(block.block_number);
     try {
@@ -46,12 +47,14 @@ export function useBlocks(deviceId: string, connected: boolean) {
         filters: [{ name: "S7 Block", extensions: ["mc7", "blk", "s7"] }],
       });
       if (!filePath) return false;
-      await invoke("upload_block_to_file", {
+      // The bytes go through the fs plugin, like every other export: on iOS the panel hands back a URL the
+      // webview side is allowed to write, a plain std::fs::write from Rust is not.
+      const data = await invoke<number[]>("upload_block", {
         deviceId,
         blockType: block.block_type.split("/")[0],
         blockNumber: block.block_number,
-        filePath,
       });
+      await writeFile(filePath, Uint8Array.from(data));
       return true;
     } catch (e) {
       setError(String(e));
