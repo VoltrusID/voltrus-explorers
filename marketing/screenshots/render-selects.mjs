@@ -132,7 +132,7 @@ async function openAndShoot(page, trig, scene, scheme) {
   if (box.x < -1 || box.y < -1 || box.x + box.w > box.vw + 1 || box.y + box.h > box.vh + 1) fail(name, `popover outside the viewport ${JSON.stringify(box)}`);
   if (box.items === 0) fail(name, "no options");
   await page.keyboard.press("Escape");
-  await sleep(250);
+  await page.waitForSelector(".vt-popover", { hidden: true, timeout: 2000 }).catch(() => {});
   if (await page.$(".vt-popover")) fail(name, "popover still open after Escape");
   if (inDialog && !(await page.$(".vt-dialog"))) fail(name, "Escape also closed the dialog around the select");
   const focused = await page.evaluate((s) => document.activeElement === document.querySelector(s), sel);
@@ -167,11 +167,18 @@ async function keyboardRun(page, trig, scheme, tag) {
   if (!(await popoverBox(page))) return fail(label, "ArrowDown did not open it");
   await sleep(250);
   const first = await highlighted(page);
-  await key(page, "ArrowDown");
-  const second = await highlighted(page);
-  if (first === second && (await page.$$('[role="option"]')).length > 1) fail(label, `ArrowDown did not move the highlight (${first})`);
-  await key(page, "ArrowUp");
-  if ((await highlighted(page)) !== first) fail(label, "ArrowUp did not come back");
+  // A Select opens on the chosen row and does not wrap, so on its last row only ArrowUp moves.
+  let [forward, backward] = ["ArrowDown", "ArrowUp"];
+  await key(page, forward);
+  let second = await highlighted(page);
+  if (first === second) {
+    [forward, backward] = [backward, forward];
+    await key(page, forward);
+    second = await highlighted(page);
+  }
+  if (first === second && (await page.$$('[role="option"]')).length > 1) fail(label, `the arrow keys did not move the highlight (${first})`);
+  await key(page, backward);
+  if ((await highlighted(page)) !== first) fail(label, `${backward} did not come back`);
   // The label of a later option, typed in part: the highlight must land on a row starting with it.
   const labels = await page.$$eval('[role="option"] .vt-option__label', (els) => els.map((e) => e.textContent ?? ""));
   const target = labels.find((l) => l && l !== first && /^[a-z0-9]/i.test(l));
@@ -251,9 +258,14 @@ try {
       // Dropdown menus (export menus and the like): open each distinct one once per scheme.
       for (const m of await page.$$('button[aria-haspopup="menu"]:not([disabled])')) {
         const name = await m.evaluate((el) => (el.getAttribute("aria-label") ?? el.textContent.trim()) || "menu");
-        if (menusSeen.has(name) || !(await m.isVisible())) continue;
+        // Skip a menu button a dialog's scrim covers.
+        const exposed = await m.evaluate((el) => {
+          el.scrollIntoView({ block: "center" });
+          const r = el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+        });
+        if (menusSeen.has(name) || !(await m.isVisible()) || !exposed) continue;
         menusSeen.add(name);
-        await m.evaluate((el) => el.scrollIntoView({ block: "center" }));
         await m.click();
         await sleep(350);
         const items = await page.$$eval('[role="menuitem"]', (els) => els.length);
@@ -261,7 +273,7 @@ try {
         await page.screenshot({ path: join(outDir, scheme, `${file}.png`) });
         if (items === 0) fail(file, "menu opened without items");
         await page.keyboard.press("Escape");
-        await sleep(250);
+        await page.waitForSelector('[role="menu"]', { hidden: true, timeout: 2000 }).catch(() => {});
         if (await page.$('[role="menu"]')) fail(file, "menu still open after Escape");
         if (!(await m.evaluate((el) => document.activeElement === el))) fail(file, "focus did not return to the menu button");
         console.log(`  ${file}: ${items} item(s)`);
