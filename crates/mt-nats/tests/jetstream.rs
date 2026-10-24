@@ -214,3 +214,34 @@ async fn test_js_raw_client_compat() {
     let seq = msg.info().expect("info").stream_sequence;
     assert_eq!(seq, 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_js_create_stream_with_message_callback() {
+    // The app starts the server with an on_message callback that emits UI events.
+    let port = free_port().await;
+    let state = NatsServerState::new(NatsServerConfig {
+        enabled: true,
+        port,
+        max_connections: 10,
+        auth: NatsAuthConfig::default(),
+    });
+    let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen2 = seen.clone();
+    let cb: OnMessage = std::sync::Arc::new(move |_s, _p, _t, _h| {
+        seen2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    start_server(state.clone(), Some(cb)).await.expect("start server");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let c = client(port).await;
+
+    let started = std::time::Instant::now();
+    let info = timeout(
+        Duration::from_secs(5),
+        c.js_create_stream("EVENTS", &["events.>".to_string()], 10000, 0),
+    )
+    .await
+    .expect("create stream timed out")
+    .expect("create stream");
+    eprintln!("create_stream took {:?}", started.elapsed());
+    assert_eq!(info.name, "EVENTS");
+}

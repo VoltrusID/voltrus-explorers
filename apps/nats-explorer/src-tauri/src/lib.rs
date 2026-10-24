@@ -160,18 +160,21 @@ async fn client_status(state: State<'_, AppState>) -> Result<bool, String> {
 // JetStream commands
 // ---------------------------------------------------------------------------
 
-fn js_client(state: &State<'_, AppState>) -> Result<NatsClient, String> {
-    state
-        .client
-        .client
-        .blocking_lock()
-        .clone()
-        .ok_or_else(|| "Not connected".to_string())
+/// The connected client, or "Not connected".
+///
+/// Commands run on the tokio runtime, where `blocking_lock` panics and leaves the invoke pending
+/// forever (every JetStream, KV and Object Store call hung), so this awaits the lock.
+async fn connected<T: Clone>(slot: &tokio::sync::Mutex<Option<T>>) -> Result<T, String> {
+    slot.lock().await.clone().ok_or_else(|| "Not connected".to_string())
+}
+
+async fn js_client(state: &State<'_, AppState>) -> Result<NatsClient, String> {
+    connected(&state.client.client).await
 }
 
 #[tauri::command]
 async fn js_list_streams(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_list_streams().await
 }
 
@@ -180,7 +183,7 @@ async fn js_stream_info(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<Option<NatsStreamInfo>, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_stream_info(&name).await
 }
 
@@ -192,19 +195,19 @@ async fn js_create_stream(
     max_messages: i64,
     max_age_ns: i64,
 ) -> Result<NatsStreamInfo, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_create_stream(&name, &subjects, max_messages, max_age_ns).await
 }
 
 #[tauri::command]
 async fn js_delete_stream(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_delete_stream(&name).await
 }
 
 #[tauri::command]
 async fn js_purge_stream(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_purge_stream(&name).await
 }
 
@@ -214,7 +217,7 @@ async fn js_stream_messages(
     name: String,
     limit: u64,
 ) -> Result<Vec<NatsStoredMessage>, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_stream_messages(&name, limit).await
 }
 
@@ -224,7 +227,7 @@ async fn js_create_consumer(
     stream: String,
     durable: String,
 ) -> Result<NatsConsumerInfo, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_create_consumer(&stream, &durable).await
 }
 
@@ -234,7 +237,7 @@ async fn js_delete_consumer(
     stream: String,
     durable: String,
 ) -> Result<(), String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_delete_consumer(&stream, &durable).await
 }
 
@@ -244,7 +247,7 @@ async fn js_consumer_info(
     stream: String,
     durable: String,
 ) -> Result<NatsConsumerInfo, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_consumer_info(&stream, &durable).await
 }
 
@@ -256,7 +259,7 @@ async fn js_consumer_next(
     batch: u64,
     wait_ms: u64,
 ) -> Result<Vec<NatsStoredMessage>, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     c.js_consumer_next(&stream, &durable, batch, wait_ms).await
 }
 
@@ -459,7 +462,7 @@ async fn schema_message_names(state: State<'_, AppState>) -> Result<Vec<String>,
 
 #[tauri::command]
 async fn kv_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    js_client(&state)?.kv_list().await
+    js_client(&state).await?.kv_list().await
 }
 
 #[tauri::command]
@@ -469,22 +472,22 @@ async fn kv_create(
     history: i64,
     max_age_ns: i64,
 ) -> Result<(), String> {
-    js_client(&state)?.kv_create(&bucket, history, max_age_ns).await
+    js_client(&state).await?.kv_create(&bucket, history, max_age_ns).await
 }
 
 #[tauri::command]
 async fn kv_delete_bucket(state: State<'_, AppState>, bucket: String) -> Result<(), String> {
-    js_client(&state)?.kv_delete_bucket(&bucket).await
+    js_client(&state).await?.kv_delete_bucket(&bucket).await
 }
 
 #[tauri::command]
 async fn kv_status(state: State<'_, AppState>, bucket: String) -> Result<NatsKvBucketInfo, String> {
-    js_client(&state)?.kv_status(&bucket).await
+    js_client(&state).await?.kv_status(&bucket).await
 }
 
 #[tauri::command]
 async fn kv_keys(state: State<'_, AppState>, bucket: String) -> Result<Vec<String>, String> {
-    js_client(&state)?.kv_keys(&bucket).await
+    js_client(&state).await?.kv_keys(&bucket).await
 }
 
 #[tauri::command]
@@ -493,7 +496,7 @@ async fn kv_get(
     bucket: String,
     key: String,
 ) -> Result<Option<NatsKvEntry>, String> {
-    js_client(&state)?.kv_get(&bucket, &key).await
+    js_client(&state).await?.kv_get(&bucket, &key).await
 }
 
 #[tauri::command]
@@ -504,12 +507,12 @@ async fn kv_put(
     payload: String,
 ) -> Result<u64, String> {
     let bytes = mt_nats::decode_payload(&payload);
-    js_client(&state)?.kv_put(&bucket, &key, &bytes).await
+    js_client(&state).await?.kv_put(&bucket, &key, &bytes).await
 }
 
 #[tauri::command]
 async fn kv_delete_key(state: State<'_, AppState>, bucket: String, key: String) -> Result<(), String> {
-    js_client(&state)?.kv_delete_key(&bucket, &key).await
+    js_client(&state).await?.kv_delete_key(&bucket, &key).await
 }
 
 #[tauri::command]
@@ -518,7 +521,7 @@ async fn kv_history(
     bucket: String,
     key: String,
 ) -> Result<Vec<NatsKvEntry>, String> {
-    js_client(&state)?.kv_history(&bucket, &key).await
+    js_client(&state).await?.kv_history(&bucket, &key).await
 }
 
 /// Subscribe to a KV bucket (all keys, or one key) for live updates. Emits a
@@ -531,7 +534,7 @@ async fn kv_watch_subscribe(
     bucket: String,
     key: Option<String>,
 ) -> Result<String, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     let watch = c.kv_open_watch(&bucket, key.as_deref()).await?;
     let wid = format!("kv:{}:{}", bucket, key.as_deref().unwrap_or("*"));
     let subs = state.client.subs.clone();
@@ -558,17 +561,17 @@ async fn kv_watch_subscribe(
 
 #[tauri::command]
 async fn obj_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    js_client(&state)?.obj_list().await
+    js_client(&state).await?.obj_list().await
 }
 
 #[tauri::command]
 async fn obj_create(state: State<'_, AppState>, bucket: String) -> Result<(), String> {
-    js_client(&state)?.obj_create(&bucket).await
+    js_client(&state).await?.obj_create(&bucket).await
 }
 
 #[tauri::command]
 async fn obj_delete_bucket(state: State<'_, AppState>, bucket: String) -> Result<(), String> {
-    js_client(&state)?.obj_delete_bucket(&bucket).await
+    js_client(&state).await?.obj_delete_bucket(&bucket).await
 }
 
 #[tauri::command]
@@ -576,7 +579,7 @@ async fn obj_list_objects(
     state: State<'_, AppState>,
     bucket: String,
 ) -> Result<Vec<NatsObjectInfo>, String> {
-    js_client(&state)?.obj_list_objects(&bucket).await
+    js_client(&state).await?.obj_list_objects(&bucket).await
 }
 
 #[tauri::command]
@@ -585,7 +588,7 @@ async fn obj_info(
     bucket: String,
     name: String,
 ) -> Result<NatsObjectInfo, String> {
-    js_client(&state)?.obj_info(&bucket, &name).await
+    js_client(&state).await?.obj_info(&bucket, &name).await
 }
 
 /// Get an object's bytes as an encoded payload string (UTF-8 or `0x` hex),
@@ -596,7 +599,7 @@ async fn obj_get(
     bucket: String,
     name: String,
 ) -> Result<String, String> {
-    let bytes = js_client(&state)?.obj_get(&bucket, &name).await?;
+    let bytes = js_client(&state).await?.obj_get(&bucket, &name).await?;
     Ok(encode_payload(&bytes))
 }
 
@@ -609,7 +612,7 @@ async fn obj_put_payload(
     payload: String,
 ) -> Result<(), String> {
     let bytes = mt_nats::decode_payload(&payload);
-    js_client(&state)?.obj_put(&bucket, &name, &bytes).await
+    js_client(&state).await?.obj_put(&bucket, &name, &bytes).await
 }
 
 /// Upload a local file as an object.
@@ -621,7 +624,7 @@ async fn obj_upload(
     path: String,
 ) -> Result<(), String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("Read file failed: {}", e))?;
-    js_client(&state)?.obj_put(&bucket, &name, &bytes).await
+    js_client(&state).await?.obj_put(&bucket, &name, &bytes).await
 }
 
 /// Download an object to a local file.
@@ -632,14 +635,14 @@ async fn obj_download(
     name: String,
     path: String,
 ) -> Result<(), String> {
-    let bytes = js_client(&state)?.obj_get(&bucket, &name).await?;
+    let bytes = js_client(&state).await?.obj_get(&bucket, &name).await?;
     std::fs::write(&path, &bytes).map_err(|e| format!("Write file failed: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 async fn obj_delete(state: State<'_, AppState>, bucket: String, name: String) -> Result<(), String> {
-    js_client(&state)?.obj_delete(&bucket, &name).await
+    js_client(&state).await?.obj_delete(&bucket, &name).await
 }
 
 // ---------------------------------------------------------------------------
@@ -695,7 +698,7 @@ async fn sys_request(
     subject: String,
     timeout_ms: u64,
 ) -> Result<String, String> {
-    let c = js_client(&state)?;
+    let c = js_client(&state).await?;
     let msg = c.request(&subject, &[], timeout_ms).await?;
     Ok(msg.payload)
 }
@@ -774,4 +777,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn connected_returns_the_client_from_inside_the_runtime() {
+        let slot = tokio::sync::Mutex::new(Some(7u8));
+        assert_eq!(connected(&slot).await, Ok(7));
+    }
+
+    #[tokio::test]
+    async fn connected_reports_not_connected() {
+        let slot: tokio::sync::Mutex<Option<u8>> = tokio::sync::Mutex::new(None);
+        assert_eq!(connected(&slot).await, Err("Not connected".to_string()));
+    }
+
+    // While another command holds the lock, a second one must wait instead of panicking.
+    #[tokio::test]
+    async fn connected_waits_for_a_held_lock() {
+        let slot = std::sync::Arc::new(tokio::sync::Mutex::new(Some(1u8)));
+        let guard = slot.lock().await;
+        let slot2 = slot.clone();
+        let waiter = tokio::spawn(async move { connected(&slot2).await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        drop(guard);
+        assert_eq!(waiter.await.unwrap(), Ok(1));
+    }
 }
