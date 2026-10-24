@@ -37,6 +37,44 @@ pub fn open_pair() -> io::Result<PtyPair> {
     Ok(PtyPair { master_fd, slave_fd, slave_path })
 }
 
+/// Put a terminal fd into raw mode (8 bits, no translation, no echo, no line editing).
+pub fn set_raw(fd: c_int) -> io::Result<()> {
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut termios = unsafe { termios.assume_init() };
+    unsafe { libc::cfmakeraw(&mut termios) };
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+impl PtyPair {
+    /// Make the pair a binary serial line.
+    ///
+    /// `openpty` leaves the cooked line discipline: ICRNL and ONLCR rewrite 0x0D and 0x0A, ICANON
+    /// holds input back until a newline, and `tcdrain` on the master (what `flush()` calls) never
+    /// returns until a program reads the slave. The two ends share one termios, so one successful
+    /// `tcsetattr` is enough; the App Sandbox refuses it with EPERM on some side, so both are tried.
+    pub fn make_raw(&self) -> io::Result<()> {
+        let slave = set_raw(self.slave_fd);
+        if slave.is_ok() {
+            return Ok(());
+        }
+        let master = set_raw(self.master_fd);
+        if master.is_ok() {
+            return Ok(());
+        }
+        Err(io::Error::other(format!(
+            "setting the pty to raw mode failed (slave: {}, master: {})",
+            slave.unwrap_err(),
+            master.unwrap_err()
+        )))
+    }
+}
+
 /// Close a descriptor returned by [`open_pair`].
 pub fn close_fd(fd: c_int) {
     unsafe { libc::close(fd) };
@@ -88,37 +126,75 @@ mod tests {
         close_fd(pair.master_fd);
     }
 
-    #[test]
-    fn another_program_can_open_the_slave_path_and_reach_the_master() {
-        let pair = open_pair().unwrap();
-        // Raw mode so the bytes arrive unchanged on either side of the pair.
-        let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
-        unsafe {
-            assert_eq!(libc::tcgetattr(pair.slave_fd, termios.as_mut_ptr()), 0);
-            let mut t = termios.assume_init();
-            libc::cfmakeraw(&mut t);
-            assert_eq!(libc::tcsetattr(pair.slave_fd, libc::TCSANOW, &t), 0);
-        }
+    fn open_slave_path(pair: &PtyPair) -> c_int {
         let path = std::ffi::CString::new(pair.slave_path.clone()).unwrap();
-        let other = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
-        assert!(other >= 0, "could not open {}: {}", pair.slave_path, io::Error::last_os_error());
-        let payload = [0xAAu8, 0x0D, 0x0A, 0x03];
-        let written = unsafe { libc::write(other, payload.as_ptr() as *const libc::c_void, payload.len()) };
-        assert_eq!(written, payload.len() as isize);
-        set_nonblocking(pair.master_fd);
-        // The line discipline hands the bytes over asynchronously.
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
+        assert!(fd >= 0, "could not open {}: {}", pair.slave_path, io::Error::last_os_error());
+        fd
+    }
+
+    fn write_all(fd: c_int, bytes: &[u8]) {
+        let n = unsafe { libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len()) };
+        assert_eq!(n, bytes.len() as isize);
+    }
+
+    // The line discipline hands bytes over asynchronously.
+    fn read_exactly(fd: c_int, len: usize) -> Vec<u8> {
+        set_nonblocking(fd);
         let mut got = Vec::new();
-        for _ in 0..50 {
-            if let Ok(chunk) = read_once(pair.master_fd) {
+        for _ in 0..100 {
+            if let Ok(chunk) = read_once(fd) {
                 got.extend(chunk);
             }
-            if got.len() >= payload.len() {
+            if got.len() >= len {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        assert_eq!(got, payload);
+        got
+    }
+
+    // 0x0D, 0x0A and 0x03 are rewritten or acted on by the cooked line discipline.
+    const BINARY: [u8; 5] = [0xAA, 0x0D, 0x0A, 0x03, 0x11];
+
+    #[test]
+    fn raw_pair_carries_binary_from_another_program_to_the_master() {
+        let pair = open_pair().unwrap();
+        pair.make_raw().unwrap();
+        let other = open_slave_path(&pair);
+        write_all(other, &BINARY);
+        assert_eq!(read_exactly(pair.master_fd, BINARY.len()), BINARY);
         close_fd(other);
+        close_fd(pair.slave_fd);
+        close_fd(pair.master_fd);
+    }
+
+    #[test]
+    fn raw_pair_carries_binary_from_the_master_to_another_program() {
+        let pair = open_pair().unwrap();
+        pair.make_raw().unwrap();
+        let other = open_slave_path(&pair);
+        write_all(pair.master_fd, &BINARY);
+        assert_eq!(read_exactly(other, BINARY.len()), BINARY);
+        close_fd(other);
+        close_fd(pair.slave_fd);
+        close_fd(pair.master_fd);
+    }
+
+    // `flush()` on the master stream is tcdrain; on a cooked pty it never returns while nobody reads the slave.
+    #[test]
+    fn draining_the_master_returns_even_when_nobody_reads_the_slave() {
+        let pair = open_pair().unwrap();
+        pair.make_raw().unwrap();
+        write_all(pair.master_fd, &[1, 2, 3]);
+        let master = pair.master_fd;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rc = unsafe { libc::tcdrain(master) };
+            let _ = tx.send(rc);
+        });
+        let rc = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("tcdrain blocked");
+        assert_eq!(rc, 0);
         close_fd(pair.slave_fd);
         close_fd(pair.master_fd);
     }

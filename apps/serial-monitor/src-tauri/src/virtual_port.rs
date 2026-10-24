@@ -57,6 +57,11 @@ pub async fn create_virtual_port(
 
     let pair = mt_serial::pty::open_pair()
         .map_err(|e| format!("openpty failed: {e}"))?;
+    if let Err(e) = pair.make_raw() {
+        mt_serial::pty::close_fd(pair.master_fd);
+        mt_serial::pty::close_fd(pair.slave_fd);
+        return Err(e.to_string());
+    }
     let (master_fd, slave_fd, slave_path) = (pair.master_fd, pair.slave_fd, pair.slave_path);
 
     // Keep the slave open for as long as the port lives. Once the last slave is closed the master
