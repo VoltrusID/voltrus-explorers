@@ -18,7 +18,15 @@ pub fn smoke_from_args(args: &[String]) -> Option<i32> {
         _ => None,
     })?;
     let out = args.get(at + 1).filter(|a| !a.starts_with("--")).map(String::as_str);
-    Some(smoke::run(check, env!("CARGO_PKG_VERSION"), out))
+    Some(smoke::run(check, &app_version(), out))
+}
+
+/// The version in `tauri.conf.json`, which is the one shown to users (the crate version is the workspace's).
+fn app_version() -> String {
+    serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"))
+        .ok()
+        .and_then(|conf| conf["version"].as_str().map(str::to_string))
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

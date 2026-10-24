@@ -58,12 +58,26 @@ Invoke-Smoke $portableExe '--smoke' 'portable-smoke'
 Write-Host ("portable exe version: " + (Get-Item $portableExe).VersionInfo.ProductVersion)
 
 # 2. Installer
-$installDir = Join-Path $env:LOCALAPPDATA 'Modbus Poll'
 $install = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
 if ($install.ExitCode -ne 0) { Fail "installer exit code $($install.ExitCode)" }
+# The per-user NSIS installer goes to %LOCALAPPDATA%\Programs\<product>; fall back to the uninstall registry entry.
+$installDir = $null
+foreach ($candidate in @((Join-Path $env:LOCALAPPDATA 'Programs\Modbus Poll'), (Join-Path $env:LOCALAPPDATA 'Modbus Poll'))) {
+  if (Test-Path $candidate) { $installDir = $candidate; break }
+}
+if (-not $installDir) {
+  $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+    ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -like 'Modbus Poll*' } | Select-Object -First 1
+  if ($entry -and $entry.InstallLocation) { $installDir = $entry.InstallLocation.Trim('"') }
+}
+if (-not $installDir) {
+  Get-ChildItem $env:LOCALAPPDATA -Directory | ForEach-Object { Write-Host "LOCALAPPDATA: $($_.Name)" }
+  Fail 'could not find where the installer put Modbus Poll'
+}
+Write-Host "install dir: $installDir"
+Get-ChildItem $installDir | ForEach-Object { Write-Host "installed: $($_.Name)" }
 $installed = Join-Path $installDir 'Modbus Poll.exe'
 if (-not (Test-Path $installed)) { Fail "installer did not create $installed" }
-Get-ChildItem $installDir | ForEach-Object { Write-Host "installed: $($_.Name)" }
 Invoke-Smoke $installed '--smoke' 'installed-smoke'
 if ($LicenseServer) { Invoke-Smoke $installed '--smoke-license' 'installed-license-smoke' }
 
