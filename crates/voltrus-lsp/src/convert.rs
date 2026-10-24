@@ -64,11 +64,7 @@ impl<'a> LineIndex<'a> {
         let chars_before = line[..offset.saturating_sub(self.starts[idx]).min(line.len())]
             .chars()
             .count();
-        let utf16: usize = line
-            .chars()
-            .take(chars_before)
-            .map(char::len_utf16)
-            .sum();
+        let utf16: usize = line.chars().take(chars_before).map(char::len_utf16).sum();
         lsp_types::Position {
             line: idx as u32,
             character: utf16 as u32,

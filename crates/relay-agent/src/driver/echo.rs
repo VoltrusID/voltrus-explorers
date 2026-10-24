@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, bail};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 
@@ -60,10 +60,30 @@ impl EchoDriver {
     pub fn new() -> Self {
         EchoDriver {
             vars: vec![
-                EchoVar { name: "motor_running", type_name: "BOOL", value: Value::Bool(false), forced: None },
-                EchoVar { name: "cycle_count", type_name: "DINT", value: json!(0), forced: None },
-                EchoVar { name: "temperature", type_name: "REAL", value: json!(22.5), forced: None },
-                EchoVar { name: "part_id", type_name: "STRING", value: json!("PART-0001"), forced: None },
+                EchoVar {
+                    name: "motor_running",
+                    type_name: "BOOL",
+                    value: Value::Bool(false),
+                    forced: None,
+                },
+                EchoVar {
+                    name: "cycle_count",
+                    type_name: "DINT",
+                    value: json!(0),
+                    forced: None,
+                },
+                EchoVar {
+                    name: "temperature",
+                    type_name: "REAL",
+                    value: json!(22.5),
+                    forced: None,
+                },
+                EchoVar {
+                    name: "part_id",
+                    type_name: "STRING",
+                    value: json!("PART-0001"),
+                    forced: None,
+                },
             ],
             deployed: None,
             ticker: None,
@@ -116,7 +136,11 @@ impl DeviceDriver for EchoDriver {
         Ok(self.snapshot())
     }
 
-    async fn subscribe(&mut self, names: Subscription, tx: UnboundedSender<EventFrame>) -> Result<Value> {
+    async fn subscribe(
+        &mut self,
+        names: Subscription,
+        tx: UnboundedSender<EventFrame>,
+    ) -> Result<Value> {
         if let Some(prev) = self.ticker.take() {
             prev.abort();
         }
@@ -132,13 +156,19 @@ impl DeviceDriver for EchoDriver {
             .iter()
             .map(|name| {
                 let v = &self.vars[self.index_of(name).expect("checked above")];
-                (name.clone(), v.forced.clone().unwrap_or_else(|| v.value.clone()))
+                (
+                    name.clone(),
+                    v.forced.clone().unwrap_or_else(|| v.value.clone()),
+                )
             })
             .collect();
 
         self.ticker = Some(tokio::spawn(async move {
             let send = |name: &str, value: Value| {
-                let frame = EventFrame { event: "variable_update".into(), payload: Some(json!({ "name": name, "value": value })) };
+                let frame = EventFrame {
+                    event: "variable_update".into(),
+                    payload: Some(json!({ "name": name, "value": value })),
+                };
                 tx.send(frame).is_ok()
             };
             // Baseline snapshot first, then only real changes per tick.
@@ -206,8 +236,13 @@ impl DeviceDriver for EchoDriver {
         serde_json::from_str::<Value>(module_json)
             .map_err(|e| anyhow::anyhow!("module_json is not valid JSON: {e}"))?;
         let crc32 = fnv1a32(module_json.as_bytes());
-        self.deployed = Some(EchoDeploy { bytes: module_json.len(), crc32 });
-        Ok(json!({ "deployed": true, "bytes": module_json.len(), "crc32": crc32, "config": config }))
+        self.deployed = Some(EchoDeploy {
+            bytes: module_json.len(),
+            crc32,
+        });
+        Ok(
+            json!({ "deployed": true, "bytes": module_json.len(), "crc32": crc32, "config": config }),
+        )
     }
 }
 
@@ -215,7 +250,8 @@ impl DeviceDriver for EchoDriver {
 mod tests {
     use super::*;
 
-    const MODULE_JSON: &str = r#"{"name":"Main","instructions":[],"variable_slots":[["x",{"Dint":1}]]}"#;
+    const MODULE_JSON: &str =
+        r#"{"name":"Main","instructions":[],"variable_slots":[["x",{"Dint":1}]]}"#;
 
     #[test]
     fn deploy_crc_is_deterministic() {

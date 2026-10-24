@@ -1,35 +1,37 @@
-pub mod types;
-pub mod opcode;
-pub mod memory;
-pub mod vm;
-pub mod timer;
 pub mod counter;
-pub mod scheduler;
+#[cfg(feature = "io")]
+pub mod io_enip;
 #[cfg(feature = "io")]
 pub mod io_manager;
+#[cfg(feature = "io")]
+pub mod io_mqtt;
 #[cfg(feature = "io")]
 pub mod io_opcua;
 #[cfg(feature = "io")]
 pub mod io_s7;
-#[cfg(feature = "io")]
-pub mod io_mqtt;
-#[cfg(feature = "io")]
-pub mod io_enip;
+pub mod memory;
+pub mod opcode;
+pub mod scheduler;
+pub mod timer;
+pub mod types;
+pub mod vm;
 
-pub use types::{RuntimeConfig, RuntimeState, CycleStats};
-pub use opcode::{Opcode, Instruction, CompiledModule};
-pub use vm::{Vm, ExecutionState, FbSnapshot};
-pub use memory::MemoryModel;
-pub use scheduler::Scheduler;
 #[cfg(feature = "io")]
-pub use io_manager::{IoDriver, IoAddress, IoArea, IoSize, ModbusIoDriver, parse_direct_address, create_driver};
+pub use io_manager::{
+    IoAddress, IoArea, IoDriver, IoSize, ModbusIoDriver, create_driver, parse_direct_address,
+};
+#[cfg(feature = "io")]
+pub use io_mqtt::MqttIoDriver;
 #[cfg(feature = "io")]
 pub use io_opcua::OpcUaIoDriver;
 #[cfg(feature = "io")]
 pub use io_s7::S7IoDriver;
-#[cfg(feature = "io")]
-pub use io_mqtt::MqttIoDriver;
+pub use memory::MemoryModel;
 pub use mt_plc_types::PlcValue;
+pub use opcode::{CompiledModule, Instruction, Opcode};
+pub use scheduler::Scheduler;
+pub use types::{CycleStats, RuntimeConfig, RuntimeState};
+pub use vm::{ExecutionState, FbSnapshot, Vm};
 
 use serde::{Deserialize, Serialize};
 
@@ -117,9 +119,13 @@ impl PlcRuntime {
     }
 
     pub fn get_breakpoint_lines(&self) -> Vec<usize> {
-        let mut lines: Vec<usize> = self.vm.breakpoints.iter()
+        let mut lines: Vec<usize> = self
+            .vm
+            .breakpoints
+            .iter()
             .filter_map(|&pc| {
-                self.line_map.iter()
+                self.line_map
+                    .iter()
                     .find(|&&(idx, _)| idx == pc)
                     .map(|&(_, line)| line)
             })
@@ -141,7 +147,8 @@ impl PlcRuntime {
 
     pub fn current_pc_line(&self) -> Option<usize> {
         let pc = self.vm.last_pc;
-        self.line_map.iter()
+        self.line_map
+            .iter()
             .find(|&&(idx, _)| idx == pc)
             .map(|&(_, line)| line)
     }
@@ -159,8 +166,9 @@ impl PlcRuntime {
         self.cycle_count += 1;
         self.stats.last_cycle_ms = elapsed;
         self.stats.cycle_count = self.cycle_count;
-        self.stats.avg_cycle_ms =
-            (self.stats.avg_cycle_ms * (self.cycle_count - 1) as f64 + elapsed) / self.cycle_count as f64;
+        self.stats.avg_cycle_ms = (self.stats.avg_cycle_ms * (self.cycle_count - 1) as f64
+            + elapsed)
+            / self.cycle_count as f64;
         if elapsed > self.stats.max_cycle_ms {
             self.stats.max_cycle_ms = elapsed;
         }
@@ -218,16 +226,21 @@ impl PlcRuntime {
     }
 
     pub fn watch_variables(&self) -> Vec<WatchedVariable> {
-        self.vm.memory().variable_names().iter().map(|name| {
-            let (value, type_name, quality) = self.vm.memory().get_watch_info(name);
-            WatchedVariable {
-                display_value: value.to_string(),
-                name: name.clone(),
-                value,
-                type_name,
-                quality,
-            }
-        }).collect()
+        self.vm
+            .memory()
+            .variable_names()
+            .iter()
+            .map(|name| {
+                let (value, type_name, quality) = self.vm.memory().get_watch_info(name);
+                WatchedVariable {
+                    display_value: value.to_string(),
+                    name: name.clone(),
+                    value,
+                    type_name,
+                    quality,
+                }
+            })
+            .collect()
     }
 }
 

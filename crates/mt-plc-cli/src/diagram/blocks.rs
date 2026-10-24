@@ -17,7 +17,11 @@ pub struct BlockDef {
 }
 
 const fn pin(name: &'static str, data_type: &'static str, input: bool) -> PinDef {
-    PinDef { name, data_type, input }
+    PinDef {
+        name,
+        data_type,
+        input,
+    }
 }
 
 macro_rules! logic_block {
@@ -221,7 +225,11 @@ mod tests {
             for pin in def.pins {
                 let ph = format!("{{{{{}}}}}", pin.name);
                 if !def.st_template.is_empty() {
-                    assert!(def.st_template.contains(&ph), "{} missing {ph}", def.block_type);
+                    assert!(
+                        def.st_template.contains(&ph),
+                        "{} missing {ph}",
+                        def.block_type
+                    );
                 }
             }
         }

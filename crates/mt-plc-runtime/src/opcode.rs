@@ -1,1 +1,1 @@
-pub use mt_plc_types::{Opcode, Instruction, CompiledModule};
+pub use mt_plc_types::{CompiledModule, Instruction, Opcode};

@@ -149,7 +149,9 @@ pub async fn activate_license(
         .map_err(|e| format!("Invalid response: {}", e))?;
 
     if !result.valid {
-        return Err(result.error.unwrap_or_else(|| "Activation failed".to_string()));
+        return Err(result
+            .error
+            .unwrap_or_else(|| "Activation failed".to_string()));
     }
 
     let state = LicenseState {
@@ -194,7 +196,9 @@ pub async fn validate_license(app: tauri::AppHandle) -> Result<LicenseState, Str
         let mut invalid_state = state;
         invalid_state.activated = false;
         save_license(&invalid_state)?;
-        return Err(result.error.unwrap_or_else(|| "License invalid".to_string()));
+        return Err(result
+            .error
+            .unwrap_or_else(|| "License invalid".to_string()));
     }
 
     Ok(state)

@@ -7,7 +7,7 @@ use prost::Message;
 use crate::bdseq;
 use crate::pb::payload::metric;
 use crate::pb::{DataType, Payload};
-use crate::topic::{sparkplug_topic, SparkplugVerb};
+use crate::topic::{SparkplugVerb, sparkplug_topic};
 use crate::transport::Will;
 use crate::value::MetricValue;
 use crate::{Metric, MqttTransport, PAYLOAD_UUID, SparkplugError};
@@ -133,7 +133,9 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             body: None,
         };
         let topic = self.topic(SparkplugVerb::NBirth);
-        self.transport.publish(&topic, &birth.encode_to_vec()).await?;
+        self.transport
+            .publish(&topic, &birth.encode_to_vec())
+            .await?;
 
         self.seq = 1;
         self.birthed = birthed;
@@ -162,7 +164,13 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             };
             let deadband = deadband_for(&self.config.deadband_by_prefix, &source.name);
             let elapsed_ms = now_ms.saturating_sub(self.last_publish_ms[i].unwrap_or(now_ms));
-            if should_publish(&value, last, deadband, elapsed_ms, self.config.max_interval_ms) {
+            if should_publish(
+                &value,
+                last,
+                deadband,
+                elapsed_ms,
+                self.config.max_interval_ms,
+            ) {
                 metrics.push(value_metric(&source.name, &value, now_ms));
                 self.last[i] = Some(value);
                 self.last_publish_ms[i] = Some(now_ms);
@@ -180,7 +188,9 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             body: None,
         };
         let topic = self.topic(SparkplugVerb::NData);
-        self.transport.publish(&topic, &data.encode_to_vec()).await?;
+        self.transport
+            .publish(&topic, &data.encode_to_vec())
+            .await?;
         self.seq = seq.wrapping_add(1);
         Ok(true)
     }
@@ -220,7 +230,9 @@ impl<T: MqttTransport> SparkplugPublisher<T> {
             body: None,
         };
         let topic = self.topic(SparkplugVerb::NBirth);
-        self.transport.publish(&topic, &birth.encode_to_vec()).await?;
+        self.transport
+            .publish(&topic, &birth.encode_to_vec())
+            .await?;
 
         self.seq = 1;
         self.birthed = birthed;
@@ -332,7 +344,10 @@ fn value_metric(name: &str, value: &MetricValue, timestamp_ms: u64) -> Metric {
         MetricValue::Bool(v) => (DataType::Boolean as u32, metric::Value::BooleanValue(*v)),
         MetricValue::Int(v) => (DataType::Int64 as u32, metric::Value::LongValue(*v as u64)),
         MetricValue::Real(v) => (DataType::Double as u32, metric::Value::DoubleValue(*v)),
-        MetricValue::String(v) => (DataType::String as u32, metric::Value::StringValue(v.clone())),
+        MetricValue::String(v) => (
+            DataType::String as u32,
+            metric::Value::StringValue(v.clone()),
+        ),
     };
     Metric {
         name: Some(name.to_string()),
@@ -470,7 +485,10 @@ mod tests {
         );
         assert_eq!(birth.metrics[1].value, Some(metric::Value::LongValue(42)));
         assert_eq!(birth.metrics[2].name.as_deref(), Some("line/running"));
-        assert_eq!(birth.metrics[2].value, Some(metric::Value::BooleanValue(true)));
+        assert_eq!(
+            birth.metrics[2].value,
+            Some(metric::Value::BooleanValue(true))
+        );
 
         // No change since birth → no NDATA.
         assert!(!publisher.publish_changes(1_500).await.unwrap());
@@ -552,7 +570,10 @@ mod tests {
         let published = publisher.transport.payloads("NDATA/edge1");
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].metrics[0].name.as_deref(), Some("tank/level"));
-        assert_eq!(published[0].metrics[0].value, Some(metric::Value::DoubleValue(12.5)));
+        assert_eq!(
+            published[0].metrics[0].value,
+            Some(metric::Value::DoubleValue(12.5))
+        );
 
         // Small wobble inside the deadband → suppressed.
         *level.lock() = 13.0;
@@ -600,7 +621,10 @@ mod tests {
         let published = publisher.transport.payloads("NDATA/edge1");
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].metrics.len(), 1);
-        assert_eq!(published[0].metrics[0].name.as_deref(), Some("motor/running"));
+        assert_eq!(
+            published[0].metrics[0].name.as_deref(),
+            Some("motor/running")
+        );
 
         // Amps jump beyond the deadband → published on its own.
         *amps.lock() = 20;
@@ -609,7 +633,10 @@ mod tests {
         assert_eq!(published.len(), 2);
         assert_eq!(published[1].metrics.len(), 1);
         assert_eq!(published[1].metrics[0].name.as_deref(), Some("motor/amps"));
-        assert_eq!(published[1].metrics[0].value, Some(metric::Value::LongValue(20)));
+        assert_eq!(
+            published[1].metrics[0].value,
+            Some(metric::Value::LongValue(20))
+        );
     }
 
     #[tokio::test]
@@ -687,7 +714,10 @@ mod tests {
         assert_eq!(deaths[0].seq, None);
         assert_eq!(deaths[0].metrics.len(), 1);
         assert_eq!(deaths[0].metrics[0].name.as_deref(), Some("bdSeq"));
-        assert_eq!(deaths[0].metrics[0].value, Some(metric::Value::LongValue(1)));
+        assert_eq!(
+            deaths[0].metrics[0].value,
+            Some(metric::Value::LongValue(1))
+        );
     }
 
     #[tokio::test]
@@ -701,15 +731,18 @@ mod tests {
                 get: Box::new(move || (*maybe.lock()).map(MetricValue::Int)),
             }
         };
-        let mut publisher = SparkplugPublisher::new(
-            config(&dir, vec![source], vec![]),
-            MockTransport::default(),
-        );
+        let mut publisher =
+            SparkplugPublisher::new(config(&dir, vec![source], vec![]), MockTransport::default());
         publisher.connect(0).await.unwrap();
 
         // Absent at birth → not in the NBIRTH.
         let birth = &publisher.transport.payloads("NBIRTH/edge1")[0];
-        assert!(birth.metrics.iter().all(|m| m.name.as_deref() != Some("line/gap")));
+        assert!(
+            birth
+                .metrics
+                .iter()
+                .all(|m| m.name.as_deref() != Some("line/gap"))
+        );
 
         // ...and never published mid-session, even once it becomes available.
         *maybe.lock() = Some(7);
@@ -738,10 +771,8 @@ mod tests {
                 get: Box::new(move || (*maybe.lock()).map(MetricValue::Int)),
             }
         };
-        let mut publisher = SparkplugPublisher::new(
-            config(&dir, vec![source], vec![]),
-            MockTransport::default(),
-        );
+        let mut publisher =
+            SparkplugPublisher::new(config(&dir, vec![source], vec![]), MockTransport::default());
         publisher.connect(0).await.unwrap();
 
         // A None scan is not an error and publishes nothing.
@@ -757,7 +788,10 @@ mod tests {
         assert!(publisher.publish_changes(3).await.unwrap());
         let published = publisher.transport.payloads("NDATA/edge1");
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].metrics[0].value, Some(metric::Value::LongValue(3)));
+        assert_eq!(
+            published[0].metrics[0].value,
+            Some(metric::Value::LongValue(3))
+        );
     }
 
     #[tokio::test]
@@ -838,10 +872,8 @@ mod tests {
     #[tokio::test]
     async fn rebirth_before_connect_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let mut publisher = SparkplugPublisher::new(
-            config(&dir, vec![], vec![]),
-            MockTransport::default(),
-        );
+        let mut publisher =
+            SparkplugPublisher::new(config(&dir, vec![], vec![]), MockTransport::default());
         assert!(matches!(
             publisher.rebirth(0).await,
             Err(SparkplugError::NotConnected)

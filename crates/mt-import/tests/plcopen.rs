@@ -278,10 +278,12 @@ fn unsupported_variable_types_are_skipped_with_reasons() {
     );
     // A variable without any <type> element is malformed input for that
     // variable and is reported as an error.
-    assert!(report
-        .errors
-        .iter()
-        .any(|e| e.context == "P/broke" && e.message.contains("no <type>")));
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.context == "P/broke" && e.message.contains("no <type>"))
+    );
     assert!(!src.contains("broke"), "{src}");
 }
 

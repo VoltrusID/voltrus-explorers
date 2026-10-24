@@ -3,15 +3,15 @@
 
 use std::sync::RwLock;
 
-use tower_lsp::jsonrpc::Result;
 use lsp_types::{
     CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverProviderCapability, HoverParams, InitializedParams, InitializeParams, InitializeResult,
-    Location, MarkupContent, MarkupKind, OneOf, ServerCapabilities, ServerInfo, Url,
-    TextDocumentSyncCapability, TextDocumentSyncKind,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, Location,
+    MarkupContent, MarkupKind, OneOf, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, Url,
 };
+use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::convert;
@@ -196,22 +196,22 @@ fn hover_markdown(hit: &Hit, open_uri: &Url) -> String {
     match (&s.type_name, &s.owner) {
         (Some(t), Some(o)) => format!(
             "```iecst\n{} : {}\n```\n**{}** · in `{o}` · {origin}",
-            s.name, t, s.kind.label()
+            s.name,
+            t,
+            s.kind.label()
         ),
         (Some(t), None) => format!(
             "```iecst\n{} : {}\n```\n**{}** · {origin}",
-            s.name, t, s.kind.label()
+            s.name,
+            t,
+            s.kind.label()
         ),
         (None, Some(o)) => format!(
             "```iecst\n{}\n```\n**{}** · in `{o}` · {origin}",
             s.name,
             s.kind.label()
         ),
-        (None, None) => format!(
-            "```iecst\n{} {}\n```\n{origin}",
-            s.kind.label(),
-            s.name
-        ),
+        (None, None) => format!("```iecst\n{} {}\n```\n{origin}", s.kind.label(), s.name),
     }
 }
 

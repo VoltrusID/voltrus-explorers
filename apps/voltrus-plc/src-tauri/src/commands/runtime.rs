@@ -34,13 +34,18 @@ pub async fn plc_run(
     // Create runtime from compiled module, preserving variable values
     {
         let compiler = state.compiler.lock().await;
-        let module = compiler.last_module.as_ref()
+        let module = compiler
+            .last_module
+            .as_ref()
             .ok_or("No compiled program. Click Build first.")?;
 
         let mut plc = plc_arc.lock().await;
 
         // Snapshot current variable values and FB state before replacing the runtime
-        let snapshot = plc.as_ref().map(|r| r.snapshot_variables()).unwrap_or_default();
+        let snapshot = plc
+            .as_ref()
+            .map(|r| r.snapshot_variables())
+            .unwrap_or_default();
         let fb_snapshot = plc.as_ref().map(|r| r.snapshot_fb_state());
 
         *plc = Some(PlcRuntime::new(
@@ -84,41 +89,50 @@ pub async fn plc_run(
                     Ok(stats) => {
                         // Check if stop was requested during this cycle
                         if !running.load(std::sync::atomic::Ordering::SeqCst) {
-                            let _ = app_handle.emit("runtime-state", RuntimeStateInfo {
-                                state: "stopped".to_string(),
+                            let _ = app_handle.emit(
+                                "runtime-state",
+                                RuntimeStateInfo {
+                                    state: "stopped".to_string(),
+                                    cycle_count: stats.cycle_count,
+                                    last_cycle_ms: stats.last_cycle_ms,
+                                    avg_cycle_ms: stats.avg_cycle_ms,
+                                    max_cycle_ms: stats.max_cycle_ms,
+                                    error_message: None,
+                                    cycle_history: stats.cycle_history.clone(),
+                                },
+                            );
+                            break;
+                        }
+                        let watch = runtime.watch_variables();
+                        let state_name = runtime.state().name().to_string();
+                        let _ = app_handle.emit("watch-update", &watch);
+                        let _ = app_handle.emit(
+                            "runtime-state",
+                            RuntimeStateInfo {
+                                state: state_name,
                                 cycle_count: stats.cycle_count,
                                 last_cycle_ms: stats.last_cycle_ms,
                                 avg_cycle_ms: stats.avg_cycle_ms,
                                 max_cycle_ms: stats.max_cycle_ms,
                                 error_message: None,
                                 cycle_history: stats.cycle_history.clone(),
-                            });
-                            break;
-                        }
-                        let watch = runtime.watch_variables();
-                        let state_name = runtime.state().name().to_string();
-                        let _ = app_handle.emit("watch-update", &watch);
-                        let _ = app_handle.emit("runtime-state", RuntimeStateInfo {
-                            state: state_name,
-                            cycle_count: stats.cycle_count,
-                            last_cycle_ms: stats.last_cycle_ms,
-                            avg_cycle_ms: stats.avg_cycle_ms,
-                            max_cycle_ms: stats.max_cycle_ms,
-                            error_message: None,
-                            cycle_history: stats.cycle_history.clone(),
-                        });
+                            },
+                        );
                     }
                     Err(e) => {
                         running.store(false, std::sync::atomic::Ordering::SeqCst);
-                        let _ = app_handle.emit("runtime-state", RuntimeStateInfo {
-                            state: "error".to_string(),
-                            cycle_count: 0,
-                            last_cycle_ms: 0.0,
-                            avg_cycle_ms: 0.0,
-                            max_cycle_ms: 0.0,
-                            error_message: Some(e),
-                            cycle_history: vec![],
-                        });
+                        let _ = app_handle.emit(
+                            "runtime-state",
+                            RuntimeStateInfo {
+                                state: "error".to_string(),
+                                cycle_count: 0,
+                                last_cycle_ms: 0.0,
+                                avg_cycle_ms: 0.0,
+                                max_cycle_ms: 0.0,
+                                error_message: Some(e),
+                                cycle_history: vec![],
+                            },
+                        );
                         break;
                     }
                 }
@@ -134,20 +148,26 @@ pub async fn plc_stop(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    state.runtime.running.store(false, std::sync::atomic::Ordering::SeqCst);
+    state
+        .runtime
+        .running
+        .store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Emit stopped state so UI updates immediately
     let plc = state.runtime.plc.lock().await;
     let stats = plc.as_ref().map(|r| r.stats().clone()).unwrap_or_default();
-    let _ = app.emit("runtime-state", RuntimeStateInfo {
-        state: "stopped".to_string(),
-        cycle_count: stats.cycle_count,
-        last_cycle_ms: stats.last_cycle_ms,
-        avg_cycle_ms: stats.avg_cycle_ms,
-        max_cycle_ms: stats.max_cycle_ms,
-        error_message: None,
-        cycle_history: stats.cycle_history.clone(),
-    });
+    let _ = app.emit(
+        "runtime-state",
+        RuntimeStateInfo {
+            state: "stopped".to_string(),
+            cycle_count: stats.cycle_count,
+            last_cycle_ms: stats.last_cycle_ms,
+            avg_cycle_ms: stats.avg_cycle_ms,
+            max_cycle_ms: stats.max_cycle_ms,
+            error_message: None,
+            cycle_history: stats.cycle_history.clone(),
+        },
+    );
 
     Ok(())
 }
@@ -168,7 +188,10 @@ pub async fn plc_step(
         if plc.is_none() {
             let module = compiler.last_module.as_ref().unwrap();
             *plc = Some(PlcRuntime::new(
-                PlcRuntimeConfig { scan_cycle_ms: 10, max_cycle_ms: 1000 },
+                PlcRuntimeConfig {
+                    scan_cycle_ms: 10,
+                    max_cycle_ms: 1000,
+                },
                 module.clone(),
             ));
         }
@@ -180,15 +203,18 @@ pub async fn plc_step(
         let watch = runtime.watch_variables();
         let stats = runtime.stats().clone();
         let _ = app.emit("watch-update", &watch);
-        let _ = app.emit("runtime-state", RuntimeStateInfo {
-            state: "paused".to_string(),
-            cycle_count: stats.cycle_count,
-            last_cycle_ms: stats.last_cycle_ms,
-            avg_cycle_ms: stats.avg_cycle_ms,
-            max_cycle_ms: stats.max_cycle_ms,
-            error_message: None,
-            cycle_history: stats.cycle_history.clone(),
-        });
+        let _ = app.emit(
+            "runtime-state",
+            RuntimeStateInfo {
+                state: "paused".to_string(),
+                cycle_count: stats.cycle_count,
+                last_cycle_ms: stats.last_cycle_ms,
+                avg_cycle_ms: stats.avg_cycle_ms,
+                max_cycle_ms: stats.max_cycle_ms,
+                error_message: None,
+                cycle_history: stats.cycle_history.clone(),
+            },
+        );
     }
 
     Ok(())
@@ -231,10 +257,7 @@ pub async fn get_runtime_state(
 // ── Debug / Breakpoint commands ──
 
 #[tauri::command]
-pub async fn set_breakpoint(
-    state: tauri::State<'_, AppState>,
-    line: u32,
-) -> Result<(), String> {
+pub async fn set_breakpoint(state: tauri::State<'_, AppState>, line: u32) -> Result<(), String> {
     let mut plc = state.runtime.plc.lock().await;
     if let Some(ref mut runtime) = *plc {
         runtime.set_breakpoint_line(line as usize);
@@ -245,10 +268,7 @@ pub async fn set_breakpoint(
 }
 
 #[tauri::command]
-pub async fn clear_breakpoint(
-    state: tauri::State<'_, AppState>,
-    line: u32,
-) -> Result<(), String> {
+pub async fn clear_breakpoint(state: tauri::State<'_, AppState>, line: u32) -> Result<(), String> {
     let mut plc = state.runtime.plc.lock().await;
     if let Some(ref mut runtime) = *plc {
         runtime.clear_breakpoint_line(line as usize);
@@ -259,12 +279,14 @@ pub async fn clear_breakpoint(
 }
 
 #[tauri::command]
-pub async fn get_breakpoints(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<u32>, String> {
+pub async fn get_breakpoints(state: tauri::State<'_, AppState>) -> Result<Vec<u32>, String> {
     let plc = state.runtime.plc.lock().await;
     match *plc {
-        Some(ref runtime) => Ok(runtime.get_breakpoint_lines().into_iter().map(|l| l as u32).collect()),
+        Some(ref runtime) => Ok(runtime
+            .get_breakpoint_lines()
+            .into_iter()
+            .map(|l| l as u32)
+            .collect()),
         None => Ok(vec![]),
     }
 }
@@ -292,10 +314,13 @@ pub async fn step_instruction(
             mt_plc_runtime::ExecutionState::Done => "stopped",
             _ => "running",
         };
-        let _ = app.emit("breakpoint-hit", DebugStepResult {
-            state: state_name.to_string(),
-            current_line,
-        });
+        let _ = app.emit(
+            "breakpoint-hit",
+            DebugStepResult {
+                state: state_name.to_string(),
+                current_line,
+            },
+        );
         Ok(DebugStepResult {
             state: state_name.to_string(),
             current_line,
@@ -321,10 +346,13 @@ pub async fn continue_execution(
             mt_plc_runtime::ExecutionState::BreakpointHit(_pc) => {
                 // emit breakpoint event
                 let line = runtime.current_pc_line().map(|l| l as u32);
-                let _ = app.emit("breakpoint-hit", DebugStepResult {
-                    state: "paused".to_string(),
-                    current_line: line,
-                });
+                let _ = app.emit(
+                    "breakpoint-hit",
+                    DebugStepResult {
+                        state: "paused".to_string(),
+                        current_line: line,
+                    },
+                );
                 "paused"
             }
             mt_plc_runtime::ExecutionState::Done => "stopped",
@@ -340,9 +368,7 @@ pub async fn continue_execution(
 }
 
 #[tauri::command]
-pub async fn get_current_pc_line(
-    state: tauri::State<'_, AppState>,
-) -> Result<Option<u32>, String> {
+pub async fn get_current_pc_line(state: tauri::State<'_, AppState>) -> Result<Option<u32>, String> {
     let plc = state.runtime.plc.lock().await;
     match *plc {
         Some(ref runtime) => Ok(runtime.current_pc_line().map(|l| l as u32)),

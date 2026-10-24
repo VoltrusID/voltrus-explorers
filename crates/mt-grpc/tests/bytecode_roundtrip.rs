@@ -9,8 +9,14 @@ fn sample_module() -> CompiledModule {
     CompiledModule {
         name: "Main".to_string(),
         instructions: vec![
-            Instruction { opcode: Opcode::PushBool, operand: Some(1) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(42) },
+            Instruction {
+                opcode: Opcode::PushBool,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(42),
+            },
         ],
         variable_slots: vec![
             ("motor".to_string(), PlcValue::Bool(false)),

@@ -22,10 +22,10 @@
 //! `crc32_le(payload[0 .. len-4])` and reports it here. Older firmware that
 //! omits the field deserializes as `None`, and the UI shows "unknown".
 
-use std::sync::Arc;
 use crate::state::AppState;
 use futures::{SinkExt, StreamExt};
-use mt_plc_types::{crc32_le, serialize_bytecode, IoMapping, IoType};
+use mt_plc_types::{IoMapping, IoType, crc32_le, serialize_bytecode};
+use std::sync::Arc;
 use tauri::Emitter;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -69,9 +69,9 @@ pub struct DiscoveredTarget {
 /// Scan for Voltrus Runtime devices on the local network via mDNS.
 #[tauri::command]
 pub async fn scan_mdns_targets() -> Result<Vec<DiscoveredTarget>, String> {
-    let daemon = mdns_sd::ServiceDaemon::new()
-        .map_err(|e| format!("mDNS init failed: {e}"))?;
-    let receiver = daemon.browse("_voltrus-runtime._tcp.local.")
+    let daemon = mdns_sd::ServiceDaemon::new().map_err(|e| format!("mDNS init failed: {e}"))?;
+    let receiver = daemon
+        .browse("_voltrus-runtime._tcp.local.")
         .map_err(|e| format!("mDNS browse failed: {e}"))?;
 
     let mut targets: Vec<DiscoveredTarget> = Vec::new();
@@ -90,7 +90,8 @@ pub async fn scan_mdns_targets() -> Result<Vec<DiscoveredTarget>, String> {
                         });
                     }
                 }
-                mdns_sd::ServiceEvent::SearchStarted(_) | mdns_sd::ServiceEvent::ServiceFound(_, _) => {}
+                mdns_sd::ServiceEvent::SearchStarted(_)
+                | mdns_sd::ServiceEvent::ServiceFound(_, _) => {}
                 _ => {}
             },
             Ok(Err(_)) | Err(_) => break,
@@ -277,10 +278,7 @@ pub async fn target_connect(
             }
         }
 
-        let _ = app_handle.emit(
-            "target-disconnected",
-            serde_json::json!({"ip": ip}),
-        );
+        let _ = app_handle.emit("target-disconnected", serde_json::json!({"ip": ip}));
     });
 
     Ok(())
@@ -304,10 +302,7 @@ pub async fn target_disconnect(state: tauri::State<'_, AppState>) -> Result<(), 
 
 /// Start the remote runtime via the persistent WebSocket sink.
 #[tauri::command]
-pub async fn target_start(
-    state: tauri::State<'_, AppState>,
-    cycle_ms: u32,
-) -> Result<(), String> {
+pub async fn target_start(state: tauri::State<'_, AppState>, cycle_ms: u32) -> Result<(), String> {
     // [0x04] [4B cycle_time_ms LE]
     let mut payload = vec![0x04u8];
     payload.extend_from_slice(&cycle_ms.to_le_bytes());
@@ -332,7 +327,9 @@ pub async fn target_step(state: tauri::State<'_, AppState>) -> Result<(), String
 /// `running_crc32` (what the target reports as loaded — `/api/state` for
 /// ESP32, `GetRuntimeState` for gRPC targets). `None` means unknown.
 #[tauri::command]
-pub async fn target_status(state: tauri::State<'_, AppState>) -> Result<TargetStatusResult, String> {
+pub async fn target_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<TargetStatusResult, String> {
     let connected = state
         .target
         .connected
@@ -431,12 +428,18 @@ mod drift_tests {
 
     #[test]
     fn equal_crcs_are_in_sync() {
-        assert_eq!(compare_crc(Some(0xDEADBEEF), Some(0xDEADBEEF)), DriftStatus::Sync);
+        assert_eq!(
+            compare_crc(Some(0xDEADBEEF), Some(0xDEADBEEF)),
+            DriftStatus::Sync
+        );
     }
 
     #[test]
     fn different_crcs_drift() {
-        assert_eq!(compare_crc(Some(0xDEADBEEF), Some(0x12345678)), DriftStatus::Drift);
+        assert_eq!(
+            compare_crc(Some(0xDEADBEEF), Some(0x12345678)),
+            DriftStatus::Drift
+        );
     }
 
     #[test]
@@ -535,7 +538,9 @@ pub async fn clear_remote_breakpoint(
 
 /// Get/set the target kind (WebSocket for ESP32, gRPC for Linux).
 #[tauri::command]
-pub async fn get_target_kind(state: tauri::State<'_, AppState>) -> Result<crate::state::TargetKind, String> {
+pub async fn get_target_kind(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::state::TargetKind, String> {
     let kind = state.target.target_kind.lock().await;
     Ok(kind.clone())
 }
@@ -571,8 +576,8 @@ pub async fn deploy_via_grpc(
     // Cache for `get_io_mappings`
     *state.io.mappings.lock().await = frontend_cache(io_mappings.as_deref());
 
-    let bytecode = bincode::serialize(&module)
-        .map_err(|e| format!("Bytecode serialization failed: {e}"))?;
+    let bytecode =
+        bincode::serialize(&module).map_err(|e| format!("Bytecode serialization failed: {e}"))?;
     // Drift fingerprint: CRC over the full bincode payload — the value the
     // mt-grpc server records from `DeployRequest.bytecode`.
     let bundle_crc = crc32_le(&bytecode);
@@ -599,7 +604,8 @@ pub async fn deploy_via_grpc(
         .await
         .map_err(|e| format!("gRPC connection to {addr} failed: {e}"))?;
 
-    let resp = client.deploy(&bytecode, Some(config.as_str()))
+    let resp = client
+        .deploy(&bytecode, Some(config.as_str()))
         .await
         .map_err(|e| format!("gRPC deploy failed: {e}"))?;
 
@@ -639,7 +645,9 @@ pub async fn grpc_start(
 ) -> Result<String, String> {
     let mut client = grpc_client_for(&state, &addr).await?;
     let config = serde_json::json!({"scan_cycle_ms": cycle_ms}).to_string();
-    let resp = client.start(Some(config.as_str())).await
+    let resp = client
+        .start(Some(config.as_str()))
+        .await
         .map_err(|e| format!("gRPC start failed: {e}"))?;
     Ok(format!("{:?}", resp.status))
 }
@@ -648,7 +656,9 @@ pub async fn grpc_start(
 #[tauri::command]
 pub async fn grpc_stop(state: tauri::State<'_, AppState>, addr: String) -> Result<String, String> {
     let mut client = grpc_client_for(&state, &addr).await?;
-    let resp = client.stop().await
+    let resp = client
+        .stop()
+        .await
         .map_err(|e| format!("gRPC stop failed: {e}"))?;
     Ok(format!("{:?}", resp.status))
 }
@@ -657,7 +667,9 @@ pub async fn grpc_stop(state: tauri::State<'_, AppState>, addr: String) -> Resul
 #[tauri::command]
 pub async fn grpc_step(state: tauri::State<'_, AppState>, addr: String) -> Result<String, String> {
     let mut client = grpc_client_for(&state, &addr).await?;
-    let resp = client.step().await
+    let resp = client
+        .step()
+        .await
         .map_err(|e| format!("gRPC step failed: {e}"))?;
     Ok(format!("{:?}", resp.status))
 }
@@ -737,12 +749,7 @@ fn parse_var_update(data: &[u8]) -> Result<Vec<WatchedVar>, String> {
         let type_tag = data[ptr];
         ptr += 1;
 
-        let raw_val = u32::from_le_bytes([
-            data[ptr],
-            data[ptr + 1],
-            data[ptr + 2],
-            data[ptr + 3],
-        ]);
+        let raw_val = u32::from_le_bytes([data[ptr], data[ptr + 1], data[ptr + 2], data[ptr + 3]]);
         ptr += 4;
         ptr += 4; // skip timestamp
 
@@ -781,7 +788,13 @@ fn decode_esp_value(type_tag: u8, raw: u32) -> (serde_json::Value, String) {
 
 fn format_value(val: &serde_json::Value) -> String {
     match val {
-        serde_json::Value::Bool(b) => if *b { "TRUE".into() } else { "FALSE".into() },
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "TRUE".into()
+            } else {
+                "FALSE".into()
+            }
+        }
         serde_json::Value::Number(n) => {
             if let Some(f) = n.as_f64() {
                 if f == (f as i64) as f64 {
@@ -847,9 +860,7 @@ async fn send_via_sink(
 ) -> Result<(), String> {
     use futures::SinkExt;
     let mut sink_guard = ws_sink.lock().await;
-    let sink: &mut crate::state::WsSink = sink_guard
-        .as_mut()
-        .ok_or("Not connected to target")?;
+    let sink: &mut crate::state::WsSink = sink_guard.as_mut().ok_or("Not connected to target")?;
 
     sink.send(Message::Binary(payload.to_vec().into()))
         .await
@@ -879,17 +890,32 @@ pub struct RemoteForceValue {
 impl RemoteForceValue {
     pub fn from_json(value: &serde_json::Value) -> Self {
         match value {
-            serde_json::Value::Bool(b) => Self { type_tag: 0, raw: if *b { 1 } else { 0 } },
+            serde_json::Value::Bool(b) => Self {
+                type_tag: 0,
+                raw: if *b { 1 } else { 0 },
+            },
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
-                    Self { type_tag: 3, raw: (i as i32) as u32 }
+                    Self {
+                        type_tag: 3,
+                        raw: (i as i32) as u32,
+                    }
                 } else if let Some(f) = n.as_f64() {
-                    Self { type_tag: 4, raw: (f as f32).to_bits() }
+                    Self {
+                        type_tag: 4,
+                        raw: (f as f32).to_bits(),
+                    }
                 } else {
-                    Self { type_tag: 3, raw: 0 }
+                    Self {
+                        type_tag: 3,
+                        raw: 0,
+                    }
                 }
             }
-            _ => Self { type_tag: 3, raw: 0 },
+            _ => Self {
+                type_tag: 3,
+                raw: 0,
+            },
         }
     }
 }
@@ -964,7 +990,8 @@ fn resolve_mappings(
         .filter_map(|fm| {
             let variable_index = variable_slots
                 .iter()
-                .position(|(name, _)| name == &fm.variable)? as u32;
+                .position(|(name, _)| name == &fm.variable)?
+                as u32;
 
             let io_type = match fm.direction.as_str() {
                 "input" => IoType::Input,

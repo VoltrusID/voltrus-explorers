@@ -8,7 +8,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{is_iec_identifier, or_named, Diag, TranspileResult};
+use super::{Diag, TranspileResult, is_iec_identifier, or_named};
 use crate::diagram::blocks::block_def;
 
 #[derive(Deserialize, Debug)]
@@ -63,7 +63,10 @@ pub struct LdElement {
 }
 
 fn is_contact(kind: &str) -> bool {
-    matches!(kind, "contact_no" | "contact_nc" | "contact_re" | "contact_fe")
+    matches!(
+        kind,
+        "contact_no" | "contact_nc" | "contact_re" | "contact_fe"
+    )
 }
 
 fn is_coil(kind: &str) -> bool {
@@ -85,7 +88,6 @@ impl OrderedMap {
             self.entries.push((key, value));
         }
     }
-
 
     fn contains(&self, key: &str) -> bool {
         self.entries.iter().any(|(k, _)| k == key)
@@ -143,8 +145,10 @@ impl Ctx {
                 self.var_outputs.push(variable.to_string());
             }
         } else {
-            self.var_inouts
-                .push_unique(variable.to_string(), el.variable_type.clone().unwrap_or_else(|| "BOOL".into()));
+            self.var_inouts.push_unique(
+                variable.to_string(),
+                el.variable_type.clone().unwrap_or_else(|| "BOOL".into()),
+            );
         }
     }
 }
@@ -194,7 +198,10 @@ pub fn transpile(program: &LdProgram) -> TranspileResult {
     }
 
     if diagnostics.iter().any(|d| d.severity == "error") {
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     let mut ctx = Ctx {
@@ -251,15 +258,18 @@ pub fn transpile(program: &LdProgram) -> TranspileResult {
         };
 
         if is_coil(&output_el.kind) {
-            let out_var = or_named(output_el.variable.as_deref(), format!("__coil_{}", output_el.id));
+            let out_var = or_named(
+                output_el.variable.as_deref(),
+                format!("__coil_{}", output_el.id),
+            );
             match output_el.kind.as_str() {
                 "coil" => body.push(format!("    {out_var} := {rung_expr};")),
-                "coil_set" => {
-                    body.push(format!("    IF {rung_expr} THEN {out_var} := TRUE; END_IF;"))
-                }
-                "coil_reset" => {
-                    body.push(format!("    IF {rung_expr} THEN {out_var} := FALSE; END_IF;"))
-                }
+                "coil_set" => body.push(format!(
+                    "    IF {rung_expr} THEN {out_var} := TRUE; END_IF;"
+                )),
+                "coil_reset" => body.push(format!(
+                    "    IF {rung_expr} THEN {out_var} := FALSE; END_IF;"
+                )),
                 "coil_toggle" => {
                     body.push(format!(
                         "    IF {rung_expr} THEN {out_var} := NOT {out_var}; END_IF;"
@@ -276,9 +286,12 @@ pub fn transpile(program: &LdProgram) -> TranspileResult {
         } else if output_el.kind == "fb_block" {
             let block_type = output_el.block_type.as_deref().unwrap_or("TON");
             if let Some(def) = block_def(block_type) {
-                let instance =
-                    or_named(output_el.instance_name.as_deref(), format!("__fb_{}", output_el.id));
-                ctx.fb_instances.upsert(instance.clone(), block_type.to_string());
+                let instance = or_named(
+                    output_el.instance_name.as_deref(),
+                    format!("__fb_{}", output_el.id),
+                );
+                ctx.fb_instances
+                    .upsert(instance.clone(), block_type.to_string());
 
                 let mut fb_inputs: Vec<(String, String)> = vec![("IN".into(), rung_expr.clone())];
                 for (k, v) in &output_el.pin_values {
@@ -337,7 +350,11 @@ pub fn transpile(program: &LdProgram) -> TranspileResult {
         var_body.push(format!("    {inst} : {block_type};"));
     }
     for (inst, _) in &ctx.edge_instances.entries {
-        let ty = if inst.contains("ftrig") { "F_TRIG" } else { "R_TRIG" };
+        let ty = if inst.contains("ftrig") {
+            "F_TRIG"
+        } else {
+            "R_TRIG"
+        };
         var_body.push(format!("    {inst} : {ty};"));
     }
     if !var_body.is_empty() {
@@ -351,7 +368,10 @@ pub fn transpile(program: &LdProgram) -> TranspileResult {
     }
     sections.push("END_PROGRAM".into());
 
-    TranspileResult { source: sections.join("\n"), diagnostics }
+    TranspileResult {
+        source: sections.join("\n"),
+        diagnostics,
+    }
 }
 
 #[cfg(test)]

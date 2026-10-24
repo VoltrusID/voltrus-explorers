@@ -45,11 +45,7 @@ fn safe_color<'a>(s: &'a str, fallback: &'a str) -> &'a str {
         && s.len() >= 4
         && s.len() <= 9
         && s[1..].chars().all(|c| c.is_ascii_hexdigit());
-    if valid {
-        s
-    } else {
-        fallback
-    }
+    if valid { s } else { fallback }
 }
 
 /// Validate a PLC host (`host` or `host:port`) before it is interpolated into
@@ -60,11 +56,7 @@ fn safe_host(s: &str) -> &str {
         && !s.contains("..")
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '_'));
-    if valid {
-        s
-    } else {
-        "192.168.1.100"
-    }
+    if valid { s } else { "192.168.1.100" }
 }
 
 /// Widget ids end up in HTML id attributes and JS getElementById strings;
@@ -136,7 +128,11 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
     let mut all_bindings_js = String::new();
 
     for (screen_idx, screen) in request.screens.iter().enumerate() {
-        let screen_class = if screen_idx == 0 { "screen active" } else { "screen" };
+        let screen_class = if screen_idx == 0 {
+            "screen active"
+        } else {
+            "screen"
+        };
         let name_html = html_escape(&screen.name);
         nav_buttons.push(format!(
             r#"<button class="nav-btn{active}" onclick="switchScreen({idx})" data-screen="{idx}" data-i18n="{name_html}">{name_html}</button>"#,
@@ -155,7 +151,10 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
             };
 
             if has_auth {
-                var_access.push_str(&format!(r#" data-role="{}""#, safe_role(widget.required_role.as_deref())));
+                var_access.push_str(&format!(
+                    r#" data-role="{}""#,
+                    safe_role(widget.required_role.as_deref())
+                ));
             }
 
             match widget.widget_type.as_str() {
@@ -241,10 +240,7 @@ pub fn build_export_html(request: &ExportRequest) -> Result<String, String> {
         String::new()
     };
     let alarm_js = if has_alarms {
-        alarm::render_alarm_banner_js(
-            &request.alarms,
-            request.scada_url.as_deref().unwrap_or(""),
-        )
+        alarm::render_alarm_banner_js(&request.alarms, request.scada_url.as_deref().unwrap_or(""))
     } else {
         String::new()
     };
@@ -380,7 +376,12 @@ document.getElementById('varCount').textContent = varCount + ' variables bound';
         ),
         page_bg = DEFAULT_SCREEN_BG,
         // The alarm header strip keeps a fixed slot; its list is an overlay.
-        screens_top = screen_top + if has_alarms { alarm::ALARM_HEADER_PX } else { 0 },
+        screens_top = screen_top
+            + if has_alarms {
+                alarm::ALARM_HEADER_PX
+            } else {
+                0
+            },
     );
 
     Ok(html)
@@ -441,16 +442,26 @@ mod tests {
     fn escapes_script_breakout_in_labels_and_alarm_json() {
         let html = build_export_html(&request("10.0.0.5", "#1e1e2e")).unwrap();
         // The raw breakout payload must never appear in the document.
-        assert!(!html.contains("</script><script>"), "alarm JSON leaked script breakout");
+        assert!(
+            !html.contains("</script><script>"),
+            "alarm JSON leaked script breakout"
+        );
         // The label payload must not appear unescaped either.
-        assert!(!html.contains("Lab</script>"), "widget label leaked script breakout");
+        assert!(
+            !html.contains("Lab</script>"),
+            "widget label leaked script breakout"
+        );
         assert!(html.contains("Lab&lt;/script&gt;"));
     }
 
     #[test]
     fn rejects_malicious_host_and_color() {
-        let html = build_export_html(&request("evil'\"}));alert(1);//", "red;}body{display:none")).unwrap();
-        assert!(html.contains("ws://192.168.1.100/ws/plc"), "host fell through validation");
+        let html = build_export_html(&request("evil'\"}));alert(1);//", "red;}body{display:none"))
+            .unwrap();
+        assert!(
+            html.contains("ws://192.168.1.100/ws/plc"),
+            "host fell through validation"
+        );
         assert!(!html.contains("ws://evil"), "host injection survived");
         assert!(
             html.contains(&format!("overflow:auto;background:{DEFAULT_SCREEN_BG}\"")),
@@ -462,16 +473,21 @@ mod tests {
     #[test]
     fn sanitizes_widget_ids() {
         let html = build_export_html(&request("10.0.0.5", "#1e1e2e")).unwrap();
-        assert!(html.contains("ind-w2") || html.contains("chart-line-w"), "expected sanitized ids");
+        assert!(
+            html.contains("ind-w2") || html.contains("chart-line-w"),
+            "expected sanitized ids"
+        );
         assert!(!html.contains("w1'</i>'"), "raw id with quote survived");
     }
-
 
     #[test]
     fn typed_writes_use_var_type_code() {
         let html = build_export_html(&request("10.0.0.5", "#1e1e2e")).unwrap();
         // REAL slider must send wire type 4, not the old hardcoded 0.
-        assert!(html.contains("sendForceVar('var1',4,this.value)"), "slider write not typed");
+        assert!(
+            html.contains("sendForceVar('var1',4,this.value)"),
+            "slider write not typed"
+        );
     }
 
     #[test]
@@ -492,10 +508,21 @@ mod tests {
         });
         req.translations = Some(TranslationSet {
             languages: [
-                ("en".to_string(), [("Pump & Tank".to_string(), "Pump & Tank".to_string())].into_iter().collect()),
-                ("id".to_string(), [("Pump & Tank".to_string(), "Pompa & Tangki".to_string())].into_iter().collect()),
+                (
+                    "en".to_string(),
+                    [("Pump & Tank".to_string(), "Pump & Tank".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                (
+                    "id".to_string(),
+                    [("Pump & Tank".to_string(), "Pompa & Tangki".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
             ]
-            .into_iter().collect(),
+            .into_iter()
+            .collect(),
         });
         req.default_language = Some("id".into());
         req.kiosk_mode = true;
@@ -509,7 +536,10 @@ mod tests {
         assert!(html.contains("connectSCADAAlarms"), "scada polling missing");
         assert!(html.contains("stretchPin"), "stretched pin hashing missing");
         // Translations must be script-safe (no raw </script> from the key)
-        assert!(!html.contains("Pompa & Tangki</"), "unsafe translation output");
+        assert!(
+            !html.contains("Pompa & Tangki</"),
+            "unsafe translation output"
+        );
     }
 
     #[test]
@@ -522,7 +552,10 @@ mod tests {
         let html = build_export_html(&req).unwrap();
         // Inline geometry on a screen overrides the .screen class and stacks
         // screens vertically (screens 2+ rendered below the viewport).
-        assert!(!html.contains(r#"id="screen-1" style="position"#), "inline screen geometry is back");
+        assert!(
+            !html.contains(r#"id="screen-1" style="position"#),
+            "inline screen geometry is back"
+        );
         assert!(html.contains(r#"id="screen-1" style="overflow:auto;"#));
         // Two charts on one variable must not append into one shared buffer.
         assert!(html.contains(r#"chartData["c1"] = [];"#));

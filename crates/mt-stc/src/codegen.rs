@@ -1,4 +1,4 @@
-use mt_plc_types::{Instruction, Opcode, PlcValue, CompiledModule};
+use mt_plc_types::{CompiledModule, Instruction, Opcode, PlcValue};
 use std::collections::HashMap;
 
 use crate::Diagnostic;
@@ -84,7 +84,11 @@ impl CodeGen {
     fn byte_offset_to_col(&self, offset: usize) -> usize {
         let line_start = match self.line_offsets.binary_search(&offset) {
             Ok(line) => self.line_offsets[line],
-            Err(line) => self.line_offsets.get(line.saturating_sub(1)).copied().unwrap_or(0),
+            Err(line) => self
+                .line_offsets
+                .get(line.saturating_sub(1))
+                .copied()
+                .unwrap_or(0),
         };
         offset.saturating_sub(line_start)
     }
@@ -97,12 +101,19 @@ impl CodeGen {
         self.errors.push(Diagnostic {
             severity: "error".into(),
             message,
-            line, col, end_line, end_col,
+            line,
+            col,
+            end_line,
+            end_col,
             source: "codegen".into(),
         });
     }
 
-    pub fn compile_pou(mut self, pou: &iecst::Pou, source: &str) -> Result<CompiledModule, Vec<Diagnostic>> {
+    pub fn compile_pou(
+        mut self,
+        pou: &iecst::Pou,
+        source: &str,
+    ) -> Result<CompiledModule, Vec<Diagnostic>> {
         self.build_line_offsets(source);
         for block in &pou.var_blocks {
             for var in &block.vars {
@@ -116,9 +127,11 @@ impl CodeGen {
                         let idx = self.next_timer_idx;
                         self.next_timer_idx += 1;
                         let q_slot = self.variables.len();
-                        self.variables.push((format!("{}.Q", var.name), PlcValue::Bool(false)));
+                        self.variables
+                            .push((format!("{}.Q", var.name), PlcValue::Bool(false)));
                         let et_slot = self.variables.len();
-                        self.variables.push((format!("{}.ET", var.name), PlcValue::Time(0)));
+                        self.variables
+                            .push((format!("{}.ET", var.name), PlcValue::Time(0)));
                         self.timers.insert(var.name.clone(), (idx, q_slot, et_slot));
                         self.timer_kinds.insert(var.name.clone(), type_name.clone());
                     }
@@ -126,19 +139,25 @@ impl CodeGen {
                         let idx = self.next_counter_idx;
                         self.next_counter_idx += 1;
                         let q_slot = self.variables.len();
-                        self.variables.push((format!("{}.Q", var.name), PlcValue::Bool(false)));
+                        self.variables
+                            .push((format!("{}.Q", var.name), PlcValue::Bool(false)));
                         let cv_slot = self.variables.len();
-                        self.variables.push((format!("{}.CV", var.name), PlcValue::Dint(0)));
-                        self.counters.insert(var.name.clone(), (idx, q_slot, cv_slot));
-                        self.counter_kinds.insert(var.name.clone(), type_name.clone());
+                        self.variables
+                            .push((format!("{}.CV", var.name), PlcValue::Dint(0)));
+                        self.counters
+                            .insert(var.name.clone(), (idx, q_slot, cv_slot));
+                        self.counter_kinds
+                            .insert(var.name.clone(), type_name.clone());
                     }
                     "R_TRIG" | "F_TRIG" => {
                         let idx = self.next_edge_idx;
                         self.next_edge_idx += 1;
                         let q_slot = self.variables.len();
-                        self.variables.push((format!("{}.Q", var.name), PlcValue::Bool(false)));
+                        self.variables
+                            .push((format!("{}.Q", var.name), PlcValue::Bool(false)));
                         let is_rising = type_name == "R_TRIG";
-                        self.edges.insert(var.name.clone(), (idx, q_slot, is_rising));
+                        self.edges
+                            .insert(var.name.clone(), (idx, q_slot, is_rising));
                     }
                     _ => {
                         let default_value = match &var.initial {
@@ -146,7 +165,11 @@ impl CodeGen {
                                 let val = eval_const_expr(expr);
                                 coerce_to_type(val, &var.var_type)
                             }
-                            None => type_spec_to_default_with_defs(&var.var_type, &self.struct_defs, &self.enum_defs),
+                            None => type_spec_to_default_with_defs(
+                                &var.var_type,
+                                &self.struct_defs,
+                                &self.enum_defs,
+                            ),
                         };
                         let slot = self.variables.len();
                         self.var_map.insert(var.name.clone(), slot);
@@ -221,11 +244,16 @@ impl CodeGen {
                     }
                     self.compile_expr(value);
                     self.emit(Opcode::StoreArrayIndex, None);
-                } else if let iecst::ExprKind::MemberAccess { expr: object, member } = &target.kind {
+                } else if let iecst::ExprKind::MemberAccess {
+                    expr: object,
+                    member,
+                } = &target.kind
+                {
                     // Handle struct field assignment: struct.field := val
                     if let iecst::ExprKind::Ident(name) = &object.kind {
                         if let Some(&var_slot) = self.var_map.get(name) {
-                            if let Some(field_idx) = self.find_struct_field_index(var_slot, member) {
+                            if let Some(field_idx) = self.find_struct_field_index(var_slot, member)
+                            {
                                 self.compile_expr(value);
                                 self.emit(Opcode::LoadVar, Some(var_slot as i32));
                                 self.emit(Opcode::StoreStructField, Some(field_idx as i32));
@@ -243,14 +271,22 @@ impl CodeGen {
                         }
                     } else {
                         self.push_error(
-                            format!("Unknown variable '{}' in assignment", get_target_name(target)),
+                            format!(
+                                "Unknown variable '{}' in assignment",
+                                get_target_name(target)
+                            ),
                             &target.span,
                         );
                     }
                 }
             }
 
-            iecst::StmtKind::If { condition, then_body, elsif_branches, else_body } => {
+            iecst::StmtKind::If {
+                condition,
+                then_body,
+                elsif_branches,
+                else_body,
+            } => {
                 self.compile_expr(condition);
                 let jump_false_pos = self.emit(Opcode::JumpIfFalse, None);
 
@@ -297,7 +333,11 @@ impl CodeGen {
                 }
             }
 
-            iecst::StmtKind::Case { expr, cases, else_body } => {
+            iecst::StmtKind::Case {
+                expr,
+                cases,
+                else_body,
+            } => {
                 // Evaluate selector and store in a hidden temp variable
                 let temp_slot = self.variables.len();
                 self.variables.push(("_case_sel".into(), PlcValue::Dint(0)));
@@ -363,7 +403,13 @@ impl CodeGen {
                 }
             }
 
-            iecst::StmtKind::For { var, from, to, by, body } => {
+            iecst::StmtKind::For {
+                var,
+                from,
+                to,
+                by,
+                body,
+            } => {
                 self.compile_expr(from);
                 if let Some(slot) = self.var_slot(var) {
                     self.emit(Opcode::StoreVar, Some(slot as i32));
@@ -475,9 +521,13 @@ impl CodeGen {
             iecst::StmtKind::Call { name, args } => {
                 if let Some(&(idx, q_slot, et_or_cv_slot)) = self.timers.get(name) {
                     // Timer call: push PT, push IN, emit timer opcode, store Q and ET
-                    let pt_val = args.iter().find(|a| a.name.as_deref() == Some("PT"))
+                    let pt_val = args
+                        .iter()
+                        .find(|a| a.name.as_deref() == Some("PT"))
                         .and_then(|a| a.value.as_ref());
-                    let in_val = args.iter().find(|a| a.name.as_deref() == Some("IN"))
+                    let in_val = args
+                        .iter()
+                        .find(|a| a.name.as_deref() == Some("IN"))
                         .and_then(|a| a.value.as_ref());
 
                     if let (Some(pt), Some(in_)) = (pt_val, in_val) {
@@ -486,13 +536,23 @@ impl CodeGen {
                     } else {
                         // Positional: args[0]=IN, args[1]=PT
                         if let Some(arg) = args.get(1) {
-                            if let Some(ref v) = arg.value { self.compile_expr(v); }
-                            else { self.emit(Opcode::PushTime, Some(0)); }
-                        } else { self.emit(Opcode::PushTime, Some(0)); }
+                            if let Some(ref v) = arg.value {
+                                self.compile_expr(v);
+                            } else {
+                                self.emit(Opcode::PushTime, Some(0));
+                            }
+                        } else {
+                            self.emit(Opcode::PushTime, Some(0));
+                        }
                         if let Some(arg) = args.get(0) {
-                            if let Some(ref v) = arg.value { self.compile_expr(v); }
-                            else { self.emit(Opcode::PushBool, Some(0)); }
-                        } else { self.emit(Opcode::PushBool, Some(0)); }
+                            if let Some(ref v) = arg.value {
+                                self.compile_expr(v);
+                            } else {
+                                self.emit(Opcode::PushBool, Some(0));
+                            }
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
                     }
 
                     let opcode = match self.timer_type(name) {
@@ -502,7 +562,7 @@ impl CodeGen {
                     };
                     self.emit(opcode, Some(idx as i32));
                     // Store results: stack has [ET, Q]
-                    self.emit(Opcode::StoreVar, Some(q_slot as i32));    // Q
+                    self.emit(Opcode::StoreVar, Some(q_slot as i32)); // Q
                     self.emit(Opcode::StoreVar, Some(et_or_cv_slot as i32)); // ET
                 } else if let Some(&(idx, q_slot, cv_slot)) = self.counters.get(name) {
                     // Counter call
@@ -510,68 +570,145 @@ impl CodeGen {
 
                     if ctype == "CTUD" {
                         // CTUD: push PV, LD, CD, R, CU (5 operands)
-                        let cu_val = args.iter().find(|a| a.name.as_deref() == Some("CU"))
+                        let cu_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("CU"))
                             .and_then(|a| a.value.as_ref());
-                        let r_val = args.iter().find(|a| a.name.as_deref() == Some("R"))
+                        let r_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("R"))
                             .and_then(|a| a.value.as_ref());
-                        let cd_val = args.iter().find(|a| a.name.as_deref() == Some("CD"))
+                        let cd_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("CD"))
                             .and_then(|a| a.value.as_ref());
-                        let ld_val = args.iter().find(|a| a.name.as_deref() == Some("LD"))
+                        let ld_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("LD"))
                             .and_then(|a| a.value.as_ref());
-                        let pv_val = args.iter().find(|a| a.name.as_deref() == Some("PV"))
+                        let pv_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("PV"))
                             .and_then(|a| a.value.as_ref());
 
-                        if let Some(pv) = pv_val { self.compile_expr(pv); } else { self.emit(Opcode::PushDint, Some(0)); }
-                        if let Some(ld) = ld_val { self.compile_expr(ld); } else { self.emit(Opcode::PushBool, Some(0)); }
-                        if let Some(cd) = cd_val { self.compile_expr(cd); } else { self.emit(Opcode::PushBool, Some(0)); }
-                        if let Some(r) = r_val { self.compile_expr(r); } else { self.emit(Opcode::PushBool, Some(0)); }
-                        if let Some(cu) = cu_val { self.compile_expr(cu); } else { self.emit(Opcode::PushBool, Some(0)); }
+                        if let Some(pv) = pv_val {
+                            self.compile_expr(pv);
+                        } else {
+                            self.emit(Opcode::PushDint, Some(0));
+                        }
+                        if let Some(ld) = ld_val {
+                            self.compile_expr(ld);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                        if let Some(cd) = cd_val {
+                            self.compile_expr(cd);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                        if let Some(r) = r_val {
+                            self.compile_expr(r);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                        if let Some(cu) = cu_val {
+                            self.compile_expr(cu);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
 
                         self.emit(Opcode::CtudCall, Some(idx as i32));
                     } else if ctype == "CTD" {
                         // CTD: push PV, LD, CD
-                        let cd_val = args.iter().find(|a| a.name.as_deref() == Some("CD"))
+                        let cd_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("CD"))
                             .and_then(|a| a.value.as_ref());
-                        let ld_val = args.iter().find(|a| a.name.as_deref() == Some("LD"))
+                        let ld_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("LD"))
                             .and_then(|a| a.value.as_ref());
-                        let pv_val = args.iter().find(|a| a.name.as_deref() == Some("PV"))
+                        let pv_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("PV"))
                             .and_then(|a| a.value.as_ref());
 
-                        if let Some(pv) = pv_val { self.compile_expr(pv); } else { self.emit(Opcode::PushDint, Some(0)); }
-                        if let Some(ld) = ld_val { self.compile_expr(ld); } else { self.emit(Opcode::PushBool, Some(0)); }
-                        if let Some(cd) = cd_val { self.compile_expr(cd); } else { self.emit(Opcode::PushBool, Some(0)); }
+                        if let Some(pv) = pv_val {
+                            self.compile_expr(pv);
+                        } else {
+                            self.emit(Opcode::PushDint, Some(0));
+                        }
+                        if let Some(ld) = ld_val {
+                            self.compile_expr(ld);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                        if let Some(cd) = cd_val {
+                            self.compile_expr(cd);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
 
                         self.emit(Opcode::CtdCall, Some(idx as i32));
                     } else {
                         // CTU: push PV, R, CU
-                        let cu_val = args.iter().find(|a| a.name.as_deref() == Some("CU"))
+                        let cu_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("CU"))
                             .and_then(|a| a.value.as_ref());
-                        let r_val = args.iter().find(|a| a.name.as_deref() == Some("R"))
+                        let r_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("R"))
                             .and_then(|a| a.value.as_ref());
-                        let pv_val = args.iter().find(|a| a.name.as_deref() == Some("PV"))
+                        let pv_val = args
+                            .iter()
+                            .find(|a| a.name.as_deref() == Some("PV"))
                             .and_then(|a| a.value.as_ref());
 
-                        if let Some(pv) = pv_val { self.compile_expr(pv); } else { self.emit(Opcode::PushDint, Some(0)); }
-                        if let Some(r) = r_val { self.compile_expr(r); } else { self.emit(Opcode::PushBool, Some(0)); }
-                        if let Some(cu) = cu_val { self.compile_expr(cu); } else { self.emit(Opcode::PushBool, Some(0)); }
+                        if let Some(pv) = pv_val {
+                            self.compile_expr(pv);
+                        } else {
+                            self.emit(Opcode::PushDint, Some(0));
+                        }
+                        if let Some(r) = r_val {
+                            self.compile_expr(r);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                        if let Some(cu) = cu_val {
+                            self.compile_expr(cu);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
 
                         self.emit(Opcode::CtuCall, Some(idx as i32));
                     }
                     // Store results: stack has [CV, Q]
-                    self.emit(Opcode::StoreVar, Some(q_slot as i32));  // Q
+                    self.emit(Opcode::StoreVar, Some(q_slot as i32)); // Q
                     self.emit(Opcode::StoreVar, Some(cv_slot as i32)); // CV
                 } else if let Some(&(idx, q_slot, is_rising)) = self.edges.get(name) {
                     // Edge detection: push CLK, emit edge opcode, store Q
-                    let clk_val = args.iter().find(|a| a.name.as_deref() == Some("CLK"))
+                    let clk_val = args
+                        .iter()
+                        .find(|a| a.name.as_deref() == Some("CLK"))
                         .and_then(|a| a.value.as_ref());
                     if let Some(clk) = clk_val {
                         self.compile_expr(clk);
                     } else if let Some(arg) = args.get(0) {
-                        if let Some(ref v) = arg.value { self.compile_expr(v); }
-                        else { self.emit(Opcode::PushBool, Some(0)); }
-                    } else { self.emit(Opcode::PushBool, Some(0)); }
+                        if let Some(ref v) = arg.value {
+                            self.compile_expr(v);
+                        } else {
+                            self.emit(Opcode::PushBool, Some(0));
+                        }
+                    } else {
+                        self.emit(Opcode::PushBool, Some(0));
+                    }
 
-                    let opcode = if is_rising { Opcode::RTrigCall } else { Opcode::FTrigCall };
+                    let opcode = if is_rising {
+                        Opcode::RTrigCall
+                    } else {
+                        Opcode::FTrigCall
+                    };
                     self.emit(opcode, Some(idx as i32));
                     self.emit(Opcode::StoreVar, Some(q_slot as i32));
                 } else {
@@ -655,8 +792,12 @@ impl CodeGen {
             iecst::ExprKind::UnaryOp { op, expr } => {
                 self.compile_expr(expr);
                 match op {
-                    iecst::UnaryOp::Neg => { self.emit(Opcode::Neg, None); }
-                    iecst::UnaryOp::Not => { self.emit(Opcode::Not, None); }
+                    iecst::UnaryOp::Neg => {
+                        self.emit(Opcode::Neg, None);
+                    }
+                    iecst::UnaryOp::Not => {
+                        self.emit(Opcode::Not, None);
+                    }
                 }
             }
 
@@ -688,7 +829,10 @@ impl CodeGen {
                 self.emit(Opcode::LoadArrayIndex, None);
             }
 
-            iecst::ExprKind::MemberAccess { expr: object, member } => {
+            iecst::ExprKind::MemberAccess {
+                expr: object,
+                member,
+            } => {
                 if let iecst::ExprKind::Ident(name) = &object.kind {
                     if let Some(&(_idx, q_slot, _second_slot)) = self.timers.get(name) {
                         let slot = match member.as_str() {
@@ -721,7 +865,10 @@ impl CodeGen {
                             self.emit(Opcode::LoadVar, Some(var_slot as i32));
                             self.emit(Opcode::LoadStructField, Some(idx as i32));
                         } else {
-                            self.push_error(format!("Unknown field '{}' on variable '{}'", member, name), &expr.span);
+                            self.push_error(
+                                format!("Unknown field '{}' on variable '{}'", member, name),
+                                &expr.span,
+                            );
                             self.emit(Opcode::PushDint, Some(0));
                         }
                     } else {
@@ -744,14 +891,15 @@ impl CodeGen {
     fn resolve_target(&self, expr: &iecst::Expr) -> Option<usize> {
         match &expr.kind {
             iecst::ExprKind::Ident(name) => self.var_slot(name),
-            iecst::ExprKind::DirectAddress(addr) => {
-                Some(encode_io_address(addr) as usize)
-            }
+            iecst::ExprKind::DirectAddress(addr) => Some(encode_io_address(addr) as usize),
             iecst::ExprKind::ArrayIndex { .. } => {
                 // Special sentinel: emit StoreArrayIndex
                 Some(usize::MAX)
             }
-            iecst::ExprKind::MemberAccess { expr: object, member } => {
+            iecst::ExprKind::MemberAccess {
+                expr: object,
+                member,
+            } => {
                 if let iecst::ExprKind::Ident(name) = &object.kind {
                     if let Some(&(_idx, q_slot, _second)) = self.timers.get(name) {
                         return Some(match member.as_str() {
@@ -768,7 +916,9 @@ impl CodeGen {
                         });
                     }
                     if let Some(&(_idx, q_slot, _is_rising)) = self.edges.get(name) {
-                        if member == "Q" { return Some(q_slot); }
+                        if member == "Q" {
+                            return Some(q_slot);
+                        }
                     }
                     // Struct field store: use sentinel for StoreStructField path
                     if let Some(&var_slot) = self.var_map.get(name) {
@@ -784,11 +934,17 @@ impl CodeGen {
     }
 
     fn timer_type(&self, name: &str) -> &str {
-        self.timer_kinds.get(name).map(|s| s.as_str()).unwrap_or("TON")
+        self.timer_kinds
+            .get(name)
+            .map(|s| s.as_str())
+            .unwrap_or("TON")
     }
 
     fn counter_type(&self, name: &str) -> &str {
-        self.counter_kinds.get(name).map(|s| s.as_str()).unwrap_or("CTU")
+        self.counter_kinds
+            .get(name)
+            .map(|s| s.as_str())
+            .unwrap_or("CTU")
     }
 
     /// Find the field index within a struct variable by looking up the type definition.
@@ -846,7 +1002,10 @@ fn type_spec_to_default_with_defs(
                         let field_values: Vec<(String, PlcValue)> = fields
                             .iter()
                             .map(|(fname, ftype)| {
-                                (fname.clone(), type_spec_to_default_with_defs(ftype, struct_defs, enum_defs))
+                                (
+                                    fname.clone(),
+                                    type_spec_to_default_with_defs(ftype, struct_defs, enum_defs),
+                                )
                             })
                             .collect();
                         return PlcValue::Struct(field_values);
@@ -922,7 +1081,9 @@ fn parse_time_literal(s: &str) -> i32 {
 fn parse_address_index(addr: &str) -> usize {
     let parts: Vec<&str> = addr.split('.').collect();
     if parts.len() == 2 {
-        if let (Ok(byte_offset), Ok(bit_offset)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+        if let (Ok(byte_offset), Ok(bit_offset)) =
+            (parts[0].parse::<usize>(), parts[1].parse::<usize>())
+        {
             return byte_offset * 8 + bit_offset;
         }
     }
@@ -956,23 +1117,21 @@ fn eval_const_expr(expr: &iecst::Expr) -> PlcValue {
         iecst::ExprKind::RealLiteral(val) => PlcValue::Real(*val as f32),
         iecst::ExprKind::BoolLiteral(val) => PlcValue::Bool(*val),
         iecst::ExprKind::TimeLiteral(val) => PlcValue::Time(parse_time_literal(val)),
-        iecst::ExprKind::UnaryOp { op, expr: inner } => {
-            match op {
-                iecst::UnaryOp::Neg => {
-                    let v = eval_const_expr(inner);
-                    match v {
-                        PlcValue::Int(i) => PlcValue::Int(-i),
-                        PlcValue::Dint(i) => PlcValue::Dint(-i),
-                        PlcValue::Real(f) => PlcValue::Real(-f),
-                        _ => v,
-                    }
-                }
-                iecst::UnaryOp::Not => {
-                    let v = eval_const_expr(inner);
-                    PlcValue::Bool(!v.to_bool())
+        iecst::ExprKind::UnaryOp { op, expr: inner } => match op {
+            iecst::UnaryOp::Neg => {
+                let v = eval_const_expr(inner);
+                match v {
+                    PlcValue::Int(i) => PlcValue::Int(-i),
+                    PlcValue::Dint(i) => PlcValue::Dint(-i),
+                    PlcValue::Real(f) => PlcValue::Real(-f),
+                    _ => v,
                 }
             }
-        }
+            iecst::UnaryOp::Not => {
+                let v = eval_const_expr(inner);
+                PlcValue::Bool(!v.to_bool())
+            }
+        },
         _ => PlcValue::Dint(0),
     }
 }
@@ -1041,20 +1200,21 @@ fn stdlib_opcode(name: &str) -> Option<Opcode> {
 
 fn coerce_to_type(val: PlcValue, var_type: &iecst::TypeSpec) -> PlcValue {
     match &var_type.kind {
-        iecst::TypeKind::Simple(name) => {
-            match name.to_uppercase().as_str() {
-                "BOOL" => PlcValue::Bool(val.to_bool()),
-                "BYTE" => PlcValue::Byte(val.to_int() as u8),
-                "SINT" | "INT" => PlcValue::Int(val.to_int() as i16),
-                "DINT" | "LINT" | "UDINT" | "ULINT" => PlcValue::Dint(val.to_int()),
-                "USINT" | "UINT" => PlcValue::Int(val.to_int() as i16),
-                "REAL" | "LREAL" => PlcValue::Real(val.to_real()),
-                "TIME" => PlcValue::Time(val.to_int()),
-                "STRING" | "WSTRING" => match val { PlcValue::String(s) => PlcValue::String(s), _ => PlcValue::String(String::new()) },
-                "WORD" | "DWORD" | "LWORD" => PlcValue::Word(val.to_int() as u16),
-                _ => val,
-            }
-        }
+        iecst::TypeKind::Simple(name) => match name.to_uppercase().as_str() {
+            "BOOL" => PlcValue::Bool(val.to_bool()),
+            "BYTE" => PlcValue::Byte(val.to_int() as u8),
+            "SINT" | "INT" => PlcValue::Int(val.to_int() as i16),
+            "DINT" | "LINT" | "UDINT" | "ULINT" => PlcValue::Dint(val.to_int()),
+            "USINT" | "UINT" => PlcValue::Int(val.to_int() as i16),
+            "REAL" | "LREAL" => PlcValue::Real(val.to_real()),
+            "TIME" => PlcValue::Time(val.to_int()),
+            "STRING" | "WSTRING" => match val {
+                PlcValue::String(s) => PlcValue::String(s),
+                _ => PlcValue::String(String::new()),
+            },
+            "WORD" | "DWORD" | "LWORD" => PlcValue::Word(val.to_int() as u16),
+            _ => val,
+        },
         _ => val,
     }
 }

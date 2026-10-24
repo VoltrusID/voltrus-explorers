@@ -1,4 +1,4 @@
-use crate::io_manager::{IoDriver, IoAddress, IoError, IoArea, IoSize};
+use crate::io_manager::{IoAddress, IoArea, IoDriver, IoError, IoSize};
 use crate::types::PlcValue;
 use mt_opcua::opcua_client::OpcUaProtocolClient;
 use mt_opcua::types::{OpcUaConfig, OpcUaNode};
@@ -10,7 +10,10 @@ pub struct OpcUaIoDriver {
 
 impl OpcUaIoDriver {
     pub fn new(endpoint_url: String) -> Self {
-        Self { client: None, endpoint_url }
+        Self {
+            client: None,
+            endpoint_url,
+        }
     }
 
     pub async fn connect(&mut self) -> Result<(), IoError> {
@@ -73,9 +76,16 @@ impl IoDriver for OpcUaIoDriver {
         })?;
         let nodes: Vec<OpcUaNode> = addresses.iter().map(|a| self.io_to_node(a)).collect();
         let rt = tokio::runtime::Handle::current();
-        let values = rt.block_on(async { client.read_tags(&nodes).await })
-            .map_err(|e| IoError { message: format!("OPC-UA read: {}", e), recoverable: true })?;
-        Ok(values.iter().map(|v| Self::value_to_plc(&v.value)).collect())
+        let values = rt
+            .block_on(async { client.read_tags(&nodes).await })
+            .map_err(|e| IoError {
+                message: format!("OPC-UA read: {}", e),
+                recoverable: true,
+            })?;
+        Ok(values
+            .iter()
+            .map(|v| Self::value_to_plc(&v.value))
+            .collect())
     }
 
     fn write_outputs(&mut self, mappings: &[(IoAddress, PlcValue)]) -> Result<(), IoError> {
@@ -102,14 +112,21 @@ impl IoDriver for OpcUaIoDriver {
                 timestamp: 0,
             };
             rt.block_on(async { client.write_tag(&node, &opc_val).await })
-                .map_err(|e| IoError { message: format!("OPC-UA write: {}", e), recoverable: true })?;
+                .map_err(|e| IoError {
+                    message: format!("OPC-UA write: {}", e),
+                    recoverable: true,
+                })?;
         }
         Ok(())
     }
 
-    fn name(&self) -> &str { "opcua" }
+    fn name(&self) -> &str {
+        "opcua"
+    }
 
-    fn is_connected(&self) -> bool { self.client.as_ref().map_or(false, |c| c.is_connected()) }
+    fn is_connected(&self) -> bool {
+        self.client.as_ref().map_or(false, |c| c.is_connected())
+    }
 
     fn disconnect(&mut self) {
         if let Some(ref mut client) = self.client {

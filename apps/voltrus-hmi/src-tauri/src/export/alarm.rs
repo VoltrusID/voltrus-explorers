@@ -1,5 +1,5 @@
-use crate::*;
 use super::{js_escape, json_for_script};
+use crate::*;
 
 /// Height of the always-visible alarm header strip. The export reserves this
 /// slot above the screens whenever alarms are configured, so raising,
@@ -13,7 +13,8 @@ pub const ALARM_HEADER_PX: u32 = 28;
 pub fn render_alarm_banner_html(top: u32) -> String {
     // The list never opens by itself (an overlay appearing under a finger can
     // turn a tap into an unintended Ack); new alarms pulse the header instead.
-    format!(r#"<style>
+    format!(
+        r#"<style>
 @keyframes alarmPulseCritical{{0%,100%{{background:#111}}50%{{background:#7f1d1d}}}}
 @keyframes alarmPulseWarning{{0%,100%{{background:#111}}50%{{background:#78350f}}}}
 #alarm-header.pulse-critical{{animation:alarmPulseCritical 1s ease-in-out infinite}}
@@ -25,7 +26,10 @@ pub fn render_alarm_banner_html(top: u32) -> String {
         <span style="display:none;color:#999;font-size:14px" id="alarm-toggle">&#x25BC;</span>
     </div>
     <div id="alarm-list" style="display:none;max-height:120px;overflow-y:auto;padding:4px 12px;background:#1a1a2e;border-bottom:2px solid #333;box-shadow:0 6px 16px rgba(0,0,0,0.5)"></div>
-</div>"#, top = top, h = ALARM_HEADER_PX)
+</div>"#,
+        top = top,
+        h = ALARM_HEADER_PX
+    )
 }
 
 /// Validate a SCADA base URL: http(s) scheme, conservative charset.
@@ -36,18 +40,15 @@ fn safe_scada_url(url: &str) -> &str {
         && !url.contains('<')
         && !url.contains('>')
         && !url.contains('\\');
-    if valid {
-        url
-    } else {
-        "http://localhost"
-    }
+    if valid { url } else { "http://localhost" }
 }
 
 /// Generate alarm banner JS — SCADA polling + PLC variable monitoring + acknowledge.
 pub fn render_alarm_banner_js(alarm_rules: &[AlarmRule], scada_url: &str) -> String {
     // Rule values are free-form user strings; escape so they cannot break out
     // of the embedded JSON (and thus the <script> block).
-    let rules_json = json_for_script(&serde_json::to_string(alarm_rules).unwrap_or_else(|_| "[]".to_string()));
+    let rules_json =
+        json_for_script(&serde_json::to_string(alarm_rules).unwrap_or_else(|_| "[]".to_string()));
     let scada_url = safe_scada_url(scada_url);
     let scada_url_js = js_escape(scada_url);
     let has_scada = scada_url != "http://localhost";
@@ -247,6 +248,10 @@ function toggleAlarmBanner() {{
 {scada_start}"#,
         rules_json = rules_json,
         scada_poll_js = scada_poll_js,
-        scada_start = if has_scada { "setInterval(connectSCADAAlarms, 5000); connectSCADAAlarms();" } else { "" },
+        scada_start = if has_scada {
+            "setInterval(connectSCADAAlarms, 5000); connectSCADAAlarms();"
+        } else {
+            ""
+        },
     )
 }

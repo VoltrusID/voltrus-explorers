@@ -59,7 +59,10 @@ impl PlcRuntimeClient {
     ///
     /// Optionally pass a JSON-encoded `RuntimeConfig` to override settings
     /// before starting.
-    pub async fn start(&mut self, config_json: Option<&str>) -> Result<RuntimeState, tonic::Status> {
+    pub async fn start(
+        &mut self,
+        config_json: Option<&str>,
+    ) -> Result<RuntimeState, tonic::Status> {
         let req = StartConfig {
             config_json: config_json.unwrap_or("").to_string(),
         };
@@ -119,9 +122,12 @@ impl PlcRuntimeClient {
         name: &str,
         val: bool,
     ) -> Result<ForceResponse, tonic::Status> {
-        self.force_variable(name, VariableValue {
-            value: Some(variable_value::Value::BoolVal(val)),
-        })
+        self.force_variable(
+            name,
+            VariableValue {
+                value: Some(variable_value::Value::BoolVal(val)),
+            },
+        )
         .await
     }
 
@@ -131,9 +137,12 @@ impl PlcRuntimeClient {
         name: &str,
         val: i32,
     ) -> Result<ForceResponse, tonic::Status> {
-        self.force_variable(name, VariableValue {
-            value: Some(variable_value::Value::DintVal(val)),
-        })
+        self.force_variable(
+            name,
+            VariableValue {
+                value: Some(variable_value::Value::DintVal(val)),
+            },
+        )
         .await
     }
 
@@ -143,9 +152,12 @@ impl PlcRuntimeClient {
         name: &str,
         val: f32,
     ) -> Result<ForceResponse, tonic::Status> {
-        self.force_variable(name, VariableValue {
-            value: Some(variable_value::Value::RealVal(val)),
-        })
+        self.force_variable(
+            name,
+            VariableValue {
+                value: Some(variable_value::Value::RealVal(val)),
+            },
+        )
         .await
     }
 
@@ -155,17 +167,17 @@ impl PlcRuntimeClient {
         name: &str,
         val: &str,
     ) -> Result<ForceResponse, tonic::Status> {
-        self.force_variable(name, VariableValue {
-            value: Some(variable_value::Value::StringVal(val.to_string())),
-        })
+        self.force_variable(
+            name,
+            VariableValue {
+                value: Some(variable_value::Value::StringVal(val.to_string())),
+            },
+        )
         .await
     }
 
     /// Remove a forced override from a variable.
-    pub async fn unforce_variable(
-        &mut self,
-        name: &str,
-    ) -> Result<ForceResponse, tonic::Status> {
+    pub async fn unforce_variable(&mut self, name: &str) -> Result<ForceResponse, tonic::Status> {
         let req = UnforceRequest {
             variable_name: name.to_string(),
         };

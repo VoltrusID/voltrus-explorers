@@ -1,15 +1,15 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use futures::stream::SplitSink;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::WebSocketStream;
-use tokio_tungstenite::MaybeTlsStream;
+use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::commands::compile::Diagnostic;
 use crate::commands::io::IoDriverConfig;
-use mt_plc_types::CompiledModule;
 use mt_plc_runtime::io_manager::IoDriver;
+use mt_plc_types::CompiledModule;
 
 pub struct CompilerState {
     pub last_diagnostics: Vec<Diagnostic>,
@@ -37,7 +37,9 @@ pub enum TargetKind {
 }
 
 impl Default for TargetKind {
-    fn default() -> Self { Self::WebSocket }
+    fn default() -> Self {
+        Self::WebSocket
+    }
 }
 
 pub struct TargetState {

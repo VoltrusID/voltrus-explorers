@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use mt_plc_types::PlcValue;
 use serde::Deserialize;
 use serde_yaml::{Mapping, Number, Value};
@@ -70,7 +70,9 @@ impl Matcher {
                 // Only genuine integers become Int matchers; a float like
                 // 41.5 must keep its default-tolerance Real window instead
                 // of being truncated by yaml_i64's float fallback.
-                if let Some(i) = n.as_i64().or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok()))
+                if let Some(i) = n
+                    .as_i64()
+                    .or_else(|| n.as_u64().and_then(|u| i64::try_from(u).ok()))
                 {
                     Ok(Matcher::Int(i))
                 } else {
@@ -124,7 +126,12 @@ impl Matcher {
 /// becomes `Real(40.0)`).
 pub fn coerce_given(name: &str, slot: &PlcValue, raw: &Value) -> anyhow::Result<PlcValue> {
     let wrong = |want: &str| {
-        anyhow::anyhow!("cannot assign {} to {} variable `{}`", describe_yaml(raw), want, name)
+        anyhow::anyhow!(
+            "cannot assign {} to {} variable `{}`",
+            describe_yaml(raw),
+            want,
+            name
+        )
     };
     match slot {
         PlcValue::Bool(_) => Ok(PlcValue::Bool(match raw {
@@ -143,17 +150,20 @@ pub fn coerce_given(name: &str, slot: &PlcValue, raw: &Value) -> anyhow::Result<
             i16::try_from(yaml_int(raw).ok_or_else(|| wrong("INT"))?).map_err(|_| wrong("INT"))?,
         )),
         PlcValue::Dint(_) => Ok(PlcValue::Dint(
-            i32::try_from(yaml_int(raw).ok_or_else(|| wrong("DINT"))?).map_err(|_| wrong("DINT"))?,
+            i32::try_from(yaml_int(raw).ok_or_else(|| wrong("DINT"))?)
+                .map_err(|_| wrong("DINT"))?,
         )),
         PlcValue::Word(_) => Ok(PlcValue::Word(
-            u16::try_from(yaml_int(raw).ok_or_else(|| wrong("WORD"))?).map_err(|_| wrong("WORD"))?,
+            u16::try_from(yaml_int(raw).ok_or_else(|| wrong("WORD"))?)
+                .map_err(|_| wrong("WORD"))?,
         )),
         PlcValue::Dword(_) => Ok(PlcValue::Dword(
             u32::try_from(yaml_int(raw).ok_or_else(|| wrong("DWORD"))?)
                 .map_err(|_| wrong("DWORD"))?,
         )),
         PlcValue::Time(_) => Ok(PlcValue::Time(
-            i32::try_from(yaml_int(raw).ok_or_else(|| wrong("TIME"))?).map_err(|_| wrong("TIME"))?,
+            i32::try_from(yaml_int(raw).ok_or_else(|| wrong("TIME"))?)
+                .map_err(|_| wrong("TIME"))?,
         )),
         PlcValue::String(_) => Ok(PlcValue::String(match raw {
             Value::String(s) => s.clone(),
@@ -176,7 +186,9 @@ pub fn parse_advance(spec: &str, scan_ms: u64) -> anyhow::Result<usize> {
     let spec = spec.trim();
     let split = spec
         .find(|c: char| !c.is_ascii_digit() && c != '.')
-        .context(format!("invalid advance `{spec}`: missing unit (ms, s or scans)"))?;
+        .context(format!(
+            "invalid advance `{spec}`: missing unit (ms, s or scans)"
+        ))?;
     let (num_part, unit) = spec.split_at(split);
     let unit = unit.trim().to_ascii_lowercase();
     if num_part.is_empty() {
@@ -367,7 +379,13 @@ scenarios:
         assert!(!window.matches(&PlcValue::Bool(true)));
 
         let exact_real = Matcher::from_yaml(&yaml("90.5")).unwrap();
-        assert_eq!(exact_real, Matcher::Real { value: 90.5, tol: DEFAULT_REAL_TOL });
+        assert_eq!(
+            exact_real,
+            Matcher::Real {
+                value: 90.5,
+                tol: DEFAULT_REAL_TOL
+            }
+        );
 
         let text = Matcher::from_yaml(&yaml("RUN")).unwrap();
         assert!(text.matches(&PlcValue::Enum("RUN".into())));
@@ -409,10 +427,8 @@ scenarios:
 
     #[test]
     fn parse_expect_preserves_order_and_names() {
-        let map: Mapping = serde_yaml::from_str(
-            "inlet_valve: true\nlevel: {approx: 41.0, tol: 0.001}\n",
-        )
-        .unwrap();
+        let map: Mapping =
+            serde_yaml::from_str("inlet_valve: true\nlevel: {approx: 41.0, tol: 0.001}\n").unwrap();
         let parsed = parse_expect(&map).unwrap();
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].0, "inlet_valve");

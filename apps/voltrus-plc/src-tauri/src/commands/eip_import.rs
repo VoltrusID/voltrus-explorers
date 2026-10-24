@@ -1,4 +1,4 @@
-use mt_enip::{browse_tags, read_templates, udt_templates_to_st, CipTagDef, CipValue, EnipConfig};
+use mt_enip::{CipTagDef, CipValue, EnipConfig, browse_tags, read_templates, udt_templates_to_st};
 
 /// One decoded UDT member for the frontend (IEC type name).
 #[derive(serde::Serialize, Clone)]
@@ -79,7 +79,10 @@ pub async fn eip_import_udts(
     for t in &matched {
         let tid = t.template_id.expect("matched filters on template_id");
         let tmpl = templates.iter().find(|tp| tp.id == tid).ok_or_else(|| {
-            format!("Tag '{}' references template {tid} but the controller did not serve it.", t.name)
+            format!(
+                "Tag '{}' references template {tid} but the controller did not serve it.",
+                t.name
+            )
         })?;
         import_tags.push(EipImportTag {
             name: t.name.clone(),
@@ -165,7 +168,13 @@ mod tests {
     #[test]
     fn glob_structure_paths() {
         assert!(glob_match("Program:Main.*", "Program:Main.Motor1"));
-        assert!(glob_match("Program:*.DriveInfo", "Program:Main.Motor1.DriveInfo"));
-        assert!(!glob_match("Program:*.DriveInfo", "Program:Main.Motor1.Amps"));
+        assert!(glob_match(
+            "Program:*.DriveInfo",
+            "Program:Main.Motor1.DriveInfo"
+        ));
+        assert!(!glob_match(
+            "Program:*.DriveInfo",
+            "Program:Main.Motor1.Amps"
+        ));
     }
 }

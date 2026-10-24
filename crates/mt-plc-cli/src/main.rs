@@ -50,7 +50,10 @@ fn main() -> std::process::ExitCode {
                 return exit_code(2);
             }
             for d in &report.diagnostics {
-                println!("{}:{}:{}: {}: {}", d.file, d.line, d.col, d.severity, d.message);
+                println!(
+                    "{}:{}:{}: {}: {}",
+                    d.file, d.line, d.col, d.severity, d.message
+                );
             }
             println!(
                 "checked {} files, {} errors, {} warnings",
@@ -212,8 +215,14 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(written.contains(&"Line1_Tags.st".to_string()), "{written:?}");
-        assert!(written.contains(&"Conveyor_Main.st".to_string()), "{written:?}");
+        assert!(
+            written.contains(&"Line1_Tags.st".to_string()),
+            "{written:?}"
+        );
+        assert!(
+            written.contains(&"Conveyor_Main.st".to_string()),
+            "{written:?}"
+        );
         std::fs::remove_dir_all(&out).ok();
     }
 
@@ -246,7 +255,11 @@ mod tests {
     #[test]
     fn import_missing_file_exits_two() {
         let out = temp_out("missing");
-        let code = run_import(&PathBuf::from("/nonexistent/export.l5x"), ImportFormat::L5x, &out);
+        let code = run_import(
+            &PathBuf::from("/nonexistent/export.l5x"),
+            ImportFormat::L5x,
+            &out,
+        );
         assert_eq!(code, 2);
         std::fs::remove_dir_all(&out).ok();
     }

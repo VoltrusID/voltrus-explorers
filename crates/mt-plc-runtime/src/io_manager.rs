@@ -36,10 +36,10 @@ pub enum IoArea {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IoSize {
-    Bit,    // X
-    Byte,   // B
-    Word,   // W
-    Dword,  // D
+    Bit,   // X
+    Byte,  // B
+    Word,  // W
+    Dword, // D
 }
 
 #[derive(Debug, Clone)]
@@ -132,7 +132,10 @@ impl ModbusIoDriver {
         };
         let client = mt_modbus::ModbusClient::connect(config)
             .await
-            .map_err(|e| IoError { message: format!("Modbus connect: {}", e), recoverable: true })?;
+            .map_err(|e| IoError {
+                message: format!("Modbus connect: {}", e),
+                recoverable: true,
+            })?;
         self.client = Some(client);
         Ok(())
     }
@@ -176,11 +179,17 @@ impl IoDriver for ModbusIoDriver {
         if let Some(ref client) = self.client {
             let tags: Vec<_> = addresses.iter().map(|a| self.io_to_tag(a)).collect();
             let rt = tokio::runtime::Handle::current();
-            let values = rt.block_on(async { client.read(&tags).await })
-                .map_err(|e| IoError { message: format!("Modbus read: {}", e), recoverable: true })?;
+            let values = rt
+                .block_on(async { client.read(&tags).await })
+                .map_err(|e| IoError {
+                    message: format!("Modbus read: {}", e),
+                    recoverable: true,
+                })?;
 
-            Ok(values.into_iter().zip(addresses.iter()).map(|(v, addr)| {
-                match v {
+            Ok(values
+                .into_iter()
+                .zip(addresses.iter())
+                .map(|(v, addr)| match v {
                     mt_modbus::ModbusValue::Uint16(u) => {
                         if let Some(bit) = addr.bit {
                             PlcValue::Bool((u >> bit) & 1 == 1)
@@ -192,8 +201,8 @@ impl IoDriver for ModbusIoDriver {
                     mt_modbus::ModbusValue::Int32(i) => PlcValue::Dint(i),
                     mt_modbus::ModbusValue::Float32(f) => PlcValue::Real(f),
                     mt_modbus::ModbusValue::Float64(f) => PlcValue::Real(f as f32),
-                }
-            }).collect())
+                })
+                .collect())
         } else {
             Ok(addresses.iter().map(|_| PlcValue::Dint(0)).collect())
         }
@@ -206,7 +215,10 @@ impl IoDriver for ModbusIoDriver {
                 let tag = self.io_to_tag(addr);
                 let value = self.value_to_modbus(val);
                 rt.block_on(async { client.write(&tag, value).await })
-                    .map_err(|e| IoError { message: format!("Modbus write: {}", e), recoverable: true })?;
+                    .map_err(|e| IoError {
+                        message: format!("Modbus write: {}", e),
+                        recoverable: true,
+                    })?;
             }
         }
         Ok(())
@@ -258,12 +270,8 @@ pub fn create_driver(
             Ok(Box::new(driver))
         }
         "s7" => {
-            let mut driver = crate::io_s7::S7IoDriver::new(
-                host.to_string(),
-                port,
-                s7_rack,
-                s7_slot,
-            );
+            let mut driver =
+                crate::io_s7::S7IoDriver::new(host.to_string(), port, s7_rack, s7_slot);
             rt.block_on(driver.connect())?;
             Ok(Box::new(driver))
         }

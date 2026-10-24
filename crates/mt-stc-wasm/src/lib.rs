@@ -1,6 +1,6 @@
-use wasm_bindgen::prelude::*;
-use mt_stc::{compile, compile_project};
 use mt_plc_types::CompiledModule;
+use mt_stc::{compile, compile_project};
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmCompileOutput {
@@ -73,20 +73,24 @@ struct VariableJson {
 }
 
 fn serialize_module(module: &CompiledModule) -> (String, String, String) {
-    let instructions: Vec<InstructionJson> = module.instructions.iter().map(|i| {
-        InstructionJson {
+    let instructions: Vec<InstructionJson> = module
+        .instructions
+        .iter()
+        .map(|i| InstructionJson {
             opcode: format!("{:?}", i.opcode),
             operand: i.operand,
-        }
-    }).collect();
+        })
+        .collect();
 
-    let variables: Vec<VariableJson> = module.variable_slots.iter().map(|(name, val)| {
-        VariableJson {
+    let variables: Vec<VariableJson> = module
+        .variable_slots
+        .iter()
+        .map(|(name, val)| VariableJson {
             name: name.clone(),
             value: format!("{:?}", val),
             type_name: val.type_name().to_string(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let instructions_json = serde_json::to_string(&instructions).unwrap_or_default();
     let variables_json = serde_json::to_string(&variables).unwrap_or_default();
@@ -99,11 +103,13 @@ fn serialize_module(module: &CompiledModule) -> (String, String, String) {
 pub fn wasm_compile(source: &str) -> WasmCompileOutput {
     let result = compile(source);
 
-    let (instructions_json, variables_json, line_map_json) = result.module
+    let (instructions_json, variables_json, line_map_json) = result
+        .module
         .as_ref()
         .map(serialize_module)
         .unwrap_or_default();
-    let module_json = result.module
+    let module_json = result
+        .module
         .as_ref()
         .map(|m| serde_json::to_string(m).unwrap_or_default())
         .unwrap_or_default();
@@ -127,11 +133,13 @@ pub fn wasm_compile_project(sources_json: &str) -> Result<WasmCompileOutput, JsV
 
     let result = compile_project(&sources);
 
-    let (instructions_json, variables_json, line_map_json) = result.module
+    let (instructions_json, variables_json, line_map_json) = result
+        .module
         .as_ref()
         .map(serialize_module)
         .unwrap_or_default();
-    let module_json = result.module
+    let module_json = result
+        .module
         .as_ref()
         .map(|m| serde_json::to_string(m).unwrap_or_default())
         .unwrap_or_default();
@@ -150,6 +158,9 @@ pub fn wasm_compile_project(sources_json: &str) -> Result<WasmCompileOutput, JsV
 
 #[wasm_bindgen]
 pub fn wasm_standard_functions() -> String {
-    let funcs: Vec<&str> = mt_stc::stdlib::standard_functions().iter().map(|f| f.name).collect();
+    let funcs: Vec<&str> = mt_stc::stdlib::standard_functions()
+        .iter()
+        .map(|f| f.name)
+        .collect();
     serde_json::to_string(&funcs).unwrap_or_default()
 }

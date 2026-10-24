@@ -2,13 +2,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{broadcast, watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
-use mt_plc_runtime::io_manager::{self, IoAddress, IoDriver, IoArea};
+use mt_plc_runtime::io_manager::{self, IoAddress, IoArea, IoDriver};
 use mt_plc_runtime::opcode::{CompiledModule, Instruction};
 use mt_plc_runtime::types::{CycleStats, RuntimeConfig};
 use mt_plc_runtime::{PlcRuntime, PlcValue};
@@ -381,9 +381,9 @@ impl PlcRuntimeGrpcServer {
                                     watched
                                 } else {
                                     watched
-                                    .into_iter()
-                                    .filter(|v| filter.contains(&v.name))
-                                    .collect()
+                                        .into_iter()
+                                        .filter(|v| filter.contains(&v.name))
+                                        .collect()
                                 }
                             })
                         };
@@ -544,10 +544,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         Ok(Response::new(pb_state))
     }
 
-    async fn stop(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<ProtoRuntimeState>, Status> {
+    async fn stop(&self, _request: Request<Empty>) -> Result<Response<ProtoRuntimeState>, Status> {
         self.stop_scan_loop().await;
 
         let mut guard = self.inner.write().await;
@@ -557,10 +554,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         Ok(Response::new(pb_state))
     }
 
-    async fn step(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<ProtoRuntimeState>, Status> {
+    async fn step(&self, _request: Request<Empty>) -> Result<Response<ProtoRuntimeState>, Status> {
         let mut guard = self.inner.write().await;
         if let Some(ref mut rt) = guard.runtime {
             match rt.execute_cycle() {
@@ -616,7 +610,10 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         request: Request<ForceRequest>,
     ) -> Result<Response<ForceResponse>, Status> {
         let req = request.into_inner();
-        let value = req.value.map(variable_value_to_plc).unwrap_or(PlcValue::Dint(0));
+        let value = req
+            .value
+            .map(variable_value_to_plc)
+            .unwrap_or(PlcValue::Dint(0));
 
         let mut guard = self.inner.write().await;
         if let Some(ref mut rt) = guard.runtime {
@@ -690,10 +687,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         }
     }
 
-    async fn get_io_status(
-        &self,
-        _request: Request<Empty>,
-    ) -> Result<Response<IoStatus>, Status> {
+    async fn get_io_status(&self, _request: Request<Empty>) -> Result<Response<IoStatus>, Status> {
         let guard = self.io.lock().unwrap_or_else(|e| e.into_inner());
         let connection = match (&guard.driver, &guard.last_error) {
             (Some(driver), _) => IoConnectionStatus {
@@ -724,10 +718,7 @@ impl PlcRuntimeTrait for PlcRuntimeGrpcServer {
         }))
     }
 
-    async fn configure_io(
-        &self,
-        request: Request<IoConfig>,
-    ) -> Result<Response<IoStatus>, Status> {
+    async fn configure_io(&self, request: Request<IoConfig>) -> Result<Response<IoStatus>, Status> {
         let req = request.into_inner();
         self.apply_io_config(&req.mappings);
 
@@ -789,10 +780,7 @@ impl PlcRuntimeGrpcServer {
         };
 
         let params = parse_connection(&source.connection_json);
-        state.connection_label = format!(
-            "{}://{}:{}",
-            source.driver, params.host, params.port
-        );
+        state.connection_label = format!("{}://{}:{}", source.driver, params.host, params.port);
 
         match io_manager::create_driver(
             &source.driver,
@@ -838,8 +826,15 @@ fn io_cycle_read(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &mut PlcRuntime)
     let mut guard = io.lock().unwrap_or_else(|e| e.into_inner());
     // Destructure so `driver` and `mappings` borrow disjoint fields through
     // the MutexGuard deref.
-    let ServerIoState { driver, mappings, last_error, .. } = &mut *guard;
-    let Some(driver) = driver.as_mut() else { return };
+    let ServerIoState {
+        driver,
+        mappings,
+        last_error,
+        ..
+    } = &mut *guard;
+    let Some(driver) = driver.as_mut() else {
+        return;
+    };
 
     let input_addrs: Vec<IoAddress> = mappings
         .iter()
@@ -869,8 +864,15 @@ fn io_cycle_read(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &mut PlcRuntime)
 /// Write mapped VM outputs to field devices after a scan cycle.
 fn io_cycle_write(io: &Arc<std::sync::Mutex<ServerIoState>>, rt: &PlcRuntime) {
     let mut guard = io.lock().unwrap_or_else(|e| e.into_inner());
-    let ServerIoState { driver, mappings, last_error, .. } = &mut *guard;
-    let Some(driver) = driver.as_mut() else { return };
+    let ServerIoState {
+        driver,
+        mappings,
+        last_error,
+        ..
+    } = &mut *guard;
+    let Some(driver) = driver.as_mut() else {
+        return;
+    };
 
     let outputs: Vec<&ServerIoMapping> = mappings
         .iter()
@@ -907,7 +909,10 @@ mod drift_tests {
     fn sample_module(name: &str) -> CompiledModule {
         CompiledModule {
             name: name.to_string(),
-            instructions: vec![Instruction { opcode: Opcode::PushBool, operand: Some(1) }],
+            instructions: vec![Instruction {
+                opcode: Opcode::PushBool,
+                operand: Some(1),
+            }],
             variable_slots: vec![("motor".to_string(), PlcValue::Bool(false))],
             pou_table: vec![("Main".to_string(), 0)],
             name_constants: vec![],
@@ -946,7 +951,10 @@ mod drift_tests {
         let bytes = bincode::serialize(&sample_module("Main")).expect("serialize");
 
         deploy_bytes(&server, &bytes).await;
-        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+        assert_eq!(
+            fingerprint(&server).await,
+            (crc32_le(&bytes), bytes.len() as u64)
+        );
     }
 
     #[tokio::test]
@@ -974,13 +982,21 @@ mod drift_tests {
         deploy_bytes(&server, &bytes).await;
 
         server
-            .start(Request::new(StartConfig { config_json: String::new() }))
+            .start(Request::new(StartConfig {
+                config_json: String::new(),
+            }))
             .await
             .expect("start");
-        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+        assert_eq!(
+            fingerprint(&server).await,
+            (crc32_le(&bytes), bytes.len() as u64)
+        );
 
         server.stop(Request::new(Empty {})).await.expect("stop");
-        assert_eq!(fingerprint(&server).await, (crc32_le(&bytes), bytes.len() as u64));
+        assert_eq!(
+            fingerprint(&server).await,
+            (crc32_le(&bytes), bytes.len() as u64)
+        );
     }
 
     #[tokio::test]

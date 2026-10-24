@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::commands::io::{IoDriverConfig, IoMapping};
 
-
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct FileEntry {
     pub name: String,
@@ -22,10 +21,7 @@ pub struct SampleTemplate {
 #[tauri::command]
 pub async fn new_file(name: String, pou_type: String) -> Result<String, String> {
     let template = match pou_type.as_str() {
-        "program" => format!(
-            "PROGRAM {}\nVAR\n    \nEND_VAR\n\nEND_PROGRAM",
-            name
-        ),
+        "program" => format!("PROGRAM {}\nVAR\n    \nEND_VAR\n\nEND_PROGRAM", name),
         "function" => format!(
             "FUNCTION {} : INT\nVAR_INPUT\n    \nEND_VAR\n\n    {} := 0;\nEND_FUNCTION",
             name, name
@@ -88,7 +84,9 @@ fn list_project_files_blocking(dir: &str) -> Result<Vec<FileEntry>, String> {
     }
 
     entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
     Ok(entries)
@@ -119,7 +117,8 @@ END_VAR
         direction := 1;
         done := FALSE;
     END_IF;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "traffic-light".into(),
@@ -149,7 +148,8 @@ END_VAR
         red := FALSE; yellow := TRUE; green := FALSE;
         IF timer > 40 THEN state := 0; timer := 0; END_IF;
     END_IF;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "motor-control".into(),
@@ -188,7 +188,8 @@ END_VAR
         speed := speed - decel_rate;
         IF speed < 0 THEN speed := 0; END_IF;
     END_IF;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "tank-level".into(),
@@ -233,7 +234,8 @@ END_VAR
     temperature := temperature - 0.05;
     IF level > 100.0 THEN level := 100.0; END_IF;
     IF level < 0.0 THEN level := 0.0; END_IF;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "ton-timer".into(),
@@ -248,7 +250,8 @@ VAR
 END_VAR
     startup_delay(IN := start, PT := T#500MS);
     motor := startup_delay.Q;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "counter-fb".into(),
@@ -264,7 +267,8 @@ VAR
 END_VAR
     part_count(CU := sensor_pulse, R := reset, PV := 10);
     batch_done := part_count.Q;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "esp32-blink".into(),
@@ -281,7 +285,8 @@ END_VAR
         relay0 := NOT relay0;
         flash(IN := FALSE, PT := T#0MS);
     END_IF;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
         SampleTemplate {
             id: "esp32-relay-chase".into(),
@@ -324,7 +329,8 @@ END_VAR
         4: relay4 := TRUE; red := 255; green := 0;   blue := 255;
         5: relay5 := TRUE; red := 0;   green := 255; blue := 255;
     END_CASE;
-END_PROGRAM"#.into(),
+END_PROGRAM"#
+                .into(),
         },
     ]
 }

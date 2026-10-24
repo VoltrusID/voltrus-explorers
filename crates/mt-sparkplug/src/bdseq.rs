@@ -13,7 +13,9 @@ pub fn load(path: &Path) -> Result<u8, SparkplugError> {
         Ok(text) => text
             .trim()
             .parse::<u8>()
-            .map_err(|_| SparkplugError::BdSeqCorrupt { path: path.to_path_buf() }),
+            .map_err(|_| SparkplugError::BdSeqCorrupt {
+                path: path.to_path_buf(),
+            }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(source) => Err(SparkplugError::BdSeqIo {
             path: path.to_path_buf(),
@@ -59,7 +61,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bd_seq");
         std::fs::write(&path, "not-a-number").unwrap();
-        assert!(matches!(load(&path), Err(SparkplugError::BdSeqCorrupt { .. })));
+        assert!(matches!(
+            load(&path),
+            Err(SparkplugError::BdSeqCorrupt { .. })
+        ));
     }
 
     #[test]

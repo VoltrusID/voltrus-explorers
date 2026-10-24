@@ -32,11 +32,17 @@ impl WasmPlcRuntime {
     }
 
     pub fn execute_cycle(&mut self) -> Result<String, JsValue> {
-        self.runtime.execute_cycle().map(|s| to_json(&s)).map_err(err)
+        self.runtime
+            .execute_cycle()
+            .map(|s| to_json(&s))
+            .map_err(err)
     }
 
     pub fn step_instruction(&mut self) -> Result<String, JsValue> {
-        self.runtime.step_instruction().map(|s| to_json(&s)).map_err(err)
+        self.runtime
+            .step_instruction()
+            .map(|s| to_json(&s))
+            .map_err(err)
     }
 
     pub fn continue_execution(&mut self) -> Result<String, JsValue> {
@@ -157,7 +163,10 @@ mod tests {
         let (mut rt, _) = make_runtime();
         rt.execute_cycle().unwrap();
         rt.write_variable("counter", r#"{"Int":10}"#).unwrap();
-        assert_eq!(rt.read_variable("counter").as_deref(), Some(r#"{"Int":10}"#));
+        assert_eq!(
+            rt.read_variable("counter").as_deref(),
+            Some(r#"{"Int":10}"#)
+        );
         assert_eq!(rt.read_variable("nope"), None);
     }
 
@@ -167,12 +176,14 @@ mod tests {
         for _ in 0..3 {
             rt.execute_cycle().unwrap();
         }
-        assert_eq!(rt.read_variable("counter").as_deref(), Some(r#"{"Real":3.0}"#));
+        assert_eq!(
+            rt.read_variable("counter").as_deref(),
+            Some(r#"{"Real":3.0}"#)
+        );
 
         rt.force_variable("counter", r#"{"Int":42}"#).unwrap();
         rt.execute_cycle().unwrap();
-        let watch: Vec<serde_json::Value> =
-            serde_json::from_str(&rt.watch_variables()).unwrap();
+        let watch: Vec<serde_json::Value> = serde_json::from_str(&rt.watch_variables()).unwrap();
         let counter = watch
             .iter()
             .find(|w| w["name"] == "counter")
@@ -182,7 +193,10 @@ mod tests {
 
         rt.unforce_variable("counter");
         rt.execute_cycle().unwrap();
-        assert_eq!(rt.read_variable("counter").as_deref(), Some(r#"{"Real":4.0}"#));
+        assert_eq!(
+            rt.read_variable("counter").as_deref(),
+            Some(r#"{"Real":4.0}"#)
+        );
     }
 
     #[test]
@@ -193,7 +207,11 @@ mod tests {
         rt.set_breakpoint_line(bp_line);
         let state: serde_json::Value =
             serde_json::from_str(&rt.step_instruction().expect("step ok")).unwrap();
-        assert!(state.get("BreakpointHit").is_some(), "expected BreakpointHit, got {}", state);
+        assert!(
+            state.get("BreakpointHit").is_some(),
+            "expected BreakpointHit, got {}",
+            state
+        );
         assert_eq!(rt.current_pc_line(), Some(bp_line));
 
         rt.clear_all_breakpoints();
@@ -207,12 +225,14 @@ mod tests {
         rt.execute_cycle().unwrap();
 
         let snapshot = rt.snapshot_variables();
-        let parsed: Vec<(String, serde_json::Value)> =
-            serde_json::from_str(&snapshot).unwrap();
+        let parsed: Vec<(String, serde_json::Value)> = serde_json::from_str(&snapshot).unwrap();
         assert!(parsed.iter().any(|(n, _)| n == "counter"));
 
         rt.write_variable("counter", r#"{"Int":99}"#).unwrap();
         rt.restore_variables(&snapshot).unwrap();
-        assert_eq!(rt.read_variable("counter").as_deref(), Some(r#"{"Real":1.0}"#));
+        assert_eq!(
+            rt.read_variable("counter").as_deref(),
+            Some(r#"{"Real":1.0}"#)
+        );
     }
 }

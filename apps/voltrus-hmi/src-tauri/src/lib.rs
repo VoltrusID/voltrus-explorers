@@ -255,7 +255,8 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_dialog::init())?;
                 // plugin-fs: currently using custom save/load commands; plugin kept for future direct fs access
                 app.handle().plugin(tauri_plugin_fs::init())?;
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?;
                 app.handle().plugin(tauri_plugin_deep_link::init())?;
 
@@ -281,13 +282,21 @@ mod preview_tests {
     #[test]
     fn preview_response_carries_its_own_csp() {
         let resp = preview_response("<p>x</p>".into());
-        let csp = resp.headers().get("Content-Security-Policy").unwrap().to_str().unwrap();
+        let csp = resp
+            .headers()
+            .get("Content-Security-Policy")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert_eq!(csp, PREVIEW_CSP);
         // The runtime needs inline script; it must not be able to load
         // anything else.
         assert!(csp.contains("script-src 'unsafe-inline'"));
         assert!(csp.starts_with("default-src 'none'"));
-        assert_eq!(resp.headers().get("Content-Type").unwrap(), "text/html; charset=utf-8");
+        assert_eq!(
+            resp.headers().get("Content-Type").unwrap(),
+            "text/html; charset=utf-8"
+        );
     }
 
     #[test]
@@ -296,6 +305,9 @@ mod preview_tests {
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().unwrap();
         assert!(csp.contains("frame-src hmipreview: http://hmipreview.localhost"));
-        assert!(csp.contains("script-src 'self';"), "app script-src must stay strict");
+        assert!(
+            csp.contains("script-src 'self';"),
+            "app script-src must stay strict"
+        );
     }
 }

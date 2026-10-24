@@ -6,10 +6,10 @@
 
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
-use relay_agent::driver::{echo::EchoDriver, DeviceDriver};
-use relay_agent::session::{run_with_reconnect, SessionConfig};
+use relay_agent::driver::{DeviceDriver, echo::EchoDriver};
+use relay_agent::session::{SessionConfig, run_with_reconnect};
 
 #[cfg(feature = "grpc")]
 use relay_agent::driver::grpc::GrpcDriver;
@@ -42,7 +42,10 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     if !args.server.starts_with("ws://") && !args.server.starts_with("wss://") {
-        bail!("--server must be a ws:// or wss:// URL, got {}", args.server);
+        bail!(
+            "--server must be a ws:// or wss:// URL, got {}",
+            args.server
+        );
     }
 
     let config = SessionConfig {
@@ -50,7 +53,12 @@ async fn main() -> Result<()> {
         device_id: args.device_id.clone(),
         pairing_token: args.pairing_token.clone(),
     };
-    println!("connecting {} as device {} (driver: {})", config.ws_url(), args.device_id, args.driver);
+    println!(
+        "connecting {} as device {} (driver: {})",
+        config.ws_url(),
+        args.device_id,
+        args.driver
+    );
 
     match args.driver.as_str() {
         "echo" => run(config, EchoDriver::new).await,
@@ -66,5 +74,11 @@ async fn main() -> Result<()> {
 }
 
 async fn run<D: DeviceDriver + Clone, F: Fn() -> D>(config: SessionConfig, make_driver: F) -> ! {
-    run_with_reconnect(&config, make_driver, Duration::from_secs(1), Duration::from_secs(30)).await
+    run_with_reconnect(
+        &config,
+        make_driver,
+        Duration::from_secs(1),
+        Duration::from_secs(30),
+    )
+    .await
 }

@@ -8,7 +8,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{is_iec_identifier, Diag, TranspileResult};
+use super::{Diag, TranspileResult, is_iec_identifier};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -86,7 +86,10 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
         });
     }
     if diagnostics.iter().any(|d| d.severity == "error") {
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     // Adjacency maps.
@@ -124,7 +127,10 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
         });
     }
     if diagnostics.iter().any(|d| d.severity == "error") {
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     // Validate step names.
@@ -198,7 +204,12 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
     // Validate transitions and jumps.
     for node in nodes {
         if node.data.element_type == "transition" {
-            if node.data.condition.as_deref().map_or(true, |c| c.trim().is_empty()) {
+            if node
+                .data
+                .condition
+                .as_deref()
+                .map_or(true, |c| c.trim().is_empty())
+            {
                 diagnostics.push(Diag {
                     message: format!("Transition at node {} has no condition", node.id),
                     severity: "error".into(),
@@ -213,9 +224,9 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
                     severity: "error".into(),
                 }),
                 Some(target) => {
-                    let target_exists = nodes
-                        .iter()
-                        .any(|n| is_step_like(&n.data) && n.data.step_name.as_deref() == Some(target));
+                    let target_exists = nodes.iter().any(|n| {
+                        is_step_like(&n.data) && n.data.step_name.as_deref() == Some(target)
+                    });
                     if !target_exists {
                         diagnostics.push(Diag {
                             message: format!("Jump target \"{target}\" does not exist"),
@@ -228,7 +239,10 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
     }
 
     if diagnostics.iter().any(|d| d.severity == "error") {
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     // Warn about steps with no actions.
@@ -274,7 +288,10 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
         let v = &step_var_map[step_id];
         let idx = node_map[step_id];
         let is_init = nodes[idx].data.element_type == "initial_step";
-        var_lines.push(format!("    {v} : BOOL{};", if is_init { " := TRUE" } else { "" }));
+        var_lines.push(format!(
+            "    {v} : BOOL{};",
+            if is_init { " := TRUE" } else { "" }
+        ));
     }
     for step_id in &step_order {
         let v = &step_var_map[step_id];
@@ -317,8 +334,7 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
                         &edge.target,
                     ));
                 } else if target.element_type == "jump" {
-                    let target_step_name =
-                        target.target_step_name.as_deref().unwrap_or("");
+                    let target_step_name = target.target_step_name.as_deref().unwrap_or("");
                     if let Some(target_var) = step_name_to_var.get(target_step_name) {
                         results.push((target_var.to_string(), "TRUE".into()));
                     }
@@ -344,8 +360,7 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
                         &edge.target,
                     ));
                 } else if target.element_type == "jump" {
-                    let target_step_name =
-                        target.target_step_name.as_deref().unwrap_or("");
+                    let target_step_name = target.target_step_name.as_deref().unwrap_or("");
                     if let Some(target_var) = step_name_to_var.get(target_step_name) {
                         results.push((target_var.to_string(), condition));
                     }
@@ -378,13 +393,8 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
     // Transitions.
     for step_id in &step_order {
         let source_var = &step_var_map[step_id];
-        let downstreams = resolve_downstream(
-            &node_map,
-            nodes,
-            &outgoing,
-            &step_name_to_var,
-            step_id,
-        );
+        let downstreams =
+            resolve_downstream(&node_map, nodes, &outgoing, &step_name_to_var, step_id);
 
         for (target_step_id, condition) in downstreams {
             let target_var = step_var_map
@@ -448,7 +458,10 @@ pub fn transpile(program: &SfcProgram) -> TranspileResult {
     }
     sections.push("END_PROGRAM".into());
 
-    TranspileResult { source: sections.join("\n"), diagnostics }
+    TranspileResult {
+        source: sections.join("\n"),
+        diagnostics,
+    }
 }
 
 #[cfg(test)]

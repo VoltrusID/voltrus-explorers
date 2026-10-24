@@ -4,12 +4,12 @@ mod commands {
     pub mod compile;
     pub mod eip_import;
     pub mod files;
-    pub mod runtime;
-    pub mod watch;
     pub mod io;
     pub mod license;
+    pub mod runtime;
     pub mod target;
     pub mod tests;
+    pub mod watch;
 }
 
 use state::*;
@@ -36,7 +36,9 @@ pub fn run() {
                 ip: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 ws_sink: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                target_kind: std::sync::Arc::new(tokio::sync::Mutex::new(crate::state::TargetKind::WebSocket)),
+                target_kind: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::state::TargetKind::WebSocket,
+                )),
                 grpc_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 grpc_addr: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 last_deployed_crc32: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
@@ -52,7 +54,6 @@ pub fn run() {
             commands::files::get_sample_templates,
             commands::files::save_project,
             commands::files::load_project,
-
             commands::runtime::plc_run,
             commands::runtime::plc_stop,
             commands::runtime::plc_step,
@@ -75,12 +76,10 @@ pub fn run() {
             commands::eip_import::eip_import_udts,
             commands::ai::chat_claude_stream,
             commands::ai::chat_ollama_stream,
-
             commands::license::activate_license,
             commands::license::validate_license,
             commands::license::get_license_status,
             commands::license::deactivate_license,
-
             commands::target::deploy_to_target,
             commands::target::target_connect,
             commands::target::target_disconnect,
@@ -98,14 +97,14 @@ pub fn run() {
             commands::target::grpc_start,
             commands::target::grpc_stop,
             commands::target::grpc_step,
-
             commands::tests::run_project_tests,
             commands::tests::generate_test_prompt,
         ])
         .setup(|app| {
             #[cfg(desktop)]
             {
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(tauri_plugin_process::init())?;
                 app.handle().plugin(tauri_plugin_dialog::init())?;
                 app.handle().plugin(tauri_plugin_fs::init())?;

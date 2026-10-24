@@ -40,7 +40,8 @@ resetWatchdog();
 
 // Request wake lock on load
 requestWakeLock();
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Generate kiosk overlay HTML for connection lost state.

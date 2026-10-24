@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::backoff::Backoff;
 use crate::driver::DeviceDriver;
@@ -45,27 +45,45 @@ async fn dispatch(
 ) -> ResponseFrame {
     let payload = frame.payload.clone().unwrap_or(Value::Null);
     let result: Result<Value> = match frame.op.as_str() {
-        "browse" => driver.browse().await.map(|vars| json!({ "variables": vars })),
+        "browse" => driver
+            .browse()
+            .await
+            .map(|vars| json!({ "variables": vars })),
         "subscribe" => {
             let names = payload
                 .get("names")
                 .and_then(|v| v.as_array())
-                .map(|names| names.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             driver.subscribe(names, events.clone()).await
         }
-        "write" => match (payload.get("name").and_then(|v| v.as_str()), payload.get("value")) {
+        "write" => match (
+            payload.get("name").and_then(|v| v.as_str()),
+            payload.get("value"),
+        ) {
             (Some(name), Some(value)) => driver.write(name, value.clone()).await,
             _ => Err(anyhow::anyhow!("write needs {{name, value}}")),
         },
-        "force" => match (payload.get("name").and_then(|v| v.as_str()), payload.get("value")) {
-            (Some(name), Some(value)) => {
-                driver.force(name, value.clone()).await.map(|_| json!({ "name": name, "forced": true }))
-            }
+        "force" => match (
+            payload.get("name").and_then(|v| v.as_str()),
+            payload.get("value"),
+        ) {
+            (Some(name), Some(value)) => driver
+                .force(name, value.clone())
+                .await
+                .map(|_| json!({ "name": name, "forced": true })),
             _ => Err(anyhow::anyhow!("force needs {{name, value}}")),
         },
         "unforce" => match payload.get("name").and_then(|v| v.as_str()) {
-            Some(name) => driver.unforce(name).await.map(|_| json!({ "name": name, "forced": false })),
+            Some(name) => driver
+                .unforce(name)
+                .await
+                .map(|_| json!({ "name": name, "forced": false })),
             None => Err(anyhow::anyhow!("unforce needs {{name}}")),
         },
         "status" => driver.status().await,
@@ -74,12 +92,15 @@ async fn dispatch(
                 driver
                     .deploy(
                         module_json,
-                        payload.get("config_json").and_then(|v| v.as_str()).map(String::from),
+                        payload
+                            .get("config_json")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                     )
                     .await
             }
             None => Err(anyhow::anyhow!("deploy needs {{module_json}}")),
-        }
+        },
         other => Err(anyhow::anyhow!("unsupported op: {other}")),
     };
     match result {
@@ -92,14 +113,18 @@ async fn dispatch(
 /// the connection ends (clean close or error); the caller decides on retries.
 pub async fn run_session(config: &SessionConfig, driver: &mut impl DeviceDriver) -> Result<()> {
     if !config.server.starts_with("ws://") && !config.server.starts_with("wss://") {
-        anyhow::bail!("invalid relay server URL (expected ws:// or wss://…), got {}", config.server);
+        anyhow::bail!(
+            "invalid relay server URL (expected ws:// or wss://…), got {}",
+            config.server
+        );
     }
     let request = config
         .ws_url()
         .into_client_request()
         .context("invalid relay server URL (expected ws:// or wss://…)")?;
-    let (stream, _response) =
-        connect_async(request).await.map_err(|e| anyhow::anyhow!("relay connect failed: {e}"))?;
+    let (stream, _response) = connect_async(request)
+        .await
+        .map_err(|e| anyhow::anyhow!("relay connect failed: {e}"))?;
     let (mut write, mut read) = stream.split();
 
     // Hello: informational only — the pairing token in the upgrade URL did the

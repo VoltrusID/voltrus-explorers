@@ -4,8 +4,8 @@
 //! the same entry points.
 
 pub mod check;
-pub mod junit;
 pub mod diagram;
+pub mod junit;
 pub mod runner;
 pub mod scenario;
 
@@ -64,17 +64,23 @@ scenarios:
     fn check_dir_reports_per_file_diagnostics() {
         let dir = temp_dir("lib-check");
         std::fs::write(dir.join("ok.st"), PROGRAM).unwrap();
-        std::fs::write(dir.join("bad.st"), "PROGRAM B\nVAR\n    x : NOTATYPE;\nEND_VAR\n").unwrap();
+        std::fs::write(
+            dir.join("bad.st"),
+            "PROGRAM B\nVAR\n    x : NOTATYPE;\nEND_VAR\n",
+        )
+        .unwrap();
 
         let report = check_dir(dir.to_str().unwrap());
         assert!(report.error.is_none(), "{:?}", report.error);
         assert_eq!(report.files, 2);
         assert!(report.errors >= 1, "{report:?}");
         assert!(!report.passed);
-        assert!(report
-            .diagnostics
-            .iter()
-            .any(|d| d.file == "bad.st" && d.severity == "error" && d.line > 0));
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.file == "bad.st" && d.severity == "error" && d.line > 0)
+        );
 
         let json = serde_json::to_string(&report).unwrap();
         assert!(json.contains("\"file\":\"bad.st\""));

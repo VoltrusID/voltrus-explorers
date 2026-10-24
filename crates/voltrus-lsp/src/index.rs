@@ -74,7 +74,6 @@ impl SymbolKind {
             SymbolKind::EnumValue => "ENUM value",
         }
     }
-
 }
 
 #[derive(Clone, Debug)]
@@ -555,12 +554,7 @@ fn var_symbol(
 /// speed`), so the identifier is located by its first case-insensitive
 /// occurrence inside the span (ASCII ST sources; same trick as everywhere
 /// else in this module).
-fn name_range(
-    span: iecst::Span,
-    name: &str,
-    source: &str,
-    li: &LineIndex,
-) -> lsp_types::Range {
+fn name_range(span: iecst::Span, name: &str, source: &str, li: &LineIndex) -> lsp_types::Range {
     let start = span.start.min(source.len());
     let end = span.end.min(source.len()).max(start);
     let rel = source[start..end]
@@ -615,11 +609,9 @@ fn blank_type_blocks(source: &str) -> String {
     let upper_chars: Vec<char> = upper.chars().collect();
     let mut in_type = false;
 
-    let is_word_before =
-        |i: usize| i > 0 && upper_chars[i - 1].is_alphanumeric();
-    let is_word_after = |i: usize, n: usize| {
-        i + n < upper_chars.len() && upper_chars[i + n].is_alphanumeric()
-    };
+    let is_word_before = |i: usize| i > 0 && upper_chars[i - 1].is_alphanumeric();
+    let is_word_after =
+        |i: usize, n: usize| i + n < upper_chars.len() && upper_chars[i + n].is_alphanumeric();
 
     let mut i = 0;
     while i < out.len() {
@@ -711,8 +703,11 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
         ] {
             if let Some(rest) = upper.strip_prefix(prefix) {
                 let orig = &trimmed[trimmed.len() - rest.len()..];
-                let word: String =
-                    orig.trim_start().chars().take_while(|c| is_ident_char(*c)).collect();
+                let word: String = orig
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| is_ident_char(*c))
+                    .collect();
                 if !word.is_empty() {
                     header = Some((word, kind));
                 }
@@ -728,8 +723,14 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
                 type_name: None,
                 owner: None,
                 name_range: lsp_types::Range {
-                    start: lsp_types::Position { line: line_no, character: col },
-                    end: lsp_types::Position { line: line_no, character: col + name.len() as u32 },
+                    start: lsp_types::Position {
+                        line: line_no,
+                        character: col,
+                    },
+                    end: lsp_types::Position {
+                        line: line_no,
+                        character: col + name.len() as u32,
+                    },
                 },
                 decl_line: line_no + 1,
             });
@@ -747,10 +748,12 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
         // `TYPE MotorConfig : ...` headers.
         if upper == "TYPE" || upper.starts_with("TYPE ") {
             var_kind = None;
-            let orig = &trimmed[trimmed.len()
-                - upper.strip_prefix("TYPE").unwrap_or("").len()..];
-            let word: String =
-                orig.trim_start().chars().take_while(|c| is_ident_char(*c)).collect();
+            let orig = &trimmed[trimmed.len() - upper.strip_prefix("TYPE").unwrap_or("").len()..];
+            let word: String = orig
+                .trim_start()
+                .chars()
+                .take_while(|c| is_ident_char(*c))
+                .collect();
             if !word.is_empty() {
                 let col = col_of_word(trimmed, &word) as u32;
                 symbols.push(Symbol {
@@ -759,8 +762,14 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
                     type_name: None,
                     owner: None,
                     name_range: lsp_types::Range {
-                        start: lsp_types::Position { line: line_no, character: col },
-                        end: lsp_types::Position { line: line_no, character: col + word.len() as u32 },
+                        start: lsp_types::Position {
+                            line: line_no,
+                            character: col,
+                        },
+                        end: lsp_types::Position {
+                            line: line_no,
+                            character: col + word.len() as u32,
+                        },
                     },
                     decl_line: line_no + 1,
                 });
@@ -795,10 +804,14 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
             .trim()
             .to_string();
         let col = col_of_word(trimmed, name_part) as u32;
-        let decl_start = lsp_types::Position { line: line_no, character: col };
-        if symbols.iter().any(|s| {
-            s.name.eq_ignore_ascii_case(name_part) && s.name_range.start == decl_start
-        }) {
+        let decl_start = lsp_types::Position {
+            line: line_no,
+            character: col,
+        };
+        if symbols
+            .iter()
+            .any(|s| s.name.eq_ignore_ascii_case(name_part) && s.name_range.start == decl_start)
+        {
             continue; // AST already indexed this declaration
         }
         symbols.push(Symbol {
@@ -807,8 +820,14 @@ fn scan_declarations(text: &str, symbols: &mut Vec<Symbol>, scopes: &mut Vec<Sco
             type_name: (!type_part.is_empty()).then_some(type_part),
             owner: current_scope.as_ref().map(|(n, _)| n.clone()),
             name_range: lsp_types::Range {
-                start: lsp_types::Position { line: line_no, character: col },
-                end: lsp_types::Position { line: line_no, character: col + name_part.len() as u32 },
+                start: lsp_types::Position {
+                    line: line_no,
+                    character: col,
+                },
+                end: lsp_types::Position {
+                    line: line_no,
+                    character: col + name_part.len() as u32,
+                },
             },
             decl_line: line_no + 1,
         });
@@ -860,15 +879,72 @@ fn col_of_word(line: &str, word: &str) -> usize {
 
 /// IEC 61131-3 keywords offered in completion.
 pub const IEC_KEYWORDS: &[&str] = &[
-    "PROGRAM", "END_PROGRAM", "FUNCTION", "END_FUNCTION", "FUNCTION_BLOCK",
-    "END_FUNCTION_BLOCK", "TYPE", "END_TYPE", "STRUCT", "END_STRUCT", "VAR",
-    "VAR_INPUT", "VAR_OUTPUT", "VAR_IN_OUT", "VAR_TEMP", "VAR_GLOBAL",
-    "VAR_EXTERNAL", "END_VAR", "IF", "THEN", "ELSIF", "ELSE", "END_IF", "CASE",
-    "OF", "END_CASE", "FOR", "TO", "BY", "DO", "END_FOR", "WHILE", "END_WHILE",
-    "REPEAT", "UNTIL", "END_REPEAT", "EXIT", "RETURN", "AND", "OR", "XOR",
-    "NOT", "MOD", "TRUE", "FALSE", "ARRAY", "AT", "RETAIN", "NON_RETAIN",
-    "CONSTANT", "BOOL", "BYTE", "WORD", "DWORD", "SINT", "INT", "DINT", "USINT",
-    "UINT", "UDINT", "REAL", "LREAL", "STRING", "WSTRING", "TIME", "DATE",
+    "PROGRAM",
+    "END_PROGRAM",
+    "FUNCTION",
+    "END_FUNCTION",
+    "FUNCTION_BLOCK",
+    "END_FUNCTION_BLOCK",
+    "TYPE",
+    "END_TYPE",
+    "STRUCT",
+    "END_STRUCT",
+    "VAR",
+    "VAR_INPUT",
+    "VAR_OUTPUT",
+    "VAR_IN_OUT",
+    "VAR_TEMP",
+    "VAR_GLOBAL",
+    "VAR_EXTERNAL",
+    "END_VAR",
+    "IF",
+    "THEN",
+    "ELSIF",
+    "ELSE",
+    "END_IF",
+    "CASE",
+    "OF",
+    "END_CASE",
+    "FOR",
+    "TO",
+    "BY",
+    "DO",
+    "END_FOR",
+    "WHILE",
+    "END_WHILE",
+    "REPEAT",
+    "UNTIL",
+    "END_REPEAT",
+    "EXIT",
+    "RETURN",
+    "AND",
+    "OR",
+    "XOR",
+    "NOT",
+    "MOD",
+    "TRUE",
+    "FALSE",
+    "ARRAY",
+    "AT",
+    "RETAIN",
+    "NON_RETAIN",
+    "CONSTANT",
+    "BOOL",
+    "BYTE",
+    "WORD",
+    "DWORD",
+    "SINT",
+    "INT",
+    "DINT",
+    "USINT",
+    "UINT",
+    "UDINT",
+    "REAL",
+    "LREAL",
+    "STRING",
+    "WSTRING",
+    "TIME",
+    "DATE",
 ];
 
 #[cfg(test)]
@@ -959,7 +1035,13 @@ END_PROGRAM
 
         // Cursor inside `Motor` on main.st line 2 ("    m : Motor;").
         let hit = idx
-            .resolve(&main_uri, lsp_types::Position { line: 2, character: 11 })
+            .resolve(
+                &main_uri,
+                lsp_types::Position {
+                    line: 2,
+                    character: 11,
+                },
+            )
             .unwrap();
         assert_eq!(hit.uri, motor_uri);
         assert_eq!(hit.symbol.kind, SymbolKind::FunctionBlock);
@@ -967,19 +1049,40 @@ END_PROGRAM
 
         // `speed` field use on line 4 resolves cross-file to the VAR_INPUT.
         let hit = idx
-            .resolve(&main_uri, lsp_types::Position { line: 4, character: 7 })
+            .resolve(
+                &main_uri,
+                lsp_types::Position {
+                    line: 4,
+                    character: 7,
+                },
+            )
             .unwrap();
         assert_eq!(hit.uri, motor_uri);
         assert_eq!(hit.symbol.kind, SymbolKind::VarInput);
 
         // Same-file variable resolves within its owner scope.
         let hit = idx
-            .resolve(&main_uri, lsp_types::Position { line: 4, character: 4 })
+            .resolve(
+                &main_uri,
+                lsp_types::Position {
+                    line: 4,
+                    character: 4,
+                },
+            )
             .unwrap();
         assert_eq!(hit.uri, main_uri);
         assert_eq!(hit.symbol.kind, SymbolKind::Var);
         // The `.` member-access operator carries no identifier -> None.
-        assert!(idx.resolve(&main_uri, lsp_types::Position { line: 4, character: 5 }).is_none());
+        assert!(
+            idx.resolve(
+                &main_uri,
+                lsp_types::Position {
+                    line: 4,
+                    character: 5
+                }
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -1003,9 +1106,25 @@ END_TYPE
         let uri = Url::parse("file:///s.st").unwrap();
         idx.open(uri.clone(), text.to_string());
         // Cursor on A's field declaration (line 2) vs B's (line 8).
-        let in_a = idx.resolve(&uri, lsp_types::Position { line: 2, character: 6 }).unwrap();
+        let in_a = idx
+            .resolve(
+                &uri,
+                lsp_types::Position {
+                    line: 2,
+                    character: 6,
+                },
+            )
+            .unwrap();
         assert_eq!(in_a.symbol.type_name.as_deref(), Some("INT"));
-        let in_b = idx.resolve(&uri, lsp_types::Position { line: 8, character: 6 }).unwrap();
+        let in_b = idx
+            .resolve(
+                &uri,
+                lsp_types::Position {
+                    line: 8,
+                    character: 6,
+                },
+            )
+            .unwrap();
         assert_eq!(in_b.symbol.type_name.as_deref(), Some("BOOL"));
     }
     #[test]
@@ -1014,7 +1133,13 @@ END_TYPE
         let uri = Url::parse("file:///w.st").unwrap();
         idx.open(uri.clone(), "    undefined_thing := 1;".to_string());
         let (word, range) = idx
-            .word_at(&uri, lsp_types::Position { line: 0, character: 8 })
+            .word_at(
+                &uri,
+                lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+            )
             .unwrap();
         assert_eq!(word, "undefined_thing");
         assert_eq!(range.start.character, 4);

@@ -88,21 +88,18 @@ impl WasmLsp {
     /// Declaration location for the identifier at the position, as JSON
     /// (null when unresolved).
     pub fn definition(&self, uri: &str, line: u32, character: u32) -> Result<String, JsValue> {
-        let loc = self.resolve(uri, line, character)?.map(|h: Hit| lsp_types::Location {
-            uri: h.uri,
-            range: h.symbol.name_range,
-        });
+        let loc = self
+            .resolve(uri, line, character)?
+            .map(|h: Hit| lsp_types::Location {
+                uri: h.uri,
+                range: h.symbol.name_range,
+            });
         serde_json::to_string(&loc).map_err(js_err)
     }
 }
 
 impl WasmLsp {
-    fn resolve(
-        &self,
-        uri: &str,
-        line: u32,
-        character: u32,
-    ) -> Result<Option<Hit>, JsValue> {
+    fn resolve(&self, uri: &str, line: u32, character: u32) -> Result<Option<Hit>, JsValue> {
         let url = parse_uri(uri)?;
         Ok(self
             .index

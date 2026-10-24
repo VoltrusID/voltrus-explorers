@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mt_plc_cli::diagram::{transpile_source, DiagramKind};
+use mt_plc_cli::diagram::{DiagramKind, transpile_source};
 
 fn fixtures_dir(lang: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -100,8 +100,10 @@ fn cycle_fixture_reports_the_ts_cycle_message() {
     let json = fs::read_to_string(fixtures_dir("fbd").join("cycle-error.fbd")).unwrap();
     let result = transpile_source(DiagramKind::Fbd, &json).unwrap();
     assert_eq!(result.source, "");
-    assert!(result
-        .diagnostics
-        .iter()
-        .any(|d| d.message == "Diagram contains a cycle — FBD execution order must be acyclic"));
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message == "Diagram contains a cycle — FBD execution order must be acyclic")
+    );
 }

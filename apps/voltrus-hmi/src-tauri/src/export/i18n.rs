@@ -1,10 +1,11 @@
-use crate::*;
 use super::{html_escape, js_escape, json_for_script};
+use crate::*;
 
 /// Generate i18n JS — translation loader, language switcher, data-i18n attribute handler.
 pub fn render_i18n_js(translations: &TranslationSet, default_language: &str) -> String {
-    let translations_json =
-        json_for_script(&serde_json::to_string(&translations.languages).unwrap_or_else(|_| "{}".to_string()));
+    let translations_json = json_for_script(
+        &serde_json::to_string(&translations.languages).unwrap_or_else(|_| "{}".to_string()),
+    );
     let default_language = js_escape(default_language);
 
     format!(
@@ -53,7 +54,10 @@ switchLanguage(currentLang);
 }
 
 /// Generate language dropdown HTML for nav bar.
-pub fn render_language_dropdown_html(translations: &TranslationSet, default_language: &str) -> String {
+pub fn render_language_dropdown_html(
+    translations: &TranslationSet,
+    default_language: &str,
+) -> String {
     let languages: Vec<String> = translations.languages.keys().cloned().collect();
     if languages.len() <= 1 {
         return String::new();
@@ -62,9 +66,16 @@ pub fn render_language_dropdown_html(translations: &TranslationSet, default_lang
     let options: Vec<String> = languages
         .iter()
         .map(|code| {
-            let selected = if code == default_language { " selected" } else { "" };
+            let selected = if code == default_language {
+                " selected"
+            } else {
+                ""
+            };
             let display = html_escape(&code.to_uppercase());
-            format!("<option value=\"{}\"{}>{}</option>", display, selected, display)
+            format!(
+                "<option value=\"{}\"{}>{}</option>",
+                display, selected, display
+            )
         })
         .collect();
 

@@ -22,7 +22,11 @@ pub trait DeviceDriver {
 
     /// Start pushing [`EventFrame`]s into `tx`; returns the ok-payload for the
     /// ide that asked. A second call replaces the previous subscription.
-    async fn subscribe(&mut self, names: Subscription, tx: UnboundedSender<EventFrame>) -> Result<Value>;
+    async fn subscribe(
+        &mut self,
+        names: Subscription,
+        tx: UnboundedSender<EventFrame>,
+    ) -> Result<Value>;
 
     /// Write a value. Note: the mt-grpc runtime exposes no plain-write RPC, so
     /// the grpc driver implements this as a force — see driver/grpc.rs.

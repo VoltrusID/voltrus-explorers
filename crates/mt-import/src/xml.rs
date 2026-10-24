@@ -146,4 +146,3 @@ fn resolve_ref(r: &BytesRef<'_>) -> Result<String, XmlError> {
 pub(crate) fn trim_xml_ws(s: &str) -> &str {
     s.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\r' | '\n'))
 }
-

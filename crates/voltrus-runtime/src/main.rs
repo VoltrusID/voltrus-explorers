@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Parser;
 use mt_grpc::pb::plc_runtime_server::PlcRuntimeServer;
-use voltrus_runtime::{bridge::VariableCache, SparkplugSettings};
+use voltrus_runtime::{SparkplugSettings, bridge::VariableCache};
 
 #[derive(Parser)]
 #[command(
@@ -134,7 +134,10 @@ async fn main() -> Result<()> {
     #[cfg(feature = "ide")]
     let ide_handle = if cli.ide {
         let config = voltrus_runtime::ide::IdeConfig {
-            ide_dir: cli.ide_dir.clone().unwrap_or_else(|| PathBuf::from("./ide")),
+            ide_dir: cli
+                .ide_dir
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("./ide")),
             projects_dir: cli
                 .projects_dir
                 .clone()

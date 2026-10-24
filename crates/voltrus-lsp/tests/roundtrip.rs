@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use tower::{Service, ServiceExt};
+use tower_lsp::LspService;
 use tower_lsp::jsonrpc::Request;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Hover, Url};
-use tower_lsp::LspService;
 
 use voltrus_lsp::server::Backend;
 

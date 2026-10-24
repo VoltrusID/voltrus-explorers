@@ -3,9 +3,9 @@
 //! See the crate-level docs for the supported subset. This module walks the
 //! XML once, collects mappable tags and ST routines, and hands candidate
 //! files to the crate-level assembly + verification pipeline.
+use crate::emit::{Decl, PouFile, VarKind};
 use crate::mapping::{TypeDecision, is_iecst_lexer_safe, map_rockwell_type, sanitize_ident};
 use crate::xml::{Ev, PullParser, XmlError, trim_xml_ws};
-use crate::emit::{Decl, PouFile, VarKind};
 use crate::{Builder, ImportError, Skipped};
 
 /// Import one L5X document. Malformed XML produces a `parse` error entry and
@@ -316,7 +316,6 @@ fn add_tag(
         TypeDecision::Emit(iec_type) => {
             let name = sanitize_ident(raw_name);
             if !is_iecst_lexer_safe(&name) {
-
                 builder.skipped(Skipped {
                     name: display,
                     reason: format!(

@@ -5,8 +5,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{is_iec_identifier, or_named, Diag, TranspileResult};
-use crate::diagram::blocks::{block_def, PinDef};
+use super::{Diag, TranspileResult, is_iec_identifier, or_named};
+use crate::diagram::blocks::{PinDef, block_def};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -151,7 +151,8 @@ impl<'a> Ctx<'a> {
                 let instance = or_named(data.instance_name.as_deref(), format!("__fb_{node_id}"));
                 let sig = format!("{instance}.{pin}");
                 if let Some(pin_def) = def.pin(pin) {
-                    self.signal_types.insert(sig.clone(), pin_def.data_type.to_string());
+                    self.signal_types
+                        .insert(sig.clone(), pin_def.data_type.to_string());
                 }
                 return sig;
             }
@@ -174,7 +175,10 @@ impl<'a> Ctx<'a> {
                     );
                     self.signal_types.insert(
                         name.clone(),
-                        target.variable_type.clone().unwrap_or_else(|| "BOOL".into()),
+                        target
+                            .variable_type
+                            .clone()
+                            .unwrap_or_else(|| "BOOL".into()),
                     );
                     return name;
                 }
@@ -200,7 +204,8 @@ impl<'a> Ctx<'a> {
             .and_then(|def| def.pin(pin))
             .map(|p: &PinDef| p.data_type)
             .unwrap_or("BOOL");
-        self.signal_types.insert(temp_name.clone(), pin_type.to_string());
+        self.signal_types
+            .insert(temp_name.clone(), pin_type.to_string());
         temp_name
     }
 }
@@ -227,7 +232,10 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
             message: "Diagram contains a cycle — FBD execution order must be acyclic".into(),
             severity: "error".into(),
         });
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     let mut node_map: HashMap<&str, usize> = HashMap::new();
@@ -249,10 +257,11 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
             .and_then(|d| d.source_pin.as_deref())
             .or(edge.source_handle.as_deref())
             .unwrap_or("OUT");
-        edge_targets
-            .entry(edge.target.as_str())
-            .or_default()
-            .push((edge.source.as_str(), source_pin, target_pin));
+        edge_targets.entry(edge.target.as_str()).or_default().push((
+            edge.source.as_str(),
+            source_pin,
+            target_pin,
+        ));
     }
 
     let mut ctx = Ctx {
@@ -295,7 +304,10 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
     }
 
     if diagnostics.iter().any(|d| d.severity == "error") {
-        return TranspileResult { source: String::new(), diagnostics };
+        return TranspileResult {
+            source: String::new(),
+            diagnostics,
+        };
     }
 
     // Collect declarations.
@@ -308,7 +320,8 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
         let Some(def) = block_def(&data.block_type) else {
             continue;
         };
-        if data.block_type == "INPUT_PIN" && data.variable_name.as_deref().is_some_and(|v| !v.is_empty())
+        if data.block_type == "INPUT_PIN"
+            && data.variable_name.as_deref().is_some_and(|v| !v.is_empty())
         {
             var_inputs.push(format!(
                 "    {} : {};",
@@ -323,7 +336,8 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
                 data.variable_name.as_deref().expect("checked"),
                 data.variable_type.clone().unwrap_or_else(|| "BOOL".into())
             ));
-        } else if def.is_function_block && data.instance_name.as_deref().is_some_and(|v| !v.is_empty())
+        } else if def.is_function_block
+            && data.instance_name.as_deref().is_some_and(|v| !v.is_empty())
         {
             var_fb_instances.push(format!(
                 "    {} : {};",
@@ -390,7 +404,10 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
                     }
                     if let Some(target) = ctx.data(&edge.target) {
                         if target.block_type == "OUTPUT_PIN"
-                            && target.variable_name.as_deref().is_some_and(|v| !v.is_empty())
+                            && target
+                                .variable_name
+                                .as_deref()
+                                .is_some_and(|v| !v.is_empty())
                         {
                             body.push(format!(
                                 "    {} := {}.{};",
@@ -452,7 +469,11 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
         if data.block_type == "INPUT_PIN" || data.block_type == "OUTPUT_PIN" {
             continue;
         }
-        let incoming = ctx.edge_targets.get(node.id.as_str()).cloned().unwrap_or_default();
+        let incoming = ctx
+            .edge_targets
+            .get(node.id.as_str())
+            .cloned()
+            .unwrap_or_default();
         let connected_target_pins: std::collections::HashSet<&str> =
             incoming.iter().map(|(_, _, tp)| *tp).collect();
         for pin in def.pins.iter().filter(|p| p.input) {
@@ -482,10 +503,7 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
         sections.extend(var_outputs);
         sections.push("END_VAR".into());
     }
-    let var_body: Vec<String> = var_fb_instances
-        .into_iter()
-        .chain(temp_decls)
-        .collect();
+    let var_body: Vec<String> = var_fb_instances.into_iter().chain(temp_decls).collect();
     if !var_body.is_empty() {
         sections.push("VAR".into());
         sections.extend(var_body);
@@ -497,7 +515,10 @@ pub fn transpile(program: &FbdProgram) -> TranspileResult {
     }
     sections.push("END_PROGRAM".into());
 
-    TranspileResult { source: sections.join("\n"), diagnostics }
+    TranspileResult {
+        source: sections.join("\n"),
+        diagnostics,
+    }
 }
 
 #[cfg(test)]

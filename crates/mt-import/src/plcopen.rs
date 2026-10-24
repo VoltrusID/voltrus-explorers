@@ -398,7 +398,6 @@ fn walk(xml: &str) -> Result<Builder, XmlError> {
     Ok(builder)
 }
 
-
 fn body_skip_reason(lang: &str) -> String {
     match lang {
         "IL" => "instruction list (IL) body is text but not Structured Text".into(),

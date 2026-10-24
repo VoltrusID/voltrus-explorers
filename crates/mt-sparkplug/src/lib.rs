@@ -21,7 +21,7 @@ pub mod pb;
 pub use pb::payload::Metric;
 pub use pb::{DataType, Payload};
 pub use publisher::{MetricSource, SparkplugConfig, SparkplugPublisher};
-pub use topic::{sparkplug_topic, SparkplugVerb};
+pub use topic::{SparkplugVerb, sparkplug_topic};
 pub use transport::{MqttTransport, RumqttcTransport, Will};
 pub use value::MetricValue;
 

@@ -1,5 +1,5 @@
-use crate::state::AppState;
 use crate::commands::target::RemoteForceValue;
+use crate::state::AppState;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct WatchedVar {
@@ -25,7 +25,8 @@ fn plc_value_to_json(val: &mt_plc_runtime::PlcValue) -> serde_json::Value {
             serde_json::json!(items)
         }
         mt_plc_runtime::PlcValue::Struct(fields) => {
-            let map: serde_json::Map<String, serde_json::Value> = fields.iter()
+            let map: serde_json::Map<String, serde_json::Value> = fields
+                .iter()
                 .map(|(k, v)| (k.clone(), plc_value_to_json(v)))
                 .collect();
             serde_json::Value::Object(map)
@@ -42,12 +43,15 @@ pub async fn get_watched_variables(
     match *plc {
         Some(ref runtime) => {
             let vars = runtime.watch_variables();
-            Ok(vars.iter().map(|v| WatchedVar {
-                name: v.name.clone(),
-                value: plc_value_to_json(&v.value),
-                type_name: v.type_name.clone(),
-                quality: v.quality.clone(),
-            }).collect())
+            Ok(vars
+                .iter()
+                .map(|v| WatchedVar {
+                    name: v.name.clone(),
+                    value: plc_value_to_json(&v.value),
+                    type_name: v.type_name.clone(),
+                    quality: v.quality.clone(),
+                })
+                .collect())
         }
         None => Ok(vec![]),
     }
@@ -60,7 +64,10 @@ pub async fn force_variable(
     value: serde_json::Value,
 ) -> Result<(), String> {
     // Remote mode: route by target kind — gRPC (Linux) or WebSocket (ESP32)
-    let connected = state.target.connected.load(std::sync::atomic::Ordering::SeqCst);
+    let connected = state
+        .target
+        .connected
+        .load(std::sync::atomic::Ordering::SeqCst);
     if connected {
         let kind = state.target.target_kind.lock().await.clone();
         match kind {
@@ -95,7 +102,12 @@ pub async fn force_variable(
             }
             crate::state::TargetKind::WebSocket => {
                 let force_val = RemoteForceValue::from_json(&value);
-                crate::commands::target::send_remote_force(&state.target.ws_sink, &name, &force_val).await?;
+                crate::commands::target::send_remote_force(
+                    &state.target.ws_sink,
+                    &name,
+                    &force_val,
+                )
+                .await?;
                 return Ok(());
             }
         }
@@ -139,7 +151,10 @@ pub async fn unforce_variable(
     name: String,
 ) -> Result<(), String> {
     // Remote mode: route by target kind — gRPC (Linux) or WebSocket (ESP32)
-    let connected = state.target.connected.load(std::sync::atomic::Ordering::SeqCst);
+    let connected = state
+        .target
+        .connected
+        .load(std::sync::atomic::Ordering::SeqCst);
     if connected {
         let kind = state.target.target_kind.lock().await.clone();
         match kind {
@@ -169,10 +184,7 @@ pub async fn unforce_variable(
 }
 
 /// Unforce a variable on the local softPLC.
-async fn unforce_local(
-    state: &tauri::State<'_, AppState>,
-    name: &str,
-) -> Result<(), String> {
+async fn unforce_local(state: &tauri::State<'_, AppState>, name: &str) -> Result<(), String> {
     let mut plc = state.runtime.plc.lock().await;
     match *plc {
         Some(ref mut runtime) => {

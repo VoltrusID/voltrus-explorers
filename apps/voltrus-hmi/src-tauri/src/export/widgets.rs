@@ -1,5 +1,5 @@
-use crate::*;
 use super::{html_escape, js_escape, safe_color, safe_id, var_type_code};
+use crate::*;
 
 /// A JS string literal that will be placed inside a double-quoted HTML
 /// attribute (onclick/oninput): js-escape for the literal, html-escape for the
@@ -51,7 +51,9 @@ pub fn render_gauge_html(widget: &HmiWidget, var_access: &str) -> String {
 
     let dash_total = std::f64::consts::PI * radius;
     let text_y = cy - 25.0;
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
 
     let mut s = String::new();
     s.push_str(&format!(
@@ -101,7 +103,11 @@ pub fn render_gauge_html(widget: &HmiWidget, var_access: &str) -> String {
     s.push_str("</span>\n");
 
     s.push_str("    <span style=\"font-size:10px;color:#666\">");
-    s.push_str(&format!("{} - {}", js_num(widget.min, 0.0), js_num(widget.max, 100.0)));
+    s.push_str(&format!(
+        "{} - {}",
+        js_num(widget.min, 0.0),
+        js_num(widget.max, 100.0)
+    ));
     s.push_str("</span>\n");
 
     s.push_str("</div>");
@@ -145,7 +151,9 @@ bindings["{var}"].push(function(v) {{
 pub fn render_chart_html(widget: &HmiWidget, var_access: &str) -> String {
     let id = safe_id(&widget.id);
     let color = safe_color(&widget.color, "#22c55e");
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
     format!(
         r#"<div class="widget chart" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}background:#2a2a3a;border:1px solid #444;border-radius:4px;display:flex;flex-direction:column;align-items:center;padding:4px" {var}>
     <span style="font-size:11px;color:#999;flex-shrink:0" data-i18n="{label_attr}">{label}</span>
@@ -203,7 +211,9 @@ bindings["{var}"].push(function(v) {{
 pub fn render_indicator_html(widget: &HmiWidget, var_access: &str) -> String {
     let id = safe_id(&widget.id);
     let color = safe_color(&widget.color, "#22c55e");
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
     format!(
         r##"<div class="widget indicator" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;flex-direction:column;align-items:center;justify-content:center" {var}>
     <svg class="indicator-light" viewBox="0 0 60 60" style="width:60%;max-height:60%;overflow:visible"><circle id="ind-{id}" cx="30" cy="30" r="27" fill="#333" stroke="{color}" stroke-width="2" style="transition:fill 0.3s,filter 0.3s"/></svg>
@@ -256,7 +266,9 @@ pub fn render_button_html(widget: &HmiWidget, var_access: &str) -> String {
     } else {
         format!("(buttonStates['{var}'] ? 0 : 1)", var = var_attr)
     };
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
 
     format!(
         r#"<div class="widget button" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}" {var_access}>
@@ -282,7 +294,9 @@ pub fn render_button_html(widget: &HmiWidget, var_access: &str) -> String {
 /// Generate HTML for a slider widget with range input.
 pub fn render_slider_html(widget: &HmiWidget, var_access: &str) -> String {
     let color = safe_color(&widget.color, "#22c55e");
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
     let type_code = var_type_code(widget.data_type.as_deref());
     format!(
         r#"<div class="widget slider" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;background:#2a2a3a;border-radius:4px" {var}>
@@ -350,7 +364,9 @@ pub fn render_text_html(widget: &HmiWidget, var_access: &str) -> String {
     } else {
         "--".to_string()
     };
-    let z_index_style = widget.z_index.map_or(String::new(), |z| format!("z-index:{};", z));
+    let z_index_style = widget
+        .z_index
+        .map_or(String::new(), |z| format!("z-index:{};", z));
     format!(
         r#"<div class="widget text" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;position:absolute;{z}display:flex;align-items:center;justify-content:center" {var}>
     <span class="widget-value" id="txt-{id}" style="font-size:{fs}px;color:{color}" data-i18n="{label_attr}">{text}</span>

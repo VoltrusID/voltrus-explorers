@@ -29,7 +29,10 @@ impl MemoryModel {
     }
 
     pub fn get_variable(&self, name: &str) -> Option<&PlcValue> {
-        self.variables.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+        self.variables
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v)
     }
 
     pub fn get_variable_index(&self, name: &str) -> Option<usize> {
@@ -71,7 +74,10 @@ impl MemoryModel {
     }
 
     pub fn force_variable(&mut self, name: &str, value: PlcValue) -> Result<(), String> {
-        let index = self.variables.iter().position(|(n, _)| n == name)
+        let index = self
+            .variables
+            .iter()
+            .position(|(n, _)| n == name)
             .ok_or_else(|| format!("Variable '{}' not found", name))?;
         self.forced[index] = true;
         self.forced_values[index] = Some(value);
@@ -86,7 +92,9 @@ impl MemoryModel {
     }
 
     pub fn read_input(&self, address: usize) -> &PlcValue {
-        self.input_image.get(address).unwrap_or(&PlcValue::Bool(false))
+        self.input_image
+            .get(address)
+            .unwrap_or(&PlcValue::Bool(false))
     }
 
     pub fn write_output(&mut self, address: usize, value: PlcValue) {
@@ -96,7 +104,9 @@ impl MemoryModel {
     }
 
     pub fn read_output(&self, address: usize) -> &PlcValue {
-        self.output_image.get(address).unwrap_or(&PlcValue::Bool(false))
+        self.output_image
+            .get(address)
+            .unwrap_or(&PlcValue::Bool(false))
     }
 
     pub fn write_input(&mut self, address: usize, value: PlcValue) {
@@ -106,7 +116,9 @@ impl MemoryModel {
     }
 
     pub fn read_memory(&self, address: usize) -> &PlcValue {
-        self.memory_image.get(address).unwrap_or(&PlcValue::Bool(false))
+        self.memory_image
+            .get(address)
+            .unwrap_or(&PlcValue::Bool(false))
     }
 
     pub fn write_memory(&mut self, address: usize, value: PlcValue) {
@@ -128,12 +140,19 @@ impl MemoryModel {
             let index = self.variables.iter().position(|(n, _)| n == name).unwrap();
             let is_forced = self.forced.get(index).copied().unwrap_or(false);
             let actual_value = if is_forced {
-                self.forced_values.get(index).and_then(|v| v.clone()).unwrap_or_else(|| value.clone())
+                self.forced_values
+                    .get(index)
+                    .and_then(|v| v.clone())
+                    .unwrap_or_else(|| value.clone())
             } else {
                 value.clone()
             };
             let quality = if is_forced { "forced" } else { "good" };
-            (actual_value, value.type_name().to_string(), quality.to_string())
+            (
+                actual_value,
+                value.type_name().to_string(),
+                quality.to_string(),
+            )
         } else {
             (PlcValue::Dint(0), "UNKNOWN".to_string(), "bad".to_string())
         }

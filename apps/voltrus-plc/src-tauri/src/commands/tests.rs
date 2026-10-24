@@ -194,7 +194,9 @@ mod tests {
                         name: "high level alarms".to_string(),
                         outcome: ScenarioOutcome::Failed,
                         duration_ms: 34,
-                        failures: vec!["high_level_alarm: expected TRUE, got FALSE (BOOL)".to_string()],
+                        failures: vec![
+                            "high_level_alarm: expected TRUE, got FALSE (BOOL)".to_string(),
+                        ],
                         error: None,
                         assertions: vec![
                             Assertion {
@@ -234,7 +236,10 @@ mod tests {
         assert_eq!(dto.suites[0].scenarios[1].assertions.len(), 2);
         assert!(!dto.suites[0].scenarios[1].assertions[0].passed);
         assert_eq!(dto.suites[0].scenarios[1].assertions[0].expected, "TRUE");
-        assert_eq!(dto.suites[0].scenarios[1].assertions[0].actual, "FALSE (BOOL)");
+        assert_eq!(
+            dto.suites[0].scenarios[1].assertions[0].actual,
+            "FALSE (BOOL)"
+        );
     }
 
     #[test]
@@ -242,7 +247,10 @@ mod tests {
         let json = serde_json::to_value(map_report(sample_report())).unwrap();
         assert_eq!(json["duration_ms"], 100);
         assert_eq!(json["failure_count"], 1);
-        assert_eq!(json["suites"][0]["scenarios"][0]["assertions"][0]["expected"], "TRUE");
+        assert_eq!(
+            json["suites"][0]["scenarios"][0]["assertions"][0]["expected"],
+            "TRUE"
+        );
         assert!(json.get("durationMs").is_none());
     }
 
@@ -255,7 +263,10 @@ mod tests {
         let dto = map_report(report);
         assert_eq!(dto.error.as_deref(), Some("dir unreadable"));
         assert_eq!(dto.suites[0].scenarios[0].outcome, "error");
-        assert_eq!(dto.suites[0].scenarios[0].error.as_deref(), Some("TankLevel.st: compile error"));
+        assert_eq!(
+            dto.suites[0].scenarios[0].error.as_deref(),
+            Some("TankLevel.st: compile error")
+        );
     }
 
     #[test]

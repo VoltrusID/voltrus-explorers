@@ -1,7 +1,7 @@
-use crate::io_manager::{IoDriver, IoAddress, IoError, IoArea, IoSize};
+use crate::io_manager::{IoAddress, IoArea, IoDriver, IoError, IoSize};
 use crate::types::PlcValue;
-use mt_s7::{S7Client, S7Config, S7Tag, S7Area, S7DataType, S7Value};
 use mt_protocol::ProtocolClient;
+use mt_s7::{S7Area, S7Client, S7Config, S7DataType, S7Tag, S7Value};
 
 pub struct S7IoDriver {
     client: Option<S7Client>,
@@ -13,7 +13,13 @@ pub struct S7IoDriver {
 
 impl S7IoDriver {
     pub fn new(host: String, port: u16, rack: u8, slot: u8) -> Self {
-        Self { client: None, host, port, rack, slot }
+        Self {
+            client: None,
+            host,
+            port,
+            rack,
+            slot,
+        }
     }
 
     pub async fn connect(&mut self) -> Result<(), IoError> {
@@ -88,9 +94,17 @@ impl IoDriver for S7IoDriver {
         })?;
         let tags: Vec<S7Tag> = addresses.iter().map(|a| self.io_to_tag(a)).collect();
         let rt = tokio::runtime::Handle::current();
-        let values = rt.block_on(async { client.read(&tags).await })
-            .map_err(|e| IoError { message: format!("S7 read: {}", e), recoverable: true })?;
-        Ok(values.iter().zip(addresses.iter()).map(|(v, a)| Self::s7_to_plc(v, a.size)).collect())
+        let values = rt
+            .block_on(async { client.read(&tags).await })
+            .map_err(|e| IoError {
+                message: format!("S7 read: {}", e),
+                recoverable: true,
+            })?;
+        Ok(values
+            .iter()
+            .zip(addresses.iter())
+            .map(|(v, a)| Self::s7_to_plc(v, a.size))
+            .collect())
     }
 
     fn write_outputs(&mut self, mappings: &[(IoAddress, PlcValue)]) -> Result<(), IoError> {
@@ -103,14 +117,21 @@ impl IoDriver for S7IoDriver {
             let tag = self.io_to_tag(addr);
             let s7_val = Self::plc_to_s7(val);
             rt.block_on(async { client.write(&tag, s7_val).await })
-                .map_err(|e| IoError { message: format!("S7 write: {}", e), recoverable: true })?;
+                .map_err(|e| IoError {
+                    message: format!("S7 write: {}", e),
+                    recoverable: true,
+                })?;
         }
         Ok(())
     }
 
-    fn name(&self) -> &str { "s7" }
+    fn name(&self) -> &str {
+        "s7"
+    }
 
-    fn is_connected(&self) -> bool { self.client.is_some() }
+    fn is_connected(&self) -> bool {
+        self.client.is_some()
+    }
 
     fn disconnect(&mut self) {
         if let Some(ref client) = self.client {

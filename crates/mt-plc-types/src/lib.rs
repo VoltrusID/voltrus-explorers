@@ -314,7 +314,13 @@ impl PlcValue {
 
     pub fn to_int(&self) -> i32 {
         match self {
-            PlcValue::Bool(b) => if *b { 1 } else { 0 },
+            PlcValue::Bool(b) => {
+                if *b {
+                    1
+                } else {
+                    0
+                }
+            }
             PlcValue::Byte(b) => *b as i32,
             PlcValue::Int(i) => *i as i32,
             PlcValue::Dint(i) => *i,
@@ -336,7 +342,13 @@ impl PlcValue {
             PlcValue::Int(i) => i.to_string(),
             PlcValue::Dint(i) => i.to_string(),
             PlcValue::Real(f) => format!("{:.3}", f),
-            PlcValue::Bool(b) => if *b { "TRUE".into() } else { "FALSE".into() },
+            PlcValue::Bool(b) => {
+                if *b {
+                    "TRUE".into()
+                } else {
+                    "FALSE".into()
+                }
+            }
             PlcValue::Enum(e) => e.clone(),
             _ => String::new(),
         }
@@ -344,7 +356,13 @@ impl PlcValue {
 
     pub fn to_real(&self) -> f32 {
         match self {
-            PlcValue::Bool(b) => if *b { 1.0 } else { 0.0 },
+            PlcValue::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             PlcValue::Byte(b) => *b as f32,
             PlcValue::Int(i) => *i as f32,
             PlcValue::Dint(i) => *i as f32,
@@ -371,7 +389,12 @@ impl PlcValue {
             PlcValue::Word(_) => PlcValue::Word(0),
             PlcValue::Dword(_) => PlcValue::Dword(0),
             PlcValue::Array(_) => PlcValue::Array(vec![]),
-            PlcValue::Struct(fields) => PlcValue::Struct(fields.iter().map(|(n, v)| (n.clone(), v.zero_of_type())).collect()),
+            PlcValue::Struct(fields) => PlcValue::Struct(
+                fields
+                    .iter()
+                    .map(|(n, v)| (n.clone(), v.zero_of_type()))
+                    .collect(),
+            ),
             PlcValue::Enum(_) => PlcValue::Enum(String::new()),
         }
     }
@@ -394,7 +417,10 @@ impl std::fmt::Display for PlcValue {
                 write!(f, "[{}]", items.join(", "))
             }
             PlcValue::Struct(fields) => {
-                let items: Vec<String> = fields.iter().map(|(n, v)| format!("{}:={}", n, v)).collect();
+                let items: Vec<String> = fields
+                    .iter()
+                    .map(|(n, v)| format!("{}:={}", n, v))
+                    .collect();
                 write!(f, "({})", items.join(", "))
             }
             PlcValue::Enum(e) => write!(f, "{}", e),

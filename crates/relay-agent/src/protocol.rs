@@ -33,11 +33,21 @@ pub struct ResponseFrame {
 
 impl ResponseFrame {
     pub fn ok(id: &str, payload: Value) -> Self {
-        ResponseFrame { id: id.to_owned(), ok: true, payload: Some(payload), error: None }
+        ResponseFrame {
+            id: id.to_owned(),
+            ok: true,
+            payload: Some(payload),
+            error: None,
+        }
     }
 
     pub fn err(id: &str, error: impl Into<String>) -> Self {
-        ResponseFrame { id: id.to_owned(), ok: false, payload: None, error: Some(error.into()) }
+        ResponseFrame {
+            id: id.to_owned(),
+            ok: false,
+            payload: None,
+            error: Some(error.into()),
+        }
     }
 }
 

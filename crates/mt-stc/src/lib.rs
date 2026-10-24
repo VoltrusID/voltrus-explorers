@@ -52,10 +52,11 @@ fn strip_type_blocks(source: &str) -> String {
     let upper_chars: Vec<char> = upper.chars().collect();
 
     while i < chars.len() {
-        if !in_type && i + 4 <= upper_chars.len() && &upper_chars[i..i+4] == ['T', 'Y', 'P', 'E'] {
+        if !in_type && i + 4 <= upper_chars.len() && &upper_chars[i..i + 4] == ['T', 'Y', 'P', 'E']
+        {
             // Check it's "TYPE" not part of a longer word
-            let before_ok = i == 0 || !chars[i-1].is_alphanumeric();
-            let after_ok = i + 4 >= upper_chars.len() || !chars[i+4].is_alphanumeric();
+            let before_ok = i == 0 || !chars[i - 1].is_alphanumeric();
+            let after_ok = i + 4 >= upper_chars.len() || !chars[i + 4].is_alphanumeric();
             if before_ok && after_ok {
                 in_type = true;
                 depth = 0;
@@ -63,9 +64,12 @@ fn strip_type_blocks(source: &str) -> String {
                 continue;
             }
         }
-        if in_type && i + 8 <= upper_chars.len() && &upper_chars[i..i+8] == ['E', 'N', 'D', '_', 'T', 'Y', 'P', 'E'] {
-            let before_ok = i == 0 || !chars[i-1].is_alphanumeric();
-            let after_ok = i + 8 >= upper_chars.len() || !chars[i+8].is_alphanumeric();
+        if in_type
+            && i + 8 <= upper_chars.len()
+            && &upper_chars[i..i + 8] == ['E', 'N', 'D', '_', 'T', 'Y', 'P', 'E']
+        {
+            let before_ok = i == 0 || !chars[i - 1].is_alphanumeric();
+            let after_ok = i + 8 >= upper_chars.len() || !chars[i + 8].is_alphanumeric();
             if before_ok && after_ok {
                 in_type = false;
                 i += 8;
@@ -106,10 +110,8 @@ pub fn compile(source: &str) -> CompileOutput {
                 if msg.contains("unused variable") || msg.contains("type mismatch") {
                     continue;
                 }
-                let (start_line, start_col) =
-                    byte_offset_to_line_col(source, d.span.start);
-                let (end_line, end_col) =
-                    byte_offset_to_line_col(source, d.span.end);
+                let (start_line, start_col) = byte_offset_to_line_col(source, d.span.start);
+                let (end_line, end_col) = byte_offset_to_line_col(source, d.span.end);
                 diagnostics.push(Diagnostic {
                     severity: format!("{:?}", d.severity).to_lowercase(),
                     message: msg,
@@ -213,7 +215,10 @@ pub fn compile_project(sources: &[(String, String)]) -> CompileOutput {
                 diagnostics.push(Diagnostic {
                     severity: "error".to_string(),
                     message: format!("{}: {}", name, e),
-                    line: 1, col: 1, end_line: 1, end_col: 5,
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 5,
                     source: "parser".to_string(),
                 });
             }
@@ -254,8 +259,7 @@ pub fn compile_project(sources: &[(String, String)]) -> CompileOutput {
                 let name_offset = all_name_constants.len();
                 for instr in &mut module.instructions {
                     match instr.opcode {
-                        mt_plc_types::Opcode::LoadVar
-                        | mt_plc_types::Opcode::StoreVar => {
+                        mt_plc_types::Opcode::LoadVar | mt_plc_types::Opcode::StoreVar => {
                             if let Some(ref mut slot) = instr.operand {
                                 *slot += slot_offset as i32;
                             }
@@ -286,7 +290,11 @@ pub fn compile_project(sources: &[(String, String)]) -> CompileOutput {
 
     if has_codegen_errors || pou_count == 0 {
         CompileOutput {
-            success: false, diagnostics, pou_count, variable_count, module: None,
+            success: false,
+            diagnostics,
+            pou_count,
+            variable_count,
+            module: None,
         }
     } else {
         CompileOutput {
@@ -431,23 +439,36 @@ mod tests {
         let module = module.unwrap();
         assert_eq!(module.name, "Main");
         // The enum variable should have been created
-        assert!(module.variable_slots.iter().any(|(n, _)| n == "c"), "Expected 'c' variable");
-        let c_var = module.variable_slots.iter().find(|(n, _)| n == "c").unwrap();
+        assert!(
+            module.variable_slots.iter().any(|(n, _)| n == "c"),
+            "Expected 'c' variable"
+        );
+        let c_var = module
+            .variable_slots
+            .iter()
+            .find(|(n, _)| n == "c")
+            .unwrap();
         assert_eq!(c_var.1.type_name(), "ENUM");
     }
 
     #[test]
     fn test_compile_project_multi_pou() {
         let sources = vec![
-            ("Main".to_string(), r#"
+            (
+                "Main".to_string(),
+                r#"
                 PROGRAM Main
                 VAR
                     x : INT;
                 END_VAR
                     x := 1;
                 END_PROGRAM
-            "#.to_string()),
-            ("Helper".to_string(), r#"
+            "#
+                .to_string(),
+            ),
+            (
+                "Helper".to_string(),
+                r#"
                 FUNCTION_BLOCK Helper
                 VAR_INPUT
                     val : INT;
@@ -457,11 +478,17 @@ mod tests {
                 END_VAR
                     result := val + 1;
                 END_FUNCTION_BLOCK
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
         ];
         let result = compile_project(&sources);
         assert!(result.success, "Compile failed: {:?}", result.diagnostics);
-        assert_eq!(result.pou_count, 2, "Expected 2 POUs, got {}", result.pou_count);
+        assert_eq!(
+            result.pou_count, 2,
+            "Expected 2 POUs, got {}",
+            result.pou_count
+        );
         assert!(result.module.is_some());
         let module = result.module.unwrap();
         assert_eq!(module.pou_table.len(), 2);
@@ -489,7 +516,12 @@ mod tests {
         let module = result.module.unwrap();
         assert!(!module.instructions.is_empty());
         // Should have at least a Halt instruction
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::Halt));
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::Halt)
+        );
     }
 
     #[test]
@@ -597,12 +629,21 @@ mod tests {
         assert!(result.module.is_some());
         let module = result.module.unwrap();
         // Timer should generate TonCall opcode and hidden Q/ET variable slots
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::TonCall),
-            "Expected TonCall instruction");
-        assert!(module.variable_slots.iter().any(|(n, _)| n == "delay.Q"),
-            "Expected delay.Q variable slot");
-        assert!(module.variable_slots.iter().any(|(n, _)| n == "delay.ET"),
-            "Expected delay.ET variable slot");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::TonCall),
+            "Expected TonCall instruction"
+        );
+        assert!(
+            module.variable_slots.iter().any(|(n, _)| n == "delay.Q"),
+            "Expected delay.Q variable slot"
+        );
+        assert!(
+            module.variable_slots.iter().any(|(n, _)| n == "delay.ET"),
+            "Expected delay.ET variable slot"
+        );
     }
 
     #[test]
@@ -623,8 +664,13 @@ mod tests {
         assert!(result.success, "Compile failed: {:?}", result.diagnostics);
         assert!(result.module.is_some());
         let module = result.module.unwrap();
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::CtuCall),
-            "Expected CtuCall instruction");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::CtuCall),
+            "Expected CtuCall instruction"
+        );
     }
 
     #[test]
@@ -647,8 +693,13 @@ mod tests {
         assert!(result.success, "Compile failed: {:?}", result.diagnostics);
         assert!(result.module.is_some());
         let module = result.module.unwrap();
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::CtudCall),
-            "Expected CtudCall instruction");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::CtudCall),
+            "Expected CtudCall instruction"
+        );
     }
 
     #[test]
@@ -672,10 +723,20 @@ mod tests {
         assert!(result.success, "Compile failed: {:?}", result.diagnostics);
         assert!(result.module.is_some());
         let module = result.module.unwrap();
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::RTrigCall),
-            "Expected RTrigCall instruction");
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::FTrigCall),
-            "Expected FTrigCall instruction");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::RTrigCall),
+            "Expected RTrigCall instruction"
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::FTrigCall),
+            "Expected FTrigCall instruction"
+        );
     }
 
     #[test]
@@ -723,12 +784,27 @@ mod tests {
         assert!(result.module.is_some());
         let module = result.module.unwrap();
         // Should contain Mul and Div opcodes
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::Mul),
-            "Expected Mul instruction");
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::Div),
-            "Expected Div instruction");
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::Add),
-            "Expected Add instruction");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::Mul),
+            "Expected Mul instruction"
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::Div),
+            "Expected Div instruction"
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::Add),
+            "Expected Add instruction"
+        );
     }
 
     #[test]
@@ -752,8 +828,13 @@ mod tests {
         assert!(result.success, "Compile failed: {:?}", result.diagnostics);
         let module = result.module.unwrap();
         // Should have Jump opcodes for EXIT
-        assert!(module.instructions.iter().any(|i| i.opcode == mt_plc_types::Opcode::Jump),
-            "Expected Jump instruction for EXIT");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| i.opcode == mt_plc_types::Opcode::Jump),
+            "Expected Jump instruction for EXIT"
+        );
     }
 
     #[test]
@@ -767,8 +848,17 @@ mod tests {
             END_PROGRAM
         "#;
         let result = compile(source);
-        assert!(!result.success, "Expected compile to fail for unknown function");
-        assert!(result.diagnostics.iter().any(|d| d.message.contains("Unknown function")),
-            "Expected 'Unknown function' error, got: {:?}", result.diagnostics);
+        assert!(
+            !result.success,
+            "Expected compile to fail for unknown function"
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("Unknown function")),
+            "Expected 'Unknown function' error, got: {:?}",
+            result.diagnostics
+        );
     }
 }

@@ -1,5 +1,5 @@
-use crate::*;
 use super::js_escape;
+use crate::*;
 
 /// Generate auth HTML — role indicator in status bar + PIN modal.
 pub fn render_auth_html() -> String {
@@ -271,5 +271,6 @@ applyRoleToControls();
 
 /// Generate role indicator HTML for status bar.
 pub fn render_role_indicator_html() -> String {
-    r#"<span id="role-indicator" style="cursor:pointer" onclick="showPinModal()">🔒 Viewer</span>"#.to_string()
+    r#"<span id="role-indicator" style="cursor:pointer" onclick="showPinModal()">🔒 Viewer</span>"#
+        .to_string()
 }

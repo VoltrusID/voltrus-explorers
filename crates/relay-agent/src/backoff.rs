@@ -12,7 +12,11 @@ pub struct Backoff {
 
 impl Backoff {
     pub fn new(base: Duration, max: Duration) -> Self {
-        Backoff { attempt: 0, base, max }
+        Backoff {
+            attempt: 0,
+            base,
+            max,
+        }
     }
 
     /// Advance the sequence and return the next delay.

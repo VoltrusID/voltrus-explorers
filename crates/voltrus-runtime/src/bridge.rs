@@ -47,7 +47,12 @@ impl VariableCache {
                 MetricSource {
                     name: name.clone(),
                     get: Box::new(move || {
-                        cache.values.lock().get(i).and_then(|slot| slot.as_ref()).map(MetricValue::from)
+                        cache
+                            .values
+                            .lock()
+                            .get(i)
+                            .and_then(|slot| slot.as_ref())
+                            .map(MetricValue::from)
                     }),
                 }
             })

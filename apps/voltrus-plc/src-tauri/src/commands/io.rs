@@ -99,13 +99,15 @@ pub async fn configure_io_driver(
 }
 
 #[tauri::command]
-pub async fn disconnect_io_driver(
-    state: tauri::State<'_, AppState>,
-) -> Result<IoStatus, String> {
+pub async fn disconnect_io_driver(state: tauri::State<'_, AppState>) -> Result<IoStatus, String> {
     let mut io = state.io.driver.lock().await;
     let config_guard = state.io.config.lock().await;
-    let protocol = config_guard.as_ref().map_or("modbus".to_string(), |c| c.protocol.clone());
-    let host = config_guard.as_ref().map_or(String::new(), |c| c.host.clone());
+    let protocol = config_guard
+        .as_ref()
+        .map_or("modbus".to_string(), |c| c.protocol.clone());
+    let host = config_guard
+        .as_ref()
+        .map_or(String::new(), |c| c.host.clone());
     let port = config_guard.as_ref().map_or(0, |c| c.port);
     let unit_id = config_guard.as_ref().map_or(0, |c| c.unit_id);
     drop(config_guard);
@@ -127,13 +129,13 @@ pub async fn disconnect_io_driver(
 }
 
 #[tauri::command]
-pub async fn get_io_status(
-    state: tauri::State<'_, AppState>,
-) -> Result<IoStatus, String> {
+pub async fn get_io_status(state: tauri::State<'_, AppState>) -> Result<IoStatus, String> {
     let io = state.io.driver.lock().await;
     let config = state.io.config.lock().await;
     let connected = io.as_ref().map_or(false, |d| d.is_connected());
-    let protocol = io.as_ref().map_or("modbus".to_string(), |d| d.name().to_string());
+    let protocol = io
+        .as_ref()
+        .map_or("modbus".to_string(), |d| d.name().to_string());
     let host = config.as_ref().map_or(String::new(), |c| c.host.clone());
     let port = config.as_ref().map_or(0, |c| c.port);
     let unit_id = config.as_ref().map_or(0, |c| c.unit_id);
@@ -175,16 +177,24 @@ pub async fn io_test_read(
                 Ok(values) => Ok(IoReadResult {
                     success: true,
                     address,
-                    value: values.first().map(|v| format!("{:?}", v)).unwrap_or_default(),
+                    value: values
+                        .first()
+                        .map(|v| format!("{:?}", v))
+                        .unwrap_or_default(),
                     error: None,
                 }),
                 Err(e) => Ok(IoReadResult {
-                    success: false, address, value: String::new(), error: Some(e.to_string()),
+                    success: false,
+                    address,
+                    value: String::new(),
+                    error: Some(e.to_string()),
                 }),
             }
         }
         None => Ok(IoReadResult {
-            success: false, address, value: String::new(),
+            success: false,
+            address,
+            value: String::new(),
             error: Some("Not connected to any device".into()),
         }),
     }
@@ -210,23 +220,29 @@ pub async fn io_test_write(
                 driver.write_outputs(&[(addr, mt_plc_runtime::PlcValue::Dint(value as i32))])
             }) {
                 Ok(()) => Ok(IoReadResult {
-                    success: true, address, value: format!("{}", value), error: None,
+                    success: true,
+                    address,
+                    value: format!("{}", value),
+                    error: None,
                 }),
                 Err(e) => Ok(IoReadResult {
-                    success: false, address, value: String::new(), error: Some(e.to_string()),
+                    success: false,
+                    address,
+                    value: String::new(),
+                    error: Some(e.to_string()),
                 }),
             }
         }
         None => Ok(IoReadResult {
-            success: false, address, value: String::new(),
+            success: false,
+            address,
+            value: String::new(),
             error: Some("Not connected to any device".into()),
         }),
     }
 }
 
 #[tauri::command]
-pub async fn get_io_mappings(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<IoMapping>, String> {
+pub async fn get_io_mappings(state: tauri::State<'_, AppState>) -> Result<Vec<IoMapping>, String> {
     Ok(state.io.mappings.lock().await.clone())
 }

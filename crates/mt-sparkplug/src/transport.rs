@@ -72,7 +72,12 @@ impl MqttTransport for RumqttcTransport {
     async fn connect(&mut self, will: Will) -> Result<(), SparkplugError> {
         let mut options = MqttOptions::new(&self.client_id, &self.host, self.port);
         options.set_keep_alive(self.keep_alive);
-        options.set_last_will(LastWill::new(will.topic, will.payload, QoS::AtMostOnce, false));
+        options.set_last_will(LastWill::new(
+            will.topic,
+            will.payload,
+            QoS::AtMostOnce,
+            false,
+        ));
 
         let (client, mut eventloop) = AsyncClient::new(options, 16);
 

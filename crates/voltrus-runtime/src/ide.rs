@@ -19,12 +19,12 @@ use std::time::SystemTime;
 
 use anyhow::Context;
 use axum::{
+    Json, Router,
     extract::{Path, Request, State},
-    http::{header, HeaderValue, Method, StatusCode},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
@@ -133,7 +133,10 @@ pub fn router(config: Arc<IdeConfig>) -> Router {
         .route("/api/auth/login", post(login))
         .route("/api/auth/me", get(me))
         .route("/api/projects", get(list_projects).post(create_project))
-        .route("/api/projects/{id}", get(get_project).delete(delete_project))
+        .route(
+            "/api/projects/{id}",
+            get(get_project).delete(delete_project),
+        )
         .route("/api/projects/{id}/files", get(list_files))
         .route(
             "/api/projects/{id}/files/{*path}",
@@ -239,7 +242,8 @@ async fn list_projects(State(cfg): State<Arc<IdeConfig>>) -> Response {
         }
         let files = project_files(&path);
         let (created_at, dir_modified) = dir_timestamps(&path);
-        let updated_at = latest_mtime(&files).map_or(dir_modified, |latest| latest.max(dir_modified));
+        let updated_at =
+            latest_mtime(&files).map_or(dir_modified, |latest| latest.max(dir_modified));
         projects.push(ProjectSummary {
             id: name.to_string(),
             created_at,
@@ -283,7 +287,10 @@ async fn create_project(
     }
     if let Err(e) = fs::create_dir_all(&dir) {
         tracing::warn!("creating project dir {}: {e}", dir.display());
-        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "failed to create project");
+        return err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to create project",
+        );
     }
     // Marker keeps a brand-new (file-less) project visible in listings.
     let _ = fs::write(dir.join(PROJECT_MARKER), b"");
@@ -332,7 +339,10 @@ async fn delete_project(State(cfg): State<Arc<IdeConfig>>, Path(id): Path<String
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::warn!("removing project dir {}: {e}", dir.display());
-            err_json(StatusCode::INTERNAL_SERVER_ERROR, "failed to delete project")
+            err_json(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to delete project",
+            )
         }
     }
 }
@@ -410,7 +420,9 @@ async fn delete_file(
     // Cloud parity: deleting an absent key still 204s.
     match fs::remove_file(&resolved) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => StatusCode::NO_CONTENT.into_response(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => {
             tracing::warn!("removing {}: {e}", resolved.display());
             err_json(StatusCode::INTERNAL_SERVER_ERROR, "failed to delete file")
@@ -775,7 +787,8 @@ mod tests {
             ),
             None => (String::new(), Vec::new()),
         };
-        let req = format!("{method} {path} HTTP/1.1\r\nhost: test\r\nconnection: close\r\n{headers}\r\n");
+        let req =
+            format!("{method} {path} HTTP/1.1\r\nhost: test\r\nconnection: close\r\n{headers}\r\n");
         stream.write_all(req.as_bytes()).await.unwrap();
         stream.write_all(&payload).await.unwrap();
         let mut raw = Vec::new();
@@ -822,7 +835,10 @@ mod tests {
 
     /// Boot a server over an ephemeral port against tempdirs. The caller must
     /// hold the returned sender — dropping it shuts the server down.
-    async fn spawn(ide_dir: &StdPath, projects_dir: &StdPath) -> (std::net::SocketAddr, watch::Sender<bool>) {
+    async fn spawn(
+        ide_dir: &StdPath,
+        projects_dir: &StdPath,
+    ) -> (std::net::SocketAddr, watch::Sender<bool>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let config = IdeConfig {
@@ -844,7 +860,13 @@ mod tests {
     }
 
     async fn create_project(addr: std::net::SocketAddr, name: &str) -> TestResponse {
-        json_request(addr, "POST", "/api/projects", serde_json::json!({ "name": name })).await
+        json_request(
+            addr,
+            "POST",
+            "/api/projects",
+            serde_json::json!({ "name": name }),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -898,7 +920,9 @@ mod tests {
         assert_eq!(create_project(addr, "pump_house").await.status, 409);
         // Missing/blank name mirrors the cloud 400.
         assert_eq!(
-            json_request(addr, "POST", "/api/projects", serde_json::json!({})).await.status,
+            json_request(addr, "POST", "/api/projects", serde_json::json!({}))
+                .await
+                .status,
             400
         );
 
@@ -918,7 +942,13 @@ mod tests {
         );
 
         // GET the file back: {content}.
-        let res = request(addr, "GET", "/api/projects/pump_house/files/pumps%2Fmain.st", None).await;
+        let res = request(
+            addr,
+            "GET",
+            "/api/projects/pump_house/files/pumps%2Fmain.st",
+            None,
+        )
+        .await;
         assert_eq!(res.status, 200);
         assert_eq!(res.json()["content"], program);
 
@@ -963,27 +993,48 @@ mod tests {
         )
         .await;
         assert_eq!(res.status, 204);
-        let res = request(addr, "GET", "/api/projects/pump_house/files/aardvark.st", None).await;
+        let res = request(
+            addr,
+            "GET",
+            "/api/projects/pump_house/files/aardvark.st",
+            None,
+        )
+        .await;
         assert_eq!(res.json()["content"], "x");
 
         // Delete a file → 204, then 404.
         assert_eq!(
-            request(addr, "DELETE", "/api/projects/pump_house/files/aardvark.st", None)
-                .await
-                .status,
+            request(
+                addr,
+                "DELETE",
+                "/api/projects/pump_house/files/aardvark.st",
+                None
+            )
+            .await
+            .status,
             204
         );
         assert_eq!(
-            request(addr, "GET", "/api/projects/pump_house/files/aardvark.st", None)
-                .await
-                .status,
+            request(
+                addr,
+                "GET",
+                "/api/projects/pump_house/files/aardvark.st",
+                None
+            )
+            .await
+            .status,
             404
         );
         // Deleting an absent file still 204s (R2 parity).
         assert_eq!(
-            request(addr, "DELETE", "/api/projects/pump_house/files/aardvark.st", None)
-                .await
-                .status,
+            request(
+                addr,
+                "DELETE",
+                "/api/projects/pump_house/files/aardvark.st",
+                None
+            )
+            .await
+            .status,
             204
         );
 
@@ -1003,11 +1054,18 @@ mod tests {
 
         // Delete the project → 204, gone from disk and API.
         assert_eq!(
-            request(addr, "DELETE", "/api/projects/pump_house", None).await.status,
+            request(addr, "DELETE", "/api/projects/pump_house", None)
+                .await
+                .status,
             204
         );
         assert!(!projects.join("pump_house").exists());
-        assert_eq!(request(addr, "GET", "/api/projects/pump_house", None).await.status, 404);
+        assert_eq!(
+            request(addr, "GET", "/api/projects/pump_house", None)
+                .await
+                .status,
+            404
+        );
     }
 
     #[tokio::test]
@@ -1020,7 +1078,11 @@ mod tests {
 
         let secret = format!(
             "..%2F..%2F{}%2Fsecret.txt",
-            tempdir("vrt-escape-trav").file_name().unwrap().to_str().unwrap()
+            tempdir("vrt-escape-trav")
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
         );
         for path in [
             "..%2F..%2Fetc%2Fpasswd".to_string(),
@@ -1078,7 +1140,11 @@ mod tests {
         let ide = tempdir("vrt-ide-spa");
         let projects = tempdir("vrt-projects-spa");
         fs::create_dir_all(ide.join("assets")).unwrap();
-        fs::write(ide.join("index.html"), "<!doctype html><title>voltrus</title>").unwrap();
+        fs::write(
+            ide.join("index.html"),
+            "<!doctype html><title>voltrus</title>",
+        )
+        .unwrap();
         fs::write(ide.join("assets/app-9f3c12.js"), "console.log(1)").unwrap();
         fs::write(ide.join("assets/logo.png"), [0x89, b'P', b'N', b'G']).unwrap();
         let (addr, _shutdown) = spawn(&ide, &projects).await;
@@ -1093,14 +1159,21 @@ mod tests {
 
         let res = request(addr, "GET", "/ide/assets/app-9f3c12.js", None).await;
         assert_eq!(res.status, 200);
-        assert!(res.header("content-type").unwrap().starts_with("text/javascript"));
+        assert!(
+            res.header("content-type")
+                .unwrap()
+                .starts_with("text/javascript")
+        );
         assert_eq!(res.header("cache-control"), Some("public, max-age=300"));
 
         let res = request(addr, "GET", "/ide/assets/logo.png", None).await;
         assert_eq!(res.status, 200);
         assert_eq!(res.header("content-type"), Some("image/png"));
 
-        assert_eq!(request(addr, "GET", "/ide/missing.js", None).await.status, 404);
+        assert_eq!(
+            request(addr, "GET", "/ide/missing.js", None).await.status,
+            404
+        );
     }
 
     #[tokio::test]
@@ -1154,10 +1227,20 @@ mod tests {
         assert_eq!(by_id["pump_house"]["fileCount"], 2);
         assert_eq!(by_id["fresh_proj"]["fileCount"], 0);
         assert_eq!(by_id["station"]["fileCount"], 2);
-        assert!(by_id["pump_house"]["createdAt"].as_str().unwrap().contains('T'));
+        assert!(
+            by_id["pump_house"]["createdAt"]
+                .as_str()
+                .unwrap()
+                .contains('T')
+        );
 
         // Every listed project is addressable; non-projects are not.
-        assert_eq!(request(addr, "GET", "/api/projects/pump_house", None).await.status, 200);
+        assert_eq!(
+            request(addr, "GET", "/api/projects/pump_house", None)
+                .await
+                .status,
+            200
+        );
         let res = request(addr, "GET", "/api/projects/notes", None).await;
         assert_eq!(res.status, 404);
         assert_eq!(res.json()["error"], "project not found");
@@ -1199,13 +1282,18 @@ mod tests {
         stream.read_to_end(&mut raw).await.unwrap();
         let head = String::from_utf8_lossy(&raw).into_owned();
         assert!(head.starts_with("HTTP/1.1 204"), "preflight is 204: {head}");
-        assert!(head.to_ascii_lowercase().contains(
-            "access-control-allow-origin: http://192.168.1.50:5173"
-        ));
-        assert!(head
-            .to_ascii_lowercase()
-            .contains("access-control-allow-headers: authorization, content-type"));
-        assert!(head.to_ascii_lowercase().contains("access-control-allow-methods: get, post, put, delete, options"));
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("access-control-allow-origin: http://192.168.1.50:5173")
+        );
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("access-control-allow-headers: authorization, content-type")
+        );
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("access-control-allow-methods: get, post, put, delete, options")
+        );
 
         // Plain requests also echo the Origin (LAN SPA on another port).
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

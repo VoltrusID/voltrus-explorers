@@ -8,7 +8,7 @@
 //! empty name/line map and loads Enum inits as String.
 
 use mt_plc_types::{
-    crc32_le, CompiledModule, Instruction, IoMapping, IoProtocol, IoType, Opcode, PlcValue,
+    CompiledModule, Instruction, IoMapping, IoProtocol, IoType, Opcode, PlcValue, crc32_le,
 };
 use thiserror::Error;
 
@@ -54,7 +54,10 @@ pub struct Bundle {
 pub fn load_vlt1(bytes: &[u8]) -> Result<Bundle, BundleError> {
     // The trailing 4 bytes are a CRC32 over everything before them.
     if bytes.len() < 28 {
-        return Err(BundleError::Truncated { needed: 28, offset: bytes.len() });
+        return Err(BundleError::Truncated {
+            needed: 28,
+            offset: bytes.len(),
+        });
     }
     let split = bytes.len() - 4;
     let stored = u32::from_le_bytes([
@@ -90,8 +93,10 @@ pub fn load_vlt1(bytes: &[u8]) -> Result<Bundle, BundleError> {
         let raw_opcode = r.u8()?;
         let has_operand = r.u8()?;
         let raw_operand = r.i32le()?;
-        let opcode =
-            Opcode::from_u8(raw_opcode).ok_or(BundleError::BadOpcode { opcode: raw_opcode, index })?;
+        let opcode = Opcode::from_u8(raw_opcode).ok_or(BundleError::BadOpcode {
+            opcode: raw_opcode,
+            index,
+        })?;
         instructions.push(Instruction {
             opcode,
             operand: (has_operand != 0).then_some(raw_operand),
@@ -168,9 +173,10 @@ fn init_from_raw(tag: u8, raw: u32, pool: &[String]) -> Result<PlcValue, BundleE
 }
 
 fn pool_string(index: usize, pool: &[String]) -> Result<String, BundleError> {
-    pool.get(index)
-        .cloned()
-        .ok_or(BundleError::BadStringIndex { index, len: pool.len() })
+    pool.get(index).cloned().ok_or(BundleError::BadStringIndex {
+        index,
+        len: pool.len(),
+    })
 }
 
 fn io_type_from_u8(v: u8) -> Option<IoType> {
@@ -205,14 +211,14 @@ impl<'a> Reader<'a> {
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], BundleError> {
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or(BundleError::Truncated { needed: n, offset: self.pos })?;
-        let slice = self
-            .buf
-            .get(self.pos..end)
-            .ok_or(BundleError::Truncated { needed: n, offset: self.pos })?;
+        let end = self.pos.checked_add(n).ok_or(BundleError::Truncated {
+            needed: n,
+            offset: self.pos,
+        })?;
+        let slice = self.buf.get(self.pos..end).ok_or(BundleError::Truncated {
+            needed: n,
+            offset: self.pos,
+        })?;
         self.pos = end;
         Ok(slice)
     }
@@ -251,9 +257,18 @@ mod tests {
         CompiledModule {
             name: "Pump".into(),
             instructions: vec![
-                Instruction { opcode: Opcode::PushBool, operand: Some(1) },
-                Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-                Instruction { opcode: Opcode::Halt, operand: None },
+                Instruction {
+                    opcode: Opcode::PushBool,
+                    operand: Some(1),
+                },
+                Instruction {
+                    opcode: Opcode::StoreVar,
+                    operand: Some(0),
+                },
+                Instruction {
+                    opcode: Opcode::Halt,
+                    operand: None,
+                },
             ],
             variable_slots: vec![
                 ("pump".to_string(), PlcValue::Bool(true)),
@@ -321,12 +336,18 @@ mod tests {
         let mut bytes = mt_plc_types::serialize_bytecode(&sample_module(), &[]).unwrap();
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF;
-        assert!(matches!(load_vlt1(&bytes), Err(BundleError::CrcMismatch { .. })));
+        assert!(matches!(
+            load_vlt1(&bytes),
+            Err(BundleError::CrcMismatch { .. })
+        ));
     }
 
     #[test]
     fn rejects_truncated_input() {
-        assert!(matches!(load_vlt1(&[0u8; 4]), Err(BundleError::Truncated { .. })));
+        assert!(matches!(
+            load_vlt1(&[0u8; 4]),
+            Err(BundleError::Truncated { .. })
+        ));
     }
 
     #[test]

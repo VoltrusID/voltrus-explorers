@@ -65,19 +65,40 @@ mod tests {
         assert_eq!(MetricValue::Bool(true).data_type(), DataType::Boolean);
         assert_eq!(MetricValue::Int(-5).data_type(), DataType::Int64);
         assert_eq!(MetricValue::Real(1.5).data_type(), DataType::Double);
-        assert_eq!(MetricValue::String("x".into()).data_type(), DataType::String);
+        assert_eq!(
+            MetricValue::String("x".into()).data_type(),
+            DataType::String
+        );
     }
 
     #[test]
     fn plc_value_conversion() {
-        assert_eq!(MetricValue::from(PlcValue::Bool(true)), MetricValue::Bool(true));
+        assert_eq!(
+            MetricValue::from(PlcValue::Bool(true)),
+            MetricValue::Bool(true)
+        );
         assert_eq!(MetricValue::from(PlcValue::Byte(7)), MetricValue::Int(7));
         assert_eq!(MetricValue::from(PlcValue::Int(-2)), MetricValue::Int(-2));
-        assert_eq!(MetricValue::from(PlcValue::Dint(100_000)), MetricValue::Int(100_000));
-        assert_eq!(MetricValue::from(PlcValue::Time(250)), MetricValue::Int(250));
-        assert_eq!(MetricValue::from(PlcValue::Word(65_535)), MetricValue::Int(65_535));
-        assert_eq!(MetricValue::from(PlcValue::Dword(4_000_000)), MetricValue::Int(4_000_000));
-        assert_eq!(MetricValue::from(PlcValue::Real(2.5)), MetricValue::Real(2.5));
+        assert_eq!(
+            MetricValue::from(PlcValue::Dint(100_000)),
+            MetricValue::Int(100_000)
+        );
+        assert_eq!(
+            MetricValue::from(PlcValue::Time(250)),
+            MetricValue::Int(250)
+        );
+        assert_eq!(
+            MetricValue::from(PlcValue::Word(65_535)),
+            MetricValue::Int(65_535)
+        );
+        assert_eq!(
+            MetricValue::from(PlcValue::Dword(4_000_000)),
+            MetricValue::Int(4_000_000)
+        );
+        assert_eq!(
+            MetricValue::from(PlcValue::Real(2.5)),
+            MetricValue::Real(2.5)
+        );
         assert_eq!(
             MetricValue::from(PlcValue::String("ok".into())),
             MetricValue::String("ok".into())

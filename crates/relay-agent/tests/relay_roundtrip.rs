@@ -4,14 +4,14 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{accept_async, WebSocketStream};
+use tokio_tungstenite::{WebSocketStream, accept_async};
 
 use relay_agent::driver::echo::EchoDriver;
-use relay_agent::session::{run_session, SessionConfig};
+use relay_agent::session::{SessionConfig, run_session};
 
 type Ws = WebSocketStream<TcpStream>;
 
@@ -43,7 +43,9 @@ async fn recv_text(ws: &mut Ws) -> Value {
 }
 
 async fn send_json(ws: &mut Ws, value: Value) {
-    ws.send(Message::Text(value.to_string().into())).await.expect("send");
+    ws.send(Message::Text(value.to_string().into()))
+        .await
+        .expect("send");
 }
 
 fn session_config(port: u16) -> SessionConfig {
@@ -62,9 +64,10 @@ async fn echo_driver_round_trip() {
 
     let config = session_config(port);
     let session_config_owned = config.clone();
-    let session = tokio::spawn(async move {
-        run_session(&session_config_owned, &mut EchoDriver::new()).await
-    });
+    let session =
+        tokio::spawn(
+            async move { run_session(&session_config_owned, &mut EchoDriver::new()).await },
+        );
 
     let mut ws = tokio::time::timeout(Duration::from_secs(5), ws_rx.recv())
         .await
@@ -77,7 +80,11 @@ async fn echo_driver_round_trip() {
     assert_eq!(hello["payload"]["agent"], "relay-agent");
 
     // browse
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r1", "op": "browse", "payload": null })).await;
+    send_json(
+        &mut ws,
+        json!({ "deviceId": "dev-1", "id": "r1", "op": "browse", "payload": null }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r1");
     assert_eq!(reply["ok"], true);
@@ -97,7 +104,9 @@ async fn echo_driver_round_trip() {
 
     let mut saw_event = false;
     for _ in 0..5 {
-        let frame = tokio::time::timeout(Duration::from_secs(5), recv_text(&mut ws)).await.expect("event timeout");
+        let frame = tokio::time::timeout(Duration::from_secs(5), recv_text(&mut ws))
+            .await
+            .expect("event timeout");
         if frame["event"] == "variable_update" {
             assert_eq!(frame["payload"]["name"], "cycle_count");
             saw_event = true;
@@ -123,7 +132,12 @@ async fn echo_driver_round_trip() {
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r5");
     assert_eq!(reply["ok"], false);
-    assert!(reply["error"].as_str().expect("error string").contains("forced"));
+    assert!(
+        reply["error"]
+            .as_str()
+            .expect("error string")
+            .contains("forced")
+    );
 
     // unforce
     send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r6", "op": "unforce", "payload": { "name": "cycle_count" } })).await;
@@ -132,7 +146,11 @@ async fn echo_driver_round_trip() {
     assert_eq!(reply["ok"], true);
 
     // status
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r7", "op": "status", "payload": null })).await;
+    send_json(
+        &mut ws,
+        json!({ "deviceId": "dev-1", "id": "r7", "op": "status", "payload": null }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r7");
     assert_eq!(reply["payload"]["driver"], "echo");
@@ -178,7 +196,11 @@ async fn echo_driver_round_trip() {
     assert_eq!(reply["payload"]["crc32"], expected_crc);
 
     // The deployed fingerprint surfaces from status for drift comparison.
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r10", "op": "status", "payload": null })).await;
+    send_json(
+        &mut ws,
+        json!({ "deviceId": "dev-1", "id": "r10", "op": "status", "payload": null }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["payload"]["deployed_crc32"], expected_crc);
     assert_eq!(reply["payload"]["deployed_bytes"], module_json.len());
@@ -197,16 +219,29 @@ async fn echo_driver_round_trip() {
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r11");
     assert_eq!(reply["ok"], false);
-    assert!(reply["error"].as_str().expect("error string").contains("module_json"));
+    assert!(
+        reply["error"]
+            .as_str()
+            .expect("error string")
+            .contains("module_json")
+    );
 
     // missing module_json -> ok:false
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r12", "op": "deploy", "payload": {} })).await;
+    send_json(
+        &mut ws,
+        json!({ "deviceId": "dev-1", "id": "r12", "op": "deploy", "payload": {} }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r12");
     assert_eq!(reply["ok"], false);
 
     // unknown op -> ok:false
-    send_json(&mut ws, json!({ "deviceId": "dev-1", "id": "r13", "op": "teleport", "payload": null })).await;
+    send_json(
+        &mut ws,
+        json!({ "deviceId": "dev-1", "id": "r13", "op": "teleport", "payload": null }),
+    )
+    .await;
     let reply = recv_text(&mut ws).await;
     assert_eq!(reply["id"], "r13");
     assert_eq!(reply["ok"], false);
@@ -278,8 +313,15 @@ async fn reconnects_after_server_drop() {
 
 #[tokio::test]
 async fn rejects_bad_server_url() {
-    let config = SessionConfig { server: "http://not-ws".into(), device_id: "d".into(), pairing_token: "t".into() };
+    let config = SessionConfig {
+        server: "http://not-ws".into(),
+        device_id: "d".into(),
+        pairing_token: "t".into(),
+    };
     let result = run_session(&config, &mut EchoDriver::new()).await;
     let error = format!("{:#}", result.expect_err("bad URL must fail"));
-    assert!(error.contains("invalid relay server URL"), "unexpected error: {error}");
+    assert!(
+        error.contains("invalid relay server URL"),
+        "unexpected error: {error}"
+    );
 }

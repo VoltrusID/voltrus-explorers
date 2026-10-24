@@ -47,7 +47,7 @@ pub fn run(dir: &Path) -> CheckReport {
                 passed: false,
                 diagnostics: Vec::new(),
                 error: Some(format!("{err:#}")),
-            }
+            };
         }
     };
 
@@ -67,7 +67,7 @@ pub fn run(dir: &Path) -> CheckReport {
                     passed: false,
                     diagnostics,
                     error: Some(format!("failed to read {rel}: {err}")),
-                }
+                };
             }
         };
         for (line, col, message, severity) in compile_source(path, &source) {
@@ -102,10 +102,7 @@ pub fn run(dir: &Path) -> CheckReport {
 /// diagnostics are attributed to the diagram file itself (line 1, col 1) and
 /// the generated ST is then compiled through the normal `mt-stc` path.
 /// `.st` files compile directly.
-pub(crate) fn compile_source(
-    path: &Path,
-    source: &str,
-) -> Vec<(usize, usize, String, String)> {
+pub(crate) fn compile_source(path: &Path, source: &str) -> Vec<(usize, usize, String, String)> {
     let kind = path
         .extension()
         .and_then(|e| crate::diagram::DiagramKind::from_extension(&e.to_string_lossy()));
@@ -146,7 +143,11 @@ pub(crate) fn collect_files(
     Ok(found)
 }
 
-fn visit(dir: &Path, pred: &impl Fn(&Path) -> bool, found: &mut Vec<PathBuf>) -> anyhow::Result<()> {
+fn visit(
+    dir: &Path,
+    pred: &impl Fn(&Path) -> bool,
+    found: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
     let entries =
         fs::read_dir(dir).with_context(|| format!("failed to read directory {}", dir.display()))?;
     for entry in entries {

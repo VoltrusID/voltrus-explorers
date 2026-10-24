@@ -1,6 +1,6 @@
-use crate::io_manager::{IoDriver, IoAddress, IoError, IoArea, IoSize};
+use crate::io_manager::{IoAddress, IoArea, IoDriver, IoError, IoSize};
 use crate::types::PlcValue;
-use mt_enip::{EnipClient, EnipConfig, CipTag, CipDataType, CipValue};
+use mt_enip::{CipDataType, CipTag, CipValue, EnipClient, EnipConfig};
 use mt_protocol::ProtocolClient;
 
 pub struct EnipIoDriver {
@@ -11,7 +11,11 @@ pub struct EnipIoDriver {
 
 impl EnipIoDriver {
     pub fn new(host: String, port: u16) -> Self {
-        Self { client: None, host, port }
+        Self {
+            client: None,
+            host,
+            port,
+        }
     }
 
     pub async fn connect(&mut self) -> Result<(), IoError> {
@@ -86,8 +90,12 @@ impl IoDriver for EnipIoDriver {
         })?;
         let tags: Vec<CipTag> = addresses.iter().map(|a| self.io_to_tag(a)).collect();
         let rt = tokio::runtime::Handle::current();
-        let values = rt.block_on(async { client.read(&tags).await })
-            .map_err(|e| IoError { message: format!("ENIP read: {}", e), recoverable: true })?;
+        let values = rt
+            .block_on(async { client.read(&tags).await })
+            .map_err(|e| IoError {
+                message: format!("ENIP read: {}", e),
+                recoverable: true,
+            })?;
         Ok(values.iter().map(|v| Self::value_to_plc(v)).collect())
     }
 
@@ -101,14 +109,21 @@ impl IoDriver for EnipIoDriver {
             let tag = self.io_to_tag(addr);
             let cip_val = Self::plc_to_cip(plc_val);
             rt.block_on(async { client.write(&tag, cip_val).await })
-                .map_err(|e| IoError { message: format!("ENIP write: {}", e), recoverable: true })?;
+                .map_err(|e| IoError {
+                    message: format!("ENIP write: {}", e),
+                    recoverable: true,
+                })?;
         }
         Ok(())
     }
 
-    fn name(&self) -> &str { "enip" }
+    fn name(&self) -> &str {
+        "enip"
+    }
 
-    fn is_connected(&self) -> bool { self.client.is_some() }
+    fn is_connected(&self) -> bool {
+        self.client.is_some()
+    }
 
     fn disconnect(&mut self) {
         if let Some(ref client) = self.client {

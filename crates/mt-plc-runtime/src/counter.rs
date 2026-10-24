@@ -2,9 +2,9 @@
 #[derive(Debug, Clone)]
 pub struct CounterInstance {
     pub kind: CounterKind,
-    pub q: bool,     // Output
-    pub cv: i32,     // Current value
-    pub pv: i32,     // Preset value
+    pub q: bool, // Output
+    pub cv: i32, // Current value
+    pub pv: i32, // Preset value
     pub prev_cu: bool,
     pub prev_cd: bool,
 }

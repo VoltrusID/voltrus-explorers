@@ -34,7 +34,8 @@ use tonic::Request;
 ///
 /// `max_cycle_ms` watchdog is set to 100x the scan cycle (floor 1000 ms).
 pub async fn boot(module: CompiledModule, scan_cycle_ms: u64) -> Result<Arc<PlcRuntimeGrpcServer>> {
-    let bytecode = bincode::serialize(&module).context("encoding module for the runtime service")?;
+    let bytecode =
+        bincode::serialize(&module).context("encoding module for the runtime service")?;
     let config_json = format!(
         r#"{{"scan_cycle_ms": {}, "max_cycle_ms": {}}}"#,
         scan_cycle_ms.max(1),
@@ -42,18 +43,27 @@ pub async fn boot(module: CompiledModule, scan_cycle_ms: u64) -> Result<Arc<PlcR
     );
     let server = Arc::new(PlcRuntimeGrpcServer::new());
     let response = server
-        .deploy(Request::new(DeployRequest { bytecode, config_json }))
+        .deploy(Request::new(DeployRequest {
+            bytecode,
+            config_json,
+        }))
         .await
         .context("deploying bundle into the runtime service")?
         .into_inner();
-    anyhow::ensure!(response.success, "deploy rejected: {}", response.error_message);
+    anyhow::ensure!(
+        response.success,
+        "deploy rejected: {}",
+        response.error_message
+    );
     Ok(server)
 }
 
 /// Start the scan loop — the same `Start` RPC the IDE issues.
 pub async fn start_scan(server: &PlcRuntimeGrpcServer) -> Result<()> {
     server
-        .start(Request::new(StartConfig { config_json: String::new() }))
+        .start(Request::new(StartConfig {
+            config_json: String::new(),
+        }))
         .await
         .context("starting the scan loop")?;
     Ok(())
@@ -101,7 +111,10 @@ pub async fn run_sparkplug(
         let transport = match RumqttcTransport::new(&settings.broker_url, client_id.clone()) {
             Ok(transport) => transport,
             Err(e) => {
-                tracing::warn!("invalid Sparkplug broker URL {:?}: {e}", settings.broker_url);
+                tracing::warn!(
+                    "invalid Sparkplug broker URL {:?}: {e}",
+                    settings.broker_url
+                );
                 tokio::time::sleep(tick).await;
                 continue;
             }
@@ -208,9 +221,18 @@ mod tests {
         let module = CompiledModule {
             name: "Pump".into(),
             instructions: vec![
-                Instruction { opcode: Opcode::PushBool, operand: Some(1) },
-                Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-                Instruction { opcode: Opcode::Halt, operand: None },
+                Instruction {
+                    opcode: Opcode::PushBool,
+                    operand: Some(1),
+                },
+                Instruction {
+                    opcode: Opcode::StoreVar,
+                    operand: Some(0),
+                },
+                Instruction {
+                    opcode: Opcode::Halt,
+                    operand: None,
+                },
             ],
             variable_slots: vec![
                 ("pump".to_string(), PlcValue::Bool(false)),
@@ -225,15 +247,15 @@ mod tests {
 
         let server = boot(bundle.module, 10).await.expect("boot");
         let snapshot = server
-            .variable_snapshot(&["pump".to_string(), "target".to_string(), "missing".to_string()])
+            .variable_snapshot(&[
+                "pump".to_string(),
+                "target".to_string(),
+                "missing".to_string(),
+            ])
             .await;
         assert_eq!(
             snapshot,
-            vec![
-                Some(PlcValue::Bool(false)),
-                Some(PlcValue::Dint(40)),
-                None,
-            ]
+            vec![Some(PlcValue::Bool(false)), Some(PlcValue::Dint(40)), None,]
         );
 
         let cache = Arc::new(bridge::VariableCache::new(vec![
@@ -252,7 +274,10 @@ mod tests {
     async fn start_scan_transitions_to_running() {
         let module = CompiledModule {
             name: "Main".into(),
-            instructions: vec![Instruction { opcode: Opcode::Halt, operand: None }],
+            instructions: vec![Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            }],
             variable_slots: vec![],
             pou_table: vec![],
             name_constants: vec![],
@@ -287,7 +312,9 @@ mod tests {
             topic: &str,
             payload: &[u8],
         ) -> Result<(), mt_sparkplug::SparkplugError> {
-            self.publishes.lock().push((topic.to_string(), payload.to_vec()));
+            self.publishes
+                .lock()
+                .push((topic.to_string(), payload.to_vec()));
             Ok(())
         }
     }
@@ -295,7 +322,10 @@ mod tests {
     fn module_with_variables(variables: Vec<(&str, PlcValue)>) -> CompiledModule {
         CompiledModule {
             name: "Main".into(),
-            instructions: vec![Instruction { opcode: Opcode::Halt, operand: None }],
+            instructions: vec![Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            }],
             variable_slots: variables
                 .into_iter()
                 .map(|(name, value)| (name.to_string(), value))
@@ -317,7 +347,10 @@ mod tests {
         use prost::Message as _;
 
         let server = boot(
-            module_with_variables(vec![("pump", PlcValue::Dint(1)), ("target", PlcValue::Dint(0))]),
+            module_with_variables(vec![
+                ("pump", PlcValue::Dint(1)),
+                ("target", PlcValue::Dint(0)),
+            ]),
             10,
         )
         .await
@@ -339,7 +372,9 @@ mod tests {
                 deadband_by_prefix: vec![],
                 max_interval_ms: 60_000,
             },
-            RecordingTransport { publishes: recorded.clone() },
+            RecordingTransport {
+                publishes: recorded.clone(),
+            },
         );
         publisher.connect(1_000).await.unwrap();
 
@@ -376,14 +411,21 @@ mod tests {
         assert_eq!(event.deployed_bundle_crc32, crc32_le(&v2_bytes));
         assert_eq!(
             server.variable_names().await,
-            vec!["pump".to_string(), "target".to_string(), "extra".to_string()]
+            vec![
+                "pump".to_string(),
+                "target".to_string(),
+                "extra".to_string()
+            ]
         );
 
         // The bridge's event handling: catalog changed → rebirth with a
         // fresh catalog.
         let new_cache = Arc::new(VariableCache::new(server.variable_names().await));
         new_cache.refresh(server.variable_snapshot(new_cache.names()).await);
-        publisher.rebirth_with(new_cache.metric_sources(), 2_000).await.unwrap();
+        publisher
+            .rebirth_with(new_cache.metric_sources(), 2_000)
+            .await
+            .unwrap();
 
         let payloads = recorded.lock().clone();
         let births = payloads

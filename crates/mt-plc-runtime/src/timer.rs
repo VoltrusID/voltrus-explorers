@@ -1,13 +1,12 @@
-
 /// Timer instance (TON/TOF/TP)
 #[derive(Debug, Clone)]
 pub struct TimerInstance {
     pub kind: TimerKind,
-    pub q: bool,         // Output
-    pub et: i32,         // Elapsed time (ms)
-    pub pt: i32,         // Preset time (ms)
+    pub q: bool, // Output
+    pub et: i32, // Elapsed time (ms)
+    pub pt: i32, // Preset time (ms)
     pub start_time: Option<std::time::Instant>,
-    pub prev_in: bool,   // Previous input state (for edge detection)
+    pub prev_in: bool, // Previous input state (for edge detection)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

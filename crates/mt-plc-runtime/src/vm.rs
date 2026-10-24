@@ -128,518 +128,571 @@ impl Vm {
     }
 
     /// Execute a single instruction. Returns new PC.
-    fn execute_instruction(&mut self, instr: &Instruction, pc: usize, instructions: &[Instruction]) -> Result<usize, String> {
+    fn execute_instruction(
+        &mut self,
+        instr: &Instruction,
+        pc: usize,
+        instructions: &[Instruction],
+    ) -> Result<usize, String> {
         let mut next_pc = pc + 1;
         match instr.opcode {
-                Opcode::PushBool => {
-                    let val = instr.operand.unwrap_or(0) != 0;
-                    self.stack.push(PlcValue::Bool(val));
-                }
-                Opcode::PushInt => {
-                    let val = instr.operand.unwrap_or(0) as i16;
-                    self.stack.push(PlcValue::Int(val));
-                }
-                Opcode::PushDint => {
-                    let val = instr.operand.unwrap_or(0);
-                    self.stack.push(PlcValue::Dint(val));
-                }
-                Opcode::PushReal => {
-                    let val = f32::from_bits(instr.operand.unwrap_or(0) as u32);
-                    self.stack.push(PlcValue::Real(val));
-                }
-                Opcode::PushTime => {
-                    let val = instr.operand.unwrap_or(0);
-                    self.stack.push(PlcValue::Time(val));
-                }
-                Opcode::PushEnum => {
-                    let name_idx = instr.operand.unwrap_or(0) as usize;
-                    let name = self.name_constants.get(name_idx).cloned().unwrap_or_default();
-                    self.stack.push(PlcValue::Enum(name));
-                }
-                Opcode::PushString => {
-                    let str_idx = instr.operand.unwrap_or(0) as usize;
-                    let s = self.name_constants.get(str_idx).cloned().unwrap_or_default();
-                    self.stack.push(PlcValue::String(s));
-                }
+            Opcode::PushBool => {
+                let val = instr.operand.unwrap_or(0) != 0;
+                self.stack.push(PlcValue::Bool(val));
+            }
+            Opcode::PushInt => {
+                let val = instr.operand.unwrap_or(0) as i16;
+                self.stack.push(PlcValue::Int(val));
+            }
+            Opcode::PushDint => {
+                let val = instr.operand.unwrap_or(0);
+                self.stack.push(PlcValue::Dint(val));
+            }
+            Opcode::PushReal => {
+                let val = f32::from_bits(instr.operand.unwrap_or(0) as u32);
+                self.stack.push(PlcValue::Real(val));
+            }
+            Opcode::PushTime => {
+                let val = instr.operand.unwrap_or(0);
+                self.stack.push(PlcValue::Time(val));
+            }
+            Opcode::PushEnum => {
+                let name_idx = instr.operand.unwrap_or(0) as usize;
+                let name = self
+                    .name_constants
+                    .get(name_idx)
+                    .cloned()
+                    .unwrap_or_default();
+                self.stack.push(PlcValue::Enum(name));
+            }
+            Opcode::PushString => {
+                let str_idx = instr.operand.unwrap_or(0) as usize;
+                let s = self
+                    .name_constants
+                    .get(str_idx)
+                    .cloned()
+                    .unwrap_or_default();
+                self.stack.push(PlcValue::String(s));
+            }
 
-                Opcode::LoadVar => {
-                    let slot = instr.operand.unwrap_or(0) as usize;
-                    if let Some(val) = self.memory.get_by_index(slot) {
-                        self.stack.push(val.clone());
-                    } else {
-                        return Err(format!("LoadVar: slot {} out of range", slot));
+            Opcode::LoadVar => {
+                let slot = instr.operand.unwrap_or(0) as usize;
+                if let Some(val) = self.memory.get_by_index(slot) {
+                    self.stack.push(val.clone());
+                } else {
+                    return Err(format!("LoadVar: slot {} out of range", slot));
+                }
+            }
+            Opcode::StoreVar => {
+                let slot = instr.operand.unwrap_or(0) as usize;
+                let val = self.stack_pop()?;
+                self.memory.set_by_index(slot, val)?;
+            }
+            Opcode::LoadIo => {
+                let encoded = instr.operand.unwrap_or(0);
+                let val = if (encoded >> 24) != 0 {
+                    // New encoding: area+size+index
+                    match (encoded >> 28) & 0xF {
+                        1 => self
+                            .memory
+                            .read_input((encoded & 0x00FF_FFFF) as usize)
+                            .clone(),
+                        2 => self
+                            .memory
+                            .read_output((encoded & 0x00FF_FFFF) as usize)
+                            .clone(),
+                        3 => self
+                            .memory
+                            .read_memory((encoded & 0x00FF_FFFF) as usize)
+                            .clone(),
+                        _ => PlcValue::Dint(0),
                     }
-                }
-                Opcode::StoreVar => {
-                    let slot = instr.operand.unwrap_or(0) as usize;
-                    let val = self.stack_pop()?;
-                    self.memory.set_by_index(slot, val)?;
-                }
-                Opcode::LoadIo => {
-                    let encoded = instr.operand.unwrap_or(0);
-                    let val = if (encoded >> 24) != 0 {
-                        // New encoding: area+size+index
-                        match (encoded >> 28) & 0xF {
-                            1 => self.memory.read_input((encoded & 0x00FF_FFFF) as usize).clone(),
-                            2 => self.memory.read_output((encoded & 0x00FF_FFFF) as usize).clone(),
-                            3 => self.memory.read_memory((encoded & 0x00FF_FFFF) as usize).clone(),
-                            _ => PlcValue::Dint(0),
-                        }
-                    } else {
-                        // Legacy encoding: flat index into input image
-                        self.memory.read_input(encoded as usize).clone()
-                    };
-                    self.stack.push(val);
-                }
-                Opcode::StoreIo => {
-                    let encoded = instr.operand.unwrap_or(0);
-                    let val = self.stack_pop()?;
-                    if (encoded >> 24) != 0 {
-                        // New encoding: area+size+index
-                        match (encoded >> 28) & 0xF {
-                            1 => self.memory.write_input((encoded & 0x00FF_FFFF) as usize, val),
-                            2 => self.memory.write_output((encoded & 0x00FF_FFFF) as usize, val),
-                            3 => self.memory.write_memory((encoded & 0x00FF_FFFF) as usize, val),
-                            _ => {},
-                        }
-                    } else {
-                        // Legacy encoding: flat index into output image
-                        self.memory.write_output(encoded as usize, val);
+                } else {
+                    // Legacy encoding: flat index into input image
+                    self.memory.read_input(encoded as usize).clone()
+                };
+                self.stack.push(val);
+            }
+            Opcode::StoreIo => {
+                let encoded = instr.operand.unwrap_or(0);
+                let val = self.stack_pop()?;
+                if (encoded >> 24) != 0 {
+                    // New encoding: area+size+index
+                    match (encoded >> 28) & 0xF {
+                        1 => self
+                            .memory
+                            .write_input((encoded & 0x00FF_FFFF) as usize, val),
+                        2 => self
+                            .memory
+                            .write_output((encoded & 0x00FF_FFFF) as usize, val),
+                        3 => self
+                            .memory
+                            .write_memory((encoded & 0x00FF_FFFF) as usize, val),
+                        _ => {}
                     }
-                }
-
-                Opcode::Add => self.binary_op(|a, b| a + b)?,
-                Opcode::Sub => self.binary_op(|a, b| a - b)?,
-                Opcode::Mul => self.binary_op(|a, b| a * b)?,
-                Opcode::Div => self.binary_op(|a, b| {
-                    if b == 0.0 { f32::NAN } else { a / b }
-                })?,
-                Opcode::Modulo => self.binary_op(|a, b| {
-                    if b == 0.0 { f32::NAN } else { a % b }
-                })?,
-                Opcode::Neg => {
-                    let val = self.stack_pop()?;
-                    match val {
-                        PlcValue::Int(i) => self.stack.push(PlcValue::Int(-i)),
-                        PlcValue::Dint(i) => self.stack.push(PlcValue::Dint(-i)),
-                        PlcValue::Real(f) => self.stack.push(PlcValue::Real(-f)),
-                        _ => return Err(format!("Neg: invalid type {:?}", val)),
-                    }
-                }
-
-                Opcode::Eq => self.compare_op(|a, b| a == b)?,
-                Opcode::Ne => self.compare_op(|a, b| a != b)?,
-                Opcode::Lt => self.compare_op(|a, b| a < b)?,
-                Opcode::Le => self.compare_op(|a, b| a <= b)?,
-                Opcode::Gt => self.compare_op(|a, b| a > b)?,
-                Opcode::Ge => self.compare_op(|a, b| a >= b)?,
-
-                Opcode::And => self.logic_op(|a, b| a && b)?,
-                Opcode::Or => self.logic_op(|a, b| a || b)?,
-                Opcode::Xor => self.logic_op(|a, b| a ^ b)?,
-                Opcode::Not => {
-                    let val = self.stack_pop()?;
-                    self.stack.push(PlcValue::Bool(!val.to_bool()));
-                }
-
-                Opcode::Shl => {
-                    let n = self.stack_pop()?.to_int() as u32;
-                    let v = self.stack_pop()?.to_int() as u32;
-                    self.stack.push(PlcValue::Dint((v << n) as i32));
-                }
-                Opcode::Shr => {
-                    let n = self.stack_pop()?.to_int() as u32;
-                    let v = self.stack_pop()?.to_int() as u32;
-                    self.stack.push(PlcValue::Dint((v >> n) as i32));
-                }
-                Opcode::Rol => {
-                    let n = self.stack_pop()?.to_int() as u32;
-                    let v = self.stack_pop()?.to_int() as u32;
-                    let bits = 32;
-                    let shift = n % bits;
-                    let result = (v << shift) | (v >> (bits - shift));
-                    self.stack.push(PlcValue::Dint(result as i32));
-                }
-                Opcode::Ror => {
-                    let n = self.stack_pop()?.to_int() as u32;
-                    let v = self.stack_pop()?.to_int() as u32;
-                    let bits = 32;
-                    let shift = n % bits;
-                    let result = (v >> shift) | (v << (bits - shift));
-                    self.stack.push(PlcValue::Dint(result as i32));
-                }
-
-                Opcode::Jump => {
-                    let offset = instr.operand.unwrap_or(0);
-                    next_pc = (pc as i64 + offset as i64) as usize;
-                }
-                Opcode::JumpIfFalse => {
-                    let offset = instr.operand.unwrap_or(0);
-                    let cond = self.stack_pop()?;
-                    if !cond.to_bool() {
-                        next_pc = (pc as i64 + offset as i64) as usize;
-                    }
-                }
-                Opcode::Call => {}
-                Opcode::CallPou => {
-                    let name_idx = instr.operand.unwrap_or(0) as usize;
-                    let pou_name = self.name_constants.get(name_idx)
-                        .cloned()
-                        .unwrap_or_default();
-                    if let Some(&(_, entry)) = self.pou_table.iter().find(|(n, _)| n == &pou_name) {
-                        self.call_stack.push(pc + 1);
-                        next_pc = entry;
-                    }
-                }
-                Opcode::Return => {
-                    if let Some(ret_addr) = self.call_stack.pop() {
-                        next_pc = ret_addr;
-                    } else {
-                        return Ok(instructions.len());
-                    }
-                }
-
-                Opcode::TonCall => self.execute_timer(crate::timer::TimerKind::TON, instr.operand)?,
-                Opcode::TofCall => self.execute_timer(crate::timer::TimerKind::TOF, instr.operand)?,
-                Opcode::TpCall => self.execute_timer(crate::timer::TimerKind::TP, instr.operand)?,
-                Opcode::CtuCall => self.execute_ctu(instr.operand)?,
-                Opcode::CtdCall => self.execute_ctd(instr.operand)?,
-                Opcode::CtudCall => self.execute_ctud(instr.operand)?,
-                Opcode::RTrigCall => self.execute_edge(true, instr.operand)?,
-                Opcode::FTrigCall => self.execute_edge(false, instr.operand)?,
-
-                Opcode::Halt => {
-                    return Ok(instructions.len());
-                }
-
-                Opcode::Pow => {
-                    let b = self.stack_pop()?.to_real();
-                    let a = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(a.powf(b)));
-                }
-
-                Opcode::Sqrt => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.sqrt()));
-                }
-                Opcode::Ln => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.ln()));
-                }
-                Opcode::Log => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.log10()));
-                }
-                Opcode::Exp => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.exp()));
-                }
-                Opcode::Sin => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.sin()));
-                }
-                Opcode::Cos => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.cos()));
-                }
-                Opcode::Tan => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.tan()));
-                }
-                Opcode::Asin => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.asin()));
-                }
-                Opcode::Acos => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.acos()));
-                }
-                Opcode::Atan => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(v.atan()));
-                }
-                Opcode::Abs => {
-                    let v = self.stack_pop()?;
-                    match v {
-                        PlcValue::Int(i) => self.stack.push(PlcValue::Int(i.abs())),
-                        PlcValue::Dint(i) => self.stack.push(PlcValue::Dint(i.abs())),
-                        PlcValue::Real(f) => self.stack.push(PlcValue::Real(f.abs())),
-                        _ => self.stack.push(v),
-                    }
-                }
-                Opcode::Trunc => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Dint(v.trunc() as i32));
-                }
-                Opcode::Floor => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Dint(v.floor() as i32));
-                }
-                Opcode::Ceil => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Dint(v.ceil() as i32));
-                }
-                Opcode::Expt => {
-                    let b = self.stack_pop()?.to_real();
-                    let a = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(a.powf(b)));
-                }
-
-                // String operations
-                Opcode::StrLen => {
-                    let s = self.stack_pop()?.as_str();
-                    self.stack.push(PlcValue::Dint(s.len() as i32));
-                }
-                Opcode::StrLeft => {
-                    let n = self.stack_pop()?.to_int() as usize;
-                    let s = self.stack_pop()?.as_str();
-                    let result = s.chars().take(n).collect::<String>();
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::StrRight => {
-                    let n = self.stack_pop()?.to_int() as usize;
-                    let s = self.stack_pop()?.as_str();
-                    let len = s.chars().count();
-                    let result = s.chars().skip(len.saturating_sub(n)).collect::<String>();
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::StrMid => {
-                    let n = self.stack_pop()?.to_int() as usize;
-                    let p = self.stack_pop()?.to_int() as usize;
-                    let s = self.stack_pop()?.as_str();
-                    let result = s.chars().skip(p.saturating_sub(1)).take(n).collect::<String>();
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::Concat => {
-                    let b = self.stack_pop()?.as_str();
-                    let a = self.stack_pop()?.as_str();
-                    self.stack.push(PlcValue::String(a + &b));
-                }
-                Opcode::StrInsert => {
-                    let pos = self.stack_pop()?.to_int() as usize;
-                    let ins = self.stack_pop()?.as_str();
-                    let s = self.stack_pop()?.as_str();
-                    let pos = pos.saturating_sub(1).min(s.len());
-                    let mut result = s.clone();
-                    result.insert_str(pos, &ins);
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::StrDelete => {
-                    let n = self.stack_pop()?.to_int() as usize;
-                    let p = self.stack_pop()?.to_int() as usize;
-                    let s = self.stack_pop()?.as_str();
-                    let start = (p.saturating_sub(1)).min(s.len());
-                    let end = (start + n).min(s.len());
-                    let result = format!("{}{}", &s[..start], &s[end..]);
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::StrReplace => {
-                    let n = self.stack_pop()?.to_int() as usize;
-                    let p = self.stack_pop()?.to_int() as usize;
-                    let rep = self.stack_pop()?.as_str();
-                    let s = self.stack_pop()?.as_str();
-                    let start = (p.saturating_sub(1)).min(s.len());
-                    let end = (start + n).min(s.len());
-                    let result = format!("{}{}{}", &s[..start], &rep, &s[end..]);
-                    self.stack.push(PlcValue::String(result));
-                }
-                Opcode::StrFind => {
-                    let needle = self.stack_pop()?.as_str();
-                    let haystack = self.stack_pop()?.as_str();
-                    let pos = haystack.find(&needle).map(|i| i as i32 + 1).unwrap_or(0);
-                    self.stack.push(PlcValue::Dint(pos));
-                }
-
-                // Conversion operations
-                Opcode::IntToReal => {
-                    let v = self.stack_pop()?.to_int();
-                    self.stack.push(PlcValue::Real(v as f32));
-                }
-                Opcode::RealToInt => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Dint(v as i32));
-                }
-                Opcode::IntToBool => {
-                    let v = self.stack_pop()?.to_int();
-                    self.stack.push(PlcValue::Bool(v != 0));
-                }
-                Opcode::BoolToInt => {
-                    let v = self.stack_pop()?.to_bool();
-                    self.stack.push(PlcValue::Dint(if v { 1 } else { 0 }));
-                }
-                Opcode::IntToString => {
-                    let v = self.stack_pop()?.to_int();
-                    self.stack.push(PlcValue::String(v.to_string()));
-                }
-                Opcode::RealToString => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::String(format!("{:.3}", v)));
-                }
-                Opcode::StringToInt => {
-                    let s = self.stack_pop()?.as_str();
-                    let v = s.parse::<i32>().unwrap_or(0);
-                    self.stack.push(PlcValue::Dint(v));
-                }
-                Opcode::StringToReal => {
-                    let s = self.stack_pop()?.as_str();
-                    let v = s.parse::<f32>().unwrap_or(0.0);
-                    self.stack.push(PlcValue::Real(v));
-                }
-                Opcode::WordToInt => {
-                    let v = self.stack_pop()?;
-                    let result = match v {
-                        PlcValue::Word(w) => w as i32,
-                        _ => v.to_int(),
-                    };
-                    self.stack.push(PlcValue::Dint(result));
-                }
-                Opcode::DwordToInt => {
-                    let v = self.stack_pop()?;
-                    let result = match v {
-                        PlcValue::Dword(d) => d as i32,
-                        _ => v.to_int(),
-                    };
-                    self.stack.push(PlcValue::Dint(result));
-                }
-                Opcode::IntToWord => {
-                    let v = self.stack_pop()?.to_int();
-                    self.stack.push(PlcValue::Word(v as u16));
-                }
-                Opcode::IntToDword => {
-                    let v = self.stack_pop()?.to_int();
-                    self.stack.push(PlcValue::Dword(v as u32));
-                }
-                Opcode::DwordToReal => {
-                    let v = self.stack_pop()?;
-                    let bits = match v {
-                        PlcValue::Dword(d) => d,
-                        _ => v.to_int() as u32,
-                    };
-                    self.stack.push(PlcValue::Real(f32::from_bits(bits)));
-                }
-                Opcode::RealToDword => {
-                    let v = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Dword(v.to_bits()));
-                }
-
-                // Selection operations
-                Opcode::Sel => {
-                    let g = self.stack_pop()?.to_bool();
-                    let in1 = self.stack_pop()?;
-                    let in0 = self.stack_pop()?;
-                    self.stack.push(if g { in1 } else { in0 });
-                }
-                Opcode::Mux => {
-                    let k = self.stack_pop()?.to_int();
-                    // args pushed in order: IN0, IN1, ..., INn, K (popped above)
-                    // stack[0]=IN0, stack[1]=IN1, ...
-                    let n = self.stack.len();
-                    let idx = k as usize;
-                    if idx < n {
-                        let val = self.stack[idx].clone();
-                        self.stack.truncate(0);
-                        self.stack.push(val);
-                    } else {
-                        self.stack.truncate(0);
-                        self.stack.push(PlcValue::Dint(0));
-                    }
-                }
-                Opcode::Limit => {
-                    let max_val = self.stack_pop()?;
-                    let min_val = self.stack_pop()?;
-                    let val = self.stack_pop()?;
-                    let result = if val.to_real() < min_val.to_real() {
-                        min_val
-                    } else if val.to_real() > max_val.to_real() {
-                        max_val
-                    } else {
-                        val
-                    };
-                    self.stack.push(result);
-                }
-                Opcode::Max => {
-                    let b = self.stack_pop()?.to_real();
-                    let a = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(a.max(b)));
-                }
-                Opcode::Min => {
-                    let b = self.stack_pop()?.to_real();
-                    let a = self.stack_pop()?.to_real();
-                    self.stack.push(PlcValue::Real(a.min(b)));
-                }
-                Opcode::Move => {
-                    // MOVE is basically a no-op: value is already on stack
-                }
-
-                Opcode::LoadArrayIndex => {
-                    let idx = self.stack_pop()?.to_int() as usize;
-                    let arr = self.stack_pop()?;
-                    match arr {
-                        PlcValue::Array(ref elements) => {
-                            let val = elements.get(idx).cloned().unwrap_or(PlcValue::Dint(0));
-                            self.stack.push(val);
-                        }
-                        _ => return Err(format!("LoadArrayIndex: not an array, got {:?}", arr.type_name())),
-                    }
-                }
-                Opcode::StoreArrayIndex => {
-                    let val = self.stack_pop()?;
-                    let idx = self.stack_pop()?.to_int() as usize;
-                    let arr = self.stack_pop()?;
-                    match arr {
-                        PlcValue::Array(mut elements) => {
-                            if idx < elements.len() {
-                                elements[idx] = val;
-                            }
-                            self.stack.push(PlcValue::Array(elements));
-                        }
-                        _ => return Err(format!("StoreArrayIndex: not an array, got {:?}", arr.type_name())),
-                    }
-                }
-                Opcode::ArrayLen => {
-                    let arr = self.stack_pop()?;
-                    match arr {
-                        PlcValue::Array(ref elements) => {
-                            self.stack.push(PlcValue::Dint(elements.len() as i32));
-                        }
-                        _ => self.stack.push(PlcValue::Dint(0)),
-                    }
-                }
-                Opcode::LoadStructField => {
-                    let field_idx = instr.operand.unwrap_or(0) as usize;
-                    let val = self.stack_pop()?;
-                    match val {
-                        PlcValue::Struct(ref fields) => {
-                            let field_val = fields.get(field_idx)
-                                .map(|(_, v)| v.clone())
-                                .unwrap_or(PlcValue::Dint(0));
-                            self.stack.push(field_val);
-                        }
-                        _ => return Err(format!("LoadStructField: not a struct, got {:?}", val.type_name())),
-                    }
-                }
-                Opcode::StoreStructField => {
-                    let field_idx = instr.operand.unwrap_or(0) as usize;
-                    let struct_val = self.stack_pop()?;
-                    let new_field_val = self.stack_pop()?;
-                    let modified = match struct_val {
-                        PlcValue::Struct(mut fields) => {
-                            if field_idx < fields.len() {
-                                fields[field_idx].1 = new_field_val;
-                            }
-                            PlcValue::Struct(fields)
-                        }
-                        _ => return Err(format!("StoreStructField: not a struct, got {:?}", struct_val.type_name())),
-                    };
-                    self.stack.push(modified);
+                } else {
+                    // Legacy encoding: flat index into output image
+                    self.memory.write_output(encoded as usize, val);
                 }
             }
 
-            Ok(next_pc)
+            Opcode::Add => self.binary_op(|a, b| a + b)?,
+            Opcode::Sub => self.binary_op(|a, b| a - b)?,
+            Opcode::Mul => self.binary_op(|a, b| a * b)?,
+            Opcode::Div => self.binary_op(|a, b| if b == 0.0 { f32::NAN } else { a / b })?,
+            Opcode::Modulo => self.binary_op(|a, b| if b == 0.0 { f32::NAN } else { a % b })?,
+            Opcode::Neg => {
+                let val = self.stack_pop()?;
+                match val {
+                    PlcValue::Int(i) => self.stack.push(PlcValue::Int(-i)),
+                    PlcValue::Dint(i) => self.stack.push(PlcValue::Dint(-i)),
+                    PlcValue::Real(f) => self.stack.push(PlcValue::Real(-f)),
+                    _ => return Err(format!("Neg: invalid type {:?}", val)),
+                }
+            }
+
+            Opcode::Eq => self.compare_op(|a, b| a == b)?,
+            Opcode::Ne => self.compare_op(|a, b| a != b)?,
+            Opcode::Lt => self.compare_op(|a, b| a < b)?,
+            Opcode::Le => self.compare_op(|a, b| a <= b)?,
+            Opcode::Gt => self.compare_op(|a, b| a > b)?,
+            Opcode::Ge => self.compare_op(|a, b| a >= b)?,
+
+            Opcode::And => self.logic_op(|a, b| a && b)?,
+            Opcode::Or => self.logic_op(|a, b| a || b)?,
+            Opcode::Xor => self.logic_op(|a, b| a ^ b)?,
+            Opcode::Not => {
+                let val = self.stack_pop()?;
+                self.stack.push(PlcValue::Bool(!val.to_bool()));
+            }
+
+            Opcode::Shl => {
+                let n = self.stack_pop()?.to_int() as u32;
+                let v = self.stack_pop()?.to_int() as u32;
+                self.stack.push(PlcValue::Dint((v << n) as i32));
+            }
+            Opcode::Shr => {
+                let n = self.stack_pop()?.to_int() as u32;
+                let v = self.stack_pop()?.to_int() as u32;
+                self.stack.push(PlcValue::Dint((v >> n) as i32));
+            }
+            Opcode::Rol => {
+                let n = self.stack_pop()?.to_int() as u32;
+                let v = self.stack_pop()?.to_int() as u32;
+                let bits = 32;
+                let shift = n % bits;
+                let result = (v << shift) | (v >> (bits - shift));
+                self.stack.push(PlcValue::Dint(result as i32));
+            }
+            Opcode::Ror => {
+                let n = self.stack_pop()?.to_int() as u32;
+                let v = self.stack_pop()?.to_int() as u32;
+                let bits = 32;
+                let shift = n % bits;
+                let result = (v >> shift) | (v << (bits - shift));
+                self.stack.push(PlcValue::Dint(result as i32));
+            }
+
+            Opcode::Jump => {
+                let offset = instr.operand.unwrap_or(0);
+                next_pc = (pc as i64 + offset as i64) as usize;
+            }
+            Opcode::JumpIfFalse => {
+                let offset = instr.operand.unwrap_or(0);
+                let cond = self.stack_pop()?;
+                if !cond.to_bool() {
+                    next_pc = (pc as i64 + offset as i64) as usize;
+                }
+            }
+            Opcode::Call => {}
+            Opcode::CallPou => {
+                let name_idx = instr.operand.unwrap_or(0) as usize;
+                let pou_name = self
+                    .name_constants
+                    .get(name_idx)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(&(_, entry)) = self.pou_table.iter().find(|(n, _)| n == &pou_name) {
+                    self.call_stack.push(pc + 1);
+                    next_pc = entry;
+                }
+            }
+            Opcode::Return => {
+                if let Some(ret_addr) = self.call_stack.pop() {
+                    next_pc = ret_addr;
+                } else {
+                    return Ok(instructions.len());
+                }
+            }
+
+            Opcode::TonCall => self.execute_timer(crate::timer::TimerKind::TON, instr.operand)?,
+            Opcode::TofCall => self.execute_timer(crate::timer::TimerKind::TOF, instr.operand)?,
+            Opcode::TpCall => self.execute_timer(crate::timer::TimerKind::TP, instr.operand)?,
+            Opcode::CtuCall => self.execute_ctu(instr.operand)?,
+            Opcode::CtdCall => self.execute_ctd(instr.operand)?,
+            Opcode::CtudCall => self.execute_ctud(instr.operand)?,
+            Opcode::RTrigCall => self.execute_edge(true, instr.operand)?,
+            Opcode::FTrigCall => self.execute_edge(false, instr.operand)?,
+
+            Opcode::Halt => {
+                return Ok(instructions.len());
+            }
+
+            Opcode::Pow => {
+                let b = self.stack_pop()?.to_real();
+                let a = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(a.powf(b)));
+            }
+
+            Opcode::Sqrt => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.sqrt()));
+            }
+            Opcode::Ln => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.ln()));
+            }
+            Opcode::Log => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.log10()));
+            }
+            Opcode::Exp => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.exp()));
+            }
+            Opcode::Sin => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.sin()));
+            }
+            Opcode::Cos => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.cos()));
+            }
+            Opcode::Tan => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.tan()));
+            }
+            Opcode::Asin => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.asin()));
+            }
+            Opcode::Acos => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.acos()));
+            }
+            Opcode::Atan => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(v.atan()));
+            }
+            Opcode::Abs => {
+                let v = self.stack_pop()?;
+                match v {
+                    PlcValue::Int(i) => self.stack.push(PlcValue::Int(i.abs())),
+                    PlcValue::Dint(i) => self.stack.push(PlcValue::Dint(i.abs())),
+                    PlcValue::Real(f) => self.stack.push(PlcValue::Real(f.abs())),
+                    _ => self.stack.push(v),
+                }
+            }
+            Opcode::Trunc => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Dint(v.trunc() as i32));
+            }
+            Opcode::Floor => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Dint(v.floor() as i32));
+            }
+            Opcode::Ceil => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Dint(v.ceil() as i32));
+            }
+            Opcode::Expt => {
+                let b = self.stack_pop()?.to_real();
+                let a = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(a.powf(b)));
+            }
+
+            // String operations
+            Opcode::StrLen => {
+                let s = self.stack_pop()?.as_str();
+                self.stack.push(PlcValue::Dint(s.len() as i32));
+            }
+            Opcode::StrLeft => {
+                let n = self.stack_pop()?.to_int() as usize;
+                let s = self.stack_pop()?.as_str();
+                let result = s.chars().take(n).collect::<String>();
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::StrRight => {
+                let n = self.stack_pop()?.to_int() as usize;
+                let s = self.stack_pop()?.as_str();
+                let len = s.chars().count();
+                let result = s.chars().skip(len.saturating_sub(n)).collect::<String>();
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::StrMid => {
+                let n = self.stack_pop()?.to_int() as usize;
+                let p = self.stack_pop()?.to_int() as usize;
+                let s = self.stack_pop()?.as_str();
+                let result = s
+                    .chars()
+                    .skip(p.saturating_sub(1))
+                    .take(n)
+                    .collect::<String>();
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::Concat => {
+                let b = self.stack_pop()?.as_str();
+                let a = self.stack_pop()?.as_str();
+                self.stack.push(PlcValue::String(a + &b));
+            }
+            Opcode::StrInsert => {
+                let pos = self.stack_pop()?.to_int() as usize;
+                let ins = self.stack_pop()?.as_str();
+                let s = self.stack_pop()?.as_str();
+                let pos = pos.saturating_sub(1).min(s.len());
+                let mut result = s.clone();
+                result.insert_str(pos, &ins);
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::StrDelete => {
+                let n = self.stack_pop()?.to_int() as usize;
+                let p = self.stack_pop()?.to_int() as usize;
+                let s = self.stack_pop()?.as_str();
+                let start = (p.saturating_sub(1)).min(s.len());
+                let end = (start + n).min(s.len());
+                let result = format!("{}{}", &s[..start], &s[end..]);
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::StrReplace => {
+                let n = self.stack_pop()?.to_int() as usize;
+                let p = self.stack_pop()?.to_int() as usize;
+                let rep = self.stack_pop()?.as_str();
+                let s = self.stack_pop()?.as_str();
+                let start = (p.saturating_sub(1)).min(s.len());
+                let end = (start + n).min(s.len());
+                let result = format!("{}{}{}", &s[..start], &rep, &s[end..]);
+                self.stack.push(PlcValue::String(result));
+            }
+            Opcode::StrFind => {
+                let needle = self.stack_pop()?.as_str();
+                let haystack = self.stack_pop()?.as_str();
+                let pos = haystack.find(&needle).map(|i| i as i32 + 1).unwrap_or(0);
+                self.stack.push(PlcValue::Dint(pos));
+            }
+
+            // Conversion operations
+            Opcode::IntToReal => {
+                let v = self.stack_pop()?.to_int();
+                self.stack.push(PlcValue::Real(v as f32));
+            }
+            Opcode::RealToInt => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Dint(v as i32));
+            }
+            Opcode::IntToBool => {
+                let v = self.stack_pop()?.to_int();
+                self.stack.push(PlcValue::Bool(v != 0));
+            }
+            Opcode::BoolToInt => {
+                let v = self.stack_pop()?.to_bool();
+                self.stack.push(PlcValue::Dint(if v { 1 } else { 0 }));
+            }
+            Opcode::IntToString => {
+                let v = self.stack_pop()?.to_int();
+                self.stack.push(PlcValue::String(v.to_string()));
+            }
+            Opcode::RealToString => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::String(format!("{:.3}", v)));
+            }
+            Opcode::StringToInt => {
+                let s = self.stack_pop()?.as_str();
+                let v = s.parse::<i32>().unwrap_or(0);
+                self.stack.push(PlcValue::Dint(v));
+            }
+            Opcode::StringToReal => {
+                let s = self.stack_pop()?.as_str();
+                let v = s.parse::<f32>().unwrap_or(0.0);
+                self.stack.push(PlcValue::Real(v));
+            }
+            Opcode::WordToInt => {
+                let v = self.stack_pop()?;
+                let result = match v {
+                    PlcValue::Word(w) => w as i32,
+                    _ => v.to_int(),
+                };
+                self.stack.push(PlcValue::Dint(result));
+            }
+            Opcode::DwordToInt => {
+                let v = self.stack_pop()?;
+                let result = match v {
+                    PlcValue::Dword(d) => d as i32,
+                    _ => v.to_int(),
+                };
+                self.stack.push(PlcValue::Dint(result));
+            }
+            Opcode::IntToWord => {
+                let v = self.stack_pop()?.to_int();
+                self.stack.push(PlcValue::Word(v as u16));
+            }
+            Opcode::IntToDword => {
+                let v = self.stack_pop()?.to_int();
+                self.stack.push(PlcValue::Dword(v as u32));
+            }
+            Opcode::DwordToReal => {
+                let v = self.stack_pop()?;
+                let bits = match v {
+                    PlcValue::Dword(d) => d,
+                    _ => v.to_int() as u32,
+                };
+                self.stack.push(PlcValue::Real(f32::from_bits(bits)));
+            }
+            Opcode::RealToDword => {
+                let v = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Dword(v.to_bits()));
+            }
+
+            // Selection operations
+            Opcode::Sel => {
+                let g = self.stack_pop()?.to_bool();
+                let in1 = self.stack_pop()?;
+                let in0 = self.stack_pop()?;
+                self.stack.push(if g { in1 } else { in0 });
+            }
+            Opcode::Mux => {
+                let k = self.stack_pop()?.to_int();
+                // args pushed in order: IN0, IN1, ..., INn, K (popped above)
+                // stack[0]=IN0, stack[1]=IN1, ...
+                let n = self.stack.len();
+                let idx = k as usize;
+                if idx < n {
+                    let val = self.stack[idx].clone();
+                    self.stack.truncate(0);
+                    self.stack.push(val);
+                } else {
+                    self.stack.truncate(0);
+                    self.stack.push(PlcValue::Dint(0));
+                }
+            }
+            Opcode::Limit => {
+                let max_val = self.stack_pop()?;
+                let min_val = self.stack_pop()?;
+                let val = self.stack_pop()?;
+                let result = if val.to_real() < min_val.to_real() {
+                    min_val
+                } else if val.to_real() > max_val.to_real() {
+                    max_val
+                } else {
+                    val
+                };
+                self.stack.push(result);
+            }
+            Opcode::Max => {
+                let b = self.stack_pop()?.to_real();
+                let a = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(a.max(b)));
+            }
+            Opcode::Min => {
+                let b = self.stack_pop()?.to_real();
+                let a = self.stack_pop()?.to_real();
+                self.stack.push(PlcValue::Real(a.min(b)));
+            }
+            Opcode::Move => {
+                // MOVE is basically a no-op: value is already on stack
+            }
+
+            Opcode::LoadArrayIndex => {
+                let idx = self.stack_pop()?.to_int() as usize;
+                let arr = self.stack_pop()?;
+                match arr {
+                    PlcValue::Array(ref elements) => {
+                        let val = elements.get(idx).cloned().unwrap_or(PlcValue::Dint(0));
+                        self.stack.push(val);
+                    }
+                    _ => {
+                        return Err(format!(
+                            "LoadArrayIndex: not an array, got {:?}",
+                            arr.type_name()
+                        ));
+                    }
+                }
+            }
+            Opcode::StoreArrayIndex => {
+                let val = self.stack_pop()?;
+                let idx = self.stack_pop()?.to_int() as usize;
+                let arr = self.stack_pop()?;
+                match arr {
+                    PlcValue::Array(mut elements) => {
+                        if idx < elements.len() {
+                            elements[idx] = val;
+                        }
+                        self.stack.push(PlcValue::Array(elements));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "StoreArrayIndex: not an array, got {:?}",
+                            arr.type_name()
+                        ));
+                    }
+                }
+            }
+            Opcode::ArrayLen => {
+                let arr = self.stack_pop()?;
+                match arr {
+                    PlcValue::Array(ref elements) => {
+                        self.stack.push(PlcValue::Dint(elements.len() as i32));
+                    }
+                    _ => self.stack.push(PlcValue::Dint(0)),
+                }
+            }
+            Opcode::LoadStructField => {
+                let field_idx = instr.operand.unwrap_or(0) as usize;
+                let val = self.stack_pop()?;
+                match val {
+                    PlcValue::Struct(ref fields) => {
+                        let field_val = fields
+                            .get(field_idx)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or(PlcValue::Dint(0));
+                        self.stack.push(field_val);
+                    }
+                    _ => {
+                        return Err(format!(
+                            "LoadStructField: not a struct, got {:?}",
+                            val.type_name()
+                        ));
+                    }
+                }
+            }
+            Opcode::StoreStructField => {
+                let field_idx = instr.operand.unwrap_or(0) as usize;
+                let struct_val = self.stack_pop()?;
+                let new_field_val = self.stack_pop()?;
+                let modified = match struct_val {
+                    PlcValue::Struct(mut fields) => {
+                        if field_idx < fields.len() {
+                            fields[field_idx].1 = new_field_val;
+                        }
+                        PlcValue::Struct(fields)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "StoreStructField: not a struct, got {:?}",
+                            struct_val.type_name()
+                        ));
+                    }
+                };
+                self.stack.push(modified);
+            }
         }
 
+        Ok(next_pc)
+    }
+
     fn stack_pop(&mut self) -> Result<PlcValue, String> {
-        self.stack.pop().ok_or_else(|| "Stack underflow".to_string())
+        self.stack
+            .pop()
+            .ok_or_else(|| "Stack underflow".to_string())
     }
 
     fn binary_op<F>(&mut self, op: F) -> Result<(), String>
@@ -674,7 +727,11 @@ impl Vm {
     }
 
     /// Timer call: stack has [PT (Time), IN (Bool)], pops both, pushes [ET (Time), Q (Bool)]
-    fn execute_timer(&mut self, kind: crate::timer::TimerKind, operand: Option<i32>) -> Result<(), String> {
+    fn execute_timer(
+        &mut self,
+        kind: crate::timer::TimerKind,
+        operand: Option<i32>,
+    ) -> Result<(), String> {
         let idx = operand.unwrap_or(0) as usize;
         let in_val = self.stack_pop()?.to_bool();
         let pt_val = self.stack_pop()?.to_int();
@@ -698,7 +755,8 @@ impl Vm {
         let pv = self.stack_pop()?.to_int();
 
         while self.counters.len() <= idx {
-            self.counters.push(crate::counter::CounterInstance::default());
+            self.counters
+                .push(crate::counter::CounterInstance::default());
         }
         let (q, cv) = self.counters[idx].execute_ctu(cu, r, pv);
 
@@ -715,7 +773,8 @@ impl Vm {
         let pv = self.stack_pop()?.to_int();
 
         while self.counters.len() <= idx {
-            self.counters.push(crate::counter::CounterInstance::default());
+            self.counters
+                .push(crate::counter::CounterInstance::default());
         }
         let (q, cv) = self.counters[idx].execute_ctd(cd, ld, pv);
 
@@ -735,7 +794,8 @@ impl Vm {
         let pv = self.stack_pop()?.to_int();
 
         while self.counters.len() <= idx {
-            self.counters.push(crate::counter::CounterInstance::default());
+            self.counters
+                .push(crate::counter::CounterInstance::default());
         }
         self.counters[idx].kind = crate::counter::CounterKind::CTUD;
         let (q, cv) = self.counters[idx].execute_ctud(cu, cd, r, ld, pv);
@@ -797,19 +857,28 @@ mod tests {
     #[test]
     fn test_push_and_store() {
         let instructions = vec![
-            Instruction { opcode: Opcode::PushInt, operand: Some(42) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(42),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![("x".to_string(), PlcValue::Int(0))];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
             variable_slots: vars,
-                pou_table: vec![],
-                name_constants: vec![],
-                line_map: vec![],
-            });
+            pou_table: vec![],
+            name_constants: vec![],
+            line_map: vec![],
+        });
         vm.execute(&instructions).unwrap();
         assert_eq!(vm.memory().get_variable("x"), Some(&PlcValue::Int(42)));
     }
@@ -821,17 +890,33 @@ mod tests {
             name: "test".into(),
             instructions: vec![],
             variable_slots: vars,
-                pou_table: vec![],
-                name_constants: vec![],
-                line_map: vec![],
-            });
+            pou_table: vec![],
+            name_constants: vec![],
+            line_map: vec![],
+        });
         vm.execute(&[
-            Instruction { opcode: Opcode::PushInt, operand: Some(10) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(3) },
-            Instruction { opcode: Opcode::Add, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(10),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::Add,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         let result = vm.memory().get_variable("result").unwrap().to_real();
         assert!((result - 13.0).abs() < 0.01);
     }
@@ -843,18 +928,37 @@ mod tests {
             name: "test".into(),
             instructions: vec![],
             variable_slots: vars,
-                pou_table: vec![],
-                name_constants: vec![],
-                line_map: vec![],
-            });
+            pou_table: vec![],
+            name_constants: vec![],
+            line_map: vec![],
+        });
         vm.execute(&[
-            Instruction { opcode: Opcode::PushInt, operand: Some(5) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(3) },
-            Instruction { opcode: Opcode::Gt, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
-        assert_eq!(vm.memory().get_variable("flag"), Some(&PlcValue::Bool(true)));
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(5),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::Gt,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vm.memory().get_variable("flag"),
+            Some(&PlcValue::Bool(true))
+        );
     }
 
     #[test]
@@ -867,20 +971,45 @@ mod tests {
             name: "test".into(),
             instructions: vec![],
             variable_slots: vars,
-                pou_table: vec![],
-                name_constants: vec![],
-                line_map: vec![],
-            });
+            pou_table: vec![],
+            name_constants: vec![],
+            line_map: vec![],
+        });
         vm.execute(&[
-            Instruction { opcode: Opcode::PushBool, operand: Some(1) },
-            Instruction { opcode: Opcode::JumpIfFalse, operand: Some(4) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Jump, operand: Some(3) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(2) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushBool,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::JumpIfFalse,
+                operand: Some(4),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Jump,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         assert_eq!(vm.memory().get_variable("x"), Some(&PlcValue::Int(1)));
     }
 
@@ -912,30 +1041,54 @@ mod tests {
         // After 1 cycle: counter = 1
         vm.execute(&instructions).unwrap();
         let counter = vm.memory().get_variable("counter").unwrap().to_real();
-        assert!((counter - 1.0).abs() < 0.5, "after 1 cycle: {}, expected 1", counter);
+        assert!(
+            (counter - 1.0).abs() < 0.5,
+            "after 1 cycle: {}, expected 1",
+            counter
+        );
 
         let enable = vm.memory().get_variable("enable").unwrap();
         assert_eq!(*enable, PlcValue::Bool(true));
 
         // After 6 total cycles: counter = 6
-        for _ in 0..5 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..5 {
+            vm.execute(&instructions).unwrap();
+        }
         let counter = vm.memory().get_variable("counter").unwrap().to_real();
-        assert!((counter - 6.0).abs() < 0.5, "after 6 cycles: {}, expected 6", counter);
+        assert!(
+            (counter - 6.0).abs() < 0.5,
+            "after 6 cycles: {}, expected 6",
+            counter
+        );
 
         // After 100 total cycles: counter = 100 (just before reset)
-        for _ in 0..94 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..94 {
+            vm.execute(&instructions).unwrap();
+        }
         let counter = vm.memory().get_variable("counter").unwrap().to_real();
-        assert!((counter - 100.0).abs() < 0.5, "after 100 cycles: {}, expected 100", counter);
+        assert!(
+            (counter - 100.0).abs() < 0.5,
+            "after 100 cycles: {}, expected 100",
+            counter
+        );
 
         // After 101 total cycles: counter incremented to 101, then reset to 0
         vm.execute(&instructions).unwrap();
         let counter = vm.memory().get_variable("counter").unwrap().to_real();
-        assert!((counter - 0.0).abs() < 0.5, "after 101 cycles: {}, expected 0", counter);
+        assert!(
+            (counter - 0.0).abs() < 0.5,
+            "after 101 cycles: {}, expected 0",
+            counter
+        );
 
         // After 102 total cycles: counter = 1 again
         vm.execute(&instructions).unwrap();
         let counter = vm.memory().get_variable("counter").unwrap().to_real();
-        assert!((counter - 1.0).abs() < 0.5, "after 102 cycles: {}, expected 1", counter);
+        assert!(
+            (counter - 1.0).abs() < 0.5,
+            "after 102 cycles: {}, expected 1",
+            counter
+        );
     }
 
     fn compile_and_run(source: &str) -> (Vm, Vec<Instruction>) {
@@ -1003,15 +1156,27 @@ END_PROGRAM
 
         // State 0: Red, timer counts up
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("red").unwrap(), PlcValue::Bool(true));
-        assert_eq!(*vm.memory().get_variable("state").unwrap(), PlcValue::Int(0));
+        assert_eq!(
+            *vm.memory().get_variable("red").unwrap(),
+            PlcValue::Bool(true)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("state").unwrap(),
+            PlcValue::Int(0)
+        );
 
         // After 100 cycles, should transition to state 1 (Red+Yellow)
-        for _ in 0..99 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..99 {
+            vm.execute(&instructions).unwrap();
+        }
         // timer is now 100, so state transitions to 1
         vm.execute(&instructions).unwrap();
         let state = vm.memory().get_variable("state").unwrap().to_int();
-        assert!(state >= 1, "Expected state >= 1 after 100+ cycles, got {}", state);
+        assert!(
+            state >= 1,
+            "Expected state >= 1 after 100+ cycles, got {}",
+            state
+        );
     }
 
     #[test]
@@ -1088,19 +1253,39 @@ END_PROGRAM
         let (mut vm, instructions) = compile_and_run(source);
 
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("motor_running").unwrap(), PlcValue::Bool(false));
-        assert_eq!(*vm.memory().get_variable("speed").unwrap(), PlcValue::Int(0));
+        assert_eq!(
+            *vm.memory().get_variable("motor_running").unwrap(),
+            PlcValue::Bool(false)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("speed").unwrap(),
+            PlcValue::Int(0)
+        );
 
-        vm.memory_mut().set_variable("start_btn", PlcValue::Bool(true)).unwrap();
-        for _ in 0..12 { vm.execute(&instructions).unwrap(); }
-        assert_eq!(*vm.memory().get_variable("motor_running").unwrap(), PlcValue::Bool(true));
+        vm.memory_mut()
+            .set_variable("start_btn", PlcValue::Bool(true))
+            .unwrap();
+        for _ in 0..12 {
+            vm.execute(&instructions).unwrap();
+        }
+        assert_eq!(
+            *vm.memory().get_variable("motor_running").unwrap(),
+            PlcValue::Bool(true)
+        );
         let speed = vm.memory().get_variable("speed").unwrap().to_int();
         assert!(speed > 0, "Speed should be ramping up, got {}", speed);
 
-        vm.memory_mut().set_variable("start_btn", PlcValue::Bool(false)).unwrap();
-        vm.memory_mut().set_variable("stop_btn", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("start_btn", PlcValue::Bool(false))
+            .unwrap();
+        vm.memory_mut()
+            .set_variable("stop_btn", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("motor_running").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("motor_running").unwrap(),
+            PlcValue::Bool(false)
+        );
     }
 
     #[test]
@@ -1185,11 +1370,20 @@ END_PROGRAM
         let (mut vm, instructions) = compile_and_run(source);
 
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("inlet_valve").unwrap(), PlcValue::Bool(true));
+        assert_eq!(
+            *vm.memory().get_variable("inlet_valve").unwrap(),
+            PlcValue::Bool(true)
+        );
 
-        for _ in 0..500 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..500 {
+            vm.execute(&instructions).unwrap();
+        }
         let level = vm.memory().get_variable("level").unwrap().to_real();
-        assert!(level > 30.0 && level < 70.0, "Level should be near setpoint 50, got {}", level);
+        assert!(
+            level > 30.0 && level < 70.0,
+            "Level should be near setpoint 50, got {}",
+            level
+        );
     }
 
     #[test]
@@ -1307,12 +1501,22 @@ END_PROGRAM
         let state = vm.memory().get_variable("state").unwrap().to_int();
         assert!(state >= 1, "Expected state >= 1, got {}", state);
 
-        for _ in 0..2000 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..2000 {
+            vm.execute(&instructions).unwrap();
+        }
         let batch_count = vm.memory().get_variable("batch_count").unwrap().to_int();
-        assert!(batch_count >= 1, "Expected at least 1 batch completed, got {}", batch_count);
+        assert!(
+            batch_count >= 1,
+            "Expected at least 1 batch completed, got {}",
+            batch_count
+        );
 
         let total_drained = vm.memory().get_variable("total_drained").unwrap().to_real();
-        assert!(total_drained > 0.0, "Should have drained some product, got {}", total_drained);
+        assert!(
+            total_drained > 0.0,
+            "Should have drained some product, got {}",
+            total_drained
+        );
     }
 
     #[test]
@@ -1343,12 +1547,19 @@ END_PROGRAM
         let counter = vm.memory().get_variable("counter").unwrap().to_int();
         assert_eq!(counter, 1);
 
-        for _ in 0..49 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..49 {
+            vm.execute(&instructions).unwrap();
+        }
         let counter = vm.memory().get_variable("counter").unwrap().to_int();
         assert_eq!(counter, 50);
-        assert_eq!(*vm.memory().get_variable("direction").unwrap(), PlcValue::Int(1));
+        assert_eq!(
+            *vm.memory().get_variable("direction").unwrap(),
+            PlcValue::Int(1)
+        );
 
-        for _ in 0..50 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..50 {
+            vm.execute(&instructions).unwrap();
+        }
         let direction = vm.memory().get_variable("direction").unwrap().to_int();
         assert_eq!(direction, -1);
         let done = vm.memory().get_variable("done").unwrap();
@@ -1372,29 +1583,56 @@ END_PROGRAM
 
         // Cycle 1: start=FALSE, timer not running, motor=FALSE
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("motor").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("motor").unwrap(),
+            PlcValue::Bool(false)
+        );
 
         // Enable start signal
-        vm.memory_mut().set_variable("start", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("start", PlcValue::Bool(true))
+            .unwrap();
 
         // Run a few cycles — timer needs ~500ms wall-clock time
-        for _ in 0..5 { vm.execute(&instructions).unwrap(); }
+        for _ in 0..5 {
+            vm.execute(&instructions).unwrap();
+        }
         // Timer hasn't elapsed yet (only microseconds have passed)
-        let q = vm.memory().get_variable("startup_delay.Q").unwrap().to_bool();
+        let q = vm
+            .memory()
+            .get_variable("startup_delay.Q")
+            .unwrap()
+            .to_bool();
         // Q might or might not be true depending on timing, but ET should be non-zero after IN=TRUE
-        let et = vm.memory().get_variable("startup_delay.ET").unwrap().to_int();
+        let et = vm
+            .memory()
+            .get_variable("startup_delay.ET")
+            .unwrap()
+            .to_int();
         assert!(et >= 0, "ET should be non-negative, got {}", et);
 
         // After enabling, motor should follow Q
         let motor = vm.memory().get_variable("motor").unwrap().to_bool();
-        let timer_q = vm.memory().get_variable("startup_delay.Q").unwrap().to_bool();
+        let timer_q = vm
+            .memory()
+            .get_variable("startup_delay.Q")
+            .unwrap()
+            .to_bool();
         assert_eq!(motor, timer_q);
 
         // Turn off start — timer resets
-        vm.memory_mut().set_variable("start", PlcValue::Bool(false)).unwrap();
+        vm.memory_mut()
+            .set_variable("start", PlcValue::Bool(false))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("startup_delay.Q").unwrap(), PlcValue::Bool(false));
-        assert_eq!(*vm.memory().get_variable("startup_delay.ET").unwrap(), PlcValue::Time(0));
+        assert_eq!(
+            *vm.memory().get_variable("startup_delay.Q").unwrap(),
+            PlcValue::Bool(false)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("startup_delay.ET").unwrap(),
+            PlcValue::Time(0)
+        );
     }
 
     #[test]
@@ -1415,27 +1653,49 @@ END_PROGRAM
 
         // Cycle 1: no pulse, counter stays at 0
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("done").unwrap(), PlcValue::Bool(false));
-        assert_eq!(*vm.memory().get_variable("part_counter.CV").unwrap(), PlcValue::Dint(0));
+        assert_eq!(
+            *vm.memory().get_variable("done").unwrap(),
+            PlcValue::Bool(false)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("part_counter.CV").unwrap(),
+            PlcValue::Dint(0)
+        );
 
         // Pulse 5 times with rising edges (toggle between TRUE and FALSE)
         for _ in 0..5 {
-            vm.memory_mut().set_variable("pulse", PlcValue::Bool(true)).unwrap();
+            vm.memory_mut()
+                .set_variable("pulse", PlcValue::Bool(true))
+                .unwrap();
             vm.execute(&instructions).unwrap();
-            vm.memory_mut().set_variable("pulse", PlcValue::Bool(false)).unwrap();
+            vm.memory_mut()
+                .set_variable("pulse", PlcValue::Bool(false))
+                .unwrap();
             vm.execute(&instructions).unwrap();
         }
 
-        let cv = vm.memory().get_variable("part_counter.CV").unwrap().to_int();
+        let cv = vm
+            .memory()
+            .get_variable("part_counter.CV")
+            .unwrap()
+            .to_int();
         assert_eq!(cv, 5, "Expected CV=5 after 5 rising edges, got {}", cv);
         let done = vm.memory().get_variable("done").unwrap().to_bool();
         assert!(done, "Q should be TRUE when CV >= PV");
 
         // Reset
-        vm.memory_mut().set_variable("reset", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("reset", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("part_counter.CV").unwrap(), PlcValue::Dint(0));
-        assert_eq!(*vm.memory().get_variable("done").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("part_counter.CV").unwrap(),
+            PlcValue::Dint(0)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("done").unwrap(),
+            PlcValue::Bool(false)
+        );
     }
 
     #[test]
@@ -1455,17 +1715,25 @@ END_PROGRAM
         let (mut vm, instructions) = compile_and_run(source);
 
         // Load preset value
-        vm.memory_mut().set_variable("load", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("load", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
         let cv = vm.memory().get_variable("countdown.CV").unwrap().to_int();
         assert_eq!(cv, 3, "CV should be 3 after load, got {}", cv);
-        vm.memory_mut().set_variable("load", PlcValue::Bool(false)).unwrap();
+        vm.memory_mut()
+            .set_variable("load", PlcValue::Bool(false))
+            .unwrap();
 
         // Count down 3 times
         for _ in 0..3 {
-            vm.memory_mut().set_variable("decrement", PlcValue::Bool(true)).unwrap();
+            vm.memory_mut()
+                .set_variable("decrement", PlcValue::Bool(true))
+                .unwrap();
             vm.execute(&instructions).unwrap();
-            vm.memory_mut().set_variable("decrement", PlcValue::Bool(false)).unwrap();
+            vm.memory_mut()
+                .set_variable("decrement", PlcValue::Bool(false))
+                .unwrap();
             vm.execute(&instructions).unwrap();
         }
 
@@ -1492,24 +1760,45 @@ END_PROGRAM
 
         // No pulse yet
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("pulse_detected").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("pulse_detected").unwrap(),
+            PlcValue::Bool(false)
+        );
 
         // Rising edge: sensor goes TRUE
-        vm.memory_mut().set_variable("sensor", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("sensor", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("pulse_detected").unwrap(), PlcValue::Bool(true));
+        assert_eq!(
+            *vm.memory().get_variable("pulse_detected").unwrap(),
+            PlcValue::Bool(true)
+        );
 
         // Held TRUE: no more edge
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("pulse_detected").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("pulse_detected").unwrap(),
+            PlcValue::Bool(false)
+        );
 
         // Back to FALSE, then TRUE again: new edge
-        vm.memory_mut().set_variable("sensor", PlcValue::Bool(false)).unwrap();
+        vm.memory_mut()
+            .set_variable("sensor", PlcValue::Bool(false))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("pulse_detected").unwrap(), PlcValue::Bool(false));
-        vm.memory_mut().set_variable("sensor", PlcValue::Bool(true)).unwrap();
+        assert_eq!(
+            *vm.memory().get_variable("pulse_detected").unwrap(),
+            PlcValue::Bool(false)
+        );
+        vm.memory_mut()
+            .set_variable("sensor", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("pulse_detected").unwrap(), PlcValue::Bool(true));
+        assert_eq!(
+            *vm.memory().get_variable("pulse_detected").unwrap(),
+            PlcValue::Bool(true)
+        );
     }
 
     #[test]
@@ -1529,27 +1818,39 @@ END_PROGRAM
 
         // Start with signal TRUE, no falling edge yet
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("fall_detected").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("fall_detected").unwrap(),
+            PlcValue::Bool(false)
+        );
 
         // Falling edge: signal goes FALSE
-        vm.memory_mut().set_variable("signal", PlcValue::Bool(false)).unwrap();
+        vm.memory_mut()
+            .set_variable("signal", PlcValue::Bool(false))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("fall_detected").unwrap(), PlcValue::Bool(true));
+        assert_eq!(
+            *vm.memory().get_variable("fall_detected").unwrap(),
+            PlcValue::Bool(true)
+        );
 
         // Held FALSE: no more edge
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("fall_detected").unwrap(), PlcValue::Bool(false));
+        assert_eq!(
+            *vm.memory().get_variable("fall_detected").unwrap(),
+            PlcValue::Bool(false)
+        );
     }
 
     #[test]
     fn test_struct_field_load_store() {
         // Create a struct variable: { speed: 0, enabled: false }
-        let vars = vec![
-            ("cfg".to_string(), PlcValue::Struct(vec![
+        let vars = vec![(
+            "cfg".to_string(),
+            PlcValue::Struct(vec![
                 ("speed".to_string(), PlcValue::Int(0)),
                 ("enabled".to_string(), PlcValue::Bool(false)),
-            ])),
-        ];
+            ]),
+        )];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
@@ -1561,30 +1862,66 @@ END_PROGRAM
 
         // Store 42 into cfg.speed (field index 0)
         vm.execute(&[
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },     // load cfg
-            Instruction { opcode: Opcode::PushInt, operand: Some(42) },    // new value
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },     // load cfg again for StoreStructField
-            Instruction { opcode: Opcode::StoreStructField, operand: Some(0) }, // store field 0
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },    // store modified struct back
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // load cfg
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(42),
+            }, // new value
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // load cfg again for StoreStructField
+            Instruction {
+                opcode: Opcode::StoreStructField,
+                operand: Some(0),
+            }, // store field 0
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            }, // store modified struct back
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         // Verify struct was updated
         let cfg = vm.memory().get_variable("cfg").unwrap();
         if let PlcValue::Struct(fields) = cfg {
             assert_eq!(fields[0].1, PlcValue::Int(42), "speed field should be 42");
-            assert_eq!(fields[1].1, PlcValue::Bool(false), "enabled field should remain false");
+            assert_eq!(
+                fields[1].1,
+                PlcValue::Bool(false),
+                "enabled field should remain false"
+            );
         } else {
             panic!("Expected Struct value");
         }
 
         // Load field from struct
         vm.execute(&[
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },     // load cfg
-            Instruction { opcode: Opcode::LoadStructField, operand: Some(0) }, // load field 0 (speed)
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },    // overwrite cfg var for easy check
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // load cfg
+            Instruction {
+                opcode: Opcode::LoadStructField,
+                operand: Some(0),
+            }, // load field 0 (speed)
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            }, // overwrite cfg var for easy check
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         // After this, slot 0 holds the loaded field value (PlcValue::Int(42))
         // But we overwrote cfg, so let's check via the stack trace — the struct was replaced.
         // Actually the value on stack was PlcValue::Int(42) stored to slot 0.
@@ -1593,9 +1930,7 @@ END_PROGRAM
 
     #[test]
     fn test_enum_value() {
-        let vars = vec![
-            ("color".to_string(), PlcValue::Enum(String::new())),
-        ];
+        let vars = vec![("color".to_string(), PlcValue::Enum(String::new()))];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
@@ -1607,14 +1942,28 @@ END_PROGRAM
 
         // PushEnum with name constant index 1 ("Green")
         vm.execute(&[
-            Instruction { opcode: Opcode::PushEnum, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushEnum,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         let color = vm.memory().get_variable("color").unwrap();
-        assert_eq!(*color, PlcValue::Enum("Green".to_string()),
-            "Expected Enum(Green), got {:?}", color);
+        assert_eq!(
+            *color,
+            PlcValue::Enum("Green".to_string()),
+            "Expected Enum(Green), got {:?}",
+            color
+        );
     }
 
     #[test]
@@ -1637,14 +1986,24 @@ END_PROGRAM
 
         // Cycle 1: no CU, counter stays at 0
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("done").unwrap(), PlcValue::Bool(false));
-        assert_eq!(*vm.memory().get_variable("cnt.CV").unwrap(), PlcValue::Dint(0));
+        assert_eq!(
+            *vm.memory().get_variable("done").unwrap(),
+            PlcValue::Bool(false)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("cnt.CV").unwrap(),
+            PlcValue::Dint(0)
+        );
 
         // Count up 5 times with rising edges
         for _ in 0..5 {
-            vm.memory_mut().set_variable("cu", PlcValue::Bool(true)).unwrap();
+            vm.memory_mut()
+                .set_variable("cu", PlcValue::Bool(true))
+                .unwrap();
             vm.execute(&instructions).unwrap();
-            vm.memory_mut().set_variable("cu", PlcValue::Bool(false)).unwrap();
+            vm.memory_mut()
+                .set_variable("cu", PlcValue::Bool(false))
+                .unwrap();
             vm.execute(&instructions).unwrap();
         }
 
@@ -1654,23 +2013,44 @@ END_PROGRAM
         assert!(done, "Q should be TRUE when CV >= PV (5 >= 5)");
 
         // Reset
-        vm.memory_mut().set_variable("r", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("r", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("cnt.CV").unwrap(), PlcValue::Dint(0));
-        assert_eq!(*vm.memory().get_variable("done").unwrap(), PlcValue::Bool(false));
-        vm.memory_mut().set_variable("r", PlcValue::Bool(false)).unwrap();
+        assert_eq!(
+            *vm.memory().get_variable("cnt.CV").unwrap(),
+            PlcValue::Dint(0)
+        );
+        assert_eq!(
+            *vm.memory().get_variable("done").unwrap(),
+            PlcValue::Bool(false)
+        );
+        vm.memory_mut()
+            .set_variable("r", PlcValue::Bool(false))
+            .unwrap();
 
         // Load preset
-        vm.memory_mut().set_variable("ld", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("ld", PlcValue::Bool(true))
+            .unwrap();
         vm.execute(&instructions).unwrap();
-        assert_eq!(*vm.memory().get_variable("cnt.CV").unwrap(), PlcValue::Dint(5));
-        vm.memory_mut().set_variable("ld", PlcValue::Bool(false)).unwrap();
+        assert_eq!(
+            *vm.memory().get_variable("cnt.CV").unwrap(),
+            PlcValue::Dint(5)
+        );
+        vm.memory_mut()
+            .set_variable("ld", PlcValue::Bool(false))
+            .unwrap();
 
         // Count down
         for _ in 0..3 {
-            vm.memory_mut().set_variable("cd", PlcValue::Bool(true)).unwrap();
+            vm.memory_mut()
+                .set_variable("cd", PlcValue::Bool(true))
+                .unwrap();
             vm.execute(&instructions).unwrap();
-            vm.memory_mut().set_variable("cd", PlcValue::Bool(false)).unwrap();
+            vm.memory_mut()
+                .set_variable("cd", PlcValue::Bool(false))
+                .unwrap();
             vm.execute(&instructions).unwrap();
         }
         let cv = vm.memory().get_variable("cnt.CV").unwrap().to_int();
@@ -1696,10 +2076,20 @@ END_PROGRAM
         // encoded = (2 << 28) | (4 << 24) | 5
         let encoded_output: i32 = (2 << 28) | (4 << 24) | 5;
         vm.execute(&[
-            Instruction { opcode: Opcode::PushDint, operand: Some(99) },
-            Instruction { opcode: Opcode::StoreIo, operand: Some(encoded_output) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(99),
+            },
+            Instruction {
+                opcode: Opcode::StoreIo,
+                operand: Some(encoded_output),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         let output_read = vm.memory().read_output(5).clone();
         assert_eq!(output_read, PlcValue::Dint(99), "Expected output[5]=99");
 
@@ -1709,12 +2099,25 @@ END_PROGRAM
 
         let encoded_input: i32 = (1 << 28) | (4 << 24) | 10;
         vm.execute(&[
-            Instruction { opcode: Opcode::LoadIo, operand: Some(encoded_input) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) }, // input_val
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
-        assert_eq!(vm.memory().get_variable("input_val"), Some(&PlcValue::Dint(77)),
-            "Expected input_val=77 from %ID10");
+            Instruction {
+                opcode: Opcode::LoadIo,
+                operand: Some(encoded_input),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            }, // input_val
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vm.memory().get_variable("input_val"),
+            Some(&PlcValue::Dint(77)),
+            "Expected input_val=77 from %ID10"
+        );
     }
 
     #[test]
@@ -1733,7 +2136,9 @@ END_PROGRAM
         let (mut vm, instructions) = compile_and_run(source);
 
         // Start the timer
-        vm.memory_mut().set_variable("start", PlcValue::Bool(true)).unwrap();
+        vm.memory_mut()
+            .set_variable("start", PlcValue::Bool(true))
+            .unwrap();
         for _ in 0..5 {
             vm.execute(&instructions).unwrap();
         }
@@ -1743,7 +2148,11 @@ END_PROGRAM
 
         // Verify timer has accumulated some ET
         let et_before = vm.memory().get_variable("delay.ET").unwrap().to_int();
-        assert!(et_before >= 0, "ET should be non-negative after running, got {}", et_before);
+        assert!(
+            et_before >= 0,
+            "ET should be non-negative after running, got {}",
+            et_before
+        );
 
         // Create a brand new VM and restore the snapshot
         let (mut vm2, instructions2) = {
@@ -1758,20 +2167,31 @@ END_PROGRAM
         vm2.restore_fb_state(&snapshot);
 
         // Run one more cycle on the new VM
-        vm2.memory_mut().set_variable("start", PlcValue::Bool(true)).unwrap();
+        vm2.memory_mut()
+            .set_variable("start", PlcValue::Bool(true))
+            .unwrap();
         vm2.execute(&instructions2).unwrap();
 
         // ET should survive (timer state was preserved)
         let et_after = vm2.memory().get_variable("delay.ET").unwrap().to_int();
-        assert!(et_after >= 0, "ET should be non-negative after restore+run, got {}", et_after);
+        assert!(
+            et_after >= 0,
+            "ET should be non-negative after restore+run, got {}",
+            et_after
+        );
     }
 
     #[test]
     fn test_array_operations() {
         let vars = vec![
-            ("arr".to_string(), PlcValue::Array(vec![
-                PlcValue::Dint(0), PlcValue::Dint(0), PlcValue::Dint(0),
-            ])),
+            (
+                "arr".to_string(),
+                PlcValue::Array(vec![
+                    PlcValue::Dint(0),
+                    PlcValue::Dint(0),
+                    PlcValue::Dint(0),
+                ]),
+            ),
             ("val".to_string(), PlcValue::Dint(0)),
             ("len".to_string(), PlcValue::Dint(0)),
         ];
@@ -1787,34 +2207,88 @@ END_PROGRAM
         // Store 42 into arr[1]
         vm.execute(&[
             // Push arr, push index, push value, StoreArrayIndex
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },   // arr
-            Instruction { opcode: Opcode::PushDint, operand: Some(1) },  // index 1
-            Instruction { opcode: Opcode::PushDint, operand: Some(42) }, // value
-            Instruction { opcode: Opcode::StoreArrayIndex, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },  // store modified arr back
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // arr
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(1),
+            }, // index 1
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(42),
+            }, // value
+            Instruction {
+                opcode: Opcode::StoreArrayIndex,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            }, // store modified arr back
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         // Verify arr[1] is now 42
         vm.execute(&[
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },   // arr
-            Instruction { opcode: Opcode::PushDint, operand: Some(1) },  // index 1
-            Instruction { opcode: Opcode::LoadArrayIndex, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(1) },  // store into val
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
-        assert_eq!(vm.memory().get_variable("val"), Some(&PlcValue::Dint(42)),
-            "Expected arr[1]=42");
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // arr
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(1),
+            }, // index 1
+            Instruction {
+                opcode: Opcode::LoadArrayIndex,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(1),
+            }, // store into val
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vm.memory().get_variable("val"),
+            Some(&PlcValue::Dint(42)),
+            "Expected arr[1]=42"
+        );
 
         // Test ArrayLen
         vm.execute(&[
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },   // arr
-            Instruction { opcode: Opcode::ArrayLen, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(2) },  // store into len
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
-        assert_eq!(vm.memory().get_variable("len"), Some(&PlcValue::Dint(3)),
-            "Expected array length 3");
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            }, // arr
+            Instruction {
+                opcode: Opcode::ArrayLen,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(2),
+            }, // store into len
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vm.memory().get_variable("len"),
+            Some(&PlcValue::Dint(3)),
+            "Expected array length 3"
+        );
     }
 
     #[test]
@@ -1846,29 +2320,51 @@ END_PROGRAM
         vm.memory_mut().set_variable("b", PlcValue::Int(3)).unwrap();
         vm.execute(&instructions).unwrap();
         let result = vm.memory().get_variable("result").unwrap().to_int();
-        assert_eq!(result, 100, "Expected result=100 from nested IF path, got {}", result);
+        assert_eq!(
+            result, 100,
+            "Expected result=100 from nested IF path, got {}",
+            result
+        );
 
         // Test nested IF else: a=5, b=0 => a > 3 is true, b > 1 is false => result=200
         vm.memory_mut().set_variable("a", PlcValue::Int(5)).unwrap();
         vm.memory_mut().set_variable("b", PlcValue::Int(0)).unwrap();
-        vm.memory_mut().set_variable("result", PlcValue::Int(0)).unwrap();
+        vm.memory_mut()
+            .set_variable("result", PlcValue::Int(0))
+            .unwrap();
         vm.execute(&instructions).unwrap();
         let result = vm.memory().get_variable("result").unwrap().to_int();
-        assert_eq!(result, 200, "Expected result=200 from nested IF-ELSE path, got {}", result);
+        assert_eq!(
+            result, 200,
+            "Expected result=200 from nested IF-ELSE path, got {}",
+            result
+        );
 
         // Test ELSIF path: a=2 => a > 3 is false, a > 1 is true => result=300
         vm.memory_mut().set_variable("a", PlcValue::Int(2)).unwrap();
-        vm.memory_mut().set_variable("result", PlcValue::Int(0)).unwrap();
+        vm.memory_mut()
+            .set_variable("result", PlcValue::Int(0))
+            .unwrap();
         vm.execute(&instructions).unwrap();
         let result = vm.memory().get_variable("result").unwrap().to_int();
-        assert_eq!(result, 300, "Expected result=300 from ELSIF path, got {}", result);
+        assert_eq!(
+            result, 300,
+            "Expected result=300 from ELSIF path, got {}",
+            result
+        );
 
         // Test ELSE path: a=0 => a > 3 is false, a > 1 is false => result=400
         vm.memory_mut().set_variable("a", PlcValue::Int(0)).unwrap();
-        vm.memory_mut().set_variable("result", PlcValue::Int(0)).unwrap();
+        vm.memory_mut()
+            .set_variable("result", PlcValue::Int(0))
+            .unwrap();
         vm.execute(&instructions).unwrap();
         let result = vm.memory().get_variable("result").unwrap().to_int();
-        assert_eq!(result, 400, "Expected result=400 from ELSE path, got {}", result);
+        assert_eq!(
+            result, 400,
+            "Expected result=400 from ELSE path, got {}",
+            result
+        );
     }
 
     #[test]
@@ -1876,9 +2372,7 @@ END_PROGRAM
         // String comparison via Eq opcode: both strings map to to_real() = 0.0,
         // so equality check (0.0 == 0.0) should be true.
         // This tests the VM behavior with string PlcValues through the Eq opcode.
-        let vars = vec![
-            ("flag".to_string(), PlcValue::Bool(false)),
-        ];
+        let vars = vec![("flag".to_string(), PlcValue::Bool(false))];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
@@ -1892,26 +2386,50 @@ END_PROGRAM
         // Since to_real() returns 0.0 for all strings, Eq("hello", "hello") => true
         vm.execute(&[
             // We can't push strings directly, but we can use IntToString
-            Instruction { opcode: Opcode::PushDint, operand: Some(42) },
-            Instruction { opcode: Opcode::IntToString, operand: None },
-            Instruction { opcode: Opcode::PushDint, operand: Some(42) },
-            Instruction { opcode: Opcode::IntToString, operand: None },
-            Instruction { opcode: Opcode::Eq, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(42),
+            },
+            Instruction {
+                opcode: Opcode::IntToString,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(42),
+            },
+            Instruction {
+                opcode: Opcode::IntToString,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::Eq,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         let flag = vm.memory().get_variable("flag").unwrap();
         // Both convert to "42", so Eq should compare their to_real() values (both 0.0)
         // Since to_real() is 0.0 for all strings, 0.0 == 0.0 => true
-        assert_eq!(*flag, PlcValue::Bool(true), "String equality via Eq should be true for same-value strings");
+        assert_eq!(
+            *flag,
+            PlcValue::Bool(true),
+            "String equality via Eq should be true for same-value strings"
+        );
     }
 
     #[test]
     fn test_modulo_operation() {
-        let vars = vec![
-            ("result".to_string(), PlcValue::Real(0.0)),
-        ];
+        let vars = vec![("result".to_string(), PlcValue::Real(0.0))];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
@@ -1923,15 +2441,35 @@ END_PROGRAM
 
         // 10 MOD 3 should be 1
         vm.execute(&[
-            Instruction { opcode: Opcode::PushInt, operand: Some(10) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(3) },
-            Instruction { opcode: Opcode::Modulo, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(10),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::Modulo,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         let result = vm.memory().get_variable("result").unwrap().to_real();
-        assert!((result - 1.0).abs() < 0.01, "Expected 10 MOD 3 = 1.0, got {}", result);
+        assert!(
+            (result - 1.0).abs() < 0.01,
+            "Expected 10 MOD 3 = 1.0, got {}",
+            result
+        );
 
         // 17 MOD 5 should be 2
         let mut vm2 = Vm::from_instructions(CompiledModule {
@@ -1943,21 +2481,39 @@ END_PROGRAM
             line_map: vec![],
         });
         vm2.execute(&[
-            Instruction { opcode: Opcode::PushInt, operand: Some(17) },
-            Instruction { opcode: Opcode::PushInt, operand: Some(5) },
-            Instruction { opcode: Opcode::Modulo, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(17),
+            },
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(5),
+            },
+            Instruction {
+                opcode: Opcode::Modulo,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         let result2 = vm2.memory().get_variable("result").unwrap().to_real();
-        assert!((result2 - 2.0).abs() < 0.01, "Expected 17 MOD 5 = 2.0, got {}", result2);
+        assert!(
+            (result2 - 2.0).abs() < 0.01,
+            "Expected 17 MOD 5 = 2.0, got {}",
+            result2
+        );
     }
 
     #[test]
     fn test_negation() {
-        let vars = vec![
-            ("result".to_string(), PlcValue::Int(0)),
-        ];
+        let vars = vec![("result".to_string(), PlcValue::Int(0))];
         let mut vm = Vm::from_instructions(CompiledModule {
             name: "test".into(),
             instructions: vec![],
@@ -1969,14 +2525,32 @@ END_PROGRAM
 
         // Negate 42 => -42
         vm.execute(&[
-            Instruction { opcode: Opcode::PushInt, operand: Some(42) },
-            Instruction { opcode: Opcode::Neg, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushInt,
+                operand: Some(42),
+            },
+            Instruction {
+                opcode: Opcode::Neg,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
 
         let result = vm.memory().get_variable("result").unwrap();
-        assert_eq!(*result, PlcValue::Int(-42), "Expected -42 after negation, got {:?}", result);
+        assert_eq!(
+            *result,
+            PlcValue::Int(-42),
+            "Expected -42 after negation, got {:?}",
+            result
+        );
 
         // Negate a Dint
         let vars2 = vec![("result".to_string(), PlcValue::Dint(0))];
@@ -1989,12 +2563,28 @@ END_PROGRAM
             line_map: vec![],
         });
         vm2.execute(&[
-            Instruction { opcode: Opcode::PushDint, operand: Some(100) },
-            Instruction { opcode: Opcode::Neg, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
-        assert_eq!(vm2.memory().get_variable("result"), Some(&PlcValue::Dint(-100)));
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(100),
+            },
+            Instruction {
+                opcode: Opcode::Neg,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            vm2.memory().get_variable("result"),
+            Some(&PlcValue::Dint(-100))
+        );
 
         // Negate a Real
         let vars3 = vec![("result".to_string(), PlcValue::Real(0.0))];
@@ -2008,21 +2598,47 @@ END_PROGRAM
         });
         let neg_three_five = (-3.5f32).to_bits() as i32;
         vm3.execute(&[
-            Instruction { opcode: Opcode::PushReal, operand: Some(0x40600000) }, // 3.5
-            Instruction { opcode: Opcode::Neg, operand: None },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
-        ]).unwrap();
+            Instruction {
+                opcode: Opcode::PushReal,
+                operand: Some(0x40600000),
+            }, // 3.5
+            Instruction {
+                opcode: Opcode::Neg,
+                operand: None,
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
+        ])
+        .unwrap();
         let result_real = vm3.memory().get_variable("result").unwrap().to_real();
-        assert!((result_real - (-3.5)).abs() < 0.01, "Expected -3.5, got {}", result_real);
+        assert!(
+            (result_real - (-3.5)).abs() < 0.01,
+            "Expected -3.5, got {}",
+            result_real
+        );
     }
 
     #[test]
     fn test_string_literal() {
         let instructions = vec![
-            Instruction { opcode: Opcode::PushString, operand: Some(0) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushString,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![("greeting".into(), PlcValue::String(String::new()))];
         let mut vm = Vm::from_instructions(CompiledModule {
@@ -2044,18 +2660,54 @@ END_PROGRAM
     #[test]
     fn test_string_operations_with_literals() {
         let instructions = vec![
-            Instruction { opcode: Opcode::PushString, operand: Some(0) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::PushString, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(1) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(1) },
-            Instruction { opcode: Opcode::Concat, operand: Some(2) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(2) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },
-            Instruction { opcode: Opcode::StrLen, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(3) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushString,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::PushString,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::Concat,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::StrLen,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![
             ("s1".into(), PlcValue::String(String::new())),
@@ -2083,13 +2735,34 @@ END_PROGRAM
     fn test_mux_function() {
         // MUX(1, 10, 20, 30) should return 20
         let instructions = vec![
-            Instruction { opcode: Opcode::PushDint, operand: Some(10) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(20) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(30) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(1) },
-            Instruction { opcode: Opcode::Mux, operand: Some(4) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(10),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(20),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(30),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::Mux,
+                operand: Some(4),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![("result".into(), PlcValue::Dint(0))];
         let mut vm = Vm::from_instructions(CompiledModule {
@@ -2107,12 +2780,30 @@ END_PROGRAM
     #[test]
     fn test_mux_function_first() {
         let instructions = vec![
-            Instruction { opcode: Opcode::PushDint, operand: Some(10) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(20) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(0) },
-            Instruction { opcode: Opcode::Mux, operand: Some(3) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(10),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(20),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Mux,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![("result".into(), PlcValue::Dint(0))];
         let mut vm = Vm::from_instructions(CompiledModule {
@@ -2130,15 +2821,42 @@ END_PROGRAM
     #[test]
     fn test_shl_shr() {
         let instructions = vec![
-            Instruction { opcode: Opcode::PushDint, operand: Some(0xFF) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(8) },
-            Instruction { opcode: Opcode::Shl, operand: Some(2) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(4) },
-            Instruction { opcode: Opcode::Shr, operand: Some(2) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(1) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(0xFF),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(8),
+            },
+            Instruction {
+                opcode: Opcode::Shl,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(4),
+            },
+            Instruction {
+                opcode: Opcode::Shr,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![
             ("shifted".into(), PlcValue::Dint(0)),
@@ -2153,8 +2871,14 @@ END_PROGRAM
             line_map: vec![],
         });
         vm.execute(&instructions).unwrap();
-        assert_eq!(vm.memory().get_variable("shifted").unwrap().to_int(), 0xFF00);
-        assert_eq!(vm.memory().get_variable("shifted_back").unwrap().to_int(), 0xFF0);
+        assert_eq!(
+            vm.memory().get_variable("shifted").unwrap().to_int(),
+            0xFF00
+        );
+        assert_eq!(
+            vm.memory().get_variable("shifted_back").unwrap().to_int(),
+            0xFF0
+        );
     }
 
     #[test]
@@ -2163,11 +2887,26 @@ END_PROGRAM
         // 0x80000001 << 1 = 0x00000002, 0x80000001 >> 31 = 0x00000001
         // ROL result = 0x00000002 | 0x00000001 = 0x00000003
         let instructions = vec![
-            Instruction { opcode: Opcode::PushDint, operand: Some(0x80000001u32 as i32) },
-            Instruction { opcode: Opcode::PushDint, operand: Some(1) },
-            Instruction { opcode: Opcode::Rol, operand: Some(2) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(0x80000001u32 as i32),
+            },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::Rol,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![("rotated".into(), PlcValue::Dint(0))];
         let mut vm = Vm::from_instructions(CompiledModule {
@@ -2186,20 +2925,59 @@ END_PROGRAM
     fn test_type_conversions() {
         let instructions = vec![
             // INT_TO_WORD(42) then WORD_TO_INT
-            Instruction { opcode: Opcode::PushDint, operand: Some(42) },
-            Instruction { opcode: Opcode::IntToWord, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(0) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(0) },
-            Instruction { opcode: Opcode::WordToInt, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(1) },
+            Instruction {
+                opcode: Opcode::PushDint,
+                operand: Some(42),
+            },
+            Instruction {
+                opcode: Opcode::IntToWord,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(0),
+            },
+            Instruction {
+                opcode: Opcode::WordToInt,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(1),
+            },
             // REAL_TO_DWORD(3.14) then DWORD_TO_REAL
-            Instruction { opcode: Opcode::PushReal, operand: Some(3.14f32.to_bits() as i32) },
-            Instruction { opcode: Opcode::RealToDword, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(2) },
-            Instruction { opcode: Opcode::LoadVar, operand: Some(2) },
-            Instruction { opcode: Opcode::DwordToReal, operand: Some(1) },
-            Instruction { opcode: Opcode::StoreVar, operand: Some(3) },
-            Instruction { opcode: Opcode::Halt, operand: None },
+            Instruction {
+                opcode: Opcode::PushReal,
+                operand: Some(3.14f32.to_bits() as i32),
+            },
+            Instruction {
+                opcode: Opcode::RealToDword,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::LoadVar,
+                operand: Some(2),
+            },
+            Instruction {
+                opcode: Opcode::DwordToReal,
+                operand: Some(1),
+            },
+            Instruction {
+                opcode: Opcode::StoreVar,
+                operand: Some(3),
+            },
+            Instruction {
+                opcode: Opcode::Halt,
+                operand: None,
+            },
         ];
         let vars = vec![
             ("w".into(), PlcValue::Word(0)),
@@ -2225,7 +3003,11 @@ END_PROGRAM
             PlcValue::Real(f) => *f,
             other => panic!("Expected Real, got {:?}", other),
         };
-        assert!((roundtrip - 3.14).abs() < 0.01, "Expected 3.14, got {}", roundtrip);
+        assert!(
+            (roundtrip - 3.14).abs() < 0.01,
+            "Expected 3.14, got {}",
+            roundtrip
+        );
     }
 
     /// Benchmark: measure how many cycles/second the VM can sustain
@@ -2237,41 +3019,119 @@ END_PROGRAM
         let mut instructions: Vec<Instruction> = Vec::new();
 
         // x := x + 1
-        instructions.push(Instruction { opcode: Opcode::LoadVar, operand: Some(0) });   // load x
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(1) });
-        instructions.push(Instruction { opcode: Opcode::Add, operand: None });
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(0) });   // store x
+        instructions.push(Instruction {
+            opcode: Opcode::LoadVar,
+            operand: Some(0),
+        }); // load x
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(1),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::Add,
+            operand: None,
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(0),
+        }); // store x
 
         // y := x * 2
-        instructions.push(Instruction { opcode: Opcode::LoadVar, operand: Some(0) });    // load x
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(2) });
-        instructions.push(Instruction { opcode: Opcode::Mul, operand: None });
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(1) });    // store y
+        instructions.push(Instruction {
+            opcode: Opcode::LoadVar,
+            operand: Some(0),
+        }); // load x
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(2),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::Mul,
+            operand: None,
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(1),
+        }); // store y
 
         // z := SQRT(x * 100)
-        instructions.push(Instruction { opcode: Opcode::LoadVar, operand: Some(0) });
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(100) });
-        instructions.push(Instruction { opcode: Opcode::Mul, operand: None });
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(1) });    // arg_count
-        instructions.push(Instruction { opcode: Opcode::Sqrt, operand: Some(1) });
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(2) });    // store z
+        instructions.push(Instruction {
+            opcode: Opcode::LoadVar,
+            operand: Some(0),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(100),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::Mul,
+            operand: None,
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(1),
+        }); // arg_count
+        instructions.push(Instruction {
+            opcode: Opcode::Sqrt,
+            operand: Some(1),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(2),
+        }); // store z
 
         // IF x > 100 THEN x := 0; END_IF
-        instructions.push(Instruction { opcode: Opcode::LoadVar, operand: Some(0) });
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(100) });
-        instructions.push(Instruction { opcode: Opcode::Gt, operand: None });
-        instructions.push(Instruction { opcode: Opcode::JumpIfFalse, operand: Some(3) }); // skip 3 instr
-        instructions.push(Instruction { opcode: Opcode::PushDint, operand: Some(0) });
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(0) });
+        instructions.push(Instruction {
+            opcode: Opcode::LoadVar,
+            operand: Some(0),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(100),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::Gt,
+            operand: None,
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::JumpIfFalse,
+            operand: Some(3),
+        }); // skip 3 instr
+        instructions.push(Instruction {
+            opcode: Opcode::PushDint,
+            operand: Some(0),
+        });
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(0),
+        });
 
         // Timer call: t1(IN:=TRUE, PT:=T#1S)
-        instructions.push(Instruction { opcode: Opcode::PushTime, operand: Some(1000) }); // PT=1s
-        instructions.push(Instruction { opcode: Opcode::PushBool, operand: Some(1) });    // IN=TRUE
-        instructions.push(Instruction { opcode: Opcode::TonCall, operand: Some(0) });     // timer idx 0
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(4) });    // t1.Q
-        instructions.push(Instruction { opcode: Opcode::StoreVar, operand: Some(5) });    // t1.ET
+        instructions.push(Instruction {
+            opcode: Opcode::PushTime,
+            operand: Some(1000),
+        }); // PT=1s
+        instructions.push(Instruction {
+            opcode: Opcode::PushBool,
+            operand: Some(1),
+        }); // IN=TRUE
+        instructions.push(Instruction {
+            opcode: Opcode::TonCall,
+            operand: Some(0),
+        }); // timer idx 0
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(4),
+        }); // t1.Q
+        instructions.push(Instruction {
+            opcode: Opcode::StoreVar,
+            operand: Some(5),
+        }); // t1.ET
 
-        instructions.push(Instruction { opcode: Opcode::Halt, operand: None });
+        instructions.push(Instruction {
+            opcode: Opcode::Halt,
+            operand: None,
+        });
 
         let vars = vec![
             ("x".to_string(), PlcValue::Dint(0)),
@@ -2309,7 +3169,11 @@ END_PROGRAM
         eprintln!("  Instructions per cycle: {}", instructions.len());
 
         // Must achieve at least 1,000 cycles/sec (1ms/cycle)
-        assert!(cycles_per_sec > 1000.0,
-            "VM too slow: {:.0} cycles/sec ({:.1}μs/cycle)", cycles_per_sec, us_per_cycle);
+        assert!(
+            cycles_per_sec > 1000.0,
+            "VM too slow: {:.0} cycles/sec ({:.1}μs/cycle)",
+            cycles_per_sec,
+            us_per_cycle
+        );
     }
 }

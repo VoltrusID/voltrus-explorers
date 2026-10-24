@@ -68,9 +68,7 @@ pub async fn compile_source(
 }
 
 #[tauri::command]
-pub async fn get_diagnostics(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<Diagnostic>, String> {
+pub async fn get_diagnostics(state: tauri::State<'_, AppState>) -> Result<Vec<Diagnostic>, String> {
     let compiler = state.compiler.lock().await;
     Ok(compiler.last_diagnostics.clone())
 }

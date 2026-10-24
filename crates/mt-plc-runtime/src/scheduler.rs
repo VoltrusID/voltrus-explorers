@@ -1,4 +1,3 @@
-
 /// Cyclic scan scheduler
 pub struct Scheduler {
     cycle_time_ms: u64,

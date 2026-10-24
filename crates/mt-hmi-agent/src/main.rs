@@ -1,10 +1,10 @@
 use axum::{
+    Router,
     body::Body,
     extract::Query,
     http::{StatusCode, header},
     response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -52,7 +52,10 @@ async fn main() {
         .await
         .expect("Failed to bind to port 8080");
 
-    println!("mt-hmi-agent listening on {}", listener.local_addr().unwrap());
+    println!(
+        "mt-hmi-agent listening on {}",
+        listener.local_addr().unwrap()
+    );
     axum::serve(listener, app).await.expect("Server error");
 }
 
@@ -100,7 +103,10 @@ async fn deploy(
 
     match fs::write(&current, &html) {
         Ok(_) => (StatusCode::OK, "Deployed successfully".to_string()),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Write failed: {}", e)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Write failed: {}", e),
+        ),
     }
 }
 

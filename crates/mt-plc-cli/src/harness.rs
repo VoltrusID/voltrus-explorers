@@ -4,8 +4,8 @@ use std::time::Instant;
 
 use crate::check::{collect_files, rel_path};
 use crate::junit::write_report;
-use crate::runner::{run_scenario, Assertion};
-use crate::scenario::{ScenarioFile, DEFAULT_SCAN_MS};
+use crate::runner::{Assertion, run_scenario};
+use crate::scenario::{DEFAULT_SCAN_MS, ScenarioFile};
 
 /// How one scenario ended, serialized lowercase (`passed`/`failed`/`error`).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub fn run(dir: &Path, junit_path: Option<&Path>) -> TestReport {
                 passed: false,
                 suites: Vec::new(),
                 error: Some(format!("{err:#}")),
-            }
+            };
         }
     };
 
@@ -129,9 +129,7 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
 
     let raw = match std::fs::read_to_string(yaml_path) {
         Ok(raw) => raw,
-        Err(err) => {
-            return error_case(format!("failed to read {}: {err}", yaml_path.display()))
-        }
+        Err(err) => return error_case(format!("failed to read {}: {err}", yaml_path.display())),
     };
     let file: ScenarioFile = match serde_yaml::from_str(&raw) {
         Ok(file) => file,
@@ -152,7 +150,7 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
             return error_case(format!(
                 "failed to read program {}: {err}",
                 program_path.display()
-            ))
+            ));
         }
     };
     let st_source = match crate::diagram::DiagramKind::from_extension(
@@ -178,11 +176,15 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
                 return error_case(format!(
                     "program {} failed to transpile{}",
                     file.program,
-                    if detail.is_empty() { String::new() } else { format!("\n{detail}") }
+                    if detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n{detail}")
+                    }
                 ));
             }
             Err(err) => {
-                return error_case(format!("program {} failed to parse: {err}", file.program))
+                return error_case(format!("program {} failed to parse: {err}", file.program));
             }
         },
         None => source,
@@ -202,7 +204,11 @@ fn run_file(yaml_path: &Path, rel: &str) -> SuiteReport {
             return error_case(format!(
                 "program {} failed to compile{}",
                 file.program,
-                if detail.is_empty() { String::new() } else { format!("\n{detail}") }
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{detail}")
+                }
             ));
         }
     };

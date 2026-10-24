@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use mt_plc_runtime::Vm;
 use mt_plc_types::{CompiledModule, Instruction, PlcValue};
 
-use crate::scenario::{coerce_given, parse_advance, parse_expect, Matcher, Scenario};
+use crate::scenario::{Matcher, Scenario, coerce_given, parse_advance, parse_expect};
 
 /// Deterministic scan-cycle driver around the runtime VM.
 ///
@@ -133,7 +133,7 @@ pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) 
                 failures: vec![format!("setup: {err:#}")],
                 assertions: Vec::new(),
                 duration_ms: 0,
-            }
+            };
         }
     };
 
@@ -161,9 +161,8 @@ pub fn run_scenario(scenario: &Scenario, module: &CompiledModule, scan_ms: u64) 
                     let name = match key.as_str() {
                         Some(name) => name,
                         None => {
-                            failures.push(format!(
-                                "step {index}: `set` keys must be variable names"
-                            ));
+                            failures
+                                .push(format!("step {index}: `set` keys must be variable names"));
                             break;
                         }
                     };
@@ -263,8 +262,8 @@ fn check_matchers(
 
 #[cfg(test)]
 mod tests {
-    use crate::scenario::ScenarioFile;
     use super::*;
+    use crate::scenario::ScenarioFile;
 
     const TON_PROGRAM: &str = r#"
 PROGRAM TimedLamp
@@ -313,7 +312,10 @@ END_PROGRAM
         assert_eq!(runner.value_of("Done").unwrap(), PlcValue::Bool(false));
         // Scan 1 starts the timer at ~0ms; scan k sees ~ (k-1) * scan_ms.
         let et = runner.value_of("LampDelay.ET").unwrap().to_int();
-        assert!((1800..=1990).contains(&et), "ET {et} outside expected window");
+        assert!(
+            (1800..=1990).contains(&et),
+            "ET {et} outside expected window"
+        );
 
         runner.advance(30).unwrap(); // crosses T#2s
         assert_eq!(runner.value_of("Done").unwrap(), PlcValue::Bool(true));
@@ -359,7 +361,9 @@ END_PROGRAM
     fn unknown_given_variable_lists_declared_names() {
         let module = compile(TON_PROGRAM);
         let mut runner = TestRunner::new(module, 10).unwrap();
-        let err = runner.give("Stat", &serde_yaml::Value::Bool(true)).unwrap_err();
+        let err = runner
+            .give("Stat", &serde_yaml::Value::Bool(true))
+            .unwrap_err();
         let message = err.to_string();
         assert!(message.contains("unknown variable `Stat`"), "{message}");
         assert!(message.contains("Start"), "{message}");
@@ -385,7 +389,11 @@ scenarios:
         let file: crate::scenario::ScenarioFile = serde_yaml::from_str(yaml).unwrap();
         let module = compile(TON_PROGRAM);
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
-        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+        assert!(
+            outcome.passed(),
+            "unexpected failures: {:?}",
+            outcome.failures
+        );
     }
 
     #[test]
@@ -423,7 +431,11 @@ scenarios:
         let file: crate::scenario::ScenarioFile = serde_yaml::from_str(yaml).unwrap();
         let module = compile(TON_PROGRAM);
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
-        assert!(outcome.failures[0].contains("no such variable"), "{:?}", outcome.failures);
+        assert!(
+            outcome.failures[0].contains("no such variable"),
+            "{:?}",
+            outcome.failures
+        );
     }
 
     #[test]
@@ -441,7 +453,11 @@ scenarios:
 "#;
         let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
-        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+        assert!(
+            outcome.passed(),
+            "unexpected failures: {:?}",
+            outcome.failures
+        );
         // The write landed and no scan ran, so the counter saw no edge.
         assert_eq!(outcome.assertions.len(), 2);
         assert!(outcome.assertions.iter().all(|a| a.passed));
@@ -467,7 +483,11 @@ scenarios:
 "#;
         let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
-        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+        assert!(
+            outcome.passed(),
+            "unexpected failures: {:?}",
+            outcome.failures
+        );
     }
 
     #[test]
@@ -496,7 +516,11 @@ scenarios:
 "#;
         let file: ScenarioFile = serde_yaml::from_str(yaml).unwrap();
         let outcome = run_scenario(&file.scenarios[0], &module, 10);
-        assert!(outcome.passed(), "unexpected failures: {:?}", outcome.failures);
+        assert!(
+            outcome.passed(),
+            "unexpected failures: {:?}",
+            outcome.failures
+        );
     }
 
     #[test]

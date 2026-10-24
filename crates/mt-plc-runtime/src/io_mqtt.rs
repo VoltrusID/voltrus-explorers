@@ -1,10 +1,13 @@
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::Mutex;
 
-use crate::io_manager::{IoDriver, IoAddress, IoError, IoArea};
+use crate::io_manager::{IoAddress, IoArea, IoDriver, IoError};
 use crate::types::PlcValue;
-use mt_mqtt::{MqttPubClient, MqttClientConfig};
+use mt_mqtt::{MqttClientConfig, MqttPubClient};
 
 pub struct MqttIoDriver {
     host: String,
@@ -105,10 +108,16 @@ impl IoDriver for MqttIoDriver {
         }
         let rt = tokio::runtime::Handle::current();
         let cache = rt.block_on(async { self.cache.lock().await });
-        Ok(addresses.iter().map(|a| {
-            let topic = self.io_to_topic(a);
-            cache.get(&topic).map(|b| Self::parse_cache(b)).unwrap_or(PlcValue::Dint(0))
-        }).collect())
+        Ok(addresses
+            .iter()
+            .map(|a| {
+                let topic = self.io_to_topic(a);
+                cache
+                    .get(&topic)
+                    .map(|b| Self::parse_cache(b))
+                    .unwrap_or(PlcValue::Dint(0))
+            })
+            .collect())
     }
 
     fn write_outputs(&mut self, mappings: &[(IoAddress, PlcValue)]) -> Result<(), IoError> {
@@ -129,15 +138,25 @@ impl IoDriver for MqttIoDriver {
                 _ => vec![],
             };
             rt.block_on(async {
-                client.publish(&topic, rumqttc::QoS::AtLeastOnce, false, payload).await
-            }).map_err(|e| IoError { message: format!("MQTT publish: {}", e), recoverable: true })?;
+                client
+                    .publish(&topic, rumqttc::QoS::AtLeastOnce, false, payload)
+                    .await
+            })
+            .map_err(|e| IoError {
+                message: format!("MQTT publish: {}", e),
+                recoverable: true,
+            })?;
         }
         Ok(())
     }
 
-    fn name(&self) -> &str { "mqtt" }
+    fn name(&self) -> &str {
+        "mqtt"
+    }
 
-    fn is_connected(&self) -> bool { self.connected.load(Ordering::SeqCst) }
+    fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
+    }
 
     fn disconnect(&mut self) {
         self._event_task.take(); // Drop the handle — the task will stop since next_event returns None on errors

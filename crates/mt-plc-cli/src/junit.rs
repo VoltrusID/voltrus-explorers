@@ -1,7 +1,7 @@
+use crate::harness::SuiteReport;
 use anyhow::Context;
 use std::fmt::Write as _;
 use std::path::Path;
-use crate::harness::SuiteReport;
 
 pub fn write_report(path: &Path, suites: &[SuiteReport]) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
@@ -14,8 +14,14 @@ pub fn write_report(path: &Path, suites: &[SuiteReport]) -> anyhow::Result<()> {
 
 pub fn to_xml(suites: &[SuiteReport]) -> String {
     let tests: usize = suites.iter().map(|s| s.cases.len()).sum();
-    let failures: usize = suites.iter().map(|s| s.cases.iter().filter(|c| !c.failures.is_empty()).count()).sum();
-    let errors: usize = suites.iter().map(|s| s.cases.iter().filter(|c| c.error.is_some()).count()).sum();
+    let failures: usize = suites
+        .iter()
+        .map(|s| s.cases.iter().filter(|c| !c.failures.is_empty()).count())
+        .sum();
+    let errors: usize = suites
+        .iter()
+        .map(|s| s.cases.iter().filter(|c| c.error.is_some()).count())
+        .sum();
 
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     writeln!(
@@ -29,7 +35,11 @@ pub fn to_xml(suites: &[SuiteReport]) -> String {
             "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"{}\">",
             escape(&suite.name),
             suite.cases.len(),
-            suite.cases.iter().filter(|c| !c.failures.is_empty()).count(),
+            suite
+                .cases
+                .iter()
+                .filter(|c| !c.failures.is_empty())
+                .count(),
             suite.cases.iter().filter(|c| c.error.is_some()).count(),
         )
         .unwrap();
@@ -115,7 +125,7 @@ mod tests {
                     outcome: ScenarioOutcome::Failed,
                     duration_ms: 0,
                     failures: vec![
-                        "level: expected 91 ±0.001, got 90.00 (REAL)\nsecond line".into()
+                        "level: expected 91 ±0.001, got 90.00 (REAL)\nsecond line".into(),
                     ],
                     error: None,
                     assertions: vec![Assertion {
@@ -137,7 +147,9 @@ mod tests {
         assert!(xml.contains(
             "<testsuite name=\"TankLevel.test.yaml\" tests=\"2\" failures=\"1\" errors=\"0\">"
         ));
-        assert!(xml.contains("<testcase name=\"low level opens inlet\" classname=\"TankLevel.test.yaml\" time=\"0\">"));
+        assert!(xml.contains(
+            "<testcase name=\"low level opens inlet\" classname=\"TankLevel.test.yaml\" time=\"0\">"
+        ));
         assert!(
             xml.contains("<failure message=\"level: expected 91 ±0.001, got 90.00 (REAL)\" type=\"assertion\">"),
             "failure message uses the first line only"

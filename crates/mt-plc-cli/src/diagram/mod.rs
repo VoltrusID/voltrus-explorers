@@ -27,7 +27,6 @@
 //! generated from the real TS transpilers by
 //! `apps/voltrus-plc/scripts/gen-goldens.test.ts`.
 
-
 pub mod blocks;
 pub mod fbd;
 pub mod ld;
