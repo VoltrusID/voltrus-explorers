@@ -9,7 +9,7 @@ const PRO_FEATURES = [
   "Write registers and coils",
   "Poll more than 20 values",
   "Slave simulator with device templates",
-  "Modbus RTU over serial, bus scan and auto-detect (macOS)",
+  "Modbus RTU over serial, bus scan and auto-detect",
   "Live trends",
   "Network scan",
   "Several connections open at once, each in its own tab",

@@ -11,6 +11,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 # App Store build: Pro sold as an in-app purchase (see crates/mt-store).
 store = ["mt-store/store", "mt-connect/store"]
+# Direct-sale Windows build: Pro unlocks with a Voltrus licence key (see crates/mt-store `key`).
+keys = ["mt-store/keys"]
 
 [build-dependencies]
 tauri-build = { workspace = true }
@@ -29,9 +31,17 @@ tokio = { workspace = true }
 
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 
-[target.'cfg(target_os = "macos")'.dependencies]
+# Modbus RTU over serial ports (the `serial` cfg set by build.rs).
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 mt-modbus = { path = "../../../crates/mt-modbus", features = ["serial"] }
 serialport = "4"
 tokio-serial = "5"
 tokio-modbus = { version = "0.16", default-features = false, features = ["rtu"] }
+
+# The virtual RTU port is a pty pair: Unix only.
+[target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+
+# A second launch (for example the voltrus-modbus-poll:// sign-in redirect) is handed to the running window.
+[target.'cfg(windows)'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

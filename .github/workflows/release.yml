@@ -7,6 +7,9 @@
 #   appstore  universal .pkg signed for the Mac App Store; uploaded to App Store Connect when `upload` is ticked
 #   dmg       universal Developer ID .dmg, notarized and stapled; attached to a GitHub Release when `github_release`
 #   ios       iPhone/iPad App Store IPA of the selected app (apps/<app>/scripts/build-ios.sh); uploaded when `upload` is ticked
+#   windows   Modbus Poll only: unsigned NSIS installer and portable zip for x64 and ARM64 (scripts/build-windows.ps1), smoke-tested
+#             on Windows runners, published with SHA256SUMS.txt as GitHub Release modbus-poll-windows-v<version> when `github_release`.
+#             Needs no secrets, so these jobs do not use the `release` environment.
 name: Release
 
 on:
@@ -33,7 +36,11 @@ on:
         type: boolean
         default: false
       github_release:
-        description: Publish the .dmg as GitHub Release <app>-v<version>
+        description: Publish the .dmg (or, with `windows`, the Windows files) as a GitHub Release (<app>-v<version>, modbus-poll-windows-v<version>)
+        type: boolean
+        default: false
+      windows:
+        description: Windows installer and portable zip, x64 and ARM64 (Modbus Poll only; unsigned, Pro by licence key)
         type: boolean
         default: false
 
@@ -212,3 +219,128 @@ jobs:
       - name: Remove signing material
         if: always()
         run: scripts/ci-keychain.sh cleanup
+
+  windows-build:
+    if: inputs.windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - name: Only Modbus Poll has a Windows build
+        if: inputs.app != 'modbus-poll'
+        shell: bash
+        run: echo "::error::The Windows build is Modbus Poll only (app=$APP)"; exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-windows-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-windows-${{ matrix.arch }}-
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Build installer and portable zip
+        run: pwsh scripts/build-windows.ps1 -Arch ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: modbus-poll-windows-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            build/modbus-poll-windows/${{ matrix.arch }}/*.exe
+            build/modbus-poll-windows/${{ matrix.arch }}/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # Installs, starts and uninstalls the files on a Windows machine of the same architecture before anything is published.
+  windows-smoke:
+    needs: windows-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: modbus-poll-windows-${{ matrix.arch }}-${{ github.run_number }}
+          path: build/modbus-poll-windows/${{ matrix.arch }}
+
+      - name: Install, start and uninstall
+        run: pwsh scripts/smoke-windows.ps1 -Dir build/modbus-poll-windows/${{ matrix.arch }} -Arch ${{ matrix.arch }} -LicenseServer
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: modbus-poll-windows-${{ matrix.arch }}-smoke-${{ github.run_number }}
+          path: build/modbus-poll-windows/${{ matrix.arch }}/smoke/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  windows-release:
+    needs: windows-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: modbus-poll-windows-*-${{ github.run_number }}
+          path: files
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: files
+        run: |
+          ls -l
+          sha256sum *.exe *.zip | tee SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: GitHub Release
+        if: inputs.github_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(python3 -c "import json; print(json.load(open('apps/modbus-poll/src-tauri/tauri.conf.json'))['version'])")"
+          cat > notes.md <<NOTES
+          Modbus Poll $version for Windows 10 and 11, 64-bit (x64) and ARM64. Direct download; there is no Microsoft Store build.
+
+          - \`Modbus-Poll-$version-windows-x64-setup.exe\` and \`...-arm64-setup.exe\`: installer, per user, no administrator rights needed.
+          - \`Modbus-Poll-$version-windows-x64-portable.zip\` and \`...-arm64-portable.zip\`: unzip and run, nothing is installed.
+          - \`SHA256SUMS.txt\`: check a download with \`certutil -hashfile <file> SHA256\`.
+
+          **These files are not code-signed.** Windows SmartScreen shows "Windows protected your PC" the first time:
+          choose "More info", then "Run anyway". The app needs the Microsoft Edge WebView2 runtime (preinstalled on Windows 11 and
+          current Windows 10; the installer fetches it when it is missing).
+
+          Free with limits (20 polled values, one connection, one saved profile). Pro unlocks with a licence key
+          (\$14.99 once, https://voltrus.id/modbus-poll/windows/): Info, then Enter key. The key is checked online once;
+          after that the app works offline. Source: GPL-3.0-or-later, this repository.
+          NOTES
+          gh release create "modbus-poll-windows-v$version" files/*.exe files/*.zip files/SHA256SUMS.txt -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Modbus Poll $version for Windows" --notes-file notes.md

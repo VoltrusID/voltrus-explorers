@@ -9,5 +9,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Vitest runs the repo-wide entitlements check, which reads files through node:fs; tsc does not need to see it.
+  "exclude": ["src/__tests__/entitlements.test.ts"]
 }

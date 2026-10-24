@@ -5,7 +5,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | App | What it does | Get it |
 | --- | --- | --- |
 | **BACnet Explorer** | Discover BACnet/IP devices, browse objects, read/write properties, COV, trend logs, schedules, device simulator | [Mac App Store](https://apps.apple.com/app/id6789600440) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS + iOS) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS, iOS and Windows) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) · [Windows](https://voltrus.id/modbus-poll/windows/) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds notify plots, value decoding, RSSI chart, write presets and macros, several notifications and devices at once, and log export | Free download ([GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases/tag/ble-inspector-v1.2.0)) |
@@ -18,6 +18,14 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
 GitHub Releases (notarized DMGs, no auto-update) have every feature unlocked.
+
+**Modbus Poll for Windows** (10 and 11, x64 and ARM64) is a direct download, not a Microsoft Store app: an installer
+and a portable zip on the `modbus-poll-windows-v<version>` GitHub Release, with `SHA256SUMS.txt`. The files are not
+code-signed, so Windows SmartScreen asks you to confirm the first run. It has the same free tier as the Mac app, and
+Pro unlocks with a licence key (Info, then Enter key) bought at [voltrus.id](https://voltrus.id/modbus-poll/windows/);
+the key is checked online once. Building it yourself (`cargo tauri build --features keys` on Windows) gives the same
+app; a build without `--features keys` has everything unlocked, like every other source build. See
+[docs/release.md](docs/release.md#windows-modbus-poll).
 
 ## Free and Pro (App Store builds)
 

@@ -20,9 +20,9 @@ pub struct Conn {
     /// doing I/O; the client serialises its own requests.
     pub client: Mutex<Option<Arc<ModbusClient>>>,
     /// Stops a running bus scan only; never implies a disconnect.
-    #[cfg(target_os = "macos")]
+    #[cfg(serial)]
     pub scan_cancel: AtomicBool,
-    #[cfg(target_os = "macos")]
+    #[cfg(serial)]
     pub scan_cancel_notify: tokio::sync::Notify,
     /// Bumped by `disconnect`; a `connect` still in flight that
     /// sees it change gives up instead of installing its client.
@@ -33,9 +33,9 @@ impl Conn {
     fn new() -> Self {
         Self {
             client: Mutex::new(None),
-            #[cfg(target_os = "macos")]
+            #[cfg(serial)]
             scan_cancel: AtomicBool::new(false),
-            #[cfg(target_os = "macos")]
+            #[cfg(serial)]
             scan_cancel_notify: tokio::sync::Notify::new(),
             connect_epoch: watch::channel(0).0,
         }

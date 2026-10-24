@@ -50,7 +50,7 @@ pub async fn slave_start(
 }
 
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub async fn slave_start_rtu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,

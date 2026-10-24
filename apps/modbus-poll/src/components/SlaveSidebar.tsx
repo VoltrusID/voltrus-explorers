@@ -25,6 +25,8 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
 
   // iOS has no serial ports — Modbus TCP only.
   const isIos = platform === "ios";
+  // The virtual RTU port is a pty pair: macOS only.
+  const hasVirtualPort = platform === "macos";
 
   return (
     <>
@@ -90,7 +92,7 @@ export function SlaveSidebar({ onSlaveStart, onSlaveStop }: Props) {
                 }}
                 disabled={slaveRunning}
                 options={[
-                  { value: "__virtual__", label: "Virtual port (PTY)" },
+                  ...(hasVirtualPort ? [{ value: "__virtual__", label: "Virtual port (PTY)" }] : []),
                   { value: "", label: "Select port…" },
                   ...serialPorts.map((p) => ({ value: p, label: p })),
                 ]}

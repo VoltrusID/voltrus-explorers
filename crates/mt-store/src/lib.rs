@@ -1,13 +1,20 @@
 //! Pro entitlement for the explorer apps.
 //!
-//! - Source and GitHub builds (no `store` feature): everything is unlocked.
+//! - Source and GitHub builds (no feature): everything is unlocked.
 //! - App Store builds (`store` feature): Pro comes from the one-time in-app purchase, or from having first
 //!   downloaded the app while it was paid ("grandfathered"). The cut-over is configured per app in
 //!   `src-tauri/store.json`; while `free_since` is unset the app is still paid, so every store install is Pro.
+//! - Direct-sale builds (`keys` feature, the Windows installer): Pro unlocks with a Voltrus licence key,
+//!   activated online once (see [`key`]). Configured by the app's `keys.json`; store builds never contain it.
 //!
-//! Apps register [`setup`] on their builder and the three commands; the frontend only ever calls
-//! `store_status`, `store_purchase` and `store_restore`.
+//! Apps register [`setup`] on their builder and the commands; the frontend only calls `store_status`,
+//! `store_purchase`, `store_restore` and, in `keys` builds, `store_activate` and `store_deactivate`.
 
+#[cfg(all(feature = "store", feature = "keys"))]
+compile_error!("the `store` and `keys` features are different ways to sell Pro; enable one");
+
+#[cfg(feature = "keys")]
+pub mod key;
 mod receipt;
 
 use serde::{Deserialize, Serialize};
@@ -41,6 +48,8 @@ pub enum ProReason {
     Grandfathered,
     /// Owns the Pro in-app purchase.
     Purchased,
+    /// Activated with a licence key.
+    Key,
     /// Free tier.
     None,
 }
@@ -53,6 +62,10 @@ pub struct StoreStatus {
     pub reason: ProReason,
     /// Localized Pro price, when the store answered.
     pub price: Option<String>,
+    /// Pro is unlocked by entering a licence key (`store_activate`) instead of a store purchase.
+    pub activation: bool,
+    /// Where to buy a key, for builds with `activation`.
+    pub buy_url: Option<String>,
 }
 
 /// Dotted numeric comparison ("1.10" > "1.9"); missing or non-numeric components count as 0.
@@ -93,7 +106,13 @@ pub fn setup<R: tauri::Runtime>(builder: tauri::Builder<R>, config_json: &str) -
     builder
 }
 
-#[cfg(not(feature = "store"))]
+/// Registers the licence-key configuration (`keys.json`) of a direct-sale build.
+#[cfg(feature = "keys")]
+pub fn setup_keys<R: tauri::Runtime>(builder: tauri::Builder<R>, config_json: &str) -> tauri::Builder<R> {
+    builder.manage(serde_json::from_str::<key::KeyConfig>(config_json).expect("invalid keys.json"))
+}
+
+#[cfg(not(any(feature = "store", feature = "keys")))]
 mod commands {
     use super::{ProReason, StoreStatus};
 
@@ -101,7 +120,7 @@ mod commands {
 
     #[tauri::command]
     pub async fn store_status() -> Result<StoreStatus, String> {
-        Ok(StoreStatus { store: false, pro: true, reason: ProReason::Build, price: None })
+        Ok(StoreStatus { store: false, pro: true, reason: ProReason::Build, price: None, activation: false, buy_url: None })
     }
 
     #[tauri::command]
@@ -112,6 +131,69 @@ mod commands {
     #[tauri::command]
     pub async fn store_restore() -> Result<StoreStatus, String> {
         Err(NOT_SOLD.into())
+    }
+
+    #[tauri::command]
+    pub async fn store_activate(_key: String) -> Result<StoreStatus, String> {
+        Err(NOT_SOLD.into())
+    }
+
+    #[tauri::command]
+    pub async fn store_deactivate() -> Result<StoreStatus, String> {
+        Err(NOT_SOLD.into())
+    }
+}
+
+#[cfg(feature = "keys")]
+mod commands {
+    use super::{ProReason, StoreStatus, key};
+    use key::KeyConfig;
+    use tauri::{AppHandle, State};
+
+    fn status(app: &AppHandle, cfg: &KeyConfig) -> Result<StoreStatus, String> {
+        let activation = key::read_activation(&key::license_dir(app)?);
+        // No readable machine id (never on Windows) means no unlock: the stored file cannot be tied to this PC.
+        let device = key::machine_id().map(|m| key::device_id(&cfg.app, &m)).unwrap_or_default();
+        let pro = key::unlocks(activation.as_ref(), &device);
+        Ok(StoreStatus {
+            store: true,
+            pro,
+            reason: if pro { ProReason::Key } else { ProReason::None },
+            price: cfg.price.clone(),
+            activation: true,
+            buy_url: Some(cfg.buy_url.clone()),
+        })
+    }
+
+    #[tauri::command]
+    pub async fn store_status(app: AppHandle, cfg: State<'_, KeyConfig>) -> Result<StoreStatus, String> {
+        status(&app, &cfg)
+    }
+
+    /// Pro is bought on the web, not in the app: the frontend opens `buy_url` and asks for the key.
+    #[tauri::command]
+    pub async fn store_purchase() -> Result<StoreStatus, String> {
+        Err("Buy a licence key on voltrus.id, then enter it here.".into())
+    }
+
+    #[tauri::command]
+    pub async fn store_restore() -> Result<StoreStatus, String> {
+        Err("Enter your licence key to unlock Pro on this PC.".into())
+    }
+
+    #[tauri::command]
+    pub async fn store_activate(app: AppHandle, cfg: State<'_, KeyConfig>, key: String) -> Result<StoreStatus, String> {
+        let dir = key::license_dir(&app)?;
+        key::activate(&cfg, &dir, &key, &app.package_info().version.to_string()).await?;
+        status(&app, &cfg)
+    }
+
+    /// Removes the key from this PC (Pro locks again). The server keeps the seat until it is released on the
+    /// Licenses page of the console.
+    #[tauri::command]
+    pub async fn store_deactivate(app: AppHandle, cfg: State<'_, KeyConfig>) -> Result<StoreStatus, String> {
+        key::remove_activation(&key::license_dir(&app)?)?;
+        status(&app, &cfg)
     }
 }
 
@@ -126,7 +208,7 @@ mod commands {
     async fn status(app: &AppHandle, config: &StoreConfig) -> Result<StoreStatus, String> {
         let original = installed_original_version();
         if grandfathered(&config.free_since, original.as_deref(), cfg!(target_os = "ios")) {
-            return Ok(StoreStatus { store: true, pro: true, reason: ProReason::Grandfathered, price: None });
+            return Ok(StoreStatus { store: true, pro: true, reason: ProReason::Grandfathered, price: None, activation: false, buy_url: None });
         }
         // StoreKit 2 answers from its local entitlement cache, so this also works offline.
         let owned = app
@@ -135,7 +217,7 @@ mod commands {
             .await
             .map_err(|e| e.to_string())?;
         if owned.is_owned && owned.purchase_state == Some(PurchaseStateValue::Purchased) {
-            return Ok(StoreStatus { store: true, pro: true, reason: ProReason::Purchased, price: None });
+            return Ok(StoreStatus { store: true, pro: true, reason: ProReason::Purchased, price: None, activation: false, buy_url: None });
         }
         let price = app
             .iap()
@@ -144,7 +226,7 @@ mod commands {
             .ok()
             .and_then(|r| r.products.into_iter().next())
             .and_then(|p| p.formatted_price);
-        Ok(StoreStatus { store: true, pro: false, reason: ProReason::None, price })
+        Ok(StoreStatus { store: true, pro: false, reason: ProReason::None, price, activation: false, buy_url: None })
     }
 
     #[tauri::command]
@@ -171,9 +253,19 @@ mod commands {
         app.iap().restore_purchases(INAPP.into()).await.map_err(|e| e.to_string())?;
         status(&app, &config).await
     }
+
+    #[tauri::command]
+    pub async fn store_activate(_key: String) -> Result<StoreStatus, String> {
+        Err("Licence keys are not used in the App Store build.".into())
+    }
+
+    #[tauri::command]
+    pub async fn store_deactivate() -> Result<StoreStatus, String> {
+        Err("Licence keys are not used in the App Store build.".into())
+    }
 }
 
-pub use commands::{store_purchase, store_restore, store_status};
+pub use commands::{store_activate, store_deactivate, store_purchase, store_restore, store_status};
 
 #[cfg(test)]
 mod tests {

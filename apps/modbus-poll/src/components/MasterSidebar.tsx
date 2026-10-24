@@ -61,6 +61,8 @@ export function MasterSidebar({
 
   // iOS has no serial ports — Modbus TCP only.
   const isIos = platform === "ios";
+  // The in-app virtual RTU slave is a pty pair: macOS only. Windows ports are COMn.
+  const hasVirtualPort = platform === "macos";
 
   return (
     <>
@@ -117,7 +119,7 @@ export function MasterSidebar({
                   <input
                     className="vt-input vt-input--mono"
                     style={{ flex: 1 }}
-                    placeholder="/dev/cu.usbserial-0001"
+                    placeholder={platform === "windows" ? "COM3" : "/dev/cu.usbserial-0001"}
                     value={rtuPort}
                     onChange={(e) => setRtuPort(e.target.value)}
                     disabled={protocol.connected}
@@ -131,7 +133,7 @@ export function MasterSidebar({
                     disabled={protocol.connected}
                     options={[
                       { value: "", label: "Select port…" },
-                      { value: VIRTUAL_PORT, label: "In-app virtual slave" },
+                      ...(hasVirtualPort ? [{ value: VIRTUAL_PORT, label: "In-app virtual slave" }] : []),
                       ...serialPorts.map((p) => ({ value: p, label: p })),
                     ]}
                   />

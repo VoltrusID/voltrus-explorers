@@ -104,14 +104,14 @@ pub async fn connect(
 }
 
 /// The serial port may still be held by the previous connection's teardown.
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 fn is_port_busy(message: &str) -> bool {
     let message = message.to_lowercase();
     message.contains("busy") || message.contains("lock")
 }
 
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub async fn connect_rtu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -188,7 +188,7 @@ pub async fn connect_rtu_virtual(
 }
 
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub fn list_serial_ports() -> Result<Vec<String>, String> {
     serialport::available_ports()
         .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
@@ -241,7 +241,7 @@ pub async fn disconnect(app: tauri::AppHandle, state: tauri::State<'_, AppState>
 /// Reuses the existing connected client's serial port — no second connection opened.
 /// The client stays connected afterwards, back on its configured unit ID, also when the scan is stopped.
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub async fn scan_bus(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -288,7 +288,7 @@ pub async fn scan_bus(
 
 /// Stop an in-progress bus scan. Instant — wakes the scan via Notify. The connection stays up.
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub async fn stop_scan_bus(state: tauri::State<'_, AppState>, conn_id: String) -> Result<(), String> {
     if let Some(conn) = state.master.existing(&conn_id).await {
         conn.scan_cancel.store(true, std::sync::atomic::Ordering::Relaxed);

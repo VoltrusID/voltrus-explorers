@@ -112,6 +112,38 @@ Do it with a new app version, never by changing the price alone (receipts carry 
 Anyone whose original download is older than `free_since` keeps Pro without paying again ("grandfathered", read from
 the App Store receipt on the device); everyone else gets the free tier plus the Pro purchase.
 
+## Windows (Modbus Poll)
+
+Modbus Poll is the only app with a Windows build. It is sold direct, not through the Microsoft Store.
+
+- `ci.yml` runs the crate and frontend tests on `windows-latest` (`test-windows`), builds the installer and portable zip
+  for x64 and ARM64 (`windows`, ARM64 is cross-compiled on the x64 runner) and installs, starts and uninstalls them on a
+  real Windows x64 and Windows ARM64 runner (`windows-smoke`, `scripts/smoke-windows.ps1`).
+- Release: `gh workflow run release.yml --ref main -R VoltrusID/voltrus-explorers -f app=modbus-poll -f appstore=false -f dmg=false -f windows=true -f github_release=true`.
+  It builds with `scripts/build-windows.ps1`, smoke-tests, then publishes GitHub Release `modbus-poll-windows-v<version>`
+  with `Modbus-Poll-<version>-windows-{x64,arm64}-{setup.exe,portable.zip}` and `SHA256SUMS.txt`. The version is the one in
+  `tauri.conf.json`, shared with the Mac app: do not bump it just for Windows while a Mac build is in review.
+- **Not signed.** There is no code-signing certificate, so SmartScreen shows "Windows protected your PC" until the
+  download has built reputation. The release notes, the portable README and the landing page say so and explain "More info,
+  Run anyway". To sign later, buy an OV/EV certificate (or use Azure Trusted Signing), store it in the repository
+  secrets and add a signing step to `scripts/build-windows.ps1` (Tauri's `bundle.windows.signCommand`); then drop the
+  warning from the three places above.
+- **Pro by licence key** (`keys` Cargo feature, `crates/mt-store/src/key.rs`, `apps/modbus-poll/src-tauri/keys.json`).
+  The free tier is the same as the Mac free tier (the limits live in `apps/modbus-poll/src/limits.ts`). A key is the
+  console licence `VLT-XXXXX-XXXXX-XXXXX` issued by the console product "Modbus Poll for Windows Pro" (app slug
+  `modbus-poll-windows`, USD 14.99, Polar product `33cc2e8b-ba2c-4393-866f-2199b28226b1`). Entering it in the app calls
+  `POST https://dl-modbus-poll.voltrus.id/license/activate` once with `app: "modbus-poll-windows"`; the worker
+  (`MacTools/apps/modbus-poll/cloudflare-worker`) binds the key to this PC (one seat, released on the console Licenses
+  page) and the app stores `license.json` (key, activation id, hash of the Windows `MachineGuid`) in its data directory.
+  There is no further network call: Pro stays unlocked offline, and a copied `license.json` does nothing on another PC.
+  A refund revokes the key in the console but not an install that already activated. The source is open, so this is an
+  honest licence check, not copy protection.
+- Store builds (`--features store`) never contain the keys code, the keys config or the buy link.
+- `Modbus Poll.exe --smoke [file]` runs a headless self-test (TCP master and slave on loopback, serial listing);
+  `--smoke-license [file]` asks the live licence server about a made-up key. Both exit 0 on success.
+- Not done on Windows: signing, auto-update (the updater needs a signing key and a feed), the virtual RTU port (a pty,
+  macOS only) and keeping a Connect sign-in across restarts (tokens live in memory outside macOS and iOS).
+
 ## Secrets (environment `release`)
 
 Set with `gh secret set NAME --env release -R VoltrusID/voltrus-explorers`. The local copies live in

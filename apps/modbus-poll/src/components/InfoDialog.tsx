@@ -89,13 +89,15 @@ export function InfoDialog({ toggleTheme }: Props) {
             {theme === "dark" ? "Dark" : "Light"}
           </Button>
         </div>
-        {status?.store ? (
-          // App Store build: purchase/restore entry point. No outbound source link here, since store review
-          // treats links to builds that unlock paid features elsewhere as steering away from in-app purchase.
+        {status?.store && (
+          // Store and licence-key builds: Pro state and its entry point. The App Store build carries no outbound
+          // source link, since store review treats links to builds that unlock paid features elsewhere as steering
+          // away from in-app purchase; the Windows direct-sale build is not in a store, so it keeps the link.
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
             <ProAboutRow />
           </div>
-        ) : (
+        )}
+        {(!status?.store || status.activation) && (
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span className="vt-label">Source</span>
             <Button size="sm" variant="ghost" onClick={() => invoke("open_url", { url: "https://github.com/VoltrusID/voltrus-explorers" })}>

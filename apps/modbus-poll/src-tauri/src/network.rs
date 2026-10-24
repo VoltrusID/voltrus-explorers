@@ -44,12 +44,24 @@ pub async fn scan_network(subnet: String, port: u16) -> Result<Vec<ScanResult>, 
         }
     }
 
-    // Parse ARP table for hostnames
-    let arp_output = std::process::Command::new("arp")
-        .arg("-a")
-        .output()
-        .ok();
-    let arp_map: std::collections::HashMap<String, String> = arp_output
+    let arp_map = arp_hostnames();
+
+    for r in &mut results {
+        if let Some(host) = arp_map.get(&r.ip) {
+            r.hostname = if host.is_empty() { None } else { Some(host.clone()) };
+        }
+    }
+
+    results.sort_by(|a, b| b.port_open.cmp(&a.port_open));
+    Ok(results)
+}
+
+/// Hostnames from the ARP table (`arp -a` lines such as `printer.lan (192.168.1.7) at ...`), by IP.
+/// Windows prints no hostnames there, and running `arp` from the GUI app would flash a console window.
+#[cfg(not(windows))]
+fn arp_hostnames() -> std::collections::HashMap<String, String> {
+    let output = std::process::Command::new("arp").arg("-a").output().ok();
+    output
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| {
             s.lines()
@@ -63,20 +75,16 @@ pub async fn scan_network(subnet: String, port: u16) -> Result<Vec<ScanResult>, 
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    for r in &mut results {
-        if let Some(host) = arp_map.get(&r.ip) {
-            r.hostname = if host.is_empty() { None } else { Some(host.clone()) };
-        }
-    }
-
-    results.sort_by(|a, b| b.port_open.cmp(&a.port_open));
-    Ok(results)
+#[cfg(windows)]
+fn arp_hostnames() -> std::collections::HashMap<String, String> {
+    std::collections::HashMap::new()
 }
 
 #[tauri::command]
-#[cfg(target_os = "macos")]
+#[cfg(serial)]
 pub async fn auto_detect_rtu(
     port_name: String,
     unit_id: u8,
