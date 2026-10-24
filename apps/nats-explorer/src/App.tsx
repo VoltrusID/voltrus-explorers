@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { SERVER_MESSAGE_CAP, serverMessagesFromRecent } from "./serverMessages";
 import {
   ArrowDown,
   Eraser,
@@ -225,6 +226,7 @@ export default function App() {
     { username: "", password: "" },
   ]);
   const [serverMessages, setServerMessages] = useState<(ServerRecent & { _ts: number })[]>([]);
+  const serverClearedAt = useRef(0);
   const [serverSubjects, setServerSubjects] = useState<SubjectInfo[]>([]);
 
   // JetStream state
@@ -350,11 +352,8 @@ export default function App() {
         }
         const subs = await invoke<SubjectInfo[]>("server_get_subjects");
         setServerSubjects(subs);
-        const recent = await invoke<ServerRecent[]>("server_get_recent", { limit: 50 });
-        setServerMessages((prev) => {
-          const merged = [...recent.map((r) => ({ ...r, _ts: Date.now() })), ...prev];
-          return merged.slice(0, 200);
-        });
+        const recent = await invoke<ServerRecent[]>("server_get_recent", { limit: SERVER_MESSAGE_CAP });
+        setServerMessages(serverMessagesFromRecent(recent, serverClearedAt.current));
       } catch { /* server stopped */ }
     };
     poll();
@@ -1612,7 +1611,14 @@ export default function App() {
               size="sm"
               variant="ghost"
               icon={<Trash2 size={14} strokeWidth={1.75} />}
-              onClick={() => (mode === "client" ? setClientMessages : setServerMessages)([])}
+              onClick={() => {
+                if (mode === "client") {
+                  setClientMessages([]);
+                } else {
+                  serverClearedAt.current = Date.now();
+                  setServerMessages([]);
+                }
+              }}
             >
               Clear
             </Button>
