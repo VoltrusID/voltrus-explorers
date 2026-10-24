@@ -61,6 +61,7 @@ jobs:
           bun run --cwd apps/opcua-explorer test
           bun run --cwd apps/ble-inspector test
           bun run --cwd apps/mqtt-explorer test
+          bun run --cwd apps/nats-explorer test
 
   # The same crate tests on a real Mac: the protocol simulators and clients talk over loopback sockets there too.
   test-macos:
