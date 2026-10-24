@@ -131,13 +131,17 @@ Modbus Poll is the only app with a Windows build. It is sold direct, not through
 - **Pro by licence key** (`keys` Cargo feature, `crates/mt-store/src/key.rs`, `apps/modbus-poll/src-tauri/keys.json`).
   The free tier is the same as the Mac free tier (the limits live in `apps/modbus-poll/src/limits.ts`). A key is the
   console licence `VLT-XXXXX-XXXXX-XXXXX` issued by the console product "Modbus Poll for Windows Pro" (app slug
-  `modbus-poll-windows`, USD 14.99, Polar product `33cc2e8b-ba2c-4393-866f-2199b28226b1`). Entering it in the app calls
-  `POST https://dl-modbus-poll.voltrus.id/license/activate` once with `app: "modbus-poll-windows"`; the worker
-  (`MacTools/apps/modbus-poll/cloudflare-worker`) binds the key to this PC (one seat, released on the console Licenses
-  page) and the app stores `license.json` (key, activation id, hash of the Windows `MachineGuid`) in its data directory.
-  There is no further network call: Pro stays unlocked offline, and a copied `license.json` does nothing on another PC.
-  A refund revokes the key in the console but not an install that already activated. The source is open, so this is an
-  honest licence check, not copy protection.
+  `modbus-poll-windows`, USD 14.99, Polar product `33cc2e8b-ba2c-4393-866f-2199b28226b1`), or a Mac direct-sale key
+  (`VOLTRUS-MODBUS-<uuid>` from Polar, or a `VLT-` licence of the Mac app); Mac App Store purchases have no key and are not covered.
+  Entering it in the app calls `POST https://dl-modbus-poll.voltrus.id/license/activate` with `app: "modbus-poll-windows"`; the
+  worker forwards to the console licence service (`voltrus-console/src/lib/modbus-licence.ts`) and the app stores
+  `license.json` (key, activation id, hash of the Windows `MachineGuid`) in its data directory. A licence is one device
+  across Mac and Windows: a second device is refused (`code: "seat_limit"`) and the app offers "Move licence here"
+  (`POST /license/move`), which releases the other device after the user confirms; the console Licenses page has
+  "Deactivate old device". At the first `store_status` of a launch the app asks `/license/validate`; a definitive "no" (moved,
+  refunded, expired) deletes `license.json` and Pro locks, any other answer (offline, server error) changes nothing. So
+  a released PC loses Pro at its next online launch, and a PC that stays offline keeps Pro. A copied `license.json` does
+  nothing on another PC. The source is open, so this is an honest licence check, not copy protection.
 - Store builds (`--features store`) never contain the keys code, the keys config or the buy link.
 - `Modbus Poll.exe --smoke [file]` runs a headless self-test (TCP master and slave on loopback, serial listing);
   `--smoke-license [file]` asks the live licence server about a made-up key. Both exit 0 on success.

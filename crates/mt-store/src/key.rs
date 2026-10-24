@@ -3,8 +3,14 @@
 //! A Voltrus console licence (`VLT-XXXXX-XXXXX-XXXXX`, issued by the purchase of "Modbus Poll for Windows Pro")
 //! is activated once against the licence server. The server binds it to this PC (one seat) and answers with an
 //! activation id; both are stored in `license.json` in the app data directory together with a hash of the
-//! PC's machine id. After that the app never contacts the server again: Pro is unlocked while the file is
-//! present and its machine hash matches this PC, so a copied file does nothing on another PC.
+//! PC's machine id. Pro is unlocked while the file is present and its machine hash matches this PC, so a copied
+//! file does nothing on another PC. The app checks the activation online once per launch, when it can.
+//!
+//! A key bought as the Mac licence on voltrus.id (`VOLTRUS-MODBUS-<uuid>`, or a `VLT-` licence of the Mac app) is
+//! accepted too. One licence is one device across Mac and Windows: activating on a second device is refused with a
+//! "Move licence here" message, and [`activate`] with `relocate` releases the other device first. A device that was
+//! released learns it at its next online check ([`validate`] at launch) and locks Pro again; a PC that stays
+//! offline keeps Pro, because the app is offline capable by design.
 //!
 //! The code is open source, so this is an honest licence check, not copy protection.
 
@@ -43,17 +49,26 @@ pub struct Activation {
     pub activated_at: u64,
 }
 
-/// Upper-cases and checks the shape `VLT-XXXXX-XXXXX-XXXXX`.
+/// Upper-cases and checks the shape: `VLT-XXXXX-XXXXX-XXXXX`, or the Mac direct-sale key `VOLTRUS-MODBUS-<uuid>`.
 pub fn normalize_key(raw: &str) -> Result<String, String> {
     let key = raw.trim().to_uppercase();
     let groups: Vec<&str> = key.split('-').collect();
-    let shaped = groups.len() == 4
+    let vlt = groups.len() == 4
         && groups[0] == "VLT"
         && groups[1..].iter().all(|g| g.chars().count() == 5 && g.chars().all(|c| CODE_ALPHABET.contains(c)));
-    if shaped {
+    let hex = |g: &str, n: usize| g.len() == n && g.chars().all(|c| c.is_ascii_hexdigit());
+    let mac = groups.len() == 7
+        && groups[0] == "VOLTRUS"
+        && groups[1] == "MODBUS"
+        && hex(groups[2], 8)
+        && hex(groups[3], 4)
+        && hex(groups[4], 4)
+        && hex(groups[5], 4)
+        && hex(groups[6], 12);
+    if vlt || mac {
         Ok(key)
     } else {
-        Err("That is not a Voltrus licence key. It looks like VLT-XXXXX-XXXXX-XXXXX and is on your Licenses page at console.voltrus.id.".into())
+        Err("That is not a Voltrus licence key. It looks like VLT-XXXXX-XXXXX-XXXXX, or VOLTRUS-MODBUS-... if you bought the Mac licence on voltrus.id. Your keys are on the Licenses page at console.voltrus.id.".into())
     }
 }
 
@@ -121,6 +136,7 @@ struct ServerAnswer {
     valid: bool,
     activation_id: Option<String>,
     error: Option<String>,
+    code: Option<String>,
 }
 
 /// The licence server's answer to an activation as a user-facing result: the activation id, or a message.
@@ -128,6 +144,8 @@ pub fn read_answer(http_status: u16, body: &str) -> Result<String, String> {
     let answer: Option<ServerAnswer> = serde_json::from_str(body).ok();
     match answer {
         Some(ServerAnswer { valid: true, activation_id: Some(id), .. }) if !id.is_empty() => Ok(id),
+        // The server's own text names the device holding the licence and says how to move it.
+        Some(ServerAnswer { error: Some(e), code: Some(c), .. }) if c == "seat_limit" => Err(e),
         Some(ServerAnswer { error: Some(e), .. }) => Err(explain(&e)),
         _ if http_status >= 500 => Err("The licence server is not available right now. Try again in a few minutes.".into()),
         _ => Err(format!("Unexpected answer from the licence server (HTTP {http_status}).")),
@@ -149,13 +167,66 @@ fn explain(server_error: &str) -> String {
     }
 }
 
-/// Activates `key` for this PC and stores the result in `dir`.
-pub async fn activate(config: &KeyConfig, dir: &Path, raw_key: &str, app_version: &str) -> Result<Activation, String> {
+/// What the licence server says about an activation this PC already holds.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Standing {
+    Active,
+    /// The server answered that the licence is no longer active here (moved to another device, refunded, expired).
+    Gone(String),
+    /// Offline, server trouble or an answer that decides nothing: keep what is stored.
+    Unknown,
+}
+
+/// The server's answer to `/license/validate` as a [`Standing`]. Only a definitive "no" locks Pro again.
+pub fn read_standing(http_status: u16, body: &str) -> Standing {
+    let answer: Option<ServerAnswer> = serde_json::from_str(body).ok();
+    match answer {
+        Some(ServerAnswer { valid: true, .. }) if http_status < 300 => Standing::Active,
+        Some(ServerAnswer { valid: false, code: Some(c), error, .. })
+            if http_status < 500 && matches!(c.as_str(), "not_found" | "inactive" | "expired" | "not_activated") =>
+        {
+            Standing::Gone(error.unwrap_or_default())
+        }
+        _ => Standing::Unknown,
+    }
+}
+
+fn client(timeout_secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder().timeout(std::time::Duration::from_secs(timeout_secs)).build().map_err(|e| e.to_string())
+}
+
+/// Asks the server whether `activation` still holds the licence. Never errors: no answer is [`Standing::Unknown`].
+pub async fn validate(config: &KeyConfig, activation: &Activation, app_version: &str) -> Standing {
+    let Ok(client) = client(4) else { return Standing::Unknown };
+    let sent = client
+        .post(format!("{}/license/validate", config.server.trim_end_matches('/')))
+        .json(&serde_json::json!({
+            "key": activation.key,
+            "app": config.app,
+            "activation_id": activation.activation_id,
+            "device_id": activation.device,
+            "app_version": app_version,
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        }))
+        .send()
+        .await;
+    match sent {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            read_standing(status, &response.text().await.unwrap_or_default())
+        }
+        Err(_) => Standing::Unknown,
+    }
+}
+
+/// Activates `key` for this PC and stores the result in `dir`. With `relocate` the licence is moved here: the
+/// server releases the device that holds it first (it loses Pro at its next online check).
+pub async fn activate(config: &KeyConfig, dir: &Path, raw_key: &str, app_version: &str, relocate: bool) -> Result<Activation, String> {
     let key = normalize_key(raw_key)?;
     let device = device_id(&config.app, &machine_id()?);
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build().map_err(|e| e.to_string())?;
+    let client = client(20)?;
     let response = client
-        .post(format!("{}/license/activate", config.server.trim_end_matches('/')))
+        .post(format!("{}/license/{}", config.server.trim_end_matches('/'), if relocate { "move" } else { "activate" }))
         .json(&serde_json::json!({
             "key": key,
             "app": config.app,
@@ -197,6 +268,12 @@ mod tests {
         assert!(normalize_key("VLT-ABCDE-FGHJK-2345O").is_err(), "O is not in the alphabet");
         assert!(normalize_key("VLT-ABCDE-FGHJK-234567").is_err());
         assert!(normalize_key("").is_err());
+        // The Mac direct-sale key (Polar).
+        let mac = "VOLTRUS-MODBUS-8A4E5B1C-1111-4C2D-9F00-0123456789AB";
+        assert_eq!(normalize_key(&format!(" {} ", mac.to_lowercase())).unwrap(), mac);
+        assert!(normalize_key("VOLTRUS-SCADA-8A4E5B1C-1111-4C2D-9F00-0123456789AB").is_err());
+        assert!(normalize_key("VOLTRUS-MODBUS-8A4E5B1C-1111-4C2D-9F00-0123456789A").is_err());
+        assert!(normalize_key("VOLTRUS-MODBUS-8A4E5B1G-1111-4C2D-9F00-0123456789AB").is_err());
     }
 
     #[test]
@@ -225,8 +302,28 @@ mod tests {
         assert!(seats.contains("another PC"), "{seats}");
         assert!(read_answer(200, r#"{"valid":false,"error":"License is expired"}"#).unwrap_err().contains("expired"));
         assert!(read_answer(200, r#"{"valid":false,"error":"License is not active"}"#).unwrap_err().contains("not active"));
+        let held = r#"{"valid":false,"code":"seat_limit","error":"This licence is already active on another device (Mac abcd1234). Move it to this device with Move licence here in the app."}"#;
+        let held = read_answer(200, held).unwrap_err();
+        assert!(held.contains("Mac abcd1234") && held.contains("Move licence here"), "{held}");
         assert!(read_answer(503, "upstream").unwrap_err().contains("not available"));
         assert!(read_answer(200, r#"{"valid":true}"#).is_err(), "valid without an activation id is not an activation");
+    }
+
+    #[test]
+    fn only_a_definitive_no_takes_pro_away() {
+        assert_eq!(read_standing(200, r#"{"valid":true}"#), Standing::Active);
+        let moved = r#"{"valid":false,"code":"not_activated","error":"moved"}"#;
+        assert_eq!(read_standing(200, moved), Standing::Gone("moved".into()));
+        for code in ["not_found", "inactive", "expired"] {
+            let body = format!(r#"{{"valid":false,"code":"{code}","error":"x"}}"#);
+            assert_eq!(read_standing(200, &body), Standing::Gone("x".into()), "{code}");
+        }
+        // Server trouble, bad requests, unknown shapes and old servers without a code keep Pro.
+        assert_eq!(read_standing(503, r#"{"valid":false,"code":"unavailable","error":"x"}"#), Standing::Unknown);
+        assert_eq!(read_standing(400, r#"{"valid":false,"code":"bad_request","error":"x"}"#), Standing::Unknown);
+        assert_eq!(read_standing(200, r#"{"valid":false,"error":"License is not active"}"#), Standing::Unknown);
+        assert_eq!(read_standing(502, "<html>"), Standing::Unknown);
+        assert_eq!(read_standing(200, ""), Standing::Unknown);
     }
 
     #[test]
@@ -273,12 +370,12 @@ mod tests {
             price: None,
         };
         let dir = std::env::temp_dir().join(format!("mt-store-live-{}", std::process::id()));
-        let activation = activate(&config, &dir, &key, "0.0.0-test").await.unwrap();
+        let activation = activate(&config, &dir, &key, "0.0.0-test", false).await.unwrap();
         assert!(activation.activation_id.contains(':'));
         assert!(unlocks(read_activation(&dir).as_ref(), &device_id(&config.app, &machine_id().unwrap())));
         // The same PC may activate again.
-        activate(&config, &dir, &key, "0.0.0-test").await.unwrap();
-        let wrong = activate(&config, &dir, "VLT-AAAAA-BBBBB-CCCCC", "0.0.0-test").await.unwrap_err();
+        activate(&config, &dir, &key, "0.0.0-test", false).await.unwrap();
+        let wrong = activate(&config, &dir, "VLT-AAAAA-BBBBB-CCCCC", "0.0.0-test", false).await.unwrap_err();
         assert!(wrong.contains("not found"), "{wrong}");
         let _ = std::fs::remove_dir_all(&dir);
     }

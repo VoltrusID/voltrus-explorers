@@ -148,6 +148,7 @@ mod commands {
 mod commands {
     use super::{ProReason, StoreStatus, key};
     use key::KeyConfig;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tauri::{AppHandle, State};
 
     fn status(app: &AppHandle, cfg: &KeyConfig) -> Result<StoreStatus, String> {
@@ -165,8 +166,21 @@ mod commands {
         })
     }
 
+    /// First status of a launch: ask the server whether this PC still holds the licence. A definitive "no" (the
+    /// licence was moved to another device, refunded or expired) removes the stored activation, so Pro locks
+    /// again. Offline or any other non-answer changes nothing, which keeps the app usable without internet.
+    static CHECKED: AtomicBool = AtomicBool::new(false);
+
     #[tauri::command]
     pub async fn store_status(app: AppHandle, cfg: State<'_, KeyConfig>) -> Result<StoreStatus, String> {
+        let dir = key::license_dir(&app)?;
+        if !CHECKED.swap(true, Ordering::Relaxed) {
+            if let Some(activation) = key::read_activation(&dir) {
+                if let key::Standing::Gone(_) = key::validate(&cfg, &activation, &app.package_info().version.to_string()).await {
+                    key::remove_activation(&dir)?;
+                }
+            }
+        }
         status(&app, &cfg)
     }
 
@@ -182,14 +196,19 @@ mod commands {
     }
 
     #[tauri::command]
-    pub async fn store_activate(app: AppHandle, cfg: State<'_, KeyConfig>, key: String) -> Result<StoreStatus, String> {
+    pub async fn store_activate(
+        app: AppHandle,
+        cfg: State<'_, KeyConfig>,
+        key: String,
+        relocate: Option<bool>,
+    ) -> Result<StoreStatus, String> {
         let dir = key::license_dir(&app)?;
-        key::activate(&cfg, &dir, &key, &app.package_info().version.to_string()).await?;
+        key::activate(&cfg, &dir, &key, &app.package_info().version.to_string(), relocate.unwrap_or(false)).await?;
         status(&app, &cfg)
     }
 
-    /// Removes the key from this PC (Pro locks again). The server keeps the seat until it is released on the
-    /// Licenses page of the console.
+    /// Removes the key from this PC (Pro locks again). The server keeps the device until it is released on the
+    /// Licenses page of the console or the licence is moved to another device.
     #[tauri::command]
     pub async fn store_deactivate(app: AppHandle, cfg: State<'_, KeyConfig>) -> Result<StoreStatus, String> {
         key::remove_activation(&key::license_dir(&app)?)?;

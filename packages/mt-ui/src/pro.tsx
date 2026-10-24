@@ -76,12 +76,17 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
     [pro, openUpsell],
   );
 
-  const activate = async () => {
+  // The server refuses a second device and tells how to move the licence (see mt-store `key`).
+  const canMove = error?.includes("Move licence here") ?? false;
+  const [confirmMove, setConfirmMove] = useState(false);
+
+  const activate = async (relocate = false) => {
+    setConfirmMove(false);
     setBusy("activate");
     setError(null);
     setNotice(null);
     try {
-      const next = await invoke<StoreStatus>("store_activate", { key: keyInput });
+      const next = await invoke<StoreStatus>("store_activate", relocate ? { key: keyInput, relocate: true } : { key: keyInput });
       setStatus(next);
       if (next.pro) {
         setKeyInput("");
@@ -134,12 +139,21 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
               <Button variant="ghost" icon={<ExternalLink size={14} strokeWidth={1.75} />} disabled={busy !== null} onClick={buy}>
                 {status.price ? `Buy Pro · ${status.price}` : "Buy Pro"}
               </Button>
+              {canMove && (
+                <Button
+                  variant={confirmMove ? "primary" : "ghost"}
+                  disabled={busy !== null || keyInput.trim() === ""}
+                  onClick={() => (confirmMove ? void activate(true) : setConfirmMove(true))}
+                >
+                  {confirmMove ? "Confirm: move here" : "Move licence here"}
+                </Button>
+              )}
               <Button
                 variant="primary"
                 icon={<KeyRound size={14} strokeWidth={1.75} />}
                 loading={busy === "activate"}
                 disabled={busy !== null || keyInput.trim() === ""}
-                onClick={activate}
+                onClick={() => void activate()}
               >
                 Activate
               </Button>
@@ -170,7 +184,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
           )}
           <p style={{ margin: 0 }}>
             {status?.activation
-              ? "A one-time purchase, no subscription. Buy a licence key, enter it below and Pro unlocks on this PC. Activation needs the internet once; after that the app works offline."
+              ? "A one-time purchase, no subscription. Buy a licence key, enter it below and Pro unlocks on this PC. Activation needs the internet once; after that the app works offline. A key covers one device at a time: you can move it here from another one."
               : "A one-time purchase. No subscription, no account."}
           </p>
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -182,7 +196,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
             ))}
           </ul>
           {status?.activation && (
-            <Field label="Licence key" hint="Looks like VLT-XXXXX-XXXXX-XXXXX. It is on your Licenses page at console.voltrus.id after you buy.">
+            <Field label="Licence key" hint="Looks like VLT-XXXXX-XXXXX-XXXXX. If you bought Modbus Poll for Mac on voltrus.id, use that VOLTRUS-MODBUS-... key. Keys are on your Licenses page at console.voltrus.id.">
               {(id) => (
                 <input
                   id={id}
@@ -199,6 +213,11 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
                 />
               )}
             </Field>
+          )}
+          {confirmMove && (
+            <Callout tone="info">
+              The other device stops having Pro the next time it checks the licence online. A device that stays offline keeps Pro until it does.
+            </Callout>
           )}
           {notice && <Callout tone="info">{notice}</Callout>}
           {error && <Callout tone="danger">{error}</Callout>}
