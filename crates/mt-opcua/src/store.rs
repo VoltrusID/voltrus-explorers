@@ -88,10 +88,34 @@ impl OpcUaStore {
     }
 }
 
+/// Milliseconds between the OPC UA epoch (1601-01-01, what `DateTime` ticks count from) and the Unix epoch.
+const OPC_UA_TO_UNIX_MS: i64 = 11_644_473_600_000;
+
+/// An OPC UA `DateTime`'s 100 ns ticks since 1601 as Unix milliseconds; 0 for a null or pre-1970 time.
+pub fn opc_ticks_to_unix_ms(ticks: i64) -> u64 {
+    (ticks / 10_000 - OPC_UA_TO_UNIX_MS).max(0) as u64
+}
+
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod epoch_tests {
+    use super::opc_ticks_to_unix_ms;
+
+    #[test]
+    fn opc_ticks_count_from_1601_not_1970() {
+        // 2026-01-01T00:00:00Z is 1_767_225_600 s after the Unix epoch; as OPC UA ticks (100 ns since 1601):
+        let ticks = (1_767_225_600i64 + 11_644_473_600) * 10_000_000;
+        assert_eq!(opc_ticks_to_unix_ms(ticks), 1_767_225_600_000);
+        assert_eq!(opc_ticks_to_unix_ms(11_644_473_600 * 10_000_000), 0);
+        // A null DateTime (ticks 0) and anything before 1970 are 0, not a wrapped number.
+        assert_eq!(opc_ticks_to_unix_ms(0), 0);
+        assert_eq!(opc_ticks_to_unix_ms(-5), 0);
+    }
 }

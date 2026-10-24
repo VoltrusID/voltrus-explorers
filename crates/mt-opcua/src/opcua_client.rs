@@ -235,12 +235,7 @@ fn reference_type_name(node_id: &NodeId) -> String {
 }
 
 fn datetime_to_ms(dt: &DateTime) -> u64 {
-    let ticks = dt.checked_ticks();
-    if ticks < 0 {
-        0
-    } else {
-        (ticks as u64) / 10_000
-    }
+    crate::store::opc_ticks_to_unix_ms(dt.checked_ticks())
 }
 
 pub struct OpcUaProtocolClient {

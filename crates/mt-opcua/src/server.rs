@@ -317,7 +317,7 @@ impl OpcUaServer {
         };
 
         let sp = address_space.read();
-        let now = DateTime::now().checked_ticks() as u64 / 10_000;
+        let now = crate::store::opc_ticks_to_unix_ms(DateTime::now().checked_ticks());
 
         node_defs
             .iter()
