@@ -76,7 +76,8 @@ if (-not $installDir) {
 }
 Write-Host "install dir: $installDir"
 Get-ChildItem $installDir | ForEach-Object { Write-Host "installed: $($_.Name)" }
-$installed = Join-Path $installDir 'Modbus Poll.exe'
+# The installer keeps the cargo binary name (modbus_poll.exe); the product name is the shortcut and window title.
+$installed = Join-Path $installDir 'modbus_poll.exe'
 if (-not (Test-Path $installed)) { Fail "installer did not create $installed" }
 Invoke-Smoke $installed '--smoke' 'installed-smoke'
 if ($LicenseServer) { Invoke-Smoke $installed '--smoke-license' 'installed-license-smoke' }
