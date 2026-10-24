@@ -8,6 +8,8 @@
 use std::path::PathBuf;
 
 const ORIGINAL_APPLICATION_VERSION: u64 = 19;
+/// Receipt type: "Production", "ProductionSandbox" (App Review, TestFlight, sandbox) or "ProductionVPPSandbox".
+const RECEIPT_TYPE: u64 = 0;
 
 const TAG_INTEGER: u8 = 0x02;
 const TAG_OCTET_STRING: u8 = 0x04;
@@ -106,12 +108,27 @@ fn payload(receipt: &[u8]) -> Option<Vec<u8>> {
 /// `original_application_version` from a receipt: on macOS the `CFBundleShortVersionString`, on iOS the
 /// `CFBundleVersion` of the build the user first downloaded.
 pub fn original_application_version(receipt: &[u8]) -> Option<String> {
+    string_attribute(receipt, ORIGINAL_APPLICATION_VERSION)
+}
+
+/// Receipt type (attribute 0): "Production", or "ProductionSandbox" for App Review, TestFlight and sandbox testers.
+pub fn receipt_type(receipt: &[u8]) -> Option<String> {
+    string_attribute(receipt, RECEIPT_TYPE)
+}
+
+/// A sandbox receipt (App Review, TestFlight, sandbox testers). Apple always reports `original_application_version`
+/// "1.0" there, so it says nothing about a past purchase.
+pub fn is_sandbox_receipt(receipt: &[u8]) -> bool {
+    receipt_type(receipt).is_some_and(|t| t != "Production")
+}
+
+fn string_attribute(receipt: &[u8], wanted: u64) -> Option<String> {
     let payload = payload(receipt)?;
     let set = read_tlv(&payload, 0).filter(|t| t.tag == TAG_SET)?;
     for attr in children(&payload, set)? {
         let fields = children(&payload, attr)?;
         let [kind, _version, value] = fields.as_slice() else { continue };
-        if uint(&payload, *kind) != Some(ORIGINAL_APPLICATION_VERSION) || value.tag != TAG_OCTET_STRING {
+        if uint(&payload, *kind) != Some(wanted) || value.tag != TAG_OCTET_STRING {
             continue;
         }
         let inner = read_tlv(&payload, value.start)?;
@@ -142,12 +159,14 @@ pub fn receipt_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// `original_application_version` of the installed app, if it came from the App Store.
+/// `original_application_version` of the installed app, if it came from the App Store. A sandbox receipt (App Review,
+/// TestFlight) gives `None`: its "1.0" would grandfather the reviewer into Pro and hide the in-app purchase from review.
 pub fn installed_original_version() -> Option<String> {
-    receipt_paths()
-        .into_iter()
-        .find_map(|p| std::fs::read(p).ok())
-        .and_then(|bytes| original_application_version(&bytes))
+    let bytes = receipt_paths().into_iter().find_map(|p| std::fs::read(p).ok())?;
+    if is_sandbox_receipt(&bytes) {
+        return None;
+    }
+    original_application_version(&bytes)
 }
 
 #[cfg(test)]
@@ -183,7 +202,14 @@ mod tests {
     /// Minimal PKCS#7 receipt shaped like Apple's: indefinite-length outer layers, a constructed
     /// (chunked) eContent OCTET STRING, and unrelated attributes around field 19.
     fn receipt(original_version: &str) -> Vec<u8> {
+        receipt_of(original_version, None)
+    }
+
+    fn receipt_of(original_version: &str, receipt_type: Option<&str>) -> Vec<u8> {
         let mut attrs = attr(2, &der(TAG_UTF8_STRING, b"com.example.app"));
+        if let Some(t) = receipt_type {
+            attrs.extend(attr(0, &der(TAG_UTF8_STRING, t.as_bytes())));
+        }
         attrs.extend(attr(19, &der(TAG_UTF8_STRING, original_version.as_bytes())));
         attrs.extend(attr(3, &der(TAG_UTF8_STRING, b"9.9.9")));
         let set = der(TAG_SET, &attrs);
@@ -213,5 +239,15 @@ mod tests {
         assert_eq!(original_application_version(&full[..full.len() / 2]), None);
         assert_eq!(original_application_version(b"not a receipt"), None);
         assert_eq!(original_application_version(&[]), None);
+    }
+
+    #[test]
+    fn sandbox_receipts_are_recognised() {
+        // App Review and TestFlight receipts always say "1.0"; they must not count as a past purchase.
+        assert!(is_sandbox_receipt(&receipt_of("1.0", Some("ProductionSandbox"))));
+        assert!(is_sandbox_receipt(&receipt_of("1.0", Some("ProductionVPPSandbox"))));
+        assert!(!is_sandbox_receipt(&receipt_of("1.3.4", Some("Production"))));
+        assert!(!is_sandbox_receipt(&receipt("1.3.4")), "no type attribute: treated as production");
+        assert_eq!(receipt_type(&receipt_of("1.0", Some("ProductionSandbox"))).as_deref(), Some("ProductionSandbox"));
     }
 }
