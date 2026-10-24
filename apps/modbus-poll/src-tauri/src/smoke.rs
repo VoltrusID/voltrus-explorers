@@ -50,19 +50,23 @@ pub async fn selftest(version: &str) -> Result<String, String> {
     ))
 }
 
-/// `--smoke-license`: asks the live licence server about a made-up key, which proves the Windows machine id,
-/// TLS and the answer parsing work end to end without spending a real licence.
+/// `--smoke-license`: asks the live licence server about made-up keys, which proves the Windows machine id,
+/// TLS and the answer parsing work end to end without spending a real licence. Both key shapes are tried: the
+/// console `VLT-` key and the Mac direct-sale `VOLTRUS-MODBUS-` key (the latter also proves the app accepts that shape).
 #[cfg(feature = "keys")]
 pub async fn license_check(version: &str) -> Result<String, String> {
     let key: mt_store::key::KeyConfig = serde_json::from_str(include_str!("../keys.json")).map_err(|e| e.to_string())?;
-    let dir = std::env::temp_dir().join(format!("modbus-poll-smoke-license-{}", std::process::id()));
-    let outcome = mt_store::key::activate(&key, &dir, "VLT-AAAAA-BBBBB-CCCCC", version, false).await;
-    let _ = std::fs::remove_dir_all(&dir);
-    match outcome {
-        Err(e) if e.contains("was not found") => Ok(format!("Modbus Poll {version} licence smoke ok: {} answered that a made-up key is unknown", key.server)),
-        Err(e) => Err(e),
-        Ok(_) => Err("the licence server accepted a made-up key".into()),
+    for made_up in ["VLT-AAAAA-BBBBB-CCCCC", "VOLTRUS-MODBUS-00000000-0000-4000-8000-000000000000"] {
+        let dir = std::env::temp_dir().join(format!("modbus-poll-smoke-license-{}", std::process::id()));
+        let outcome = mt_store::key::activate(&key, &dir, made_up, version, false).await;
+        let _ = std::fs::remove_dir_all(&dir);
+        match outcome {
+            Err(e) if e.contains("was not found") => {}
+            Err(e) => return Err(format!("{made_up}: {e}")),
+            Ok(_) => return Err(format!("the licence server accepted the made-up key {made_up}")),
+        }
     }
+    Ok(format!("Modbus Poll {version} licence smoke ok: {} answered that made-up VLT and VOLTRUS-MODBUS keys are unknown", key.server))
 }
 
 #[cfg(not(feature = "keys"))]

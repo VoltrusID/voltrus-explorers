@@ -121,8 +121,10 @@ Modbus Poll is the only app with a Windows build. It is sold direct, not through
   real Windows x64 and Windows ARM64 runner (`windows-smoke`, `scripts/smoke-windows.ps1`).
 - Release: `gh workflow run release.yml --ref main -R VoltrusID/voltrus-explorers -f app=modbus-poll -f appstore=false -f dmg=false -f windows=true -f github_release=true`.
   It builds with `scripts/build-windows.ps1`, smoke-tests, then publishes GitHub Release `modbus-poll-windows-v<version>`
-  with `Modbus-Poll-<version>-windows-{x64,arm64}-{setup.exe,portable.zip}` and `SHA256SUMS.txt`. The version is the one in
-  `tauri.conf.json`, shared with the Mac app: do not bump it just for Windows while a Mac build is in review.
+  with `Modbus-Poll-<version>-windows-{x64,arm64}-{setup.exe,portable.zip}` and `SHA256SUMS.txt`. The Windows build has its own
+  version: `version` in `apps/modbus-poll/src-tauri/tauri.windows.conf.json` overrides `tauri.conf.json` (which the Mac and iOS builds read) for
+  Windows only, and `build-windows.ps1` and the release job read it from there. Bump it for a Windows release; the Mac version
+  is untouched.
 - **Not signed.** There is no code-signing certificate, so SmartScreen shows "Windows protected your PC" until the
   download has built reputation. The release notes, the portable README and the landing page say so and explain "More info,
   Run anyway". To sign later, buy an OV/EV certificate (or use Azure Trusted Signing), store it in the repository

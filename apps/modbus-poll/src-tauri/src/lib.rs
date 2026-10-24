@@ -21,12 +21,12 @@ pub fn smoke_from_args(args: &[String]) -> Option<i32> {
     Some(smoke::run(check, &app_version(), out))
 }
 
-/// The version in `tauri.conf.json`, which is the one shown to users (the crate version is the workspace's).
+/// The version shown to users: `tauri.conf.json`, or on Windows `tauri.windows.conf.json` when it sets one (the Windows
+/// build has its own version; the crate version is the workspace's).
 fn app_version() -> String {
-    serde_json::from_str::<serde_json::Value>(include_str!("../tauri.conf.json"))
-        .ok()
-        .and_then(|conf| conf["version"].as_str().map(str::to_string))
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+    let version = |json: &str| serde_json::from_str::<serde_json::Value>(json).ok().and_then(|conf| conf["version"].as_str().map(str::to_string));
+    let windows = if cfg!(windows) { version(include_str!("../tauri.windows.conf.json")) } else { None };
+    windows.or_else(|| version(include_str!("../tauri.conf.json"))).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

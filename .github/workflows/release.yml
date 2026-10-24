@@ -331,7 +331,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="$(python3 -c "import json; print(json.load(open('apps/modbus-poll/src-tauri/tauri.conf.json'))['version'])")"
+          version="$(python3 -c "import json; c = json.load(open('apps/modbus-poll/src-tauri/tauri.conf.json')); c.update(json.load(open('apps/modbus-poll/src-tauri/tauri.windows.conf.json'))); print(c['version'])")"
           cat > notes.md <<NOTES
           Modbus Poll $version for Windows 10 and 11, 64-bit (x64) and ARM64. Direct download; there is no Microsoft Store build.
 

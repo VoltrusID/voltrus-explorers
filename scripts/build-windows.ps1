@@ -20,7 +20,14 @@ Set-Location $root
 $triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
 $appDir = Join-Path $root 'apps/modbus-poll'
 $conf = Get-Content (Join-Path $appDir 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
+# The Windows build has its own version (the Mac and iOS builds read tauri.conf.json only): tauri.windows.conf.json
+# overrides it when present, exactly as Tauri merges it into the config of a Windows build.
+$winConf = Join-Path $appDir 'src-tauri/tauri.windows.conf.json'
 $version = $conf.version
+if (Test-Path $winConf) {
+  $overlay = Get-Content $winConf -Raw | ConvertFrom-Json
+  if ($overlay.version) { $version = $overlay.version }
+}
 $product = $conf.productName
 $out = Join-Path $root "build/modbus-poll-windows/$Arch"
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
