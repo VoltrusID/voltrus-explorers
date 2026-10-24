@@ -1154,7 +1154,7 @@ function App() {
             title="No devices found"
             description={
               platform === "ios"
-                ? "Scanning sends a network broadcast, and iOS only allows that for apps that hold Apple's multicast networking permission. If this build does not have it yet, scanning finds nothing even when devices are online. Connect by typing the controller's IP address on the Devices tab instead, and make sure Local Network is on for BACnet Explorer in Settings > Privacy & Security > Local Network."
+                ? "No BACnet/IP devices answered the Who-Is broadcast. Check that the controllers are powered and on the same subnet as this device's Wi-Fi, that UDP 47808 is not blocked, and that Local Network is on for BACnet Explorer in Settings > Privacy & Security > Local Network. A controller on another subnet can still be added by typing its IP address on the Devices tab."
                 : "No BACnet/IP devices answered the Who-Is broadcast. Check that devices are powered, on the same subnet, and not blocking UDP 47808, then scan again."
             }
             action={

@@ -186,13 +186,14 @@ jobs:
           bundle_id="$(python3 -c "import json; print(json.load(open('apps/$APP/src-tauri/tauri.conf.json'))['identifier'])")"
           python3 scripts/asc-profile.py IOS_APP_STORE "$bundle_id" "$serial" "$RUNNER_TEMP/ios.mobileprovision"
           echo "IOS_MOBILE_PROVISION=$(base64 < "$RUNNER_TEMP/ios.mobileprovision" | tr -d '\n')" >> "$GITHUB_ENV"
-          # Apps with an iOS entitlements file (BACnet Explorer: Who-Is scanning needs the multicast entitlement) only
-          # get it when the profile carries it; otherwise signing the archive would fail.
+          # Apps with an iOS entitlements file (BACnet Explorer: Who-Is scanning needs the multicast entitlement, approved
+          # for this team) are built with it, so a profile without it fails here instead of shipping an app that cannot scan.
           if [[ -f "apps/$APP/src-tauri/entitlements.ios.plist" ]]; then
             if security cms -D -i "$RUNNER_TEMP/ios.mobileprovision" | grep -q 'com.apple.developer.networking.multicast'; then
               echo "IOS_MULTICAST=1" >> "$GITHUB_ENV"
             else
-              echo "::notice::The provisioning profile has no multicast networking entitlement: building without it (Who-Is scanning finds nothing on iOS). See docs/ios-multicast.md."
+              echo "::error::The provisioning profile has no multicast networking entitlement: enable Multicast Networking on the $bundle_id App ID. See docs/ios-multicast.md."
+              exit 1
             fi
           fi
           rm -f "$RUNNER_TEMP/ios.mobileprovision"
