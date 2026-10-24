@@ -56,7 +56,7 @@ pub async fn selftest(version: &str) -> Result<String, String> {
 pub async fn license_check(version: &str) -> Result<String, String> {
     let key: mt_store::key::KeyConfig = serde_json::from_str(include_str!("../keys.json")).map_err(|e| e.to_string())?;
     let dir = std::env::temp_dir().join(format!("modbus-poll-smoke-license-{}", std::process::id()));
-    let outcome = mt_store::key::activate(&key, &dir, "VLT-AAAAA-BBBBB-CCCCC", version).await;
+    let outcome = mt_store::key::activate(&key, &dir, "VLT-AAAAA-BBBBB-CCCCC", version, false).await;
     let _ = std::fs::remove_dir_all(&dir);
     match outcome {
         Err(e) if e.contains("was not found") => Ok(format!("Modbus Poll {version} licence smoke ok: {} answered that a made-up key is unknown", key.server)),
