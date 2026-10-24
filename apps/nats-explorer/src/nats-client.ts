@@ -8,6 +8,23 @@ import type {
   PayloadFormat,
 } from "./nats-types";
 
+// ----- JetStream -----
+// Tauri maps each command argument from camelCase, so snake_case keys are rejected.
+
+export const jsCreateStream = (
+  name: string,
+  subjects: string[],
+  maxMessages: number,
+  maxAgeNs: number,
+) => invoke<unknown>("js_create_stream", { name, subjects, maxMessages, maxAgeNs });
+
+export const jsConsumerNext = <T>(
+  stream: string,
+  durable: string,
+  batch: number,
+  waitMs: number,
+) => invoke<T[]>("js_consumer_next", { stream, durable, batch, waitMs });
+
 // ----- Decode + schema -----
 
 export const decodeDetect = (payload: string) =>

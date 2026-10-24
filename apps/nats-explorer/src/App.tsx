@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { SERVER_MESSAGE_CAP, serverMessagesFromRecent } from "./serverMessages";
+import { jsConsumerNext, jsCreateStream } from "./nats-client";
 import {
   ArrowDown,
   Eraser,
@@ -627,12 +628,12 @@ export default function App() {
     setJsError(null);
     try {
       const subjects = jsSubjects.split(",").map((s) => s.trim()).filter(Boolean);
-      await invoke("js_create_stream", {
-        name: jsStream.trim(),
+      await jsCreateStream(
+        jsStream.trim(),
         subjects,
-        max_messages: jsMaxMsgs,
-        max_age_ns: jsMaxAgeDays > 0 ? jsMaxAgeDays * 86400 * 1e9 : 0,
-      });
+        jsMaxMsgs,
+        jsMaxAgeDays > 0 ? jsMaxAgeDays * 86400 * 1e9 : 0,
+      );
       await refreshStreams();
       addLog("info", `Stream created: ${jsStream.trim()}`);
       setJsStream("");
@@ -704,12 +705,7 @@ export default function App() {
   const handleConsumerNext = async (stream: string, durable: string) => {
     if (!requirePro("Fetching stream messages")) return;
     try {
-      const msgs = await invoke<NatsStoredMessage[]>("js_consumer_next", {
-        stream,
-        durable,
-        batch: 10,
-        wait_ms: 3000,
-      });
+      const msgs = await jsConsumerNext<NatsStoredMessage>(stream, durable, 10, 3000);
       setStreamMsgs((prev) => [...msgs, ...prev].slice(0, 50));
       addLog("rx", `Consumer ${durable}: fetched ${msgs.length} messages`);
     } catch (e) {
