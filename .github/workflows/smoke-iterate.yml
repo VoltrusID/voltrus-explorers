@@ -1,13 +1,10 @@
 name: Smoke iterate (temporary)
 on:
-  workflow_dispatch:
-    inputs:
-      run_id:
-        description: CI run id that holds the modbus-poll-windows artifacts
-        required: true
-      run_number:
-        description: That run's run_number (artifact name suffix)
-        required: true
+  push:
+    branches: [windows-modbus]
+env:
+  RUN_ID: '40074437186'
+  RUN_NUMBER: '139'
 permissions:
   contents: read
   actions: read
@@ -28,9 +25,9 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: modbus-poll-windows-${{ matrix.arch }}-${{ inputs.run_number }}
+          name: modbus-poll-windows-${{ matrix.arch }}-${{ env.RUN_NUMBER }}
           path: build/modbus-poll-windows/${{ matrix.arch }}
-          run-id: ${{ inputs.run_id }}
+          run-id: ${{ env.RUN_ID }}
           github-token: ${{ github.token }}
       - run: pwsh scripts/smoke-windows.ps1 -Dir build/modbus-poll-windows/${{ matrix.arch }} -Arch ${{ matrix.arch }} -LicenseServer
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
