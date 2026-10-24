@@ -328,6 +328,29 @@ function App() {
   // -----------------------------------------------------------------------
 
   const handleCreateVirtualPort = useCallback(async () => {
+    // Listen before creating: the port can report a disconnect before the create call returns.
+    virtualUnlistenRef.current.forEach((fn) => fn());
+    virtualUnlistenRef.current = [];
+    const unlistenData = await listen<{ hex: string; bytes: number[]; timestamp: number }>(
+      "virtual-data",
+      (event) => {
+        const ts = formatTimestamp(event.payload.timestamp);
+        setVirtualTraffic((prev) => appendTraffic(prev, { direction: "RX", data: event.payload.hex, timestamp: ts }));
+        addLog("rx", `[VPort] ${event.payload.hex}`);
+      },
+    );
+    const unlistenDisconnect = await listen<{ reason: string }>(
+      "virtual-disconnect",
+      (event) => {
+        setVirtualActive(false);
+        setVirtualPortPath(null);
+        addLog("error", `Virtual port closed: ${event.payload.reason}`);
+        virtualUnlistenRef.current.forEach((fn) => fn());
+        virtualUnlistenRef.current = [];
+      },
+    );
+    virtualUnlistenRef.current = [unlistenData, unlistenDisconnect];
+
     try {
       const path = await invoke<string>("create_virtual_port");
       setVirtualPortPath(path);
@@ -339,29 +362,10 @@ function App() {
       if (updatedList.length > 0 && !updatedList.find((p) => p.port_name === current)) {
         setConfig({ port_name: updatedList[0].port_name });
       }
-
-      const unlistenData = await listen<{ hex: string; bytes: number[]; timestamp: number }>(
-        "virtual-data",
-        (event) => {
-          const ts = formatTimestamp(event.payload.timestamp);
-          setVirtualTraffic((prev) => appendTraffic(prev, { direction: "RX", data: event.payload.hex, timestamp: ts }));
-          addLog("rx", `[VPort] ${event.payload.hex}`);
-        },
-      );
-
-      const unlistenDisconnect = await listen<{ reason: string }>(
-        "virtual-disconnect",
-        (event) => {
-          setVirtualActive(false);
-          setVirtualPortPath(null);
-          addLog("error", `Virtual port closed: ${event.payload.reason}`);
-          virtualUnlistenRef.current.forEach((fn) => fn());
-          virtualUnlistenRef.current = [];
-        },
-      );
-
-      virtualUnlistenRef.current = [unlistenData, unlistenDisconnect];
     } catch (e) {
+      unlistenData();
+      unlistenDisconnect();
+      virtualUnlistenRef.current = [];
       addLog("error", `Virtual port failed: ${e}`);
     }
   }, [addLog, refreshPorts, activeId, setConfig]);

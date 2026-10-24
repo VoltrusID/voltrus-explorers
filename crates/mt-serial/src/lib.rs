@@ -43,6 +43,8 @@
 //! ```
 
 pub mod client;
+#[cfg(unix)]
+pub mod pty;
 pub mod types;
 
 // Re-export the primary public API at the crate root.

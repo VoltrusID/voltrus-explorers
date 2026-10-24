@@ -32,8 +32,18 @@ pub struct VirtualDisconnectEvent {
 pub struct VirtualPortState {
     pub port: Arc<Mutex<tokio_serial::SerialStream>>,
     pub slave_path: String,
+    /// Held open so the master does not see a hang-up; closed when the port is destroyed.
+    pub slave_fd: std::os::raw::c_int,
     pub read_task: tokio::task::JoinHandle<()>,
 }
+
+#[cfg(unix)]
+fn close_fd(fd: std::os::raw::c_int) {
+    mt_serial::pty::close_fd(fd);
+}
+
+#[cfg(not(unix))]
+fn close_fd(_fd: std::os::raw::c_int) {}
 
 // ── Commands ────────────────────────────────────────────────────────────
 
@@ -43,41 +53,25 @@ pub async fn create_virtual_port(
     app: tauri::AppHandle,
     state: tauri::State<'_, super::AppState>,
 ) -> Result<String, String> {
-    use std::ffi::CStr;
     use std::os::unix::io::FromRawFd;
 
-    let mut master_fd: libc::c_int = -1;
-    let mut slave_fd: libc::c_int = -1;
-    let mut name_buf = [0u8; 256];
+    let pair = mt_serial::pty::open_pair()
+        .map_err(|e| format!("openpty failed: {e}"))?;
+    let (master_fd, slave_fd, slave_path) = (pair.master_fd, pair.slave_fd, pair.slave_path);
 
-    let result = unsafe {
-        libc::openpty(
-            &mut master_fd,
-            &mut slave_fd,
-            name_buf.as_mut_ptr() as *mut libc::c_char,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-
-    if result == -1 {
-        return Err(format!(
-            "openpty failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-
-    let slave_path = unsafe { CStr::from_ptr(name_buf.as_ptr() as *const libc::c_char) }
-        .to_string_lossy()
-        .into_owned();
-
-    // Close slave fd — external apps (or our own client) open it by path.
-    unsafe { libc::close(slave_fd) };
+    // Keep the slave open for as long as the port lives. Once the last slave is closed the master
+    // reads end-of-file, so closing it here made the port die before any other program opened it.
 
     // master fd → TTYPort → SerialStream
     let tty_port = unsafe { serialport::TTYPort::from_raw_fd(master_fd) };
-    let stream = tokio_serial::SerialStream::try_from(tty_port)
-        .map_err(|e| format!("Failed to create SerialStream from PTY: {e}"))?;
+    let stream = match tokio_serial::SerialStream::try_from(tty_port) {
+        Ok(stream) => stream,
+        Err(e) => {
+            // The failed conversion closed the master; the slave is still ours.
+            mt_serial::pty::close_fd(slave_fd);
+            return Err(format!("Failed to create SerialStream from PTY: {e}"));
+        }
+    };
 
     let shared_port: Arc<Mutex<tokio_serial::SerialStream>> =
         Arc::new(Mutex::new(stream));
@@ -107,6 +101,7 @@ pub async fn create_virtual_port(
                     let mut guard = virtual_conn_for_reader.lock().await;
                     if let Some(conn) = guard.take() {
                         conn.read_task.abort();
+                        close_fd(conn.slave_fd);
                     }
                     break;
                 }
@@ -144,6 +139,7 @@ pub async fn create_virtual_port(
                     let mut guard = virtual_conn_for_reader.lock().await;
                     if let Some(conn) = guard.take() {
                         conn.read_task.abort();
+                        close_fd(conn.slave_fd);
                     }
                     break;
                 }
@@ -158,6 +154,7 @@ pub async fn create_virtual_port(
     *state.virtual_conn.lock().await = Some(VirtualPortState {
         port: shared_port,
         slave_path: slave_path_clone,
+        slave_fd,
         read_task,
     });
 
@@ -180,6 +177,7 @@ pub async fn destroy_virtual_port(
     let mut guard = state.virtual_conn.lock().await;
     if let Some(conn) = guard.take() {
         conn.read_task.abort();
+        close_fd(conn.slave_fd);
     }
     Ok(())
 }

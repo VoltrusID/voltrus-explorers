@@ -3718,6 +3718,7 @@ name = "mt-serial"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "libc",
  "mt-protocol",
  "serde",
  "serde_json",
