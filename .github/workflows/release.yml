@@ -311,9 +311,13 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: modbus-poll-windows-*-${{ github.run_number }}
+          name: modbus-poll-windows-x64-${{ github.run_number }}
           path: files
-          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: modbus-poll-windows-arm64-${{ github.run_number }}
+          path: files
 
       - name: Checksums
         working-directory: files
