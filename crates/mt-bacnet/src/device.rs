@@ -72,6 +72,10 @@ pub struct SimPointDef {
     /// commandable (Priority_Array + Relinquish_Default); inputs cannot be writable.
     #[serde(default)]
     pub writable: bool,
+    /// Multi-state objects: the name of each state from 1 (State_Text). Empty
+    /// for none; otherwise as many as Number_Of_States (`max`).
+    #[serde(default)]
+    pub state_text: Vec<String>,
 }
 
 /// A point's current value as reported to the UI (every tick + on write).
@@ -145,6 +149,8 @@ struct SimObj {
     kind: Kind,
     /// Number_Of_States (multi-state objects).
     states: u32,
+    /// State_Text (multi-state objects), empty when the point has none.
+    state_text: Vec<String>,
     /// Present_Value is written through the 16-level priority array.
     commandable: bool,
     /// Effective present value. Stays under the tick loop's control until a
@@ -271,6 +277,9 @@ fn build_objects(points: &[SimPointDef]) -> Result<Vec<SimObj>, String> {
             return Err(format!("{}: duplicate object {}:{}", p.key, p.object_type, p.object_instance));
         }
         let states = p.max.map_or(2, |m| m.round().max(1.0) as u32);
+        if !p.state_text.is_empty() && (kind != Kind::MultiState || p.state_text.len() != states as usize) {
+            return Err(format!("{}: state_text needs one name per state of a multi-state object", p.key));
+        }
         let base = match kind {
             Kind::Analog => p.base,
             Kind::Binary => f64::from(p.base >= 0.5),
@@ -292,6 +301,7 @@ fn build_objects(points: &[SimPointDef]) -> Result<Vec<SimObj>, String> {
             decimals: p.decimals,
             kind,
             states,
+            state_text: p.state_text.clone(),
             commandable: role == Role::Output || (role == Role::Value && p.writable),
             current: base,
             forced: false,
@@ -591,7 +601,7 @@ fn object_type_from_str(s: &str) -> Option<ObjectType> {
 /// kilopascals 54, bars 55, watts 47, kilowatts 48, revolutions-per-minute 104,
 /// cubic-feet-per-minute 84, cubic-meters-per-second 85, hertz 27.
 /// Unknown/missing → no-units (95).
-fn unit_enum(unit: Option<&str>) -> u32 {
+pub fn unit_enum(unit: Option<&str>) -> u32 {
     match unit {
         Some("°C") => 62,
         Some("°F") => 64,

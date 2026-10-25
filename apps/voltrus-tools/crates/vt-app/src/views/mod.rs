@@ -6,12 +6,13 @@
 
 pub mod cached;
 mod editor;
-mod editor_bacnet;
 pub mod inspector;
 mod log;
+mod new_menu;
 mod palette;
 pub mod pane;
 mod points;
+mod publish;
 pub mod sidebar;
 mod splits;
 pub mod status_bar;
@@ -27,11 +28,11 @@ use gpui::{
     AnyView, Context, CursorStyle, MouseButton, MouseMoveEvent, MouseUpEvent, Window, div, px,
 };
 use vt_app_core::{Axis, PaneView};
+use vt_protocol::Role;
 use vt_ui::Icon;
 use vt_ui::theme::*;
 
 use crate::actions::*;
-use crate::model::editor::EditorKind;
 use crate::model::palette::Mode;
 use crate::model::{AppModel, Drag, Overlay};
 
@@ -115,11 +116,11 @@ impl Render for AppModel {
             .on_action(cx.listener(|model, _: &ChooseTheme, window, cx| {
                 model.open_palette(Mode::Themes, window, cx);
             }))
-            .on_action(cx.listener(|model, _: &NewConnection, window, cx| {
-                model.open_editor(EditorKind::Master, None, window, cx);
+            .on_action(cx.listener(|model, _: &NewConnection, _, cx| {
+                model.open_new_menu(Role::Client, model.new_menu_anchor(), cx);
             }))
-            .on_action(cx.listener(|model, _: &NewSimulator, window, cx| {
-                model.open_editor(EditorKind::Slave, None, window, cx);
+            .on_action(cx.listener(|model, _: &NewSimulator, _, cx| {
+                model.open_new_menu(Role::Simulator, model.new_menu_anchor(), cx);
             }))
             .on_action(cx.listener(|model, _: &ToggleSidebar, _, cx| model.toggle_sidebar(cx)))
             .on_action(cx.listener(|model, _: &ToggleInspector, _, cx| model.toggle_inspector(cx)))
@@ -206,6 +207,7 @@ impl Render for AppModel {
                 Overlay::None => this,
                 Overlay::Palette(_) => this.child(palette::render(self, cx)),
                 Overlay::Editor(_) => this.child(editor::render(self, cx)),
+                Overlay::NewMenu { .. } => this.child(new_menu::render(self, cx)),
             })
             .when_some(self.toast.as_ref(), |this, toast| {
                 let color = if toast.error {

@@ -148,6 +148,10 @@ fn client_discovers_reads_subscribes_and_commands_a_simulated_device() {
         spec: device(port, 2001),
     });
     assert_eq!(listening(&mut events, simulator), Ok(()));
+    let served: Vec<PointInfo> = events.wait(simulator, |kind| match kind {
+        EventKind::Points(points) => Some(points.clone()),
+        _ => None,
+    });
 
     // The device picker's Who-Is, directed at the simulator on loopback.
     engine.send(Command::DiscoverBacnet {
@@ -164,11 +168,15 @@ fn client_discovers_reads_subscribes_and_commands_a_simulated_device() {
         _ => None,
     });
     let found = found.expect("the Who-Is went out");
-    assert!(
-        found.iter().any(|device| device.instance == 2001
-            && device.address == "127.0.0.1"
-            && device.port == port),
-        "{found:?}"
+    // One row per device, at the address the Who-Is was sent to.
+    let ours: Vec<_> = found
+        .iter()
+        .filter(|device| device.instance == 2001)
+        .collect();
+    assert_eq!(ours.len(), 1, "{found:?}");
+    assert_eq!(
+        (ours[0].address.as_str(), ours[0].port),
+        ("127.0.0.1", port)
     );
 
     // The client, not told the instance, finds it with its own Who-Is and
@@ -207,6 +215,17 @@ fn client_discovers_reads_subscribes_and_commands_a_simulated_device() {
         ("MSV 1", "Multi-state")
     );
     assert!(mode.writable);
+    // The state names come from the device's State_Text.
+    assert_eq!(mode.states, ["Off", "Heat", "Cool", "Auto"]);
+    assert!(supply.states.is_empty());
+    // Client and simulator show a point's units the same way: the symbol of
+    // the BACnet engineering unit the device reports.
+    for (read, served) in points.iter().zip(&served) {
+        assert_eq!(read.unit, served.unit, "{}", read.name);
+        assert_eq!(read.states, served.states, "{}", read.name);
+    }
+    let fan = &points[usize::try_from(index_of("fan_speed")).unwrap()];
+    assert_eq!(fan.unit, "rpm", "the BACnet symbol, not the template's RPM");
 
     // Every point reads good and inside the plant's range.
     let first = events.wait(client, |kind| {

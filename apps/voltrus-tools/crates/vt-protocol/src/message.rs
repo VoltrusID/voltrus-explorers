@@ -3,7 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BacnetDeviceInfo, BacnetDiscoverSpec, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -39,6 +39,15 @@ pub enum Command {
         session: SessionId,
         point: u32,
         locked: bool,
+    },
+    /// Message protocols (MQTT): publish `payload` to `topic`. Clients send it
+    /// to their broker; a broker simulator delivers it as if a client had.
+    Publish {
+        session: SessionId,
+        topic: String,
+        payload: String,
+        qos: MqttQos,
+        retain: bool,
     },
     /// Stop every session and the engine itself.
     Shutdown,
@@ -83,8 +92,26 @@ pub enum EventKind {
         point: u32,
         locked: bool,
     },
+    /// More points joined the session (topics seen for the first time). Their
+    /// ids continue from the points already reported; values so far are kept.
+    PointsAdded(Vec<PointInfo>),
+    /// The latest message behind points whose values arrive as messages
+    /// (MQTT payloads), as text for the inspector.
+    Payloads(Vec<PointText>),
+    /// Outcome of a [`Command::Publish`].
+    Published {
+        topic: String,
+        result: Result<(), String>,
+    },
     /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
     BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
+}
+
+/// The text behind one point's latest value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PointText {
+    pub point: u32,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -192,6 +219,93 @@ mod tests {
     }
 
     #[test]
+    fn mqtt_messages_round_trip_through_json() {
+        use crate::{MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription};
+
+        let client = MqttClientSpec {
+            host: "broker.example".into(),
+            port: 8883,
+            client_id: "panel-7".into(),
+            username: "operator".into(),
+            password: "s3cret".into(),
+            tls: true,
+            keep_alive_s: 15,
+            subscriptions: vec![
+                MqttSubscription::new("plant/+/telemetry"),
+                MqttSubscription {
+                    filter: "site/meter".into(),
+                    qos: MqttQos::ExactlyOnce,
+                    json_path: "phases[2].v".into(),
+                },
+            ],
+        };
+        let broker = MqttBrokerSpec {
+            sparkplug: true,
+            template: None,
+            ..MqttBrokerSpec::default()
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::MqttClient(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::MqttBroker(broker),
+            },
+            Command::Publish {
+                session: SessionId(1),
+                topic: "plant/inverter/limit".into(),
+                payload: "{\"kw\": 42.5}".into(),
+                qos: MqttQos::AtLeastOnce,
+                retain: true,
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let events = [
+            EventKind::PointsAdded(vec![PointInfo {
+                id: 3,
+                name: "plant/inverter/ac_power".into(),
+                address: "QoS 0".into(),
+                data_type: "Number".into(),
+                unit: String::new(),
+                writable: true,
+                boolean: false,
+                states: Vec::new(),
+            }]),
+            EventKind::Payloads(vec![PointText {
+                point: 3,
+                text: "1234.5".into(),
+            }]),
+            EventKind::Published {
+                topic: "plant/inverter/limit".into(),
+                result: Err("Not connected".into()),
+            },
+        ];
+        for kind in events {
+            let event = Event {
+                session: SessionId(1),
+                kind,
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // Optional fields may be missing from a saved workspace.
+        let saved = r##"{"kind":"mqtt_client","host":"h","port":1883,"keep_alive_s":30,
+            "subscriptions":[{"filter":"#","qos":"at_most_once"}]}"##;
+        let SessionSpec::MqttClient(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("an MQTT client spec");
+        };
+        assert!(spec.password.is_empty() && !spec.tls);
+        assert!(spec.subscriptions[0].json_path.is_empty());
+    }
+
+    #[test]
     fn bacnet_messages_round_trip_through_json() {
         let client = crate::BacnetClientSpec {
             host: "plant.local".into(),
@@ -243,6 +357,7 @@ mod tests {
                 address: "192.168.1.40".into(),
                 port: 47808,
                 vendor: "ASHRAE".into(),
+                also: vec!["127.0.0.1:47808".into()],
             }]),
             Ok(Vec::new()),
             Err("Who-Is broadcast could not be sent".into()),

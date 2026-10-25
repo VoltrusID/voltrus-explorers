@@ -4,30 +4,52 @@ use gpui::{App, AppContext as _, Context, Entity, Subscription, Window};
 use vt_app_core::ConnectionId;
 use vt_app_core::forms::{BlockForm, FormError, MasterForm, SlaveForm, Transport, next_block};
 use vt_protocol::{
-    Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, Protocol, Role, SessionSpec, WordOrder,
+    Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, MqttBrokerSpec, MqttClientSpec, Protocol,
+    Role, SessionSpec, WordOrder,
 };
 use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 
+mod mqtt;
+
+pub use mqtt::MqttFields;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
     Master,
     Slave,
+    MqttClient,
+    MqttBroker,
     BacnetClient,
     BacnetDevice,
 }
 
 impl EditorKind {
-    /// The editor that makes a connection of `protocol` in `role`.
+    /// The editor that makes a new connection of `protocol` in `role`, if
+    /// the suite has one (not every protocol has a simulator).
     pub fn for_protocol(protocol: Protocol, role: Role) -> Option<Self> {
         Some(match (protocol, role) {
             (Protocol::Modbus, Role::Client) => Self::Master,
             (Protocol::Modbus, Role::Simulator) => Self::Slave,
+            (Protocol::Mqtt, Role::Client) => Self::MqttClient,
+            (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
         })
+    }
+
+    /// The editor of a saved connection.
+    pub fn for_spec(spec: &SessionSpec) -> Self {
+        match spec {
+            SessionSpec::ModbusMaster(_) => Self::Master,
+            SessionSpec::ModbusSlave(_) => Self::Slave,
+            SessionSpec::MqttClient(_) => Self::MqttClient,
+            SessionSpec::MqttBroker(_) => Self::MqttBroker,
+            SessionSpec::BacnetClient(_) => Self::BacnetClient,
+            SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+        }
     }
 }
 
@@ -67,6 +89,7 @@ pub struct Editor {
     pub bacnet: BacnetFields,
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
+    pub mqtt: MqttFields,
 }
 
 fn input(
@@ -95,12 +118,30 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let mut mqtt_client = MqttClientSpec::default();
+        let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
             Some((_, name, SessionSpec::ModbusMaster(spec))) => {
                 (name, spec, ModbusSlaveSpec::default())
             }
             Some((_, name, SessionSpec::ModbusSlave(spec))) => {
                 (name, ModbusMasterSpec::default(), spec)
+            }
+            Some((_, name, SessionSpec::MqttClient(spec))) => {
+                mqtt_client = spec;
+                (
+                    name,
+                    ModbusMasterSpec::default(),
+                    ModbusSlaveSpec::default(),
+                )
+            }
+            Some((_, name, SessionSpec::MqttBroker(spec))) => {
+                mqtt_broker = spec;
+                (
+                    name,
+                    ModbusMasterSpec::default(),
+                    ModbusSlaveSpec::default(),
+                )
             }
             Some((_, name, SessionSpec::BacnetClient(_) | SessionSpec::BacnetDevice(_))) => (
                 name,
@@ -111,6 +152,8 @@ impl Editor {
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
                     EditorKind::Slave => "Modbus simulator".to_owned(),
+                    EditorKind::MqttClient => "MQTT broker".to_owned(),
+                    EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
                 },
@@ -175,6 +218,7 @@ impl Editor {
             bacnet,
             error: None,
             subscriptions: Vec::new(),
+            mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -190,7 +234,10 @@ impl Editor {
             editor.timeout.clone(),
             editor.bind.clone(),
             editor.registers.clone(),
-        ] {
+        ]
+        .into_iter()
+        .chain(editor.mqtt.inputs())
+        {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
@@ -305,6 +352,16 @@ impl Editor {
                 .slave_form(cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::ModbusSlave(spec))),
+            EditorKind::MqttClient => self
+                .mqtt
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MqttClient(spec))),
+            EditorKind::MqttBroker => self
+                .mqtt
+                .broker_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MqttBroker(spec))),
             EditorKind::BacnetClient => self
                 .bacnet
                 .client_form(Self::text(&self.name, cx), cx)

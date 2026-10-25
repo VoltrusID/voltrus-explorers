@@ -220,12 +220,16 @@ fn row(
     let trended = trend.is_some();
     let locked = live.locked.contains(&point);
     let good = reading.quality == Quality::Good;
-    let raw = reading
-        .raw_words()
-        .iter()
-        .map(|word| format!("{word:04X}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Message protocols show what arrived; the others the words on the wire.
+    let raw = match live.payload(point) {
+        Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
+        None => reading
+            .raw_words()
+            .iter()
+            .map(|word| format!("{word:04X}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    };
     let trend_color = theme.series(trend.unwrap_or(0));
     let hover = theme.hover;
 
@@ -297,7 +301,7 @@ fn row(
                 .gap(SPACE_2)
                 .whitespace_nowrap()
                 .overflow_hidden()
-                .child(value(info, reading, theme)),
+                .child(value(info, reading, live.payload(point), theme)),
         )
         .when(columns.raw, |this| {
             this.child(
@@ -377,8 +381,19 @@ fn row(
 }
 
 /// A reading as the table shows it: `ON`/`OFF` for bits, the number with its
-/// unit otherwise, a dash when the read failed.
-fn value(info: &PointInfo, reading: Reading, theme: &Theme) -> AnyElement {
+/// unit otherwise, the message for text values (MQTT), a dash when the read
+/// failed.
+fn value(info: &PointInfo, reading: Reading, text: Option<&str>, theme: &Theme) -> AnyElement {
+    if let Some(text) = text.filter(|_| reading.quality == Quality::Good && reading.value.is_nan())
+    {
+        return div()
+            .min_w_0()
+            .truncate()
+            .font_family(MONO)
+            .text_color(theme.fg_muted)
+            .child(text.lines().next().unwrap_or_default().to_owned())
+            .into_any_element();
+    }
     if reading.quality == Quality::Bad || !reading.value.is_finite() {
         return div()
             .flex()
@@ -387,6 +402,29 @@ fn value(info: &PointInfo, reading: Reading, theme: &Theme) -> AnyElement {
             .text_color(theme.danger)
             .child(vt_ui::icon(Icon::CircleAlert, ICON_SM, theme.danger))
             .child(div().font_family(MONO).child("—"))
+            .into_any_element();
+    }
+    if let Some(name) = info.state_name(reading.value) {
+        return div()
+            .flex()
+            .min_w_0()
+            .items_baseline()
+            .gap(SPACE_2)
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(name.to_owned()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(MONO)
+                    .text_size(FONT_SMALL)
+                    .text_color(theme.fg_dim)
+                    .child(format_value(reading.value)),
+            )
             .into_any_element();
     }
     if info.boolean {

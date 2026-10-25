@@ -15,7 +15,7 @@
       { "key": "valve", "label": "Cooling Valve", "object_type": "analogOutput", "object_instance": 1, "base": 38, "variance": 6, "noise": 1, "period": 45000, "min": 0, "max": 100, "decimals": 1, "unit": "%", "writable": true },
       { "key": "setpoint", "label": "Supply Temp Setpoint", "object_type": "analogValue", "object_instance": 1, "base": 23.0, "min": 15, "max": 30, "decimals": 1, "unit": "°C", "writable": true },
       { "key": "damper", "label": "Outdoor Damper", "object_type": "analogValue", "object_instance": 2, "base": 45, "variance": 5, "noise": 1, "period": 40000, "min": 0, "max": 100, "decimals": 1, "unit": "%", "writable": true },
-      { "key": "mode", "label": "Operating Mode", "object_type": "multiStateValue", "object_instance": 1, "base": 4, "max": 4, "writable": true }
+      { "key": "mode", "label": "Operating Mode", "object_type": "multiStateValue", "object_instance": 1, "base": 4, "max": 4, "writable": true, "state_text": ["Off", "Heat", "Cool", "Auto"] }
     ]
   },
   {

@@ -90,6 +90,7 @@ fn pt(key: &str, ot: &str, inst: u32, base: f64, writable: bool, is_bool: bool) 
         unit: Some("°C".into()),
         is_bool,
         writable,
+        state_text: Vec::new(),
     }
 }
 
@@ -415,6 +416,34 @@ fn units_use_the_standard_enumeration_values() {
     }
     assert_eq!(unit_enum(None), 95, "no-units");
     assert_eq!(unit_enum(Some("furlongs")), 95);
+}
+
+#[test]
+fn multi_state_objects_serve_their_state_text() {
+    let mut ms = pt("ms", "multiStateValue", 1, 1.0, true, false);
+    ms.max = Some(2.0);
+    ms.state_text = vec!["Off".into(), "On".into()];
+    let mut rig = Rig::new(&[ms]);
+    // State_Text (110): the whole array, its length at index 0, one element.
+    let off = [0x74, 0x00, b'O', b'f', b'f'];
+    let on = [0x73, 0x00, b'O', b'n'];
+    let whole = rig.apdu(&confirmed(SVC_RP, &rp_body(MSV1, &[0x19, 0x6E])));
+    assert_eq!(whole, cat(&[&[0x30, 0x01, 0x0C, 0x0C], &MSV1, &[0x19, 0x6E, 0x3E], &off, &on, &[0x3F]]));
+    let count = rig.apdu(&confirmed(SVC_RP, &rp_body(MSV1, &[0x19, 0x6E, 0x29, 0x00])));
+    assert_eq!(count, cat(&[&[0x30, 0x01, 0x0C, 0x0C], &MSV1, &[0x19, 0x6E, 0x29, 0x00, 0x3E, 0x21, 0x02, 0x3F]]));
+    let second = rig.apdu(&confirmed(SVC_RP, &rp_body(MSV1, &[0x19, 0x6E, 0x29, 0x02])));
+    assert_eq!(second, cat(&[&[0x30, 0x01, 0x0C, 0x0C], &MSV1, &[0x19, 0x6E, 0x29, 0x02, 0x3E], &on, &[0x3F]]));
+    let past = rig.apdu(&confirmed(SVC_RP, &rp_body(MSV1, &[0x19, 0x6E, 0x29, 0x03])));
+    assert_eq!(past, [0x50, 0x01, 0x0C, 0x91, 0x02, 0x91, 42], "invalid-array-index");
+
+    // Without names the property is unknown, and names must match the states.
+    let mut rig = Rig::standard();
+    let none = rig.apdu(&confirmed(SVC_RP, &rp_body(MSV1, &[0x19, 0x6E])));
+    assert_eq!(none, [0x50, 0x01, 0x0C, 0x91, 0x02, 0x91, 32], "unknown-property");
+    let mut wrong = pt("ms", "multiStateValue", 1, 1.0, true, false);
+    wrong.max = Some(3.0);
+    wrong.state_text = vec!["Off".into(), "On".into()];
+    assert!(build_objects(&[wrong]).is_err());
 }
 
 #[test]

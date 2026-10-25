@@ -2,68 +2,16 @@
 //! simulator.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, ClickEvent, Context, ElementId, FontWeight, SharedString, Window, div, px};
+use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, div, px};
 use vt_engine::templates;
 use vt_ui::Icon;
-use vt_ui::components::{Button, field, section_label};
+use vt_ui::components::{Button, checkbox, field, section_label};
 use vt_ui::theme::*;
 
-use super::editor::{on_edit, row};
+use super::{on_edit, row};
 use crate::model::AppModel;
 use crate::model::bacnet::Discovery;
 use crate::model::editor::Editor;
-
-/// A checkbox row, as the Modbus simulator's "add a client" one.
-fn checkbox(
-    id: &'static str,
-    checked: bool,
-    label: &'static str,
-    detail: &'static str,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    cx: &Context<AppModel>,
-) -> impl IntoElement {
-    let theme = theme(cx);
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap(SPACE_4)
-        .cursor_pointer()
-        .on_click(on_click)
-        .child(
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(16.0))
-                .rounded(RADIUS_SM)
-                .border_1()
-                .border_color(if checked {
-                    theme.accent
-                } else {
-                    theme.border_strong
-                })
-                .bg(if checked { theme.accent } else { theme.bg })
-                .when(checked, |this| {
-                    this.child(vt_ui::icon(Icon::Check, ICON_SM, theme.accent_fg))
-                }),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .child(div().text_size(FONT_BODY).child(label))
-                .when(!detail.is_empty(), |this| {
-                    this.child(
-                        div()
-                            .text_size(FONT_SMALL)
-                            .text_color(theme.fg_dim)
-                            .child(detail),
-                    )
-                }),
-        )
-}
 
 fn group(title: &'static str, cx: &Context<AppModel>) -> gpui::Div {
     div()
@@ -174,10 +122,20 @@ fn picker(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                         .child(
                             div()
                                 .flex_none()
+                                .flex()
+                                .items_baseline()
+                                .gap(SPACE_3)
                                 .font_family(MONO)
                                 .text_size(FONT_SMALL)
                                 .text_color(theme.fg_muted)
-                                .child(format!("{}:{}", device.address, device.port)),
+                                .child(format!("{}:{}", device.address, device.port))
+                                .when(!device.also.is_empty(), |this| {
+                                    this.child(
+                                        div()
+                                            .text_color(theme.fg_dim)
+                                            .child(format!("+{}", device.also.len())),
+                                    )
+                                }),
                         )
                         .when(picked, |this| {
                             this.child(vt_ui::icon(Icon::Check, ICON_MD, theme.accent))
@@ -303,8 +261,7 @@ pub fn client(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                 .child(checkbox(
                     "bacnet-cov",
                     cov,
-                    "Subscribe to changes (COV)",
-                    "Objects the device takes no subscription for are polled",
+                    "Subscribe to changes (COV); objects the device takes no subscription for are polled",
                     on_edit(cx, |editor| editor.bacnet.cov = !editor.bacnet.cov),
                     cx,
                 )),
@@ -404,7 +361,6 @@ pub fn device(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                 "bacnet-add-client",
                 add_client,
                 "Also add a client that subscribes to it, side by side",
-                "",
                 on_edit(cx, |editor| editor.add_client = !editor.add_client),
                 cx,
             ))

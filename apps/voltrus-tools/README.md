@@ -17,6 +17,18 @@ standalone Tauri apps in this repository.
   computer, Raritan PDU) or a plain register image of up to 2000 registers.
   Template values drift realistically; a value set from the app or written by
   any master is held until released.
+- **MQTT client** (on `mt-mqtt`): host and port, client id, username and
+  password, TLS against the system's trust store, keep-alive, wildcard
+  subscriptions with QoS. Every concrete topic becomes a point: a number,
+  true/false, each numeric field of a JSON payload (or only the one at a JSON
+  path such as `phases[0].v`), or each Sparkplug B metric with its unit (a
+  missed birth is re-requested). Raw messages go to traffic, broker events to
+  the log; the inspector shows the last message and publishes any payload with
+  QoS and retain, and writing a point publishes to its topic.
+- **MQTT broker simulator**: a broker on this computer that publishes a
+  device template as retained numbers at `<prefix>/<value>`, a JSON nameplate
+  at `<prefix>/status` and optionally a Sparkplug B edge node. A number
+  published to a value's topic (or `<topic>/set`) by any client is held.
 - **BACnet/IP client**: a device picker that sends Who-Is (broadcast on the
   BACnet port, and directed at an address and at the simulators on this
   computer) and lists the devices that answer with their instance, vendor and
@@ -47,20 +59,21 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus and BACnet come first. The others in this repository (MQTT, OPC UA,
+Modbus, MQTT and BACnet are ported. The others in this repository (OPC UA,
 S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
 Start the app and press **Start demo plant**: a simulated inverter opens next
-to a client polling it. **Start the BACnet demo** in the command palette opens
-a simulated air handler and a client subscribed to it. Or run a fixed scenario
-without touching your saved workspace:
+to a client polling it (each protocol on the welcome screen has its own
+**Demo**). Or run a fixed scenario without touching your saved workspace:
 
 ```bash
 cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traffic,
                                                  # simulator, editor, palette, light,
+                                                 # mqtt-points, mqtt-trend, mqtt-traffic,
+                                                 # mqtt-inspector, mqtt-editor
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
                                                  # bacnet-command
@@ -74,7 +87,7 @@ system appearance, so screenshots are comparable.
 | Keys | Action |
 | --- | --- |
 | ⌘K | Command palette |
-| ⌘N / ⇧⌘N | New connection / simulator |
+| ⌘N / ⇧⌘N | New connection / simulator (pick the protocol) |
 | ⌘Enter | Connect or disconnect the focused pane |
 | ⌘1 … ⌘4 | Points, trend, traffic, log |
 | ⌘D / ⇧⌘D | Split right / down |

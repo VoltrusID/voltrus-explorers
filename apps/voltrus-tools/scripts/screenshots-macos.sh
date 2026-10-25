@@ -14,6 +14,7 @@ swiftc -O -o "$helper" "$here/window-id.swift"
 
 status=0
 for scenario in welcome points trend traffic simulator editor palette light \
+  mqtt-points mqtt-trend mqtt-traffic mqtt-inspector mqtt-editor \
   bacnet-points bacnet-trend bacnet-traffic bacnet-discover bacnet-command; do
   "$binary" --demo "$scenario" &
   pid=$!

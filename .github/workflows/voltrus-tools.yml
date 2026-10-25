@@ -11,6 +11,7 @@ on:
       - crates/mt-modbus/**
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
+      - crates/mt-mqtt/**
       - .github/workflows/voltrus-tools.yml
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - crates/mt-modbus/**
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
+      - crates/mt-mqtt/**
       - .github/workflows/voltrus-tools.yml
   workflow_dispatch:
 

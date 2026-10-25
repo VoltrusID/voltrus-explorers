@@ -265,9 +265,11 @@ fn point_info(id: usize, point: &SimPointDef) -> PointInfo {
             },
         ),
         data_type: kind.map_or("Object", ObjectKind::label).into(),
-        unit: point.unit.clone().unwrap_or_default(),
+        // The units a client reads from the device, not the template's spelling.
+        unit: mt_bacnet::units_label(mt_bacnet::device::unit_enum(point.unit.as_deref())),
         writable: true,
         boolean: point.is_bool,
+        states: point.state_text.clone(),
     }
 }
 

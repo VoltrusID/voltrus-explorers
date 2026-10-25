@@ -321,21 +321,7 @@ impl AppModel {
                 DEMO_INSTANCE,
             )),
         );
-        self.workspace.open(client);
-        self.workspace
-            .split(simulator, Axis::Horizontal, PaneView::Points);
-        if let Some(pane) = self
-            .workspace
-            .panes
-            .iter()
-            .find(|pane| pane.connection == client)
-            .map(|pane| pane.id)
-        {
-            self.workspace.focus(pane);
-        }
-        self.connect(simulator, cx);
-        self.connect(client, cx);
-        self.save(cx);
+        self.show_side_by_side(client, simulator, cx);
         Some((client, simulator))
     }
 

@@ -339,7 +339,8 @@ impl BacnetClient {
     /// Read every tag and keep each property's own outcome: a device that
     /// answers one property with an Error still yields the others' values.
     /// `statusFlags` comes back as the named flags (`normal`, or e.g.
-    /// `in-alarm, out-of-service`), as COV notifications report them. `Err`
+    /// `in-alarm, out-of-service`), as COV notifications report them, and
+    /// `stateText` (a whole array) as the state names one per line. `Err`
     /// only for a request that failed as a whole (timeout, unresolvable tag).
     pub async fn read_each(&self, tags: &[BacnetObject]) -> Result<Vec<Result<BacnetValue, String>>, ProtocolError> {
         let (resolved, by_key) = self.fetch(tags).await?;
@@ -350,6 +351,16 @@ impl BacnetClient {
                     (PropertyIdentifier::StatusFlags, [PropertyValue::BitString(bits)]) => {
                         BacnetValue::String(status_flags_text(bits))
                     }
+                    (PropertyIdentifier::StateText, names) => BacnetValue::String(
+                        names
+                            .iter()
+                            .map(|name| match name {
+                                PropertyValue::CharacterString(name) => name.replace('\n', " "),
+                                other => other.as_display_string(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ),
                     _ => property_value_to_bacnet(values),
                 }),
                 Some(PropertyResultValue::Error(class, code)) => {

@@ -10,6 +10,9 @@ use vt_protocol::{
 mod bacnet;
 
 pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
+mod mqtt;
+
+pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +41,13 @@ pub enum Field {
     DeviceInstance,
     LocalPort,
     Priority,
+    /// MQTT: a subscription row and which of its fields.
+    Subscription(usize, SubscriptionField),
+    Subscriptions,
+    KeepAlive,
+    Username,
+    Prefix,
+    PublishMs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

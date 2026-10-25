@@ -370,6 +370,7 @@ impl Image {
                             unit: register.unit.clone(),
                             writable: true,
                             boolean: false,
+                            states: Vec::new(),
                         };
                         address = address.saturating_add(if register.is_counter { 4 } else { 2 });
                         point
@@ -385,6 +386,7 @@ impl Image {
                     unit: String::new(),
                     writable: true,
                     boolean: false,
+                    states: Vec::new(),
                 })
                 .collect(),
         }

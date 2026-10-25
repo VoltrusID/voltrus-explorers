@@ -3,13 +3,13 @@
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, px};
-use vt_protocol::{Quality, Role, SessionSpec};
+use vt_protocol::{Protocol, Quality, Role, SessionSpec};
 use vt_ui::Icon;
 use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
 use vt_ui::theme::*;
 
-use super::{now_ms, resize_handle, state_color};
+use super::{now_ms, publish, resize_handle, state_color};
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Drag};
 
@@ -88,22 +88,39 @@ fn point_detail(
         .map(|connection| &connection.spec);
     let simulator = spec.is_some_and(|spec| spec.role() == Role::Simulator);
     // Only template simulators drift, so only they hold values.
-    let holds = matches!(spec, Some(SessionSpec::ModbusSlave(slave)) if slave.template.is_some())
-        || matches!(spec, Some(SessionSpec::BacnetDevice(_)));
+    let holds = match spec {
+        Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
+        Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
+        Some(SessionSpec::BacnetDevice(_)) => true,
+        _ => false,
+    };
+    let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
     // BACnet clients command at a priority, and can give the command up.
     let priority = match spec {
         Some(SessionSpec::BacnetClient(client)) => Some(client.priority),
         _ => None,
     };
     let running = live.session.is_some();
-    let good = reading.quality == Quality::Good && reading.value.is_finite();
+    let payload = live.payload(point);
+    // Text payloads (MQTT) have no number to show: show the text.
+    let text_value = payload.filter(|_| reading.quality == Quality::Good && reading.value.is_nan());
+    let good =
+        reading.quality == Quality::Good && (reading.value.is_finite() || text_value.is_some());
     let locked = live.locked.contains(&point);
     let trended = live.trend_points().contains(&point);
     let summary = live
         .history(point)
         .and_then(|history| history.summary(now_ms() - 60_000.0));
 
-    let big_value: SharedString = if !good {
+    // Multi-state points show their state's name, with the number beside it.
+    let state = info
+        .state_name(reading.value)
+        .filter(|_| reading.quality == Quality::Good);
+    let big_value: SharedString = if let Some(name) = state {
+        name.to_owned().into()
+    } else if let Some(text) = text_value {
+        text.lines().next().unwrap_or_default().to_owned().into()
+    } else if !good {
         "—".into()
     } else if info.boolean {
         SharedString::from(if reading.value != 0.0 { "ON" } else { "OFF" })
@@ -154,7 +171,10 @@ fn point_detail(
                         .child(
                             div()
                                 .font_family(MONO)
-                                .text_size(FONT_VALUE)
+                                .when(text_value.is_none(), |this| this.text_size(FONT_VALUE))
+                                .when(text_value.is_some(), |this| {
+                                    this.text_size(FONT_TITLE).min_w_0().truncate()
+                                })
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(if good { theme.fg } else { theme.danger })
                                 .child(big_value),
@@ -165,6 +185,15 @@ fn point_detail(
                                     .text_size(FONT_EMPHASIS)
                                     .text_color(theme.fg_muted)
                                     .child(info.unit.clone()),
+                            )
+                        })
+                        .when(state.is_some(), |this| {
+                            this.child(
+                                div()
+                                    .font_family(MONO)
+                                    .text_size(FONT_EMPHASIS)
+                                    .text_color(theme.fg_muted)
+                                    .child(format!("state {}", format_value(reading.value))),
                             )
                         }),
                 )
@@ -224,6 +253,36 @@ fn point_detail(
         );
     }
 
+    if let Some(payload) = payload {
+        content = content.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(SPACE_4)
+                .child(section_label("Last message", cx))
+                .child(
+                    div()
+                        .id("inspector-message")
+                        .max_h(px(220.0))
+                        .overflow_y_scroll()
+                        .px(SPACE_5)
+                        .py(SPACE_4)
+                        .rounded(RADIUS_MD)
+                        .bg(theme.surface)
+                        .border_1()
+                        .border_color(theme.border)
+                        .font_family(MONO)
+                        .text_size(FONT_SMALL)
+                        .text_color(theme.fg_muted)
+                        .children(
+                            payload
+                                .lines()
+                                .map(|line| div().min_h(px(14.0)).child(line.to_owned())),
+                        ),
+                ),
+        );
+    }
+
     if let Some(summary) = summary {
         let stat = |label: &'static str, value: String| {
             div()
@@ -274,6 +333,7 @@ fn point_detail(
                     match priority {
                         Some(priority) => format!("Command at priority {priority}"),
                         None if simulator => "Set value".to_owned(),
+                        None if mqtt => "Publish a value to this topic".to_owned(),
                         None => "Write to device".to_owned(),
                     },
                     cx,
@@ -284,13 +344,24 @@ fn point_detail(
                         .gap(SPACE_3)
                         .child(div().flex_1().child(model.write_input.clone()))
                         .child(
-                            Button::new("write", if simulator { "Set" } else { "Write" })
-                                .icon(Icon::Send)
-                                .primary()
-                                .disabled(!running)
-                                .on_click(cx.listener(|model, _, window, cx| {
+                            Button::new(
+                                "write",
+                                if simulator {
+                                    "Set"
+                                } else if mqtt {
+                                    "Publish"
+                                } else {
+                                    "Write"
+                                },
+                            )
+                            .icon(Icon::Send)
+                            .primary()
+                            .disabled(!running)
+                            .on_click(cx.listener(
+                                |model, _, window, cx| {
                                     model.write_selected(window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 )
                 .when(priority.is_some(), |this| {
@@ -332,6 +403,8 @@ fn point_detail(
                                 "Value set and held"
                             } else if simulator {
                                 "Value set"
+                            } else if mqtt {
+                                "Published"
                             } else if priority.is_some() {
                                 "The device accepted it"
                             } else {
@@ -386,6 +459,11 @@ fn point_detail(
                 )
             }),
     );
+    if spec.is_some_and(|spec| spec.protocol() == Protocol::Mqtt) {
+        content = content
+            .child(divider(cx))
+            .child(publish::card(live, &model.publish, cx));
+    }
     content.into_any_element()
 }
 
@@ -401,6 +479,7 @@ fn session_summary(
     let live = model.live.get(&connection);
     let state = live.map(|live| live.state.clone());
     let stats = live.map(|live| live.stats).unwrap_or_default();
+    let mqtt = saved.spec.protocol() == Protocol::Mqtt;
     let row = |label: &'static str, value: String| {
         div()
             .flex()
@@ -450,14 +529,23 @@ fn session_summary(
                 .bg(theme.surface)
                 .border_1()
                 .border_color(theme.border)
-                .child(row("Polls", stats.polls.to_string()))
-                .child(row("Errors", stats.errors.to_string()))
-                .child(row("Frames", stats.frames.to_string()))
                 .child(row(
-                    "Latency",
+                    if mqtt { "Updates" } else { "Polls" },
+                    stats.polls.to_string(),
+                ))
+                .child(row("Errors", stats.errors.to_string()))
+                .child(row(
+                    if mqtt { "Messages" } else { "Frames" },
+                    stats.frames.to_string(),
+                ))
+                .child(row(
+                    if mqtt { "Ping" } else { "Latency" },
                     format!("{:.1} ms", f64::from(stats.last_latency_us) / 1000.0),
                 )),
         )
+        .when_some(live.filter(|_| mqtt), |this, live| {
+            this.child(publish::card(live, &model.publish, cx))
+        })
         .child(
             div()
                 .text_size(FONT_SMALL)

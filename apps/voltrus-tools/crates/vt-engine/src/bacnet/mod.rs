@@ -120,6 +120,13 @@ impl ObjectKind {
         )
     }
 
+    pub(crate) fn is_multi_state(self) -> bool {
+        matches!(
+            self,
+            Self::MultiStateInput | Self::MultiStateOutput | Self::MultiStateValue
+        )
+    }
+
     /// Outputs and values take present-value writes; inputs are sensors.
     pub(crate) fn writable(self) -> bool {
         !matches!(
@@ -255,7 +262,7 @@ pub(crate) async fn discover(spec: BacnetDiscoverSpec) -> Result<Vec<BacnetDevic
     // Devices answer a broadcast Who-Is with a broadcast I-Am to the BACnet
     // port, so listen there when it is free; another BACnet application (or a
     // simulator in this app) may hold it, and then only unicast answers come.
-    let mut found = match spec.broadcast_port {
+    let found = match spec.broadcast_port {
         Some(port) => match mt_bacnet::who_is(
             SocketAddr::new(ip, port),
             Some(port),
@@ -265,26 +272,60 @@ pub(crate) async fn discover(spec: BacnetDiscoverSpec) -> Result<Vec<BacnetDevic
         .await
         {
             Ok(found) => found,
-            Err(_) => mt_bacnet::who_is(SocketAddr::new(ip, 0), Some(port), directed, wait)
+            Err(_) => mt_bacnet::who_is(SocketAddr::new(ip, 0), Some(port), directed.clone(), wait)
                 .await
                 .map_err(|error| error.to_string())?,
         },
-        None => mt_bacnet::who_is(SocketAddr::new(ip, 0), None, directed, wait)
+        None => mt_bacnet::who_is(SocketAddr::new(ip, 0), None, directed.clone(), wait)
             .await
             .map_err(|error| error.to_string())?,
     };
+    Ok(one_per_device(found, &directed))
+}
+
+/// One entry per device instance: a device on several interfaces (or that
+/// answered both the broadcast and a directed Who-Is) is listed once, at an
+/// address the Who-Is was sent to if it answered there, else on loopback,
+/// else the first; its other addresses go in `also`.
+fn one_per_device(
+    mut found: Vec<mt_bacnet::BacnetDiscoveredDevice>,
+    directed: &[SocketAddr],
+) -> Vec<BacnetDeviceInfo> {
+    let rank = |device: &mt_bacnet::BacnetDiscoveredDevice| {
+        let ip = device.ip.parse::<IpAddr>().ok();
+        let address = ip.map(|ip| SocketAddr::new(ip, device.port));
+        if address.is_some_and(|address| directed.contains(&address)) {
+            0
+        } else if ip.is_some_and(|ip| ip.is_loopback()) {
+            1
+        } else {
+            2
+        }
+    };
     found.sort_by(|a, b| {
-        (a.device_instance, &a.ip, a.port).cmp(&(b.device_instance, &b.ip, b.port))
+        (a.device_instance, rank(a), &a.ip, a.port).cmp(&(
+            b.device_instance,
+            rank(b),
+            &b.ip,
+            b.port,
+        ))
     });
-    Ok(found
-        .into_iter()
-        .map(|device| BacnetDeviceInfo {
-            instance: device.device_instance,
-            address: device.ip,
-            port: device.port,
-            vendor: device.vendor_name.unwrap_or_default(),
-        })
-        .collect())
+    let mut devices: Vec<BacnetDeviceInfo> = Vec::new();
+    for device in found {
+        match devices.last_mut() {
+            Some(last) if last.instance == device.device_instance => {
+                last.also.push(format!("{}:{}", device.ip, device.port));
+            }
+            _ => devices.push(BacnetDeviceInfo {
+                instance: device.device_instance,
+                address: device.ip,
+                port: device.port,
+                vendor: device.vendor_name.unwrap_or_default(),
+                also: Vec::new(),
+            }),
+        }
+    }
+    devices
 }
 
 pub(crate) fn traffic(
@@ -644,6 +685,40 @@ mod tests {
         // A bit-string display is not the named form.
         assert_eq!(StatusFlags::parse("Bits(0100)"), None);
         assert_eq!(StatusFlags::parse(""), None);
+    }
+
+    fn answer(instance: u32, ip: &str, port: u16) -> mt_bacnet::BacnetDiscoveredDevice {
+        mt_bacnet::BacnetDiscoveredDevice {
+            device_instance: instance,
+            ip: ip.into(),
+            port,
+            vendor_name: Some("ASHRAE".into()),
+            model_name: None,
+            firmware_version: None,
+            object_list_count: None,
+        }
+    }
+
+    #[test]
+    fn each_device_is_listed_once_at_the_address_asked() {
+        let found = vec![
+            answer(1001, "192.168.64.2", 47808),
+            answer(7, "10.0.0.9", 47808),
+            answer(1001, "127.0.0.1", 47808),
+            answer(1001, "10.0.0.5", 47808),
+        ];
+        // Nothing asked directly: loopback wins over the LAN addresses.
+        let devices = one_per_device(found.clone(), &[]);
+        assert_eq!(devices.len(), 2);
+        assert_eq!((devices[0].instance, devices[1].instance), (7, 1001));
+        assert_eq!(devices[1].address, "127.0.0.1");
+        assert_eq!(devices[1].also, ["10.0.0.5:47808", "192.168.64.2:47808"]);
+        // The typed host wins over loopback.
+        let typed: SocketAddr = "192.168.64.2:47808".parse().unwrap();
+        let devices = one_per_device(found, &[typed]);
+        assert_eq!(devices[1].address, "192.168.64.2");
+        assert_eq!(devices[1].also, ["127.0.0.1:47808", "10.0.0.5:47808"]);
+        assert!(devices[0].also.is_empty());
     }
 
     #[test]

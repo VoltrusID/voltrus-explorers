@@ -274,6 +274,7 @@ pub(crate) fn layout(spec: &ModbusMasterSpec) -> (Vec<PointInfo>, Vec<ModbusTag>
                 unit: block.unit.clone(),
                 writable: block.area.writable(),
                 boolean: block.area.is_bit(),
+                states: Vec::new(),
             });
             tags.push(ModbusTag {
                 name,

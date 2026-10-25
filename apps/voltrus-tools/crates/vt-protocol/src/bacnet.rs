@@ -83,13 +83,17 @@ pub struct BacnetDiscoverSpec {
     pub wait_ms: u64,
 }
 
-/// A device that answered a Who-Is.
+/// A device that answered a Who-Is: one per device instance, at the address
+/// to use (one the Who-Is was sent to, else loopback, else the first).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BacnetDeviceInfo {
     pub instance: u32,
     pub address: String,
     pub port: u16,
     pub vendor: String,
+    /// Other addresses (`host:port`) the same device answered from.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
 }
 
 #[cfg(test)]

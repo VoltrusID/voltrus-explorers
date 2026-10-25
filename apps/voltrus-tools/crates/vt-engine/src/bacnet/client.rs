@@ -434,12 +434,15 @@ async fn describe_points(
         if object.kind.is_analog() {
             tags.push(object.tag("units"));
         }
+        if object.kind.is_multi_state() {
+            tags.push(object.tag("stateText"));
+        }
     }
     out.traffic(vec![read_request(
         client,
         objects.len(),
         tags.len(),
-        "objectName, units",
+        "objectName, units, stateText",
     )]);
     let results = client
         .read_each(&tags)
@@ -462,6 +465,17 @@ async fn describe_points(
         } else {
             String::new()
         };
+        // State_Text is optional: a device without it shows the numbers.
+        let states = if object.kind.is_multi_state() {
+            match results.next() {
+                Some(Ok(BacnetValue::String(names))) if !names.is_empty() => {
+                    names.lines().map(str::to_owned).collect()
+                }
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
         points.push(PointInfo {
             id: u32::try_from(id).unwrap_or(u32::MAX),
             name,
@@ -470,6 +484,7 @@ async fn describe_points(
             unit,
             writable: object.kind.writable(),
             boolean: object.kind.is_binary(),
+            states,
         });
     }
     Ok(points)

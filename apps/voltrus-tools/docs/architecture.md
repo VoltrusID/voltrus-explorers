@@ -84,8 +84,18 @@ running when the window closes and a phone can attach.
 2. Add a session module in `vt-engine` that turns the protocol crate's API into
    `Points`, `Values`, `Traffic`, `Log` and `Written` events.
 3. Add a form to `vt-app-core::forms` (a submodule per protocol, e.g.
-   `forms/bacnet.rs`) and its editor in `vt-app` (`model/bacnet.rs` for the
-   fields, `views/editor_bacnet.rs` for the sheet).
+   `forms/bacnet.rs`) and its editor in `vt-app` (e.g. `model/bacnet.rs` for
+   the fields, `views/editor/bacnet.rs` for the sheet), and map the protocol
+   to it in `EditorKind::for_protocol` (the "+" menu lists every protocol that
+   has one).
+
+Protocols whose points appear over time (MQTT topics) start with an empty
+`Points` and report each new point with `PointsAdded`, which keeps the values
+and histories so far; the message behind a value goes in `Payloads` (the
+inspector shows it), and `Command::Publish` / `Published` carry free-form
+publishes. The MQTT simulator's broker lives in the session task
+(`vt-engine/src/mqtt/broker.rs`, on rumqttc's packet codec) because
+`mt-mqtt`'s rumqttd-based broker cannot be stopped or rebound in-process.
 
 The points, trend, traffic and log views work for any protocol that reports
 points; protocol-specific views (an OPC UA browse tree, an MQTT topic tree)

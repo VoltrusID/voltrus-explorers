@@ -11,6 +11,7 @@ carries all of these texts in `Contents/Resources/Licenses`.
 | [Lucide](https://lucide.dev) | Icons in `vt-ui/assets/icons` | ISC (`vt-ui/assets/icons/LICENSE-lucide.txt`) |
 | [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | Monospace face for values and addresses | SIL OFL 1.1 (`vt-ui/assets/fonts/OFL-JetBrainsMono.txt`) |
 | [iTerm2 Color Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes), © 2011 to present Mark Badolato | Origin of most bundled colour schemes, as distributed with Ghostty | MIT (below) |
+| [rumqttc](https://github.com/bytebeamio/rumqtt), Bytebeam | MQTT client (through `mt-mqtt`) and the packet codec of the MQTT broker simulator (`vt-engine/src/mqtt/broker.rs`) | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) |
 
 The MIT notice required by muxy:
 
