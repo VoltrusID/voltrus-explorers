@@ -172,11 +172,11 @@ impl TextInput {
         self
     }
 
-    fn to_display(&self, offset: usize) -> usize {
+    fn display_index(&self, offset: usize) -> usize {
         display_offset(&self.content, self.secure, offset)
     }
 
-    fn from_display(&self, index: usize) -> usize {
+    fn content_index(&self, index: usize) -> usize {
         content_offset(&self.content, self.secure, index)
     }
 
@@ -348,7 +348,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        self.from_display(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
+        self.content_index(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -512,11 +512,11 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + layout.x_for_index(self.to_display(range.start)) - self.scroll_x,
+                bounds.left() + layout.x_for_index(self.display_index(range.start)) - self.scroll_x,
                 bounds.top(),
             ),
             point(
-                bounds.left() + layout.x_for_index(self.to_display(range.end)) - self.scroll_x,
+                bounds.left() + layout.x_for_index(self.display_index(range.end)) - self.scroll_x,
                 bounds.bottom(),
             ),
         ))
@@ -530,7 +530,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let local = self.last_bounds?.localize(&point)?;
         let layout = self.last_layout.as_ref()?;
-        let index = self.from_display(layout.index_for_x(local.x + self.scroll_x)?);
+        let index = self.content_index(layout.index_for_x(local.x + self.scroll_x)?);
         Some(self.offset_to_utf16(index))
     }
 }
@@ -654,9 +654,9 @@ impl Element for TextElement {
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
         // Offsets in the drawn text: a secure field draws one bullet per character.
-        let display_cursor = input.to_display(cursor);
+        let display_cursor = input.display_index(cursor);
         let display_selection =
-            input.to_display(selected_range.start)..input.to_display(selected_range.end);
+            input.display_index(selected_range.start)..input.display_index(selected_range.end);
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
