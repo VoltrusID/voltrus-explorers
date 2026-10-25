@@ -12,6 +12,7 @@ publish.workspace = true
 vt-protocol = { path = "../vt-protocol" }
 mt-modbus = { path = "../../../../crates/mt-modbus" }
 mt-protocol = { path = "../../../../crates/mt-protocol" }
+mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
@@ -20,6 +21,7 @@ bytes = "1"
 prost = "0.14"
 rumqttc = "0.24"
 serde_json.workspace = true
+serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

@@ -26,6 +26,7 @@ fn point(key: &str, object_type: &str, instance: u32, base: f64, unit: Option<&s
         unit: unit.map(str::to_string),
         is_bool,
         writable: false,
+        state_text: Vec::new(),
     }
 }
 

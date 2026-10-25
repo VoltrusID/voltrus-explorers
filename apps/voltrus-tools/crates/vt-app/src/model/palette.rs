@@ -30,6 +30,9 @@ pub enum Command {
     View(PaneView),
     ChooseTheme,
     Theme(String),
+    NewBacnetClient,
+    NewBacnetDevice,
+    BacnetDemo,
 }
 
 pub struct Entry {
@@ -201,6 +204,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "An inverter on a simulated broker and a client subscribed to it",
             Icon::Zap,
             Command::MqttDemo,
+        ),
+        (
+            "New BACnet connection…",
+            "Discover a device with Who-Is, read its objects, command them",
+            Icon::Plus,
+            Command::NewBacnetClient,
+        ),
+        (
+            "New BACnet device simulator…",
+            "Play an air handler, chiller or VAV box on this computer",
+            Icon::Server,
+            Command::NewBacnetDevice,
+        ),
+        (
+            "Start the BACnet demo",
+            "A simulated air handler and a client subscribed to it",
+            Icon::Zap,
+            Command::BacnetDemo,
         ),
         (
             "Split right",

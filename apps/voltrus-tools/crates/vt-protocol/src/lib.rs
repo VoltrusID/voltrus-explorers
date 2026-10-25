@@ -5,11 +5,15 @@
 //! can move out of process later (a background server the app attaches to, as
 //! in muxy) without changing either side's model.
 
+mod bacnet;
 mod message;
 mod modbus;
 mod mqtt;
 mod value;
 
+pub use bacnet::{
+    BACNET_PORT, BacnetClientSpec, BacnetDeviceInfo, BacnetDeviceSpec, BacnetDiscoverSpec,
+};
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
 };
@@ -37,6 +41,10 @@ pub enum SessionSpec {
     MqttClient(MqttClientSpec),
     /// Run an MQTT broker, optionally publishing a simulated device.
     MqttBroker(MqttBrokerSpec),
+    /// Read, subscribe to and command a BACnet/IP device's objects.
+    BacnetClient(BacnetClientSpec),
+    /// Play a BACnet/IP device with a plant's simulated objects.
+    BacnetDevice(BacnetDeviceSpec),
 }
 
 impl SessionSpec {
@@ -44,13 +52,14 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
+            Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Self::ModbusMaster(_) | Self::MqttClient(_) => Role::Client,
-            Self::ModbusSlave(_) | Self::MqttBroker(_) => Role::Simulator,
+            Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
+            Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
         }
     }
 
@@ -74,6 +83,15 @@ impl SessionSpec {
                 Some(_) => format!("{} · {}/#", host_port(&spec.bind, spec.port), spec.prefix),
                 None => host_port(&spec.bind, spec.port),
             },
+            Self::BacnetClient(spec) => match spec.device_instance {
+                Some(instance) => {
+                    format!("{} · device {instance}", host_port(&spec.host, spec.port))
+                }
+                None => host_port(&spec.host, spec.port),
+            },
+            Self::BacnetDevice(spec) => {
+                format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
+            }
         }
     }
 
@@ -84,6 +102,8 @@ impl SessionSpec {
             Self::ModbusSlave(spec) => format!("{}:{}", spec.bind, spec.port),
             Self::MqttClient(spec) => host_port(&spec.host, spec.port),
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
+            Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
+            Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
         }
     }
 }
@@ -103,15 +123,17 @@ fn host_port(host: &str, port: u16) -> String {
 pub enum Protocol {
     Modbus,
     Mqtt,
+    Bacnet,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt];
+    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
+            Self::Bacnet => "BACnet",
         }
     }
 
@@ -120,6 +142,7 @@ impl Protocol {
         match self {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
+            Self::Bacnet => "BA",
         }
     }
 
@@ -128,6 +151,9 @@ impl Protocol {
             Self::Modbus => "TCP and RTU master, register blocks, writes, and a slave simulator",
             Self::Mqtt => {
                 "Wildcard subscriptions, JSON and Sparkplug B values, publish, and a broker simulator"
+            }
+            Self::Bacnet => {
+                "Who-Is discovery, object list, COV and priority writes, and a device simulator"
             }
         }
     }

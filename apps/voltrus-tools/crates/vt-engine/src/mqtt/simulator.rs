@@ -186,6 +186,8 @@ pub(crate) async fn run(
                     }
                     out.published(topic, Ok(()));
                 }
+                // Other controls don't apply to a broker.
+                Some(_) => {}
             },
         }
     }
@@ -405,6 +407,7 @@ impl Device {
                 unit: register.unit.clone(),
                 writable: true,
                 boolean: false,
+                states: Vec::new(),
             })
             .collect()
     }

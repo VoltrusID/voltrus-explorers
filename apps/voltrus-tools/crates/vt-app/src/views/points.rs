@@ -404,6 +404,29 @@ fn value(info: &PointInfo, reading: Reading, text: Option<&str>, theme: &Theme) 
             .child(div().font_family(MONO).child("—"))
             .into_any_element();
     }
+    if let Some(name) = info.state_name(reading.value) {
+        return div()
+            .flex()
+            .min_w_0()
+            .items_baseline()
+            .gap(SPACE_2)
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(name.to_owned()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(MONO)
+                    .text_size(FONT_SMALL)
+                    .text_color(theme.fg_dim)
+                    .child(format_value(reading.value)),
+            )
+            .into_any_element();
+    }
     if info.boolean {
         let on = reading.value != 0.0;
         return pill(

@@ -29,6 +29,22 @@ standalone Tauri apps in this repository.
   device template as retained numbers at `<prefix>/<value>`, a JSON nameplate
   at `<prefix>/status` and optionally a Sparkplug B edge node. A number
   published to a value's topic (or `<topic>/set`) by any client is held.
+- **BACnet/IP client**: a device picker that sends Who-Is (broadcast on the
+  BACnet port, and directed at an address and at the simulators on this
+  computer) and lists the devices that answer with their instance, vendor and
+  address. The client reads the device's object list and shows every analog,
+  binary and multi-state input, output and value with its object name and
+  units, subscribes to change-of-value notifications where the device takes
+  them and polls the rest with ReadPropertyMultiple (ReadProperty for devices
+  without it). A fault status flag marks the value bad; alarm and override
+  flags are logged. Writes are WriteProperty commands at the connection's
+  priority, and **Relinquish** writes NULL to give the command up. The local
+  address and UDP port are configurable (0.0.0.0:47808 to receive
+  broadcasts).
+- **BACnet device simulator**: plays an air handler, a chiller or a VAV box
+  on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
+  with a 16-level priority array, and SubscribeCOV. A value set from the app
+  or commanded by any client is held until released or relinquished.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -36,15 +52,16 @@ standalone Tauri apps in this repository.
   Series of very different size (watts beside hertz) get stacked lanes, each
   with its own scale.
 - **Traffic and log**: a master's requests and responses with their payload
-  words, the requests a simulator receives, and every connect, failure and
-  external write. Both follow new entries until you scroll back or pause.
+  words, a BACnet client's requests, answers and COV notifications, the
+  requests a simulator receives, and every connect, failure and external
+  write. Both follow new entries until you scroll back or pause.
 - **Tabs and splits**: watch a device and its simulator side by side, or two
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus and MQTT are ported. The others in this repository (OPC UA, S7,
-EtherNet/IP, BACnet, DNP3, NATS, serial, BLE) are being ported next; each
-plugs into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
+Modbus, MQTT and BACnet are ported. The others in this repository (OPC UA,
+S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
+into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
@@ -57,6 +74,9 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # simulator, editor, palette, light,
                                                  # mqtt-points, mqtt-trend, mqtt-traffic,
                                                  # mqtt-inspector, mqtt-editor
+                                                 # bacnet-points, bacnet-trend,
+                                                 # bacnet-traffic, bacnet-discover,
+                                                 # bacnet-command
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the

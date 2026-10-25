@@ -2,7 +2,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame};
+use crate::{
+    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+};
 
 /// Identifies a running session. Chosen by the app, unique per engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -49,6 +51,17 @@ pub enum Command {
     },
     /// Stop every session and the engine itself.
     Shutdown,
+    /// BACnet clients: give up the command at the session's write priority
+    /// (WriteProperty of NULL), so a lower priority or the relinquish default
+    /// drives the point again. Answered by [`EventKind::Written`].
+    Relinquish { session: SessionId, point: u32 },
+    /// Send a BACnet Who-Is; the devices that answer come back as
+    /// [`EventKind::BacnetDevices`] under `session`, which names the request
+    /// (no session runs under it).
+    DiscoverBacnet {
+        session: SessionId,
+        spec: BacnetDiscoverSpec,
+    },
 }
 
 /// Engine → app.
@@ -90,6 +103,8 @@ pub enum EventKind {
         topic: String,
         result: Result<(), String>,
     },
+    /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
+    BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
 }
 
 /// The text behind one point's latest value.
@@ -260,6 +275,7 @@ mod tests {
                 unit: String::new(),
                 writable: true,
                 boolean: false,
+                states: Vec::new(),
             }]),
             EventKind::Payloads(vec![PointText {
                 point: 3,
@@ -287,5 +303,71 @@ mod tests {
         };
         assert!(spec.password.is_empty() && !spec.tls);
         assert!(spec.subscriptions[0].json_path.is_empty());
+    }
+
+    #[test]
+    fn bacnet_messages_round_trip_through_json() {
+        let client = crate::BacnetClientSpec {
+            host: "plant.local".into(),
+            device_instance: Some(4_194_302),
+            local_port: crate::BACNET_PORT,
+            cov: false,
+            priority: 16,
+            ..crate::BacnetClientSpec::default()
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::BacnetClient(client),
+            },
+            // An unknown instance is not the same as instance 0.
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::BacnetClient(crate::BacnetClientSpec {
+                    device_instance: None,
+                    ..crate::BacnetClientSpec::default()
+                }),
+            },
+            Command::Open {
+                session: SessionId(3),
+                spec: SessionSpec::BacnetDevice(crate::BacnetDeviceSpec::default()),
+            },
+            Command::Relinquish {
+                session: SessionId(1),
+                point: 9,
+            },
+            Command::DiscoverBacnet {
+                session: SessionId(4),
+                spec: BacnetDiscoverSpec {
+                    bind: "0.0.0.0".into(),
+                    broadcast_port: None,
+                    directed: vec!["127.0.0.1:47809".into(), "[::1]:47808".into()],
+                    wait_ms: 1500,
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        for answer in [
+            Ok(vec![BacnetDeviceInfo {
+                instance: 1001,
+                address: "192.168.1.40".into(),
+                port: 47808,
+                vendor: "ASHRAE".into(),
+                also: vec!["127.0.0.1:47808".into()],
+            }]),
+            Ok(Vec::new()),
+            Err("Who-Is broadcast could not be sent".into()),
+        ] {
+            let event = Event {
+                session: SessionId(4),
+                kind: EventKind::BacnetDevices(answer),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
     }
 }

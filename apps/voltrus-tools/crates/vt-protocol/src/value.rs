@@ -14,6 +14,20 @@ pub struct PointInfo {
     pub writable: bool,
     /// Booleans render as ON/OFF and trend as steps.
     pub boolean: bool,
+    /// Names of the values of a multi-state point, from 1 (BACnet State_Text):
+    /// value `n` shows `states[n - 1]`. Empty for every other point.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<String>,
+}
+
+impl PointInfo {
+    /// The name of a multi-state point's `value`, if it has one.
+    pub fn state_name(&self, value: f64) -> Option<&str> {
+        if value.fract() != 0.0 || !(1.0..=self.states.len() as f64).contains(&value) {
+            return None;
+        }
+        self.states.get(value as usize - 1).map(String::as_str)
+    }
 }
 
 /// The latest value of every point, produced by one poll or tick.
@@ -76,4 +90,39 @@ pub struct TrafficFrame {
 pub enum Direction {
     Tx,
     Rx,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_state_values_name_their_state_from_one() {
+        let point = PointInfo {
+            id: 0,
+            name: "Mode".into(),
+            address: "MSV 1".into(),
+            data_type: "Multi-state".into(),
+            unit: String::new(),
+            writable: true,
+            boolean: false,
+            states: vec!["Off".into(), "Heat".into(), "Cool".into()],
+        };
+        assert_eq!(point.state_name(1.0), Some("Off"));
+        assert_eq!(point.state_name(3.0), Some("Cool"));
+        // Outside the states, between them, or not a number: no name.
+        assert_eq!(point.state_name(0.0), None);
+        assert_eq!(point.state_name(4.0), None);
+        assert_eq!(point.state_name(2.5), None);
+        assert_eq!(point.state_name(f64::NAN), None);
+        let plain = PointInfo {
+            states: Vec::new(),
+            ..point
+        };
+        assert_eq!(plain.state_name(1.0), None);
+        // Saved without states, read back with none.
+        let text = serde_json::to_string(&plain).unwrap();
+        assert!(!text.contains("states"));
+        assert_eq!(serde_json::from_str::<PointInfo>(&text).unwrap(), plain);
+    }
 }

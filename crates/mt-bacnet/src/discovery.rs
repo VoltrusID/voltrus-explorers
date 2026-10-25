@@ -171,6 +171,82 @@ pub async fn discover_devices(
     .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
 }
 
+/// Send a Who-Is from a socket bound to `local` and collect the I-Am answers for `wait`.
+///
+/// With `broadcast_port` the Who-Is goes to the directed broadcast address of every
+/// interface and to 255.255.255.255 on that port, as [`discover_devices`] does. Each
+/// address in `directed` also gets a unicast Who-Is (Original-Unicast-NPDU), which
+/// reaches a device on any port, a device across a router that drops broadcasts, and a
+/// device on this computer's loopback. A device that answers more than once (to the
+/// broadcast and to a directed Who-Is) is listed once per address.
+pub async fn who_is(
+    local: SocketAddr,
+    broadcast_port: Option<u16>,
+    directed: Vec<SocketAddr>,
+    wait: Duration,
+) -> Result<Vec<BacnetDiscoveredDevice>, ProtocolError> {
+    tokio::task::spawn_blocking(move || {
+        let request = WhoIsRequest::new();
+        let socket = UdpSocket::bind(local)
+            .map_err(|e| ProtocolError::ConnectionFailed(format!("Socket bind {local}: {e}")))?;
+        socket
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .map_err(|e| ProtocolError::ConnectionFailed(format!("set_read_timeout: {e}")))?;
+
+        let mut sent = 0usize;
+        let mut last_error = None;
+        if let Some(port) = broadcast_port {
+            socket
+                .set_broadcast(true)
+                .map_err(|e| ProtocolError::ConnectionFailed(format!("set_broadcast: {e}")))?;
+            let frame = who_is_frame(&request)?;
+            for target in who_is_targets() {
+                match socket.send_to(&frame, SocketAddr::from((target, port))) {
+                    Ok(_) => sent += 1,
+                    Err(e) => last_error = Some(format!("Who-Is to {target}:{port}: {e}")),
+                }
+            }
+        }
+        if !directed.is_empty() {
+            // Unconfirmed-Request PDU (type 1), service choice 8, then the optional range.
+            let mut apdu = vec![0x10, UnconfirmedServiceChoice::WhoIs as u8];
+            request
+                .encode(&mut apdu)
+                .map_err(|e| ProtocolError::Other(format!("WhoIs encode: {e}")))?;
+            let frame = crate::transport::unicast_frame(&apdu, false);
+            for target in &directed {
+                match socket.send_to(&frame, target) {
+                    Ok(_) => sent += 1,
+                    Err(e) => last_error = Some(format!("Who-Is to {target}: {e}")),
+                }
+            }
+        }
+        if sent == 0 {
+            return Err(ProtocolError::ConnectionFailed(
+                last_error.unwrap_or_else(|| "No Who-Is target: give a broadcast port or an address".into()),
+            ));
+        }
+
+        let mut discovered: Vec<BacnetDiscoveredDevice> = Vec::new();
+        let deadline = std::time::Instant::now() + wait;
+        let mut buf = [0u8; 2048];
+        while std::time::Instant::now() < deadline {
+            if let Ok((n, source)) = socket.recv_from(&mut buf) {
+                if let Some(device) = parse_iam_response(&buf[..n], source) {
+                    if !discovered.iter().any(|d| {
+                        d.device_instance == device.device_instance && d.ip == device.ip && d.port == device.port
+                    }) {
+                        discovered.push(device);
+                    }
+                }
+            }
+        }
+        Ok(discovered)
+    })
+    .await
+    .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
+}
+
 /// Parse a received BVLC datagram into a [`BacnetDiscoveredDevice`] if it carries
 /// an I-Am (unconfirmed service 0, clause 16.10).
 ///
@@ -602,7 +678,7 @@ fn extract_bool(value: &bacnet_rs::service::PropertyResultValue) -> Option<bool>
 }
 
 /// Status flags as words: `normal`, or the set bits (BACnetStatusFlags: in-alarm, fault, overridden, out-of-service).
-fn status_flags_text(bits: &[bool]) -> String {
+pub(crate) fn status_flags_text(bits: &[bool]) -> String {
     const NAMES: [&str; 4] = ["in-alarm", "fault", "overridden", "out-of-service"];
     let set: Vec<&str> = NAMES.iter().zip(bits).filter(|(_, on)| **on).map(|(name, _)| *name).collect();
     if set.is_empty() { "normal".into() } else { set.join(", ") }
@@ -635,6 +711,19 @@ fn title_case_units(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A BACnetEngineeringUnits value as shown next to a number: its symbol (`°C`, `kW`),
+/// else its title-cased name (`Coefficient Of Performance`); empty for no-units (95).
+pub fn units_label(units: u32) -> String {
+    if units == 95 {
+        return String::new();
+    }
+    let eu = EngineeringUnits::from(units);
+    match eu.unit_symbol() {
+        "" => title_case_units(&eu.bacnet_name()),
+        symbol => symbol.to_string(),
+    }
 }
 
 /// Map a BACnet property identifier number to a human-readable name.

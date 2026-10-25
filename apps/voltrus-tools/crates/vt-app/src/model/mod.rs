@@ -4,6 +4,7 @@
 //! As in muxy, views are plain functions over `&AppModel`; this file holds
 //! every state transition.
 
+pub mod bacnet;
 pub mod editor;
 pub mod live;
 pub mod palette;
@@ -236,6 +237,17 @@ impl AppModel {
     // ── Engine ────────────────────────────────────────────────────────────
 
     fn apply_event(&mut self, event: Event) {
+        // The device picker's Who-Is runs under a request id, not a session.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::BacnetDevices(found),
+            } => {
+                self.bacnet_devices_found(session, found);
+                return;
+            }
+            event => event,
+        };
         let Some(connection) = self.sessions.get(&event.session).copied() else {
             return;
         };
@@ -516,12 +528,15 @@ impl AppModel {
             Protocol::Mqtt => {
                 self.start_mqtt_demo(cx);
             }
+            Protocol::Bacnet => {
+                self.start_bacnet_demo(cx);
+            }
         }
     }
 
     /// Open a client with its simulator beside it, focus the client and
     /// start both.
-    fn show_side_by_side(
+    pub(super) fn show_side_by_side(
         &mut self,
         client: ConnectionId,
         simulator: ConnectionId,
@@ -554,7 +569,7 @@ impl AppModel {
             .filter_map(|connection| match &connection.spec {
                 SessionSpec::ModbusSlave(spec) => Some(spec.port),
                 SessionSpec::MqttBroker(spec) => Some(spec.port),
-                SessionSpec::ModbusMaster(_) | SessionSpec::MqttClient(_) => None,
+                _ => None,
             })
             .collect();
         ports.find(|port| !taken.contains(port) && TcpListener::bind(("127.0.0.1", *port)).is_ok())
@@ -733,7 +748,12 @@ impl AppModel {
         let kind = existing
             .as_ref()
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
+        let discover = kind == EditorKind::BacnetClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
+        // A new BACnet client starts by looking for devices.
+        if discover {
+            self.discover_bacnet(cx);
+        }
         cx.notify();
     }
 
@@ -802,6 +822,12 @@ impl AppModel {
             self.workspace
                 .split(client, Axis::Horizontal, PaneView::Points);
             self.connect(client, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::BacnetDevice(device) = &spec
+        {
+            self.add_bacnet_client(&name, device, cx);
         }
         self.workspace.focus(
             self.workspace
@@ -957,6 +983,15 @@ impl AppModel {
             Command::NewMqttBroker => self.open_editor(EditorKind::MqttBroker, None, window, cx),
             Command::MqttDemo => {
                 self.start_mqtt_demo(cx);
+            }
+            Command::NewBacnetClient => {
+                self.open_editor(EditorKind::BacnetClient, None, window, cx)
+            }
+            Command::NewBacnetDevice => {
+                self.open_editor(EditorKind::BacnetDevice, None, window, cx)
+            }
+            Command::BacnetDemo => {
+                self.start_bacnet_demo(cx);
             }
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),

@@ -522,6 +522,7 @@ impl Topics {
                     unit: found.unit.clone(),
                     writable,
                     boolean,
+                    states: Vec::new(),
                 });
                 self.origins.push(Origin {
                     topic: key.0.clone(),

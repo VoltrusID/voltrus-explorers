@@ -204,6 +204,8 @@ impl Live {
             EventKind::Published { topic, result } => {
                 self.publish_result = Some((topic, result));
             }
+            // The device picker's answer: the editor takes it, not a session.
+            EventKind::BacnetDevices(_) => {}
         }
     }
 
@@ -283,6 +285,7 @@ mod tests {
             unit: String::new(),
             writable: true,
             boolean: false,
+            states: Vec::new(),
         }
     }
 

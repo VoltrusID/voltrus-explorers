@@ -235,6 +235,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
     let holds = match &connection.spec {
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
+        SessionSpec::BacnetDevice(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
@@ -255,6 +256,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::MqttClient(_), _) => {
                     "Connect to subscribe. Topics become points as their messages arrive."
+                }
+                (SessionSpec::BacnetDevice(_), _) => {
+                    "Start it to play the device on this computer. Any BACnet/IP client can read and command it, including this app."
+                }
+                (SessionSpec::BacnetClient(_), _) => {
+                    "Connect to read the device's objects. Values arrive as changes (COV) or polls."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

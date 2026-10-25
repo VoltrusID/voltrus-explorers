@@ -35,6 +35,7 @@ const P_PROTOCOL_VERSION: u32 = 98;
 const P_RELINQUISH_DEFAULT: u32 = 104;
 const P_REQUIRED: u32 = 105;
 const P_SEGMENTATION_SUPPORTED: u32 = 107;
+const P_STATE_TEXT: u32 = 110;
 pub(super) const P_STATUS_FLAGS: u32 = 111;
 const P_SYSTEM_STATUS: u32 = 112;
 const P_UNITS: u32 = 117;
@@ -123,7 +124,12 @@ fn point_property_lists(o: &SimObj) -> (Vec<u32>, Vec<u32>) {
         // Binary_Value has no Polarity property.
         Kind::Binary if o.ot != ObjectType::BinaryValue => required.push(P_POLARITY),
         Kind::Binary => {}
-        Kind::MultiState => required.push(P_NUMBER_OF_STATES),
+        Kind::MultiState => {
+            required.push(P_NUMBER_OF_STATES);
+            if !o.state_text.is_empty() {
+                optional.push(P_STATE_TEXT);
+            }
+        }
     }
     if o.commandable {
         required.push(P_PRIORITY_ARRAY);
@@ -188,6 +194,18 @@ fn point_property(o: &SimObj, pid: u32, index: Option<u32>) -> Result<Vec<Val>, 
             Some(0) => Ok(vec![Val::Unsigned(16)]),
             Some(i @ 1..=16) => Ok(vec![slot(i as usize - 1)]),
             Some(_) => Err(ERR_INVALID_ARRAY_INDEX),
+        };
+    }
+    if pid == P_STATE_TEXT {
+        // BACnetARRAY[Number_Of_States] of CharacterString (clause 12.18.11).
+        return match index {
+            None => Ok(o.state_text.iter().cloned().map(Val::Str).collect()),
+            Some(0) => Ok(vec![Val::Unsigned(o.state_text.len() as u64)]),
+            Some(i) => o
+                .state_text
+                .get(i as usize - 1)
+                .map(|text| vec![Val::Str(text.clone())])
+                .ok_or(ERR_INVALID_ARRAY_INDEX),
         };
     }
     if index.is_some() {
@@ -331,8 +349,8 @@ pub(super) fn write_property(
         return Err(ERR_UNKNOWN_PROPERTY);
     }
     if index.is_some() {
-        // Priority_Array is the only array here and is read-only.
-        return Err(if pid == P_PRIORITY_ARRAY { ERR_WRITE_ACCESS_DENIED } else { ERR_NOT_AN_ARRAY });
+        // Priority_Array and State_Text are the only arrays here, and read-only.
+        return Err(if matches!(pid, P_PRIORITY_ARRAY | P_STATE_TEXT) { ERR_WRITE_ACCESS_DENIED } else { ERR_NOT_AN_ARRAY });
     }
     match pid {
         P_PRESENT_VALUE => {

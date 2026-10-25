@@ -7,6 +7,9 @@ use vt_protocol::{
     WordOrder,
 };
 
+mod bacnet;
+
+pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
@@ -33,6 +36,11 @@ pub enum Field {
     /// A block row: its index and which of its fields.
     Block(usize, BlockField),
     Blocks,
+    /// BACnet: the device object instance, the client's local UDP port and
+    /// its command priority.
+    DeviceInstance,
+    LocalPort,
+    Priority,
     /// MQTT: a subscription row and which of its fields.
     Subscription(usize, SubscriptionField),
     Subscriptions,

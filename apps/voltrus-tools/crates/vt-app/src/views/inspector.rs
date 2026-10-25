@@ -91,9 +91,15 @@ fn point_detail(
     let holds = match spec {
         Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
         Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
+        Some(SessionSpec::BacnetDevice(_)) => true,
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
+    // BACnet clients command at a priority, and can give the command up.
+    let priority = match spec {
+        Some(SessionSpec::BacnetClient(client)) => Some(client.priority),
+        _ => None,
+    };
     let running = live.session.is_some();
     let payload = live.payload(point);
     // Text payloads (MQTT) have no number to show: show the text.
@@ -106,7 +112,13 @@ fn point_detail(
         .history(point)
         .and_then(|history| history.summary(now_ms() - 60_000.0));
 
-    let big_value: SharedString = if let Some(text) = text_value {
+    // Multi-state points show their state's name, with the number beside it.
+    let state = info
+        .state_name(reading.value)
+        .filter(|_| reading.quality == Quality::Good);
+    let big_value: SharedString = if let Some(name) = state {
+        name.to_owned().into()
+    } else if let Some(text) = text_value {
         text.lines().next().unwrap_or_default().to_owned().into()
     } else if !good {
         "—".into()
@@ -173,6 +185,15 @@ fn point_detail(
                                     .text_size(FONT_EMPHASIS)
                                     .text_color(theme.fg_muted)
                                     .child(info.unit.clone()),
+                            )
+                        })
+                        .when(state.is_some(), |this| {
+                            this.child(
+                                div()
+                                    .font_family(MONO)
+                                    .text_size(FONT_EMPHASIS)
+                                    .text_color(theme.fg_muted)
+                                    .child(format!("state {}", format_value(reading.value))),
                             )
                         }),
                 )
@@ -309,12 +330,11 @@ fn point_detail(
                 .flex_col()
                 .gap(SPACE_4)
                 .child(section_label(
-                    if simulator {
-                        "Set value"
-                    } else if mqtt {
-                        "Publish a value to this topic"
-                    } else {
-                        "Write to device"
+                    match priority {
+                        Some(priority) => format!("Command at priority {priority}"),
+                        None if simulator => "Set value".to_owned(),
+                        None if mqtt => "Publish a value to this topic".to_owned(),
+                        None => "Write to device".to_owned(),
                     },
                     cx,
                 ))
@@ -344,6 +364,20 @@ fn point_detail(
                             )),
                         ),
                 )
+                .when(priority.is_some(), |this| {
+                    this.child(
+                        div().flex().child(
+                            Button::new("relinquish", "Relinquish")
+                                .icon(Icon::LockOpen)
+                                .compact()
+                                .disabled(!running)
+                                .tooltip("Write NULL at this priority: the next priority or the default takes over")
+                                .on_click(cx.listener(|model, _, _, cx| {
+                                    model.relinquish_selected(cx);
+                                })),
+                        ),
+                    )
+                })
                 .when(!running, |this| {
                     this.child(
                         div()
@@ -371,6 +405,8 @@ fn point_detail(
                                 "Value set"
                             } else if mqtt {
                                 "Published"
+                            } else if priority.is_some() {
+                                "The device accepted it"
                             } else {
                                 "Written"
                             }
