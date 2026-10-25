@@ -65,10 +65,10 @@ jobs:
         run: cargo fmt -p vt-protocol -p vt-engine -p vt-app-core -p vt-ui -p vt-app -- --check
 
       - name: Lint
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --keep-going --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked --workspace
+        run: cargo test --locked --no-fail-fast --workspace
 
       - name: Build release
         run: cargo build --locked --release -p vt-app

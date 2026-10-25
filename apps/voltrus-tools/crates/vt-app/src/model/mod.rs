@@ -43,7 +43,8 @@ pub struct Boot {
 pub enum Overlay {
     None,
     Palette(Palette),
-    Editor(Editor),
+    /// Boxed: the editor holds a field entity per input.
+    Editor(Box<Editor>),
 }
 
 pub enum Drag {
@@ -127,7 +128,7 @@ impl AppModel {
                 .kind(InputKind::Number)
                 .mono()
         });
-        let mut subscriptions = vec![cx.subscribe_in(
+        let write_events = cx.subscribe_in(
             &write_input,
             window,
             |model, _, event: &InputEvent, window, cx| match event {
@@ -135,10 +136,11 @@ impl AppModel {
                 InputEvent::Cancelled => window.focus(&model.focus),
                 InputEvent::Changed | InputEvent::Blurred => {}
             },
-        )];
-        subscriptions.push(cx.observe_window_appearance(window, |model, window, cx| {
+        );
+        let appearance = cx.observe_window_appearance(window, |model, window, cx| {
             model.apply_theme(window, cx);
-        }));
+        });
+        let subscriptions = vec![write_events, appearance];
         let mut model = Self {
             workspace: boot.workspace,
             store: boot.store,
@@ -525,7 +527,7 @@ impl AppModel {
 
     pub fn editor_mut(&mut self) -> Option<&mut Editor> {
         match &mut self.overlay {
-            Overlay::Editor(editor) => Some(editor),
+            Overlay::Editor(editor) => Some(editor.as_mut()),
             _ => None,
         }
     }
@@ -555,7 +557,7 @@ impl AppModel {
             Some((_, _, SessionSpec::ModbusMaster(_))) => EditorKind::Master,
             None => kind,
         };
-        self.overlay = Overlay::Editor(Editor::new(kind, existing, window, cx));
+        self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         cx.notify();
     }
 

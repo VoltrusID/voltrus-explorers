@@ -302,10 +302,7 @@ impl Image {
                     .lock()
                     .map_err(|_| "The register image is unavailable")?;
                 if let Some(word) = state.registers.get_mut(index) {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    {
-                        *word = value as u16;
-                    }
+                    *word = value as u16;
                 }
                 Ok(())
             }

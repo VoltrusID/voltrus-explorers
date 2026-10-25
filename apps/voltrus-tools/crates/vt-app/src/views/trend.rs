@@ -44,9 +44,7 @@ pub fn render(
         window.request_animation_frame();
         now_ms()
     } else {
-        #[allow(clippy::cast_precision_loss)]
-        let last = live.last_frame_ms as f64;
-        last
+        live.last_frame_ms as f64
     };
 
     let series: Vec<Series> = points

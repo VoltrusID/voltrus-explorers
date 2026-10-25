@@ -58,7 +58,7 @@ fn number<T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy>(
             format!("{what} must be a number from {min} to {max}"),
         )
     })?;
-    if value < min || value > max {
+    if !(min..=max).contains(&value) {
         return Err(error(field, format!("{what} must be from {min} to {max}")));
     }
     Ok(value)
