@@ -378,7 +378,7 @@ mod tests {
             latency_us: 0,
             readings: vec![reading(1.0)],
         }));
-        live.toggle_trend(0);
+        live.trend.insert(0);
         live.selected = Some(0);
         let first = live.histories[0].clone();
 

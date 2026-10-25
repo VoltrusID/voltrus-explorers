@@ -132,8 +132,9 @@ fn a_client_watches_and_publishes_to_the_simulated_broker() {
         session: BROKER,
         spec: SessionSpec::MqttBroker(spec.clone()),
     });
-    engine.until("the broker to listen", |engine| {
+    engine.until("the broker to listen and report its points", |engine| {
         matches!(engine.broker.state, Some(SessionState::Listening { .. }))
+            && !engine.broker.points.is_empty()
     });
     assert_eq!(
         engine.broker.points.len(),
