@@ -29,6 +29,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
         .flex_none()
         .items_center()
         .gap(SPACE_6)
+        // Drawn as the root of its cached view: fill it explicitly.
+        .w_full()
         .h(STATUS_BAR_HEIGHT)
         .px(SPACE_6)
         .bg(theme.chrome)

@@ -107,6 +107,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
         .flex_none()
         .items_center()
         .gap(SPACE_2)
+        // Drawn as the root of its cached view: fill it explicitly.
+        .w_full()
         .h(TITLE_BAR_HEIGHT)
         .pl(left)
         .pr(SPACE_4)

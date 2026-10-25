@@ -312,6 +312,7 @@ pub(crate) fn state_color(state: &vt_protocol::SessionState, theme: &Theme) -> g
         SessionState::Closed { error: None } => theme.fg_dim,
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::at_end;
