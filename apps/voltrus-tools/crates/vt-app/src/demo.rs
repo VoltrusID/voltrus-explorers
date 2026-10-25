@@ -311,9 +311,7 @@ fn bacnet(
             model.workspace.ui.inspector_open = false;
             model.open_editor(EditorKind::BacnetClient, None, window, cx);
             cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(2))
-                    .await;
+                cx.background_executor().timer(Duration::from_secs(2)).await;
                 let _ = this.update(cx, |model, cx| model.discover_bacnet(cx));
             })
             .detach();
