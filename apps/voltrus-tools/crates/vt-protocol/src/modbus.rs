@@ -212,6 +212,15 @@ impl Area {
         let scale = if address < 9_999 { 10_000 } else { 100_000 };
         prefix * scale + 1 + u32::from(address)
     }
+
+    /// [`Self::modicon`] as shown to the user. Coils always use the six-digit
+    /// form (coil 0 is 000001), so a coil never reads like a discrete input.
+    pub fn modicon_label(self, address: u16) -> String {
+        match self {
+            Self::Coil => format!("{:06}", self.modicon(address)),
+            _ => self.modicon(address).to_string(),
+        }
+    }
 }
 
 /// How the words of a register value are interpreted.
@@ -291,8 +300,15 @@ pub struct ModbusSlaveSpec {
     pub unit_id: u8,
     /// Device template driving the registers; `None` serves a plain image.
     pub template: Option<String>,
-    /// Registers in the image when no template sets the size.
+    /// Registers in the image when no template sets the size, at most
+    /// [`Self::MAX_PLAIN_REGISTERS`].
     pub registers: u16,
+}
+
+impl ModbusSlaveSpec {
+    /// Largest plain register image: every register becomes a point with its
+    /// own history, so the image stays a size the app can chart.
+    pub const MAX_PLAIN_REGISTERS: u16 = 2_000;
 }
 
 impl Default for ModbusSlaveSpec {
@@ -349,5 +365,14 @@ mod tests {
         assert_eq!(Area::Holding.modicon(30_769), 430_770);
         assert_eq!(Area::Input.modicon(12_000), 312_001);
         assert_eq!(Area::Coil.modicon(20_000), 20_001);
+    }
+
+    #[test]
+    fn coil_labels_never_collide_with_discrete_inputs() {
+        assert_eq!(Area::Coil.modicon_label(0), "000001");
+        assert_eq!(Area::Coil.modicon_label(9_999), "010000");
+        assert_eq!(Area::Coil.modicon_label(65_535), "065536");
+        assert_eq!(Area::Discrete.modicon_label(0), "10001");
+        assert_eq!(Area::Holding.modicon_label(30_769), "430770");
     }
 }

@@ -51,6 +51,10 @@ impl Emitter {
         self.emit(EventKind::Written { point, result });
     }
 
+    pub(crate) fn locked(&self, point: u32, locked: bool) {
+        self.emit(EventKind::Locked { point, locked });
+    }
+
     pub(crate) fn log(&self, level: LogLevel, message: impl Into<String>) {
         self.emit(EventKind::Log(LogEntry {
             at_ms: now_ms(),

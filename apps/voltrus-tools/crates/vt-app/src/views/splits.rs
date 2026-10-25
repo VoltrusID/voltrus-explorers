@@ -2,45 +2,38 @@
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, ElementId, MouseButton, MouseDownEvent, Window, canvas, div, px, relative,
+    AnyElement, AnyView, Context, ElementId, MouseButton, MouseDownEvent, canvas, div, px, relative,
 };
-use vt_app_core::{Axis, Branch, Layout, PaneId, TabId};
+use vt_app_core::{Axis, Branch, Layout, TabId};
 use vt_ui::theme::*;
 
 use super::pane;
 use crate::model::{AppModel, Drag};
 
-pub fn render(model: &AppModel, window: &mut Window, cx: &mut Context<AppModel>) -> AnyElement {
+pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let Some(tab) = model.workspace.active_tab() else {
         return div().into_any_element();
     };
-    let split = !matches!(tab.layout, Layout::Leaf(_));
     let layout = tab.layout.clone();
-    node(
-        model,
-        tab.id,
-        &layout,
-        &mut Vec::new(),
-        tab.focused,
-        split,
-        window,
-        cx,
-    )
+    node(model, tab.id, &layout, &mut Vec::new(), cx)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn node(
     model: &AppModel,
     tab: TabId,
     layout: &Layout,
     path: &mut Vec<Branch>,
-    focused: PaneId,
-    split: bool,
-    window: &mut Window,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     match layout {
-        Layout::Leaf(pane) => pane::render(model, *pane, split && *pane == focused, window, cx),
+        // Each pane draws in its own cached view: a pane that animates
+        // doesn't rebuild its neighbours.
+        Layout::Leaf(pane) => match model.chrome.panes.get(pane) {
+            Some(view) => AnyView::from(view.clone())
+                .cached(div().size_full().min_w_0().min_h_0().style().clone())
+                .into_any_element(),
+            None => pane::render(model, *pane, cx),
+        },
         Layout::Split {
             axis,
             ratio,
@@ -50,10 +43,10 @@ fn node(
             let theme = theme(cx).clone();
             let horizontal = *axis == Axis::Horizontal;
             path.push(Branch::First);
-            let first = node(model, tab, first, path, focused, split, window, cx);
+            let first = node(model, tab, first, path, cx);
             path.pop();
             path.push(Branch::Second);
-            let second = node(model, tab, second, path, focused, split, window, cx);
+            let second = node(model, tab, second, path, cx);
             path.pop();
 
             let key = (tab, path.clone());

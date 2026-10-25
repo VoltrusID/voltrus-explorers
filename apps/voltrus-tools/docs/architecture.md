@@ -53,7 +53,17 @@ sequenceDiagram
 - The app drains queued events in one batch per wake-up and redraws once.
 - Values land in per-point `History` ring buffers (`vt-ui::chart`), shared
   with the charts by `Rc`: painting a frame never copies samples.
-- Trends request a new frame only while their session is live.
+- Trends request a new frame only while their session is live. gpui redraws
+  a notified view and its ancestors, so the sidebar, tab strip, inspector,
+  status bar and each pane are drawn by their own cached views
+  (`vt-app/src/views/cached.rs`, after muxy): an animating trend redraws its
+  pane and the thin window shell, while everything else replays its last frame
+  until the model changes.
+- Lists follow new rows only while scrolled to their end; scrolling back to
+  read stays put. Each pane keeps its own scroll positions.
+- The engine finishes a closing simulator before opening another on the same
+  port, and a simulator takes writes from any master into its simulation and
+  holds them, reporting `Locked` so the app shows the point as held.
 - Each pane records its width at layout (`AppModel::pane_widths`); the
   header, points columns, trend and traffic rows adapt to it on the next
   frame, so a split pane stays readable on a small screen.

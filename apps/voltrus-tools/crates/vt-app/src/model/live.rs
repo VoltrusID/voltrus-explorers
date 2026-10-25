@@ -4,7 +4,6 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
-use gpui::UniformListScrollHandle;
 use vt_protocol::{
     EventKind, LogEntry, PointInfo, Quality, Reading, SessionId, SessionState, Stats, TrafficFrame,
 };
@@ -35,9 +34,8 @@ pub struct Live {
     /// Simulator points the user pinned to a value.
     pub locked: BTreeSet<u32>,
     pub write_result: Option<(u32, Result<(), String>)>,
-    pub points_scroll: UniformListScrollHandle,
-    pub traffic_scroll: UniformListScrollHandle,
-    pub log_scroll: UniformListScrollHandle,
+    /// The log keeps recording but stops following new entries.
+    pub log_paused: bool,
 }
 
 impl Default for Live {
@@ -58,9 +56,7 @@ impl Default for Live {
             trend_window_ms: 60_000.0,
             locked: BTreeSet::new(),
             write_result: None,
-            points_scroll: UniformListScrollHandle::new(),
-            traffic_scroll: UniformListScrollHandle::new(),
-            log_scroll: UniformListScrollHandle::new(),
+            log_paused: false,
         }
     }
 }
@@ -76,6 +72,14 @@ impl Live {
         self.locked.clear();
         for history in &self.histories {
             history.clear();
+        }
+    }
+
+    /// Apply an event from `session`. Events of a session this connection has
+    /// since replaced (a reconnect, a restarted simulator) are dropped.
+    pub fn apply_from(&mut self, session: SessionId, event: EventKind) {
+        if self.session == Some(session) {
+            self.apply(event);
         }
     }
 
@@ -135,6 +139,13 @@ impl Live {
             }
             EventKind::Stats(stats) => self.stats = stats,
             EventKind::Written { point, result } => self.write_result = Some((point, result)),
+            EventKind::Locked { point, locked } => {
+                if locked {
+                    self.locked.insert(point);
+                } else {
+                    self.locked.remove(&point);
+                }
+            }
         }
     }
 
@@ -171,10 +182,11 @@ impl Live {
         self.histories.get(usize::try_from(point).ok()?)
     }
 
-    pub fn select_step(&mut self, step: isize) {
+    /// Move the selection by `step` rows; returns the newly selected row.
+    pub fn select_step(&mut self, step: isize) -> Option<usize> {
         let count = self.points.len();
         if count == 0 {
-            return;
+            return None;
         }
         let next = match self.selected {
             None => 0,
@@ -184,9 +196,75 @@ impl Live {
                 (current + step).clamp(0, last)
             }
         };
-        let next = u32::try_from(next).unwrap_or(0);
-        self.selected = Some(next);
-        self.points_scroll
-            .scroll_to_item(next as usize, gpui::ScrollStrategy::Center);
+        let next = usize::try_from(next).unwrap_or(0);
+        self.selected = u32::try_from(next).ok();
+        Some(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use vt_protocol::{EventKind, PointInfo, SessionId, SessionState};
+
+    use super::Live;
+
+    fn point(id: u32) -> PointInfo {
+        PointInfo {
+            id,
+            name: format!("P{id}"),
+            address: (40_001 + id).to_string(),
+            data_type: "UInt16".into(),
+            unit: String::new(),
+            writable: true,
+            boolean: false,
+        }
+    }
+
+    #[test]
+    fn a_restart_keeps_choices_and_drops_the_old_run() {
+        let mut live = Live::default();
+        live.restart(SessionId(1));
+        live.apply(EventKind::Points((0..3).map(point).collect()));
+        live.selected = Some(2);
+        live.apply(EventKind::Locked {
+            point: 1,
+            locked: true,
+        });
+        assert!(live.locked.contains(&1));
+        live.restart(SessionId(2));
+        assert_eq!(live.session, Some(SessionId(2)));
+        assert!(live.locked.is_empty(), "holds belong to the old run");
+        assert_eq!(live.selected, Some(2), "the selection survives");
+        // The new run reports fewer points: choices past the end go.
+        live.apply(EventKind::Points(vec![point(0)]));
+        assert_eq!(live.selected, None);
+    }
+
+    #[test]
+    fn a_stopped_session_detaches_and_steps_stay_in_range() {
+        let mut live = Live::default();
+        live.restart(SessionId(7));
+        live.apply(EventKind::Points((0..3).map(point).collect()));
+        assert_eq!(live.select_step(1), Some(0));
+        assert_eq!(live.select_step(5), Some(2));
+        assert_eq!(live.select_step(-9), Some(0));
+        live.apply(EventKind::State(SessionState::Closed { error: None }));
+        assert_eq!(live.session, None);
+    }
+
+    #[test]
+    fn events_of_a_replaced_session_are_ignored() {
+        let mut live = Live::default();
+        live.restart(SessionId(1));
+        live.restart(SessionId(2));
+        live.apply_from(SessionId(1), EventKind::Points((0..3).map(point).collect()));
+        live.apply_from(
+            SessionId(1),
+            EventKind::State(SessionState::Closed { error: None }),
+        );
+        assert!(live.points.is_empty(), "the old run's schema was dropped");
+        assert_eq!(live.session, Some(SessionId(2)), "the old run's close too");
+        live.apply_from(SessionId(2), EventKind::Points(vec![point(0)]));
+        assert_eq!(live.points.len(), 1);
     }
 }

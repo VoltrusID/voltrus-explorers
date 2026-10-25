@@ -10,8 +10,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Hsla, PathBuilder, Pixels, Point, ShapedLine, SharedString, TextRun, Window,
-    canvas, fill, font, point, px, size,
+    App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Point, ShapedLine, SharedString, TextRun,
+    Window, canvas, fill, font, point, px, size,
 };
 
 use crate::theme::*;
@@ -24,9 +24,11 @@ pub struct History {
 }
 
 impl History {
+    /// An empty history keeping at most `capacity` samples. Storage grows as
+    /// samples arrive, so many idle histories cost next to nothing.
     pub fn new(capacity: usize) -> Rc<Self> {
         Rc::new(Self {
-            samples: RefCell::new(VecDeque::with_capacity(capacity.min(4096))),
+            samples: RefCell::new(VecDeque::new()),
             capacity: capacity.max(2),
         })
     }
@@ -150,7 +152,9 @@ pub fn format_value(value: f64) -> String {
 /// Series of comparable size share one value axis. When their sizes differ by
 /// more than [`LANE_RATIO`] (say watts beside hertz), one axis would flatten
 /// all but the largest, so each series gets its own stacked lane with its own
-/// scale, name and latest value: the usual industrial trend layout.
+/// scale, name and latest value: the usual industrial trend layout. When the
+/// chart is too short for every lane to get [`MIN_LANE_HEIGHT`], the series
+/// share one axis after all. Nothing paints outside the chart's bounds.
 pub fn trend_chart(series: Vec<Series>, now_ms: f64, window_ms: f64, cx: &App) -> impl IntoElement {
     let theme = theme(cx).clone();
     canvas(
@@ -162,15 +166,19 @@ pub fn trend_chart(series: Vec<Series>, now_ms: f64, window_ms: f64, cx: &App) -
                 .map(|series| series.history.range(since))
                 .collect();
             let known: Vec<(f64, f64)> = ranges.iter().flatten().copied().collect();
-            if needs_lanes(&known) {
-                paint_lanes(
-                    &series, &ranges, now_ms, window_ms, &theme, bounds, window, cx,
-                );
-            } else {
-                paint_shared(
-                    &series, &known, now_ms, window_ms, &theme, bounds, window, cx,
-                );
-            }
+            let lanes =
+                needs_lanes(&known) && lanes_fit(series.len(), f32::from(bounds.size.height));
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                if lanes {
+                    paint_lanes(
+                        &series, &ranges, now_ms, window_ms, &theme, bounds, window, cx,
+                    );
+                } else {
+                    paint_shared(
+                        &series, &known, now_ms, window_ms, &theme, bounds, window, cx,
+                    );
+                }
+            });
         },
     )
     .size_full()
@@ -179,6 +187,9 @@ pub fn trend_chart(series: Vec<Series>, now_ms: f64, window_ms: f64, cx: &App) -
 /// How many times larger one series may be than another before they get
 /// separate lanes.
 pub const LANE_RATIO: f64 = 10.0;
+
+/// The shortest lane worth drawing, header included, in pixels.
+pub const MIN_LANE_HEIGHT: f32 = 36.0;
 
 /// Whether series with these value ranges need one lane each instead of a
 /// shared axis: true when the largest magnitude exceeds the smallest by more
@@ -199,6 +210,20 @@ pub fn needs_lanes(ranges: &[(f64, f64)]) -> bool {
 const LABEL_GUTTER: f32 = 56.0;
 /// Height of the time labels under the plot.
 const TIME_STRIP: f32 = 18.0;
+/// Space between stacked lanes.
+const LANE_GAP: f32 = 12.0;
+
+/// Whether `count` lanes, with their gaps and the time strip, fit in a chart
+/// `height` pixels tall at [`MIN_LANE_HEIGHT`] each.
+fn lanes_fit(count: usize, height: f32) -> bool {
+    if count == 0 {
+        return false;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let lanes = count as f32;
+    let usable = height - TIME_STRIP - LANE_GAP * (lanes - 1.0);
+    usable >= MIN_LANE_HEIGHT * lanes
+}
 
 #[allow(clippy::too_many_arguments)]
 fn paint_shared(
@@ -254,7 +279,7 @@ fn paint_lanes(
     cx: &mut App,
 ) {
     const HEADER: f32 = 18.0;
-    const GAP: f32 = 12.0;
+    const GAP: f32 = LANE_GAP;
     let since = now_ms - window_ms;
     let count = series.len().max(1);
     #[allow(clippy::cast_precision_loss)]
@@ -543,5 +568,24 @@ mod tests {
         assert!(needs_lanes(&[(56_000.0, 57_000.0), (49.9, 50.1)]));
         // A 0/1 flag beside a pressure in the thousands.
         assert!(needs_lanes(&[(0.0, 1.0), (700.0, 760.0)]));
+    }
+
+    #[test]
+    fn history_grows_only_as_samples_arrive() {
+        let history = History::new(1800);
+        assert_eq!(history.samples.borrow().capacity(), 0);
+        history.push(0.0, 1.0);
+        assert!(history.samples.borrow().capacity() < 1800);
+    }
+
+    #[test]
+    fn short_charts_fall_back_to_a_shared_axis() {
+        // Two lanes need the time strip, one gap and two minimum lanes.
+        let two = TIME_STRIP + LANE_GAP + 2.0 * MIN_LANE_HEIGHT;
+        assert!(lanes_fit(2, two));
+        assert!(!lanes_fit(2, two - 1.0));
+        // Twenty series in a 300 px pane would overflow it.
+        assert!(!lanes_fit(20, 300.0));
+        assert!(!lanes_fit(0, 1000.0));
     }
 }

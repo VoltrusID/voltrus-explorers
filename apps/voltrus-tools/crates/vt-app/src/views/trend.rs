@@ -1,7 +1,7 @@
 //! A live multi-series trend of the chosen points.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, Window, div, px};
+use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, canvas, div, px};
 use vt_app_core::ConnectionId;
 use vt_ui::Icon;
 use vt_ui::chart::{Series, format_value, needs_lanes, trend_chart};
@@ -26,7 +26,6 @@ pub fn render(
     connection: ConnectionId,
     live: &Live,
     pane_width: f32,
-    window: &mut Window,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let theme = theme(cx).clone();
@@ -42,14 +41,27 @@ pub fn render(
         .into_any_element();
     }
 
-    // Live sessions scroll every frame; stopped ones freeze at their last sample.
+    // Live sessions scroll every frame; stopped ones freeze at their last
+    // sample. The frame request comes from this pane's cached view (see
+    // `views::cached`), so only this pane and the window shell redraw.
     let live_now = live.state.is_live();
+    #[allow(clippy::cast_precision_loss)]
     let now = if live_now {
-        window.request_animation_frame();
         now_ms()
     } else {
         live.last_frame_ms as f64
     };
+    let ticker = canvas(
+        move |_, window, _| {
+            if live_now {
+                window.request_animation_frame();
+            }
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .w(px(0.0))
+    .h(px(0.0));
 
     let series: Vec<Series> = points
         .iter()
@@ -149,9 +161,11 @@ pub fn render(
         ));
 
     div()
+        .relative()
         .flex()
         .flex_col()
         .size_full()
+        .child(ticker)
         .child(toolbar)
         .when(!lanes, |this| {
             this.child(

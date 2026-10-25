@@ -3,7 +3,7 @@
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, px};
-use vt_protocol::{Quality, Role};
+use vt_protocol::{Quality, Role, SessionSpec};
 use vt_ui::Icon;
 use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
@@ -82,10 +82,13 @@ fn point_detail(
     let Some((info, reading)) = live.point(point) else {
         return div().into_any_element();
     };
-    let simulator = model
+    let spec = model
         .workspace
         .connection(connection)
-        .is_some_and(|connection| connection.spec.role() == Role::Simulator);
+        .map(|connection| &connection.spec);
+    let simulator = spec.is_some_and(|spec| spec.role() == Role::Simulator);
+    // Only template simulators drift, so only they hold values.
+    let holds = matches!(spec, Some(SessionSpec::ModbusSlave(slave)) if slave.template.is_some());
     let running = live.session.is_some();
     let good = reading.quality == Quality::Good && reading.value.is_finite();
     let locked = live.locked.contains(&point);
@@ -305,8 +308,10 @@ fn point_detail(
                         Ok(()) => (
                             Icon::CircleCheck,
                             theme.success,
-                            if simulator {
+                            if holds {
                                 "Value set and held"
+                            } else if simulator {
+                                "Value set"
                             } else {
                                 "Written"
                             }
@@ -343,7 +348,7 @@ fn point_detail(
                     cx.listener(move |model, _, _, cx| model.toggle_trend(connection, point, cx)),
                 ),
             )
-            .when(simulator && running, |this| {
+            .when(holds && running, |this| {
                 this.child(
                     Button::new(
                         "inspector-hold",

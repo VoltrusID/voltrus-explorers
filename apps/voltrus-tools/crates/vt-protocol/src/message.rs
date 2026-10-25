@@ -64,6 +64,12 @@ pub enum EventKind {
         point: u32,
         result: Result<(), String>,
     },
+    /// Simulators: a point is now held at its value (or released to drift
+    /// again), after an app write or lock, or a write from an external master.
+    Locked {
+        point: u32,
+        locked: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,5 +164,15 @@ mod tests {
         };
         let text = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+
+        let locked = Event {
+            session: SessionId(7),
+            kind: EventKind::Locked {
+                point: 4,
+                locked: true,
+            },
+        };
+        let text = serde_json::to_string(&locked).unwrap();
+        assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), locked);
     }
 }

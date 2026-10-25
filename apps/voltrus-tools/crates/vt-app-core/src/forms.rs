@@ -277,21 +277,32 @@ impl SlaveForm {
 
     pub fn build(&self) -> Result<(String, ModbusSlaveSpec), FormError> {
         let name = name(&self.name)?;
+        // IPv6 addresses may come bracketed, as in URLs; the spec keeps the
+        // bare address and the engine brackets it when it listens.
         let bind = self.bind.trim();
-        if bind.parse::<std::net::IpAddr>().is_err() {
+        let bare = bind
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(bind);
+        let Ok(ip) = bare.parse::<std::net::IpAddr>() else {
             return Err(error(
                 Field::Bind,
-                "Listen on an IP address, e.g. 127.0.0.1 or 0.0.0.0",
+                "Listen on an IP address, e.g. 127.0.0.1, 0.0.0.0 or ::",
             ));
-        }
+        };
+        let most = if self.template.is_some() {
+            u16::MAX
+        } else {
+            ModbusSlaveSpec::MAX_PLAIN_REGISTERS
+        };
         Ok((
             name,
             ModbusSlaveSpec {
-                bind: bind.to_owned(),
+                bind: ip.to_string(),
                 port: number(&self.port, Field::Port, "Port", 1, u16::MAX)?,
                 unit_id: number(&self.unit_id, Field::UnitId, "Unit ID", 1, 247)?,
                 template: self.template.clone(),
-                registers: number(&self.registers, Field::Registers, "Registers", 1, u16::MAX)?,
+                registers: number(&self.registers, Field::Registers, "Registers", 1, most)?,
             },
         ))
     }
@@ -380,5 +391,34 @@ mod tests {
         assert!(slave.build().is_ok());
         slave.bind = "localhost".into();
         assert_eq!(slave.build().unwrap_err().field, Field::Bind);
+    }
+
+    #[test]
+    fn simulators_listen_on_ipv6_bracketed_or_not() {
+        let mut slave = SlaveForm::from_spec("Sim", &ModbusSlaveSpec::default());
+        for bind in ["::", "[::]", " [::1] "] {
+            slave.bind = bind.into();
+            let (_, spec) = slave.build().expect("an IPv6 listen address");
+            assert_eq!(spec.bind, bind.trim().trim_matches(['[', ']']));
+        }
+        slave.bind = "[127.0.0.1".into();
+        assert_eq!(slave.build().unwrap_err().field, Field::Bind);
+    }
+
+    #[test]
+    fn plain_simulators_serve_at_most_2000_registers() {
+        let mut slave = SlaveForm::from_spec("Sim", &ModbusSlaveSpec::default());
+        slave.registers = "2000".into();
+        assert_eq!(slave.build().expect("2000 registers").1.registers, 2000);
+        slave.registers = "2001".into();
+        let error = slave.build().unwrap_err();
+        assert_eq!(error.field, Field::Registers);
+        assert_eq!(error.message, "Registers must be from 1 to 2000");
+        slave.registers = "0".into();
+        assert_eq!(slave.build().unwrap_err().field, Field::Registers);
+        // A template sizes the image itself; the field only pads it.
+        slave.template = Some("pm5560".into());
+        slave.registers = "5000".into();
+        assert!(slave.build().is_ok());
     }
 }

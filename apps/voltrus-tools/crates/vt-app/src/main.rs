@@ -54,14 +54,16 @@ fn main() -> ExitCode {
             vt_ui::init(initial, cx);
             cx.bind_keys(actions::key_bindings());
             cx.set_menus(actions::menus());
+            // The model saves on the way out (`AppModel::new` hooks app quit).
             cx.on_action(|_: &actions::Quit, cx| cx.quit());
 
+            // Startup failures exit straight away with a failing status: on
+            // macOS `cx.quit()` ends the process with status 0.
             let (engine, events) = match vt_engine::start() {
                 Ok(started) => started,
                 Err(error) => {
                     eprintln!("voltrus-tools: could not start the session engine: {error}");
-                    cx.quit();
-                    return;
+                    std::process::exit(1);
                 }
             };
 
@@ -86,9 +88,7 @@ fn main() -> ExitCode {
                     }
                     model
                 });
-                let weak = model.downgrade();
-                window.on_window_should_close(cx, move |_, cx| {
-                    let _ = weak.update(cx, |model, _| model.shutdown());
+                window.on_window_should_close(cx, |_, cx| {
                     cx.quit();
                     true
                 });
@@ -96,8 +96,7 @@ fn main() -> ExitCode {
             });
             if let Err(error) = opened {
                 eprintln!("voltrus-tools: could not open the window: {error}");
-                cx.quit();
-                return;
+                std::process::exit(1);
             }
             cx.activate(true);
         });

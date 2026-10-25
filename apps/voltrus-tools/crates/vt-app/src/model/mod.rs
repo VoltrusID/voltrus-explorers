@@ -16,20 +16,22 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    AppContext as _, Bounds, Context, Entity, FocusHandle, Pixels, Point, SharedString,
-    Subscription, Task, Window,
+    AppContext as _, Bounds, Context, Entity, FocusHandle, IntoElement as _, Pixels, Point,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window,
 };
 use vt_app_core::{
     Appearance, Axis, Branch, ConnectionId, Pane, PaneId, PaneView, TabId, Workspace, store,
 };
 use vt_engine::{EngineHandle, templates};
-use vt_protocol::{Command as EngineCommand, Event, ModbusSlaveSpec, Role, SessionId, SessionSpec};
+use vt_protocol::{Command as EngineCommand, Event, ModbusSlaveSpec, SessionId, SessionSpec};
 use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 use vt_ui::theme::{self, Theme, ThemeCatalog};
 
 use editor::{Editor, EditorKind};
 use live::Live;
 use palette::{Command, Mode, Palette};
+
+use crate::views::{self, cached::CachedView};
 
 /// What `main` hands the model at startup.
 pub struct Boot {
@@ -76,6 +78,25 @@ pub type SplitBounds = Rc<RefCell<HashMap<(TabId, Vec<Branch>), Bounds<Pixels>>>
 /// Each pane's width at the last layout, so its contents can fit the space.
 pub type PaneWidths = Rc<RefCell<HashMap<PaneId, Pixels>>>;
 
+/// Scroll positions of one pane's lists: two panes on one connection scroll
+/// independently.
+#[derive(Clone, Default)]
+pub struct PaneScroll {
+    pub points: UniformListScrollHandle,
+    pub traffic: UniformListScrollHandle,
+    pub log: UniformListScrollHandle,
+}
+
+/// The window's parts that are drawn by their own cached views.
+pub struct Chrome {
+    pub sidebar: Entity<CachedView>,
+    pub tabs: Entity<CachedView>,
+    pub inspector: Entity<CachedView>,
+    pub status_bar: Entity<CachedView>,
+    /// One per open pane, made as panes appear.
+    pub panes: HashMap<PaneId, Entity<CachedView>>,
+}
+
 pub struct AppModel {
     pub workspace: Workspace,
     store: Option<PathBuf>,
@@ -91,6 +112,8 @@ pub struct AppModel {
     pub drag: Option<Drag>,
     pub split_bounds: SplitBounds,
     pub pane_widths: PaneWidths,
+    pane_scrolls: RefCell<HashMap<PaneId, PaneScroll>>,
+    pub chrome: Chrome,
     pub write_input: Entity<TextInput>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -143,7 +166,13 @@ impl AppModel {
         let appearance = cx.observe_window_appearance(window, |model, window, cx| {
             model.apply_theme(window, cx);
         });
-        let subscriptions = vec![write_events, appearance];
+        // ⌘Q, the menu and closing the window all end here: stop the
+        // sessions and save the layout.
+        let quit = cx.on_app_quit(|model, _| {
+            model.shutdown();
+            async {}
+        });
+        let subscriptions = vec![write_events, appearance, quit];
         let mut model = Self {
             workspace: boot.workspace,
             store: boot.store,
@@ -159,6 +188,26 @@ impl AppModel {
             drag: None,
             split_bounds: Rc::default(),
             pane_widths: Rc::default(),
+            pane_scrolls: RefCell::default(),
+            chrome: Chrome {
+                sidebar: CachedView::new(
+                    |model, _, cx| views::sidebar::render(model, cx).into_any_element(),
+                    cx,
+                ),
+                tabs: CachedView::new(
+                    |model, _, cx| views::tabs::render(model, cx).into_any_element(),
+                    cx,
+                ),
+                inspector: CachedView::new(
+                    |model, _, cx| views::inspector::render(model, cx).into_any_element(),
+                    cx,
+                ),
+                status_bar: CachedView::new(
+                    |model, _, cx| views::status_bar::render(model, cx).into_any_element(),
+                    cx,
+                ),
+                panes: HashMap::new(),
+            },
             write_input,
             _tasks: vec![pump],
             _subscriptions: subscriptions,
@@ -180,10 +229,8 @@ impl AppModel {
             &event.kind,
             vt_protocol::EventKind::State(state) if !state.is_running()
         );
-        if let Some(live) = self.live.get_mut(&connection)
-            && live.session == Some(event.session)
-        {
-            live.apply(event.kind);
+        if let Some(live) = self.live.get_mut(&connection) {
+            live.apply_from(event.session, event.kind);
         }
         if closed {
             self.sessions.remove(&event.session);
@@ -247,6 +294,34 @@ impl AppModel {
 
     pub fn focused_connection(&self) -> Option<ConnectionId> {
         self.focused_pane().map(|pane| pane.connection)
+    }
+
+    /// The scroll handles of a pane's lists.
+    pub fn pane_scroll(&self, pane: PaneId) -> PaneScroll {
+        self.pane_scrolls
+            .borrow_mut()
+            .entry(pane)
+            .or_default()
+            .clone()
+    }
+
+    /// Give every open pane its cached view and forget closed panes.
+    pub fn sync_pane_views(&mut self, cx: &mut Context<Self>) {
+        let open: Vec<PaneId> = self.workspace.panes.iter().map(|pane| pane.id).collect();
+        self.chrome.panes.retain(|pane, _| open.contains(pane));
+        self.pane_scrolls
+            .borrow_mut()
+            .retain(|pane, _| open.contains(pane));
+        self.pane_widths
+            .borrow_mut()
+            .retain(|pane, _| open.contains(pane));
+        for pane in open {
+            if !self.chrome.panes.contains_key(&pane) {
+                let view =
+                    CachedView::new(move |model, _, cx| views::pane::render(model, pane, cx), cx);
+                self.chrome.panes.insert(pane, view);
+            }
+        }
     }
 
     pub fn open_connection(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
@@ -423,14 +498,28 @@ impl AppModel {
         cx.notify();
     }
 
+    /// ↑↓ through the focused pane's points. The typed write value belongs to
+    /// the point it was typed for, so moving clears it.
     pub fn step_selection(&mut self, step: isize, cx: &mut Context<Self>) {
-        if let Some(connection) = self.focused_connection()
-            && let Some(live) = self.live.get_mut(&connection)
-        {
-            live.select_step(step);
-            live.write_result = None;
-            cx.notify();
-        }
+        let Some(pane) = self.focused_pane().map(|pane| pane.id) else {
+            return;
+        };
+        let Some(connection) = self.focused_connection() else {
+            return;
+        };
+        let Some(live) = self.live.get_mut(&connection) else {
+            return;
+        };
+        let Some(next) = live.select_step(step) else {
+            return;
+        };
+        live.write_result = None;
+        self.write_input
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.pane_scroll(pane)
+            .points
+            .scroll_to_item(next, gpui::ScrollStrategy::Center);
+        cx.notify();
     }
 
     pub fn toggle_trend(&mut self, connection: ConnectionId, point: u32, cx: &mut Context<Self>) {
@@ -458,10 +547,6 @@ impl AppModel {
             return;
         };
         let text = self.write_input.read(cx).value().trim().to_owned();
-        let simulator = self
-            .workspace
-            .connection(connection)
-            .is_some_and(|connection| connection.spec.role() == Role::Simulator);
         let Some(live) = self.live.get_mut(&connection) else {
             return;
         };
@@ -476,10 +561,8 @@ impl AppModel {
                 return;
             }
         };
+        // A simulator reports the point held once the write is applied.
         live.write_result = None;
-        if simulator {
-            live.locked.insert(point);
-        }
         self.engine.send(EngineCommand::Write {
             session,
             point,
@@ -511,6 +594,20 @@ impl AppModel {
     pub fn clear_traffic(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
         if let Some(live) = self.live.get_mut(&connection) {
             live.traffic.clear();
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_log_pause(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
+        if let Some(live) = self.live.get_mut(&connection) {
+            live.log_paused = !live.log_paused;
+            cx.notify();
+        }
+    }
+
+    pub fn clear_log(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
+        if let Some(live) = self.live.get_mut(&connection) {
+            live.log.clear();
             cx.notify();
         }
     }

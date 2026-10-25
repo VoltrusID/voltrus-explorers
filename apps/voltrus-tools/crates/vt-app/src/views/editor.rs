@@ -11,6 +11,7 @@ use vt_ui::Icon;
 use vt_ui::components::{Button, IconButton, Segment, field, section_label, segmented};
 use vt_ui::theme::*;
 
+use crate::actions::EDITOR;
 use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
@@ -70,6 +71,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         .child(
             div()
                 .id("editor")
+                // Its own context keeps pane shortcuts from acting behind it.
+                .key_context(EDITOR)
                 .flex()
                 .flex_col()
                 .w(px(680.0))

@@ -1,15 +1,20 @@
 //! Views are functions over `&AppModel`; this is the window's root.
+//!
+//! The sidebar, tab strip, inspector, status bar and each pane are drawn by
+//! their own [`cached::CachedView`]s, so a pane that animates (a live trend)
+//! redraws itself and this thin shell, not the whole window.
 
+pub mod cached;
 mod editor;
-mod inspector;
+pub mod inspector;
 mod log;
 mod palette;
-mod pane;
+pub mod pane;
 mod points;
-mod sidebar;
+pub mod sidebar;
 mod splits;
-mod status_bar;
-mod tabs;
+pub mod status_bar;
+pub mod tabs;
 mod traffic;
 mod trend;
 mod welcome;
@@ -17,7 +22,9 @@ mod welcome;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::prelude::*;
-use gpui::{Context, MouseButton, MouseMoveEvent, MouseUpEvent, Window, div, px};
+use gpui::{
+    AnyView, Context, CursorStyle, MouseButton, MouseMoveEvent, MouseUpEvent, Window, div, px,
+};
 use vt_app_core::{Axis, PaneView};
 use vt_ui::Icon;
 use vt_ui::theme::*;
@@ -25,21 +32,39 @@ use vt_ui::theme::*;
 use crate::actions::*;
 use crate::model::editor::EditorKind;
 use crate::model::palette::Mode;
-use crate::model::{AppModel, Overlay};
+use crate::model::{AppModel, Drag, Overlay};
 
 impl Render for AppModel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_pane_views(cx);
         let theme = theme(cx).clone();
         let ui = self.workspace.ui.clone();
         let has_tabs = self.workspace.active_tab().is_some();
-        let dragging = self.drag.is_some();
+        let cursor = match &self.drag {
+            None => None,
+            Some(Drag::Split {
+                axis: Axis::Vertical,
+                ..
+            }) => Some(CursorStyle::ResizeUpDown),
+            Some(_) => Some(CursorStyle::ResizeLeftRight),
+        };
+        let chrome = &self.chrome;
 
         let content = div()
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
-            .child(tabs::render(self, cx))
+            .child(
+                AnyView::from(chrome.tabs.clone()).cached(
+                    div()
+                        .flex_none()
+                        .w_full()
+                        .h(TITLE_BAR_HEIGHT)
+                        .style()
+                        .clone(),
+                ),
+            )
             .child(
                 div()
                     .flex()
@@ -50,16 +75,22 @@ impl Render for AppModel {
                             .flex_1()
                             .min_w_0()
                             .h_full()
-                            .when(has_tabs, |this| {
-                                this.child(splits::render(self, window, cx))
-                            })
+                            .when(has_tabs, |this| this.child(splits::render(self, cx)))
                             .when(!has_tabs, |this| this.child(welcome::render(self, cx))),
                     )
                     .when(ui.inspector_open && has_tabs, |this| {
-                        this.child(inspector::render(self, cx))
+                        this.child(
+                            AnyView::from(chrome.inspector.clone()).cached(
+                                div()
+                                    .flex_none()
+                                    .w(px(ui.inspector_width))
+                                    .h_full()
+                                    .style()
+                                    .clone(),
+                            ),
+                        )
                     }),
             );
-
         div()
             .id("root")
             .size_full()
@@ -140,20 +171,36 @@ impl Render for AppModel {
                     model.end_drag(cx);
                 }),
             )
-            .when(dragging, |this| {
-                this.cursor(gpui::CursorStyle::ResizeLeftRight)
-            })
+            .when_some(cursor, |this, cursor| this.cursor(cursor))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
                     .when(ui.sidebar_open, |this| {
-                        this.child(sidebar::render(self, cx))
+                        this.child(
+                            AnyView::from(chrome.sidebar.clone()).cached(
+                                div()
+                                    .flex_none()
+                                    .w(px(ui.sidebar_width))
+                                    .h_full()
+                                    .style()
+                                    .clone(),
+                            ),
+                        )
                     })
                     .child(content),
             )
-            .child(status_bar::render(self, cx))
+            .child(
+                AnyView::from(chrome.status_bar.clone()).cached(
+                    div()
+                        .flex_none()
+                        .w_full()
+                        .h(STATUS_BAR_HEIGHT)
+                        .style()
+                        .clone(),
+                ),
+            )
             .map(|this| match &self.overlay {
                 Overlay::None => this,
                 Overlay::Palette(_) => this.child(palette::render(self, cx)),
@@ -226,8 +273,50 @@ pub(crate) fn resize_handle(
         .top_0()
         .bottom_0()
         .w(px(6.0))
-        .cursor(gpui::CursorStyle::ResizeLeftRight)
+        .cursor(CursorStyle::ResizeLeftRight)
         .on_mouse_down(MouseButton::Left, on_down)
+}
+
+/// Keep a growing list on its newest row, but only while the user is already
+/// there: scrolling back to read stays put until they return to the end.
+pub(crate) fn follow_end(scroll: &gpui::UniformListScrollHandle, count: usize, row: f32) {
+    if count == 0 {
+        return;
+    }
+    let (offset, max) = {
+        let state = scroll.0.borrow();
+        (
+            f32::from(state.base_handle.offset().y),
+            f32::from(state.base_handle.max_offset().height),
+        )
+    };
+    if at_end(offset, max, row) {
+        scroll.scroll_to_item(count - 1, gpui::ScrollStrategy::Bottom);
+    }
+}
+
+/// Whether a list scrolled to `offset` (zero or negative, gpui's sign) out of
+/// `max` is within two rows of its end. A list that doesn't scroll yet is.
+fn at_end(offset: f32, max: f32, row: f32) -> bool {
+    let slack = 2.0 * row;
+    max <= slack || -offset >= max - slack
+}
+
+#[cfg(test)]
+mod tests {
+    use super::at_end;
+
+    #[test]
+    fn lists_follow_only_from_their_end() {
+        // Nothing to scroll yet.
+        assert!(at_end(0.0, 0.0, 24.0));
+        // At the end, or a row short of it after new rows arrived.
+        assert!(at_end(-480.0, 480.0, 24.0));
+        assert!(at_end(-456.0, 480.0, 24.0));
+        // Scrolled back to read: stay put.
+        assert!(!at_end(-100.0, 480.0, 24.0));
+        assert!(!at_end(0.0, 480.0, 24.0));
+    }
 }
 
 /// The colour of a session state: live, trying, failed or idle.

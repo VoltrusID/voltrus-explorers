@@ -1,7 +1,9 @@
 //! The live table of a session's points.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, div, px, uniform_list};
+use gpui::{
+    AnyElement, Context, ElementId, FontWeight, UniformListScrollHandle, div, px, uniform_list,
+};
 use vt_app_core::{ConnectionId, PaneId};
 use vt_protocol::{PointInfo, Quality, Reading};
 use vt_ui::Icon;
@@ -60,12 +62,15 @@ impl Columns {
     }
 }
 
+/// `holds`: the session can pin values (a template simulator), so rows get a
+/// hold button.
 pub fn render(
     pane: PaneId,
     connection: ConnectionId,
     live: &Live,
-    simulator: bool,
+    holds: bool,
     pane_width: f32,
+    scroll: UniformListScrollHandle,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let theme = theme(cx).clone();
@@ -163,7 +168,7 @@ pub fn render(
                         let row_state = RowState {
                             point,
                             connection,
-                            simulator,
+                            holds,
                             columns,
                             trend: trend.iter().position(|candidate| *candidate == point),
                         };
@@ -173,7 +178,7 @@ pub fn render(
             },
         ),
     )
-    .track_scroll(live.points_scroll.clone())
+    .track_scroll(scroll)
     .flex_1();
 
     div()
@@ -190,7 +195,7 @@ pub fn render(
 struct RowState {
     point: u32,
     connection: ConnectionId,
-    simulator: bool,
+    holds: bool,
     columns: Columns,
     /// Index among the trended points, if this one is trended.
     trend: Option<usize>,
@@ -207,7 +212,7 @@ fn row(
     let RowState {
         point,
         connection,
-        simulator,
+        holds,
         columns,
         trend,
     } = state;
@@ -328,7 +333,7 @@ fn row(
                     .flex_none()
                     .flex()
                     .justify_end()
-                    .when(simulator, |this| {
+                    .when(holds, |this| {
                         this.child(
                             IconButton::new(
                                 ElementId::NamedInteger("lock".into(), u64::from(point)),

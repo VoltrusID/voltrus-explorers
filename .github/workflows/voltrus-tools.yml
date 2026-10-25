@@ -43,7 +43,8 @@ jobs:
           persist-credentials: false
 
       # Restore and save separately so a failing build still keeps the compiled
-      # dependencies (GPUI takes most of a cold build).
+      # dependencies (GPUI takes most of a cold build). One cache per lockfile:
+      # saved only when there was no exact hit, so runs don't pile up copies.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: cache
         with:
@@ -51,9 +52,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             apps/voltrus-tools/target
-          key: voltrus-tools-macos-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}-${{ github.run_id }}
+          key: voltrus-tools-macos-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}
           restore-keys: |
-            voltrus-tools-macos-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}-
             voltrus-tools-macos-
 
       - name: Toolchain
@@ -74,7 +74,7 @@ jobs:
         run: cargo build --locked --release -p vt-app
 
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always()
+        if: always() && steps.cache.outputs.cache-hit != 'true'
         with:
           path: |
             ~/.cargo/registry

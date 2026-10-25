@@ -35,7 +35,11 @@ pub(crate) async fn run(
     'session: loop {
         out.state(SessionState::Connecting);
         let (traffic_tx, mut traffic_rx) = mpsc::unbounded_channel();
-        let client = match connect(&spec).await {
+        let connected = tokio::select! {
+            result = connect(&spec) => result,
+            () = until_closed(&mut control, out) => break 'session,
+        };
+        let client = match connected {
             Ok(mut client) => {
                 client.set_traffic_channel(traffic_tx);
                 client
@@ -59,7 +63,11 @@ pub(crate) async fn run(
             tokio::select! {
                 _ = ticker.tick() => {
                     let started = Instant::now();
-                    let result = client.read(&tags).await;
+                    let mut deferred = Vec::new();
+                    let Some(result) = read_or_close(&client, &tags, &mut control, &mut deferred).await else {
+                        let _ = client.disconnect().await;
+                        break 'session;
+                    };
                     let latency_us = u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX);
                     stats.polls += 1;
                     stats.last_latency_us = latency_us;
@@ -91,6 +99,9 @@ pub(crate) async fn run(
                             };
                             out.log(if lost { LogLevel::Error } else { LogLevel::Warn }, error.to_string());
                             if lost {
+                                for (point, _) in deferred {
+                                    out.written(point, Err("Not connected".into()));
+                                }
                                 out.stats(stats);
                                 let _ = client.disconnect().await;
                                 attempt = 1;
@@ -101,6 +112,9 @@ pub(crate) async fn run(
                             }
                         }
                     }
+                    for (point, value) in deferred {
+                        write_and_report(&client, &tags, point, value, out).await;
+                    }
                     out.stats(stats);
                 }
                 command = control.recv() => match command {
@@ -109,11 +123,7 @@ pub(crate) async fn run(
                         break 'session;
                     }
                     Some(Control::Write { point, value }) => {
-                        let result = write(&client, &tags, point, value).await;
-                        if let Err(error) = &result {
-                            out.log(LogLevel::Warn, error.clone());
-                        }
-                        out.written(point, result);
+                        write_and_report(&client, &tags, point, value, out).await;
                     }
                     // Masters serve nothing, so there is nothing to hold.
                     Some(Control::Lock { .. }) => {}
@@ -139,16 +149,43 @@ async fn retry(
         retry_in_ms: u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
         reason: reason.to_owned(),
     });
-    let deadline = tokio::time::sleep(wait);
-    tokio::pin!(deadline);
+    tokio::select! {
+        () = tokio::time::sleep(wait) => true,
+        () = until_closed(control, out) => false,
+    }
+}
+
+/// Wait for the app to close the session while there is no link, refusing
+/// writes in the meantime.
+async fn until_closed(control: &mut mpsc::UnboundedReceiver<Control>, out: &Emitter) {
+    loop {
+        match control.recv().await {
+            None | Some(Control::Close) => return,
+            Some(Control::Write { point, .. }) => {
+                out.written(point, Err("Not connected".into()));
+            }
+            Some(Control::Lock { .. }) => {}
+        }
+    }
+}
+
+/// Read every tag, unless the app closes the session first (`None`). Writes
+/// that arrive meanwhile are kept in `deferred` for after the read.
+async fn read_or_close(
+    client: &ModbusClient,
+    tags: &[ModbusTag],
+    control: &mut mpsc::UnboundedReceiver<Control>,
+    deferred: &mut Vec<(u32, f64)>,
+) -> Option<Result<Vec<ModbusValue>, ProtocolError>> {
+    let read = client.read(tags);
+    tokio::pin!(read);
     loop {
         tokio::select! {
-            () = &mut deadline => return true,
+            result = &mut read => return Some(result),
             command = control.recv() => match command {
-                None | Some(Control::Close) => return false,
-                Some(Control::Write { point, .. }) => {
-                    out.written(point, Err("Not connected".into()));
-                }
+                None | Some(Control::Close) => return None,
+                Some(Control::Write { point, value }) => deferred.push((point, value)),
+                // Masters serve nothing, so there is nothing to hold.
                 Some(Control::Lock { .. }) => {}
             },
         }
@@ -167,13 +204,17 @@ async fn connect(spec: &ModbusMasterSpec) -> Result<ModbusClient, ProtocolError>
         ModbusLink::Tcp { host, port } => {
             // The client takes an IP literal; resolve names here so hosts like
             // `plc-1.local` work too.
-            let address = tokio::net::lookup_host((host.as_str(), *port))
-                .await
-                .map_err(|error| {
-                    ProtocolError::ConnectionFailed(format!("Cannot resolve {host}: {error}"))
-                })?
-                .min_by_key(|address| address.is_ipv6())
-                .ok_or_else(|| ProtocolError::ConnectionFailed(format!("{host} has no address")))?;
+            let address =
+                tokio::time::timeout(timeout, tokio::net::lookup_host((host.as_str(), *port)))
+                    .await
+                    .map_err(|_| ProtocolError::Timeout(format!("Resolving {host} timed out")))?
+                    .map_err(|error| {
+                        ProtocolError::ConnectionFailed(format!("Cannot resolve {host}: {error}"))
+                    })?
+                    .min_by_key(|address| address.is_ipv6())
+                    .ok_or_else(|| {
+                        ProtocolError::ConnectionFailed(format!("{host} has no address"))
+                    })?;
             let ip = match address.ip() {
                 std::net::IpAddr::V4(ip) => ip.to_string(),
                 std::net::IpAddr::V6(ip) => format!("[{ip}]"),
@@ -224,7 +265,7 @@ pub(crate) fn layout(spec: &ModbusMasterSpec) -> (Vec<PointInfo>, Vec<ModbusTag>
             points.push(PointInfo {
                 id,
                 name: name.clone(),
-                address: block.area.modicon(address).to_string(),
+                address: block.area.modicon_label(address),
                 data_type: if block.area.is_bit() {
                     "Bool".into()
                 } else {
@@ -296,6 +337,20 @@ fn frame(
     }
 }
 
+async fn write_and_report(
+    client: &ModbusClient,
+    tags: &[ModbusTag],
+    point: u32,
+    value: f64,
+    out: &Emitter,
+) {
+    let result = write(client, tags, point, value).await;
+    if let Err(error) = &result {
+        out.log(LogLevel::Warn, error.clone());
+    }
+    out.written(point, result);
+}
+
 async fn write(
     client: &ModbusClient,
     tags: &[ModbusTag],
@@ -344,7 +399,7 @@ mod tests {
         };
         let (points, tags) = layout(&spec);
         let addresses: Vec<_> = points.iter().map(|point| point.address.as_str()).collect();
-        assert_eq!(addresses, ["40011", "40013", "1"]);
+        assert_eq!(addresses, ["40011", "40013", "000001"]);
         assert_eq!(tags[1].address, 12);
         assert_eq!(points[1].unit, "kW");
         assert!(points[2].boolean && points[2].writable);

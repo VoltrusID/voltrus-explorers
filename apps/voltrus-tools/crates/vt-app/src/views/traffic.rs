@@ -1,14 +1,16 @@
 //! The protocol traffic monitor.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, ScrollStrategy, div, px, uniform_list};
+use gpui::{
+    AnyElement, Context, ElementId, FontWeight, UniformListScrollHandle, div, px, uniform_list,
+};
 use vt_app_core::ConnectionId;
 use vt_protocol::Direction;
 use vt_ui::Icon;
 use vt_ui::components::{Button, empty_state, pill};
 use vt_ui::theme::*;
 
-use super::clock;
+use super::{clock, follow_end};
 use crate::model::AppModel;
 use crate::model::live::Live;
 
@@ -19,6 +21,7 @@ pub fn render(
     connection: ConnectionId,
     live: &Live,
     pane_width: f32,
+    scroll: UniformListScrollHandle,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let stacked = pane_width < STACKED;
@@ -33,9 +36,9 @@ pub fn render(
     let theme = theme(cx).clone();
     let count = live.traffic.len();
     let paused = live.traffic_paused;
-    if count > 0 && !paused {
-        live.traffic_scroll
-            .scroll_to_item(count - 1, ScrollStrategy::Bottom);
+    let row = if stacked { 40.0 } else { 24.0 };
+    if !paused {
+        follow_end(&scroll, count, row);
     }
 
     let toolbar = div()
@@ -157,7 +160,7 @@ pub fn render(
                 },
             ),
         )
-        .track_scroll(live.traffic_scroll.clone())
+        .track_scroll(scroll)
         .flex_1()
         .into_any_element()
     };

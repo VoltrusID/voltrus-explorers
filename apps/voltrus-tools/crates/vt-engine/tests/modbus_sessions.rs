@@ -87,17 +87,20 @@ fn master_reads_and_writes_a_simulated_template_device() {
         );
     }
 
-    // A write from the master reaches the simulator's registers.
+    // A write from the master lands in the simulator's registers and stays:
+    // the simulator takes it into its simulation and holds it, with no
+    // slave-side write or lock.
     let target = profile
         .registers
         .iter()
         .position(|register| !register.is_counter)
         .expect("a measurement register");
+    let point = u32::try_from(target).expect("a point id");
     let register = &profile.registers[target];
     let value = f64::from(((register.min + register.max) / 2.0) as f32);
     engine.send(Command::Write {
         session: master,
-        point: u32::try_from(target).unwrap(),
+        point,
         value,
     });
     let written = wait_for(&events, master, |kind| match kind {
@@ -105,42 +108,50 @@ fn master_reads_and_writes_a_simulated_template_device() {
         _ => None,
     });
     assert_eq!(written, Ok(()));
+    wait_for(&events, slave, |kind| {
+        (*kind
+            == EventKind::Locked {
+                point,
+                locked: true,
+            })
+        .then_some(())
+    });
 
-    // Simulated values drift on every tick unless pinned. Setting a value on
-    // the simulator session pins it; the master must keep reading it.
-    engine.send(Command::Write {
-        session: slave,
-        point: u32::try_from(target).unwrap(),
-        value,
-    });
-    let pinned = wait_for(&events, slave, |kind| match kind {
-        EventKind::Written { result, .. } => Some(result.clone()),
-        _ => None,
-    });
-    assert_eq!(pinned, Ok(()));
-    // Frames polled before the pin landed may still be queued: skip a few polls.
-    std::thread::sleep(Duration::from_millis(300));
+    // Several simulation ticks later (well past two publish intervals), the
+    // master still reads the value it wrote, and so does the simulator's own
+    // view of its registers.
+    std::thread::sleep(Duration::from_millis(1200));
     while events.try_recv().is_ok() {}
     let deadline = Instant::now() + Duration::from_millis(2500);
     let mut seen = 0;
+    let mut published = 0;
     while Instant::now() < deadline {
-        if let Ok(event) = events.try_recv()
-            && event.session == master
-            && let EventKind::Values(frame) = event.kind
+        let Ok(event) = events.try_recv() else {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        };
+        if let EventKind::Values(frame) = event.kind
             && let Some(reading) = frame.readings.get(target)
             && reading.quality == Quality::Good
         {
             assert!(
                 (reading.value - value).abs() < 1e-3,
-                "drifted to {}",
+                "{} drifted to {}",
+                event.session,
                 reading.value
             );
-            seen += 1;
-        } else {
-            std::thread::sleep(Duration::from_millis(5));
+            if event.session == master {
+                seen += 1;
+            } else if event.session == slave {
+                published += 1;
+            }
         }
     }
-    assert!(seen > 5, "only {seen} frames after the write");
+    assert!(seen > 5, "only {seen} master frames after the write");
+    assert!(
+        published > 2,
+        "only {published} simulator frames after the write"
+    );
 
     engine.send(Command::Close { session: master });
     wait_for(&events, master, |kind| {
@@ -186,5 +197,70 @@ fn master_reconnects_when_the_device_appears() {
         _ => None,
     });
     assert!(good);
+    engine.send(Command::Shutdown);
+}
+
+/// Wait until `session` listens; `Err` if it closed with an error first.
+fn listening(events: &async_channel::Receiver<Event>, session: SessionId) -> Result<(), String> {
+    wait_for(events, session, |kind| match kind {
+        EventKind::State(SessionState::Listening { .. }) => Some(Ok(())),
+        EventKind::State(SessionState::Closed { error: Some(error) }) => Some(Err(error.clone())),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_simulator_restarts_on_its_own_port() {
+    let (engine, events) = vt_engine::start().expect("the engine starts");
+    let port = free_port();
+    let spec = || {
+        SessionSpec::ModbusSlave(ModbusSlaveSpec {
+            port,
+            ..ModbusSlaveSpec::default()
+        })
+    };
+    let first = SessionId(20);
+    engine.send(Command::Open {
+        session: first,
+        spec: spec(),
+    });
+    assert_eq!(listening(&events, first), Ok(()));
+
+    // Saving edits to a running simulator: the app closes the old session and
+    // opens a new one on the same port straight away.
+    let second = SessionId(21);
+    engine.send(Command::Close { session: first });
+    engine.send(Command::Open {
+        session: second,
+        spec: spec(),
+    });
+    assert_eq!(listening(&events, second), Ok(()));
+
+    // Reconnecting: opening the running session's id again replaces it.
+    engine.send(Command::Open {
+        session: second,
+        spec: spec(),
+    });
+    assert_eq!(listening(&events, second), Ok(()));
+    engine.send(Command::Shutdown);
+}
+
+#[test]
+fn a_simulator_listens_on_ipv6_loopback() {
+    // Hosts without IPv6 cannot run this.
+    if std::net::TcpListener::bind("[::1]:0").is_err() {
+        return;
+    }
+    let (engine, events) = vt_engine::start().expect("the engine starts");
+    let session = SessionId(30);
+    engine.send(Command::Open {
+        session,
+        spec: SessionSpec::ModbusSlave(ModbusSlaveSpec {
+            bind: "::1".into(),
+            port: free_port(),
+            ..ModbusSlaveSpec::default()
+        }),
+    });
+    assert_eq!(listening(&events, session), Ok(()));
     engine.send(Command::Shutdown);
 }

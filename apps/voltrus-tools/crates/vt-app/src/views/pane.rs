@@ -1,9 +1,9 @@
 //! One pane: a connection's header and the view it shows.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, MouseButton, Window, canvas, div, px};
-use vt_app_core::{PaneId, PaneView};
-use vt_protocol::{Role, SessionState};
+use gpui::{AnyElement, Context, ElementId, FontWeight, MouseButton, canvas, div, px};
+use vt_app_core::{Layout, PaneId, PaneView};
+use vt_protocol::{Role, SessionSpec, SessionState};
 use vt_ui::Icon;
 use vt_ui::components::{
     Button, ButtonKind, IconButton, Segment, empty_state, monogram, pill, segmented, status_dot,
@@ -25,14 +25,14 @@ const NARROW_CHROME: f32 = 246.0;
 /// Assumed before the first layout measured the pane.
 const UNMEASURED: f32 = 1200.0;
 
-pub fn render(
-    model: &AppModel,
-    pane_id: PaneId,
-    highlight: bool,
-    window: &mut Window,
-    cx: &mut Context<AppModel>,
-) -> AnyElement {
+pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> AnyElement {
     let theme = theme(cx).clone();
+    // The focused pane of a split tab carries an accent edge.
+    let highlight = model
+        .workspace
+        .tab_of(pane_id)
+        .is_some_and(|tab| tab.focused == pane_id && !matches!(tab.layout, Layout::Leaf(_)));
+    let scroll = model.pane_scroll(pane_id);
     let width = model
         .pane_widths
         .borrow()
@@ -230,12 +230,18 @@ pub fn render(
         ))
         .child(session_button);
 
+    // Only template simulators hold values; a plain register image has
+    // nothing that drifts.
+    let holds =
+        matches!(&connection.spec, SessionSpec::ModbusSlave(spec) if spec.template.is_some());
     let body: AnyElement = match live {
         Some(live) if !live.points.is_empty() || running => match view {
-            PaneView::Points => points::render(pane_id, connection_id, live, simulator, width, cx),
-            PaneView::Trend => trend::render(connection_id, live, width, window, cx),
-            PaneView::Traffic => traffic::render(connection_id, live, width, cx),
-            PaneView::Log => log::render(connection_id, live, width, cx),
+            PaneView::Points => {
+                points::render(pane_id, connection_id, live, holds, width, scroll.points, cx)
+            }
+            PaneView::Trend => trend::render(connection_id, live, width, cx),
+            PaneView::Traffic => traffic::render(connection_id, live, width, scroll.traffic, cx),
+            PaneView::Log => log::render(connection_id, live, width, scroll.log, cx),
         },
         _ => empty_state(
             if simulator { Icon::Server } else { Icon::Plug },

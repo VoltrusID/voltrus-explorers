@@ -24,6 +24,16 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 
 sed "s/@VERSION@/$version/g" "$here/packaging/Info.plist" > "$app/Contents/Info.plist"
 
+# Licence texts travel with every copy: the app's own GPL, the notices, and
+# each bundled third-party work's licence (fonts, icons, themes, frameworks).
+licenses="$app/Contents/Resources/Licenses"
+mkdir -p "$licenses"
+cp "$here/../../LICENSE" "$licenses/LICENSE"
+cp "$here/NOTICE.md" "$licenses/NOTICE.md"
+cp "$here/crates/vt-ui/assets/fonts/OFL-JetBrainsMono.txt" "$licenses/"
+cp "$here/crates/vt-ui/assets/icons/LICENSE-lucide.txt" "$licenses/"
+cp "$here"/packaging/licenses/*.txt "$licenses/"
+
 # Ad-hoc signature: required to launch on Apple silicon. Release builds get a
 # Developer ID signature and notarization instead.
 codesign --force --deep --sign - "$app"

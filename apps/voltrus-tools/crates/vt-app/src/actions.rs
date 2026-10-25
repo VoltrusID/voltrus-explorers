@@ -33,6 +33,12 @@ actions!(
 
 pub const WORKSPACE: &str = "Workspace";
 pub const PALETTE: &str = "Palette";
+pub const EDITOR: &str = "Editor";
+/// Pane shortcuts: the workspace, but not behind the editor sheet or palette.
+const PANE_KEYS: &str = "Workspace && !Editor && !Palette";
+/// Where ↑↓ move through points: as above, and not while a text field has
+/// focus, so they never retarget the inspector's write.
+const POINT_KEYS: &str = "Workspace && !Editor && !Palette && !TextInput";
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     let primary = if cfg!(target_os = "macos") {
@@ -49,20 +55,20 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(&key("shift-n"), NewSimulator, None),
         KeyBinding::new(&key("b"), ToggleSidebar, None),
         KeyBinding::new(&key("i"), ToggleInspector, None),
-        KeyBinding::new(&key("d"), SplitRight, Some(WORKSPACE)),
-        KeyBinding::new(&key("shift-d"), SplitDown, Some(WORKSPACE)),
-        KeyBinding::new(&key("w"), ClosePane, Some(WORKSPACE)),
+        KeyBinding::new(&key("d"), SplitRight, Some(PANE_KEYS)),
+        KeyBinding::new(&key("shift-d"), SplitDown, Some(PANE_KEYS)),
+        KeyBinding::new(&key("w"), ClosePane, Some(PANE_KEYS)),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new(&key("shift-]"), NextTab, None),
         KeyBinding::new(&key("shift-["), PreviousTab, None),
-        KeyBinding::new(&key("enter"), ToggleSession, Some(WORKSPACE)),
-        KeyBinding::new(&key("1"), ShowPoints, Some(WORKSPACE)),
-        KeyBinding::new(&key("2"), ShowTrend, Some(WORKSPACE)),
-        KeyBinding::new(&key("3"), ShowTraffic, Some(WORKSPACE)),
-        KeyBinding::new(&key("4"), ShowLog, Some(WORKSPACE)),
-        KeyBinding::new("down", SelectNextPoint, Some(WORKSPACE)),
-        KeyBinding::new("up", SelectPreviousPoint, Some(WORKSPACE)),
+        KeyBinding::new(&key("enter"), ToggleSession, Some(PANE_KEYS)),
+        KeyBinding::new(&key("1"), ShowPoints, Some(PANE_KEYS)),
+        KeyBinding::new(&key("2"), ShowTrend, Some(PANE_KEYS)),
+        KeyBinding::new(&key("3"), ShowTraffic, Some(PANE_KEYS)),
+        KeyBinding::new(&key("4"), ShowLog, Some(PANE_KEYS)),
+        KeyBinding::new("down", SelectNextPoint, Some(POINT_KEYS)),
+        KeyBinding::new("up", SelectPreviousPoint, Some(POINT_KEYS)),
         KeyBinding::new("escape", Dismiss, Some(WORKSPACE)),
         KeyBinding::new("up", PaletteUp, Some(PALETTE)),
         KeyBinding::new("down", PaletteDown, Some(PALETTE)),
