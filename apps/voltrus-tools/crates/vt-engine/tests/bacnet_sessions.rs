@@ -323,7 +323,14 @@ fn client_discovers_reads_subscribes_and_commands_a_simulated_device() {
         .then_some(())
     });
 
-    // The simulator's traffic shows the client's requests.
+    // The simulator's traffic shows the client's requests: its waits above
+    // consumed the earlier ones, so command once more.
+    engine.send(Command::Write {
+        session: client,
+        point: mode_point,
+        value: 4.0,
+    });
+    assert_eq!(written(&mut events, client, mode_point), Ok(()));
     events.wait(simulator, |kind| match kind {
         EventKind::Traffic(frames) => frames
             .iter()
