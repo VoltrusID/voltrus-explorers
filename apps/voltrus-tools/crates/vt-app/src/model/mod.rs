@@ -20,7 +20,7 @@ use gpui::{
     Subscription, Task, Window,
 };
 use vt_app_core::{
-    Appearance, Axis, Branch, ConnectionId, Pane, PaneView, TabId, Workspace, store,
+    Appearance, Axis, Branch, ConnectionId, Pane, PaneId, PaneView, TabId, Workspace, store,
 };
 use vt_engine::{EngineHandle, templates};
 use vt_protocol::{Command as EngineCommand, Event, ModbusSlaveSpec, Role, SessionId, SessionSpec};
@@ -73,6 +73,8 @@ pub struct Toast {
 }
 
 pub type SplitBounds = Rc<RefCell<HashMap<(TabId, Vec<Branch>), Bounds<Pixels>>>>;
+/// Each pane's width at the last layout, so its contents can fit the space.
+pub type PaneWidths = Rc<RefCell<HashMap<PaneId, Pixels>>>;
 
 pub struct AppModel {
     pub workspace: Workspace,
@@ -88,6 +90,7 @@ pub struct AppModel {
     toast_seq: u64,
     pub drag: Option<Drag>,
     pub split_bounds: SplitBounds,
+    pub pane_widths: PaneWidths,
     pub write_input: Entity<TextInput>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -155,6 +158,7 @@ impl AppModel {
             toast_seq: 0,
             drag: None,
             split_bounds: Rc::default(),
+            pane_widths: Rc::default(),
             write_input,
             _tasks: vec![pump],
             _subscriptions: subscriptions,
@@ -261,7 +265,7 @@ impl AppModel {
         cx.notify();
     }
 
-    pub fn focus_pane(&mut self, pane: vt_app_core::PaneId, cx: &mut Context<Self>) {
+    pub fn focus_pane(&mut self, pane: PaneId, cx: &mut Context<Self>) {
         self.workspace.focus(pane);
         cx.notify();
     }
@@ -301,12 +305,7 @@ impl AppModel {
         }
     }
 
-    pub fn set_pane_view(
-        &mut self,
-        pane: vt_app_core::PaneId,
-        view: PaneView,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_pane_view(&mut self, pane: PaneId, view: PaneView, cx: &mut Context<Self>) {
         self.workspace.focus(pane);
         self.workspace.set_view(pane, view);
         self.save(cx);
@@ -619,7 +618,7 @@ impl AppModel {
                 .panes
                 .iter()
                 .find(|pane| pane.connection == saved)
-                .map_or(vt_app_core::PaneId(0), |pane| pane.id),
+                .map_or(PaneId(0), |pane| pane.id),
         );
         self.overlay = Overlay::None;
         window.focus(&self.focus);

@@ -30,6 +30,7 @@ impl Default for ModbusMasterSpec {
                 start: 0,
                 count: 10,
                 data_type: DataType::U16,
+                unit: String::new(),
             }],
         }
     }
@@ -122,6 +123,9 @@ pub struct RegisterBlock {
     /// Number of values (not registers) in the block.
     pub count: u16,
     pub data_type: DataType,
+    /// Engineering unit of every value, e.g. from a device template.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unit: String,
 }
 
 impl RegisterBlock {
@@ -195,15 +199,18 @@ impl Area {
     }
 
     /// The conventional 1-based "Modicon" number of a protocol address, e.g.
-    /// holding register 0 is 40001.
+    /// holding register 0 is 40001. Addresses past 9998 use the six-digit
+    /// form (holding register 30770 is 430771), as five digits would collide
+    /// with the next area.
     pub fn modicon(self, address: u16) -> u32 {
-        let base = match self {
-            Self::Coil => 1,
-            Self::Discrete => 10_001,
-            Self::Input => 30_001,
-            Self::Holding => 40_001,
+        let prefix = match self {
+            Self::Coil => 0,
+            Self::Discrete => 1,
+            Self::Input => 3,
+            Self::Holding => 4,
         };
-        base + u32::from(address)
+        let scale = if address < 9_999 { 10_000 } else { 100_000 };
+        prefix * scale + 1 + u32::from(address)
     }
 }
 
@@ -311,6 +318,7 @@ mod tests {
             start,
             count,
             data_type,
+            unit: String::new(),
         }
     }
 
@@ -332,5 +340,14 @@ mod tests {
             block(Area::Holding, 65_535, 1, DataType::U16).end_address(),
             Some(65_535)
         );
+    }
+
+    #[test]
+    fn modicon_numbers_switch_to_six_digits_past_9998() {
+        assert_eq!(Area::Holding.modicon(0), 40_001);
+        assert_eq!(Area::Holding.modicon(9_998), 49_999);
+        assert_eq!(Area::Holding.modicon(30_769), 430_770);
+        assert_eq!(Area::Input.modicon(12_000), 312_001);
+        assert_eq!(Area::Coil.modicon(20_000), 20_001);
     }
 }

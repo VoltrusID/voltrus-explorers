@@ -51,6 +51,14 @@ impl SessionSpec {
             }
         }
     }
+
+    /// Just the address (host and port, or serial port), for tight spaces.
+    pub fn address(&self) -> String {
+        match self {
+            Self::ModbusMaster(spec) => spec.link.to_string(),
+            Self::ModbusSlave(spec) => format!("{}:{}", spec.bind, spec.port),
+        }
+    }
 }
 
 /// The protocols the suite speaks.

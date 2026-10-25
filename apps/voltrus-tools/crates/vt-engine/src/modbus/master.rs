@@ -230,7 +230,7 @@ pub(crate) fn layout(spec: &ModbusMasterSpec) -> (Vec<PointInfo>, Vec<ModbusTag>
                 } else {
                     block.data_type.name().into()
                 },
-                unit: String::new(),
+                unit: block.unit.clone(),
                 writable: block.area.writable(),
                 boolean: block.area.is_bit(),
             });
@@ -328,6 +328,7 @@ mod tests {
                     start: 10,
                     count: 2,
                     data_type: DataType::F32,
+                    unit: "kW".into(),
                 },
                 RegisterBlock {
                     name: "Run".into(),
@@ -335,6 +336,7 @@ mod tests {
                     start: 0,
                     count: 1,
                     data_type: DataType::U16,
+                    unit: String::new(),
                 },
             ],
             word_order: WordOrder::Big,
@@ -344,6 +346,7 @@ mod tests {
         let addresses: Vec<_> = points.iter().map(|point| point.address.as_str()).collect();
         assert_eq!(addresses, ["40011", "40013", "1"]);
         assert_eq!(tags[1].address, 12);
+        assert_eq!(points[1].unit, "kW");
         assert!(points[2].boolean && points[2].writable);
     }
 

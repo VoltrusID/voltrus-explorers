@@ -37,41 +37,33 @@ pub fn register_span(profile: &SimDeviceProfile) -> u32 {
 }
 
 /// A master that polls a simulated template device the way the simulator lays
-/// it out: one block per run of same-kind registers, holding area, big-endian.
+/// it out: one named block per register (holding area, big-endian) carrying
+/// the register's unit. The client merges adjacent blocks into bulk reads.
 pub fn master_for(
     profile: &SimDeviceProfile,
     host: &str,
     port: u16,
     unit_id: u8,
 ) -> ModbusMasterSpec {
-    let mut blocks: Vec<RegisterBlock> = Vec::new();
+    let mut blocks: Vec<RegisterBlock> = Vec::with_capacity(profile.registers.len());
     let mut address = u32::from(profile.base_address);
-    let mut previous: Option<bool> = None;
     for register in &profile.registers {
-        let width = if register.is_counter { 4 } else { 2 };
         let Ok(start) = u16::try_from(address) else {
             break;
         };
-        match blocks.last_mut() {
-            Some(block) if previous == Some(register.is_counter) => block.count += 1,
-            _ => blocks.push(RegisterBlock {
-                name: if register.is_counter {
-                    format!("{} counters", profile.model)
-                } else {
-                    format!("{} values", profile.model)
-                },
-                area: Area::Holding,
-                start,
-                count: 1,
-                data_type: if register.is_counter {
-                    DataType::F64
-                } else {
-                    DataType::F32
-                },
-            }),
-        }
-        previous = Some(register.is_counter);
-        address += width;
+        blocks.push(RegisterBlock {
+            name: register.name.replace('_', " "),
+            area: Area::Holding,
+            start,
+            count: 1,
+            data_type: if register.is_counter {
+                DataType::F64
+            } else {
+                DataType::F32
+            },
+            unit: register.unit.clone(),
+        });
+        address += if register.is_counter { 4 } else { 2 };
     }
     ModbusMasterSpec {
         link: ModbusLink::Tcp {
@@ -114,6 +106,10 @@ mod tests {
             for block in &spec.blocks {
                 assert_eq!(u32::from(block.start), expected, "{}", profile.id);
                 expected += u32::from(block.count) * u32::from(block.data_type.words());
+            }
+            for (block, register) in spec.blocks.iter().zip(&profile.registers) {
+                assert_eq!(block.unit, register.unit, "{}", profile.id);
+                assert!(!block.name.contains('_'), "{}", block.name);
             }
         }
     }

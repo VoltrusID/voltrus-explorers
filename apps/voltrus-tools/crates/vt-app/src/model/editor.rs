@@ -20,6 +20,7 @@ pub struct BlockRow {
     pub count: Entity<TextInput>,
     pub area: Area,
     pub data_type: DataType,
+    unit: String,
 }
 
 pub struct Editor {
@@ -199,6 +200,7 @@ impl Editor {
             count: input(block.count, "10", InputKind::Unsigned, true, cx),
             area: block.area,
             data_type: block.data_type,
+            unit: block.unit,
         };
         for field in [row.name.clone(), row.start.clone(), row.count.clone()] {
             self.watch(&field, window, cx);
@@ -220,6 +222,7 @@ impl Editor {
                 start: row.start.read(cx).value().to_owned(),
                 count: row.count.read(cx).value().to_owned(),
                 data_type: row.data_type,
+                unit: row.unit.clone(),
             })
             .collect()
     }

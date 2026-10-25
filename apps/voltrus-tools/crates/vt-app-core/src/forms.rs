@@ -85,6 +85,8 @@ pub struct BlockForm {
     pub start: String,
     pub count: String,
     pub data_type: DataType,
+    /// Not edited in the form; kept so template units survive an edit.
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +140,7 @@ impl MasterForm {
                     start: block.start.to_string(),
                     count: block.count.to_string(),
                     data_type: block.data_type,
+                    unit: block.unit.clone(),
                 })
                 .collect(),
         }
@@ -226,6 +229,7 @@ impl MasterForm {
                 start,
                 count,
                 data_type: block.data_type,
+                unit: block.unit.clone(),
             };
             if built.end_address().is_none() {
                 return Err(error(
@@ -314,6 +318,7 @@ pub fn next_block(blocks: &[BlockForm]) -> BlockForm {
         start: start.to_string(),
         count: "10".into(),
         data_type: blocks.last().map_or(DataType::U16, |last| last.data_type),
+        unit: String::new(),
     }
 }
 

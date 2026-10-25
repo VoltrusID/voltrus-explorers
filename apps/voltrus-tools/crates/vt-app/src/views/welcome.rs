@@ -27,6 +27,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
             .flex_col()
             .gap(SPACE_3)
             .flex_1()
+            .min_w_0()
             .p(SPACE_7)
             .rounded(RADIUS_LG)
             .bg(theme.surface)
@@ -52,12 +53,14 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
+        .px(SPACE_10)
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap(SPACE_9)
-                .w(px(640.0))
+                .w_full()
+                .max_w(px(640.0))
                 .child(
                     div()
                         .flex()

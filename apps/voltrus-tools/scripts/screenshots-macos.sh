@@ -25,8 +25,9 @@ for scenario in welcome points trend traffic simulator editor palette light; do
     echo "::warning::$scenario: no window appeared"
     status=1
   else
-    # Let sessions connect and a few seconds of data flow into the trends.
-    sleep 6
+    # Let sessions connect and data flow: the trend scenario shows a 30 s
+    # window, so it waits until the lines span the whole chart.
+    if [ "$scenario" = trend ]; then sleep 33; else sleep 6; fi
     screencapture -o -x -l "$id" "$out/$scenario.png"
     echo "captured $scenario ($(sips -g pixelWidth -g pixelHeight "$out/$scenario.png" | tail -2 | awk '{print $2}' | paste -sd x -))"
   fi

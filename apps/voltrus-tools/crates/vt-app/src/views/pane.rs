@@ -1,15 +1,25 @@
 //! One pane: a connection's header and the view it shows.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, MouseButton, Window, div, px};
+use gpui::{AnyElement, Context, ElementId, FontWeight, MouseButton, Window, canvas, div, px};
 use vt_app_core::{PaneId, PaneView};
 use vt_protocol::{Role, SessionState};
 use vt_ui::Icon;
-use vt_ui::components::{Button, Segment, empty_state, monogram, pill, segmented};
+use vt_ui::components::{
+    Button, ButtonKind, IconButton, Segment, empty_state, monogram, pill, segmented, status_dot,
+};
 use vt_ui::theme::*;
 
 use super::{log, points, state_color, traffic, trend};
 use crate::model::AppModel;
+
+/// Below this width the view switcher shows icons only and the latency hides.
+const COMPACT: f32 = 720.0;
+/// Below this width the state moves under the name and the session button
+/// becomes an icon.
+const NARROW: f32 = 520.0;
+/// Assumed before the first layout measured the pane.
+const UNMEASURED: f32 = 1200.0;
 
 pub fn render(
     model: &AppModel,
@@ -19,6 +29,13 @@ pub fn render(
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let theme = theme(cx).clone();
+    let width = model
+        .pane_widths
+        .borrow()
+        .get(&pane_id)
+        .map_or(UNMEASURED, |width| f32::from(*width));
+    let compact = width < COMPACT;
+    let narrow = width < NARROW;
     let Some(pane) = model.workspace.pane(pane_id) else {
         return div().into_any_element();
     };
@@ -49,7 +66,38 @@ pub fn render(
     };
     let latency = live
         .filter(|live| live.state == SessionState::Connected && live.stats.polls > 0)
+        .filter(|_| !compact)
         .map(|live| format!("{:.1} ms", f64::from(live.stats.last_latency_us) / 1000.0));
+    let session_label = match (running, simulator) {
+        (true, true) => "Stop",
+        (true, false) => "Disconnect",
+        (false, true) => "Start",
+        (false, false) => "Connect",
+    };
+    let session_id = ElementId::NamedInteger("session".into(), pane_id.0);
+    let session_button = if narrow {
+        IconButton::new(session_id, if running { Icon::Square } else { Icon::Play })
+            .color(if running {
+                theme.fg_muted
+            } else {
+                theme.accent
+            })
+            .tooltip(session_label)
+            .on_click(cx.listener(move |model, _, _, cx| model.toggle_session(connection_id, cx)))
+            .into_any_element()
+    } else {
+        Button::new(session_id, session_label)
+            .icon(if running { Icon::Square } else { Icon::Play })
+            .kind(if running {
+                ButtonKind::Secondary
+            } else {
+                ButtonKind::Primary
+            })
+            .on_click(cx.listener(move |model, _, _, cx| model.toggle_session(connection_id, cx)))
+            .into_any_element()
+    };
+    let has_detail = detail.is_some();
+    let subtitle = detail.unwrap_or_else(|| connection.spec.endpoint());
 
     let segments = PaneView::ALL
         .into_iter()
@@ -65,6 +113,7 @@ pub fn render(
                 PaneView::Traffic => Icon::ArrowUpDown,
                 PaneView::Log => Icon::ScrollText,
             })
+            .icon_only(compact)
         })
         .collect();
 
@@ -86,36 +135,50 @@ pub fn render(
             div()
                 .flex()
                 .flex_col()
+                .flex_1()
                 .min_w_0()
-                .flex_shrink()
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(SPACE_4)
+                        .min_w_0()
                         .child(
                             div()
+                                .min_w_0()
                                 .truncate()
                                 .text_size(FONT_EMPHASIS)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(connection.name.clone()),
                         )
-                        .child(pill(state.label(), color)),
+                        .when(!narrow, |this| this.child(pill(state.label(), color))),
                 )
                 .child(
                     div()
-                        .truncate()
-                        .font_family(MONO)
-                        .text_size(FONT_CAPTION)
-                        .text_color(if detail.is_some() {
-                            color
-                        } else {
-                            theme.fg_dim
+                        .flex()
+                        .items_center()
+                        .gap(SPACE_3)
+                        .min_w_0()
+                        .when(narrow, |this| {
+                            this.child(status_dot(color)).child(
+                                div()
+                                    .flex_none()
+                                    .text_size(FONT_CAPTION)
+                                    .text_color(color)
+                                    .child(state.label()),
+                            )
                         })
-                        .child(detail.unwrap_or_else(|| connection.spec.endpoint())),
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(MONO)
+                                .text_size(FONT_CAPTION)
+                                .text_color(if has_detail { color } else { theme.fg_dim })
+                                .child(subtitle),
+                        ),
                 ),
         )
-        .child(div().flex_1())
         .when_some(latency, |this, latency| {
             this.child(
                 div()
@@ -135,30 +198,13 @@ pub fn render(
             segments,
             cx,
         ))
-        .child(
-            Button::new(
-                ElementId::NamedInteger("session".into(), pane_id.0),
-                match (running, simulator) {
-                    (true, true) => "Stop",
-                    (true, false) => "Disconnect",
-                    (false, true) => "Start",
-                    (false, false) => "Connect",
-                },
-            )
-            .icon(if running { Icon::Square } else { Icon::Play })
-            .kind(if running {
-                vt_ui::components::ButtonKind::Secondary
-            } else {
-                vt_ui::components::ButtonKind::Primary
-            })
-            .on_click(cx.listener(move |model, _, _, cx| model.toggle_session(connection_id, cx))),
-        );
+        .child(session_button);
 
     let body: AnyElement = match live {
         Some(live) if !live.points.is_empty() || running => match view {
-            PaneView::Points => points::render(pane_id, connection_id, live, simulator, cx),
-            PaneView::Trend => trend::render(connection_id, live, window, cx),
-            PaneView::Traffic => traffic::render(connection_id, live, cx),
+            PaneView::Points => points::render(pane_id, connection_id, live, simulator, width, cx),
+            PaneView::Trend => trend::render(connection_id, live, width, window, cx),
+            PaneView::Traffic => traffic::render(connection_id, live, width, cx),
             PaneView::Log => log::render(connection_id, live, cx),
         },
         _ => empty_state(
@@ -184,8 +230,10 @@ pub fn render(
         .into_any_element(),
     };
 
+    let widths = model.pane_widths.clone();
     div()
         .id(ElementId::NamedInteger("pane".into(), pane_id.0))
+        .relative()
         .flex()
         .flex_col()
         .size_full()
@@ -200,6 +248,21 @@ pub fn render(
                     model.focus_pane(pane_id, cx);
                 }
             }),
+        )
+        // Measure the pane; when its width changes, draw once more so the
+        // header and columns fit the new space.
+        .child(
+            canvas(
+                move |area, window, _| {
+                    let previous = widths.borrow_mut().insert(pane_id, area.size.width);
+                    if previous != Some(area.size.width) {
+                        window.request_animation_frame();
+                    }
+                },
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .inset_0(),
         )
         .child(header)
         .child(div().flex_1().min_h_0().child(body))

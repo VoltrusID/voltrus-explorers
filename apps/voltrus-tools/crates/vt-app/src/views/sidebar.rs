@@ -297,7 +297,7 @@ fn row(model: &AppModel, connection: &Connection, cx: &mut Context<AppModel>) ->
                         .font_family(MONO)
                         .text_size(FONT_CAPTION)
                         .text_color(theme.fg_dim)
-                        .child(connection.spec.endpoint()),
+                        .child(connection.spec.address()),
                 ),
         )
         .child(

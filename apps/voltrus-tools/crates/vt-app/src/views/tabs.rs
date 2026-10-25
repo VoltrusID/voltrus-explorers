@@ -74,6 +74,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
             .child(div().flex_1().min_w_0().truncate().child(title))
             .child(
                 div()
+                    .flex_none()
                     .invisible()
                     .group_hover(group, |style| style.visible())
                     .when(selected, |this| this.visible())

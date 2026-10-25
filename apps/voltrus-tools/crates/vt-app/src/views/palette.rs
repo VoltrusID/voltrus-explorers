@@ -51,7 +51,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                 .items_center()
                                 .gap(SPACE_5)
                                 .h(px(36.0))
-                                .mx(SPACE_3)
+                                .w_full()
                                 .px(SPACE_5)
                                 .rounded(RADIUS_MD)
                                 .cursor_pointer()
@@ -105,6 +105,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
             ),
         )
         .track_scroll(state.scroll.clone())
+        .px(SPACE_3)
         .size_full();
 
     div()

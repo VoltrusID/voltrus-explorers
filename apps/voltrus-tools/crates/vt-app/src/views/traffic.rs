@@ -12,7 +12,16 @@ use super::clock;
 use crate::model::AppModel;
 use crate::model::live::Live;
 
-pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>) -> AnyElement {
+/// Below this pane width a frame's summary and detail stack on two lines.
+const STACKED: f32 = 620.0;
+
+pub fn render(
+    connection: ConnectionId,
+    live: &Live,
+    pane_width: f32,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
+    let stacked = pane_width < STACKED;
     let theme = theme(cx).clone();
     let count = live.traffic.len();
     let paused = live.traffic_paused;
@@ -80,15 +89,30 @@ pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>)
                         .filter_map(|index| {
                             let frame = live.traffic.get(index)?;
                             let tx = frame.direction == Direction::Tx;
+                            let summary = div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(theme.fg)
+                                .child(frame.summary.clone());
+                            let detail = div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(theme.fg_muted)
+                                .child(frame.detail.clone());
                             Some(
                                 div()
                                     .flex()
+                                    .w_full()
                                     .items_center()
                                     .gap(SPACE_5)
-                                    .h(px(24.0))
+                                    .h(px(if stacked { 40.0 } else { 24.0 }))
                                     .px(SPACE_7)
                                     .font_family(MONO)
                                     .text_size(FONT_SMALL)
+                                    .whitespace_nowrap()
+                                    .when(stacked, |this| {
+                                        this.border_b_1().border_color(theme.border.alpha(0.6))
+                                    })
                                     .child(
                                         div()
                                             .w(px(96.0))
@@ -98,28 +122,28 @@ pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>)
                                     )
                                     .child(
                                         div()
-                                            .w(px(34.0))
+                                            .w(px(24.0))
                                             .flex_none()
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(if tx { theme.info } else { theme.success })
                                             .child(if tx { "TX" } else { "RX" }),
                                     )
-                                    .child(
-                                        div()
-                                            .w(px(260.0))
-                                            .flex_none()
-                                            .truncate()
-                                            .text_color(theme.fg)
-                                            .child(frame.summary.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_color(theme.fg_muted)
-                                            .child(frame.detail.clone()),
-                                    ),
+                                    .map(|this| {
+                                        if stacked {
+                                            this.child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .child(summary)
+                                                    .child(detail.text_size(FONT_CAPTION)),
+                                            )
+                                        } else {
+                                            this.child(summary.w(px(260.0)).flex_none())
+                                                .child(detail.flex_1())
+                                        }
+                                    }),
                             )
                         })
                         .collect::<Vec<_>>()

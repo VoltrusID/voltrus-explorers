@@ -305,6 +305,7 @@ pub fn pill(text: impl Into<SharedString>, color: Hsla) -> impl IntoElement {
         .text_color(color)
         .text_size(FONT_CAPTION)
         .font_weight(FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
         .child(text.into())
 }
 
@@ -383,6 +384,8 @@ pub struct Segment {
     pub label: SharedString,
     pub icon: Option<Icon>,
     pub selected: bool,
+    /// Show only the icon, with the label as a tooltip (narrow spaces).
+    pub icon_only: bool,
     pub on_click: ClickHandler,
 }
 
@@ -396,6 +399,7 @@ impl Segment {
             label: label.into(),
             icon: None,
             selected,
+            icon_only: false,
             on_click: Box::new(on_click),
         }
     }
@@ -403,6 +407,13 @@ impl Segment {
     #[must_use]
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Drop the label when `icon_only` holds and the segment has an icon.
+    #[must_use]
+    pub fn icon_only(mut self, icon_only: bool) -> Self {
+        self.icon_only = icon_only;
         self
     }
 }
@@ -431,6 +442,8 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
                 .map(move |(index, segment)| {
                     let color = if segment.selected { selected_fg } else { fg };
                     let handler = segment.on_click;
+                    let icon_only = segment.icon_only && segment.icon.is_some();
+                    let label = segment.label;
                     div()
                         .id(ElementId::NamedInteger(
                             SharedString::from(format!("{id}-segment")),
@@ -438,13 +451,16 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
                         ))
                         .flex()
                         .items_center()
+                        .justify_center()
                         .gap(SPACE_2)
                         .h(px(20.0))
-                        .px(SPACE_4)
+                        .when(icon_only, |this| this.w(px(26.0)))
+                        .when(!icon_only, |this| this.px(SPACE_4))
                         .rounded(RADIUS_SM)
                         .text_size(FONT_SMALL)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(color)
+                        .whitespace_nowrap()
                         .cursor_pointer()
                         .when(segment.selected, |this| {
                             this.bg(selected_bg).border_1().border_color(border)
@@ -455,7 +471,13 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
                         .when_some(segment.icon, |this, glyph| {
                             this.child(icon(glyph, ICON_SM, color))
                         })
-                        .child(segment.label)
+                        .map(|this| {
+                            if icon_only {
+                                this.tooltip(move |_, cx| Tooltip::view(label.clone(), cx))
+                            } else {
+                                this.child(label)
+                            }
+                        })
                         .on_click(move |event, window, cx| handler(event, window, cx))
                 }),
         )

@@ -10,8 +10,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Hsla, PathBuilder, Pixels, Point, SharedString, TextRun, Window, canvas, fill,
-    font, point, px, size,
+    App, Bounds, Hsla, PathBuilder, Pixels, Point, ShapedLine, SharedString, TextRun, Window,
+    canvas, fill, font, point, px, size,
 };
 
 use crate::theme::*;
@@ -145,23 +145,65 @@ pub fn format_value(value: f64) -> String {
     }
 }
 
-/// A full trend: horizontal grid with value labels, time running right to
-/// left from `now_ms` back `window_ms`.
+/// A full trend, time running right to left from `now_ms` back `window_ms`.
+///
+/// Series of comparable size share one value axis. When their sizes differ by
+/// more than [`LANE_RATIO`] (say watts beside hertz), one axis would flatten
+/// all but the largest, so each series gets its own stacked lane with its own
+/// scale, name and latest value: the usual industrial trend layout.
 pub fn trend_chart(series: Vec<Series>, now_ms: f64, window_ms: f64, cx: &App) -> impl IntoElement {
     let theme = theme(cx).clone();
     canvas(
         |_, _, _| (),
         move |bounds, (), window, cx| {
-            paint_trend(&series, now_ms, window_ms, &theme, bounds, window, cx);
+            let since = now_ms - window_ms;
+            let ranges: Vec<Option<(f64, f64)>> = series
+                .iter()
+                .map(|series| series.history.range(since))
+                .collect();
+            let known: Vec<(f64, f64)> = ranges.iter().flatten().copied().collect();
+            if needs_lanes(&known) {
+                paint_lanes(
+                    &series, &ranges, now_ms, window_ms, &theme, bounds, window, cx,
+                );
+            } else {
+                paint_shared(
+                    &series, &known, now_ms, window_ms, &theme, bounds, window, cx,
+                );
+            }
         },
     )
     .size_full()
 }
 
-const LABEL_GUTTER: f32 = 56.0;
+/// How many times larger one series may be than another before they get
+/// separate lanes.
+pub const LANE_RATIO: f64 = 10.0;
 
-fn paint_trend(
+/// Whether series with these value ranges need one lane each instead of a
+/// shared axis: true when the largest magnitude exceeds the smallest by more
+/// than [`LANE_RATIO`].
+pub fn needs_lanes(ranges: &[(f64, f64)]) -> bool {
+    if ranges.len() < 2 {
+        return false;
+    }
+    let magnitudes = ranges
+        .iter()
+        .map(|(low, high)| low.abs().max(high.abs()).max(high - low).max(1e-9));
+    let (smallest, largest) = magnitudes.fold((f64::INFINITY, 0.0_f64), |(small, large), m| {
+        (small.min(m), large.max(m))
+    });
+    largest > smallest * LANE_RATIO
+}
+
+const LABEL_GUTTER: f32 = 56.0;
+/// Height of the time labels under the plot.
+const TIME_STRIP: f32 = 18.0;
+
+#[allow(clippy::too_many_arguments)]
+fn paint_shared(
     series: &[Series],
+    ranges: &[(f64, f64)],
     now_ms: f64,
     window_ms: f64,
     theme: &Theme,
@@ -170,9 +212,9 @@ fn paint_trend(
     cx: &mut App,
 ) {
     let since = now_ms - window_ms;
-    let range = series
+    let range = ranges
         .iter()
-        .filter_map(|series| series.history.range(since))
+        .copied()
         .reduce(|(low, high), (l, h)| (low.min(l), high.max(h)));
     let (low, high) = match range {
         Some((low, high)) => value_scale(low, high),
@@ -182,12 +224,112 @@ fn paint_trend(
         point(bounds.left() + px(LABEL_GUTTER), bounds.top() + px(8.0)),
         size(
             (bounds.size.width - px(LABEL_GUTTER + 8.0)).max(px(10.0)),
-            (bounds.size.height - px(24.0)).max(px(10.0)),
+            (bounds.size.height - px(8.0 + TIME_STRIP)).max(px(10.0)),
         ),
     );
+    paint_grid(plot, low, high, 4, theme, bounds.left(), window, cx);
+    paint_time_labels(plot, window_ms, theme, window, cx);
+    let to_point = |at: f64, value: f64| -> Point<Pixels> {
+        let x = ((at - since) / window_ms).clamp(0.0, 1.0);
+        let y = ((value - low) / (high - low)).clamp(0.0, 1.0);
+        point(
+            plot.left() + plot.size.width * x as f32,
+            plot.bottom() - plot.size.height * y as f32,
+        )
+    };
+    for line in series {
+        stroke(line, since, &to_point, px(1.75), window);
+    }
+}
 
-    // Grid and value labels.
-    let rows = 4;
+#[allow(clippy::too_many_arguments)]
+fn paint_lanes(
+    series: &[Series],
+    ranges: &[Option<(f64, f64)>],
+    now_ms: f64,
+    window_ms: f64,
+    theme: &Theme,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    const HEADER: f32 = 18.0;
+    const GAP: f32 = 12.0;
+    let since = now_ms - window_ms;
+    let count = series.len().max(1);
+    #[allow(clippy::cast_precision_loss)]
+    let lanes = count as f32;
+    let usable = bounds.size.height - px(TIME_STRIP + GAP * (lanes - 1.0));
+    let lane_height = (usable * (1.0 / lanes)).max(px(HEADER + 16.0));
+    let plot_left = bounds.left() + px(LABEL_GUTTER);
+    let plot_width = (bounds.size.width - px(LABEL_GUTTER + 8.0)).max(px(10.0));
+    let mut last_plot = None;
+    for (index, (line, range)) in series.iter().zip(ranges).enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let top = bounds.top() + (lane_height + px(GAP)) * index as f32;
+
+        // Header: colour key and name on the left, latest value on the right.
+        window.paint_quad(
+            fill(
+                Bounds::new(point(plot_left, top + px(5.0)), size(px(8.0), px(8.0))),
+                line.color,
+            )
+            .corner_radii(px(4.0)),
+        );
+        paint_text(
+            &line.label,
+            point(plot_left + px(14.0), top + px(2.0)),
+            theme.fg_muted,
+            SANS,
+            window,
+            cx,
+        );
+        let latest = line
+            .history
+            .latest()
+            .map_or_else(|| "—".to_owned(), |(_, value)| format_value(value));
+        let shaped = shape(&latest, theme.fg, MONO, window);
+        let _ = shaped.paint(
+            point(plot_left + plot_width - shaped.width, top + px(2.0)),
+            px(14.0),
+            window,
+            cx,
+        );
+
+        let plot = Bounds::new(
+            point(plot_left, top + px(HEADER + 4.0)),
+            size(plot_width, (lane_height - px(HEADER + 8.0)).max(px(8.0))),
+        );
+        let (low, high) = range.map_or((0.0, 1.0), |(low, high)| value_scale(low, high));
+        paint_grid(plot, low, high, 1, theme, bounds.left(), window, cx);
+        let to_point = |at: f64, value: f64| -> Point<Pixels> {
+            let x = ((at - since) / window_ms).clamp(0.0, 1.0);
+            let y = ((value - low) / (high - low)).clamp(0.0, 1.0);
+            point(
+                plot.left() + plot.size.width * x as f32,
+                plot.bottom() - plot.size.height * y as f32,
+            )
+        };
+        stroke(line, since, &to_point, px(1.75), window);
+        last_plot = Some(plot);
+    }
+    if let Some(plot) = last_plot {
+        paint_time_labels(plot, window_ms, theme, window, cx);
+    }
+}
+
+/// Horizontal grid lines with their values in the gutter left of the plot.
+#[allow(clippy::too_many_arguments)]
+fn paint_grid(
+    plot: Bounds<Pixels>,
+    low: f64,
+    high: f64,
+    rows: u32,
+    theme: &Theme,
+    gutter_left: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
     for row in 0..=rows {
         let fraction = f64::from(row) / f64::from(rows);
         let y = plot.top() + plot.size.height * (1.0 - fraction as f32);
@@ -202,36 +344,36 @@ fn paint_trend(
         let value = low + (high - low) * fraction;
         paint_label(
             &format_value(value),
-            point(bounds.left() + px(4.0), y - px(7.0)),
+            point(gutter_left + px(4.0), y - px(7.0)),
             theme.fg_dim,
             window,
             cx,
         );
     }
-    // Time labels.
-    for (fraction, text) in [(0.0, format_span(window_ms)), (1.0, "now".to_string())] {
-        let x = plot.left() + plot.size.width * fraction as f32;
-        let x = if fraction > 0.5 { x - px(22.0) } else { x };
-        paint_label(
-            &text,
-            point(x, plot.bottom() + px(4.0)),
-            theme.fg_dim,
-            window,
-            cx,
-        );
-    }
+}
 
-    let to_point = |at: f64, value: f64| -> Point<Pixels> {
-        let x = ((at - since) / window_ms).clamp(0.0, 1.0);
-        let y = ((value - low) / (high - low)).clamp(0.0, 1.0);
-        point(
-            plot.left() + plot.size.width * x as f32,
-            plot.bottom() - plot.size.height * y as f32,
-        )
-    };
-    for line in series {
-        stroke(line, since, &to_point, px(1.75), window);
-    }
+/// The window's span at the left end of the time axis, "now" at the right.
+fn paint_time_labels(
+    plot: Bounds<Pixels>,
+    window_ms: f64,
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    paint_label(
+        &format_span(window_ms),
+        point(plot.left(), plot.bottom() + px(4.0)),
+        theme.fg_dim,
+        window,
+        cx,
+    );
+    let now = shape("now", theme.fg_dim, MONO, window);
+    let _ = now.paint(
+        point(plot.right() - now.width, plot.bottom() + px(4.0)),
+        px(14.0),
+        window,
+        cx,
+    );
 }
 
 fn stroke(
@@ -287,20 +429,35 @@ fn stroke(
     }
 }
 
-fn paint_label(text: &str, origin: Point<Pixels>, color: Hsla, window: &mut Window, cx: &mut App) {
+fn shape(text: &str, color: Hsla, family: &'static str, window: &mut Window) -> ShapedLine {
     let text: SharedString = text.to_owned().into();
     let run = TextRun {
         len: text.len(),
-        font: font(MONO),
+        font: font(family),
         color,
         background_color: None,
         underline: None,
         strikethrough: None,
     };
-    let line = window
+    window
         .text_system()
-        .shape_line(text, FONT_CAPTION, &[run], None);
+        .shape_line(text, FONT_CAPTION, &[run], None)
+}
+
+fn paint_text(
+    text: &str,
+    origin: Point<Pixels>,
+    color: Hsla,
+    family: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let line = shape(text, color, family, window);
     let _ = line.paint(origin, px(14.0), window, cx);
+}
+
+fn paint_label(text: &str, origin: Point<Pixels>, color: Hsla, window: &mut Window, cx: &mut App) {
+    paint_text(text, origin, color, MONO, window, cx);
 }
 
 fn format_span(window_ms: f64) -> String {
@@ -370,5 +527,21 @@ mod tests {
         let history = History::new(4);
         history.push(0.0, f64::NAN);
         assert_eq!(history.range(0.0), None);
+    }
+
+    #[test]
+    fn comparable_series_share_an_axis() {
+        assert!(!needs_lanes(&[]));
+        assert!(!needs_lanes(&[(56_000.0, 57_000.0)]));
+        // Temperature beside frequency: same order of magnitude.
+        assert!(!needs_lanes(&[(45.0, 46.5), (49.9, 50.1)]));
+    }
+
+    #[test]
+    fn far_apart_series_get_lanes() {
+        // Watts beside hertz.
+        assert!(needs_lanes(&[(56_000.0, 57_000.0), (49.9, 50.1)]));
+        // A 0/1 flag beside a pressure in the thousands.
+        assert!(needs_lanes(&[(0.0, 1.0), (700.0, 760.0)]));
     }
 }

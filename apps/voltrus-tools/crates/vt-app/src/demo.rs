@@ -2,7 +2,7 @@
 //! and trying the app without hardware. Nothing is saved.
 
 use gpui::{Context, Window};
-use vt_app_core::{Appearance, PaneView};
+use vt_app_core::{Appearance, ConnectionId, PaneView};
 
 use crate::model::AppModel;
 use crate::model::editor::EditorKind;
@@ -51,17 +51,30 @@ impl Scenario {
 /// grid frequency and heatsink temperature.
 const INTERESTING: [u32; 4] = [4, 11, 12, 15];
 
+/// Window of the trend scenario: the screenshot script waits a little longer
+/// than this so the lines span the whole chart.
+const TREND_WINDOW_MS: f64 = 30_000.0;
+
 pub fn apply(
     model: &mut AppModel,
     scenario: Scenario,
     window: &mut Window,
     cx: &mut Context<AppModel>,
 ) {
+    // Screenshots must not depend on the machine's appearance setting.
+    model.workspace.ui.appearance = if scenario == Scenario::Light {
+        Appearance::Light
+    } else {
+        Appearance::Dark
+    };
+    model.apply_theme(window, cx);
+
     match scenario {
         Scenario::Welcome => {}
         Scenario::Editor => model.open_editor(EditorKind::Master, None, window, cx),
         Scenario::Palette => {
             model.start_demo_plant(cx);
+            model.workspace.ui.inspector_open = false;
             model.open_palette(Mode::Commands, window, cx);
         }
         Scenario::Points
@@ -75,18 +88,33 @@ pub fn apply(
             if let Some(live) = model.live.get_mut(&client) {
                 live.selected = Some(INTERESTING[1]);
                 live.trend = INTERESTING.into_iter().collect();
+                live.trend_window_ms = TREND_WINDOW_MS;
             }
+            let pane_of = |model: &AppModel, connection: ConnectionId| {
+                model
+                    .workspace
+                    .panes
+                    .iter()
+                    .find(|pane| pane.connection == connection)
+                    .map(|pane| pane.id)
+            };
             match scenario {
-                Scenario::Trend => model.set_view(PaneView::Trend, cx),
-                Scenario::Traffic => model.set_view(PaneView::Traffic, cx),
+                // The plant side by side: both panes get the full width.
+                Scenario::Points => model.workspace.ui.inspector_open = false,
+                Scenario::Trend => {
+                    model.workspace.ui.inspector_open = false;
+                    model.set_view(PaneView::Trend, cx);
+                }
+                Scenario::Traffic => {
+                    model.workspace.ui.inspector_open = false;
+                    model.set_view(PaneView::Traffic, cx);
+                }
+                // One connection with the inspector beside it.
                 Scenario::Simulator => {
-                    if let Some(pane) = model
-                        .workspace
-                        .panes
-                        .iter()
-                        .find(|pane| pane.connection == simulator)
-                        .map(|pane| pane.id)
-                    {
+                    if let Some(pane) = pane_of(model, client) {
+                        model.workspace.close_pane(pane);
+                    }
+                    if let Some(pane) = pane_of(model, simulator) {
                         model.focus_pane(pane, cx);
                     }
                     if let Some(live) = model.live.get_mut(&simulator) {
@@ -94,8 +122,12 @@ pub fn apply(
                     }
                 }
                 Scenario::Light => {
-                    model.workspace.ui.appearance = Appearance::Light;
-                    model.apply_theme(window, cx);
+                    if let Some(pane) = pane_of(model, simulator) {
+                        model.workspace.close_pane(pane);
+                    }
+                    if let Some(pane) = pane_of(model, client) {
+                        model.focus_pane(pane, cx);
+                    }
                 }
                 _ => {}
             }

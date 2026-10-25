@@ -46,6 +46,7 @@ pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>)
                         Some(
                             div()
                                 .flex()
+                                .w_full()
                                 .items_center()
                                 .gap(SPACE_5)
                                 .h(px(26.0))

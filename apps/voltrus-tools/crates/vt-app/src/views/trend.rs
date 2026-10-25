@@ -4,7 +4,7 @@ use gpui::prelude::*;
 use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, Window, div, px};
 use vt_app_core::ConnectionId;
 use vt_ui::Icon;
-use vt_ui::chart::{Series, format_value, trend_chart};
+use vt_ui::chart::{Series, format_value, needs_lanes, trend_chart};
 use vt_ui::components::{Segment, empty_state, segmented};
 use vt_ui::theme::*;
 
@@ -19,9 +19,13 @@ const WINDOWS: [(&str, f64); 4] = [
     ("15 min", 900_000.0),
 ];
 
+/// Below this pane width the footer hint is dropped.
+const ROOMY: f32 = 560.0;
+
 pub fn render(
     connection: ConnectionId,
     live: &Live,
+    pane_width: f32,
     window: &mut Window,
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
@@ -52,14 +56,27 @@ pub fn render(
         .enumerate()
         .filter_map(|(index, point)| {
             let (info, _) = live.point(*point)?;
+            let label = if info.unit.is_empty() {
+                info.name.clone()
+            } else {
+                format!("{} ({})", info.name, info.unit)
+            };
             Some(Series {
-                label: info.name.clone().into(),
+                label: label.into(),
                 color: theme.series(index),
                 history: live.history(*point)?.clone(),
                 stepped: info.boolean,
             })
         })
         .collect();
+
+    // Lanes carry their own names and values; a shared axis needs a legend.
+    let since = now - live.trend_window_ms;
+    let ranges: Vec<(f64, f64)> = series
+        .iter()
+        .filter_map(|series| series.history.range(since))
+        .collect();
+    let lanes = needs_lanes(&ranges);
 
     let legend = series.iter().map(|series| {
         let latest = series
@@ -78,6 +95,7 @@ pub fn render(
             .bg(theme.surface)
             .border_1()
             .border_color(theme.border)
+            .whitespace_nowrap()
             .child(div().size(px(8.0)).rounded_full().bg(series.color))
             .child(
                 div()
@@ -105,50 +123,66 @@ pub fn render(
         })
         .collect();
 
+    let count = series.len();
+    let toolbar = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(SPACE_4)
+        .h(px(36.0))
+        .px(SPACE_7)
+        .border_b_1()
+        .border_color(theme.border)
+        .text_size(FONT_SMALL)
+        .text_color(theme.fg_muted)
+        .whitespace_nowrap()
+        .child(div().min_w_0().truncate().child(if count == 1 {
+            "1 point".to_owned()
+        } else {
+            format!("{count} points")
+        }))
+        .child(div().flex_1())
+        .child(segmented(
+            ElementId::NamedInteger("trend-window".into(), connection.0),
+            windows,
+            cx,
+        ));
+
     div()
         .flex()
         .flex_col()
         .size_full()
+        .child(toolbar)
+        .when(!lanes, |this| {
+            this.child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .flex_wrap()
+                    .gap(SPACE_3)
+                    .px(SPACE_7)
+                    .pt(SPACE_6)
+                    .children(legend),
+            )
+        })
         .child(
             div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(SPACE_4)
+                .flex_1()
+                .min_h_0()
                 .px(SPACE_7)
-                .py(SPACE_5)
-                .border_b_1()
-                .border_color(theme.border)
-                .child(
-                    div()
-                        .id(ElementId::NamedInteger("legend".into(), connection.0))
-                        .flex()
-                        .flex_1()
-                        .min_w_0()
-                        .gap(SPACE_3)
-                        .overflow_x_scroll()
-                        .children(legend),
-                )
-                .child(segmented(
-                    ElementId::NamedInteger("trend-window".into(), connection.0),
-                    windows,
-                    cx,
-                )),
+                .py(SPACE_6)
+                .child(trend_chart(series, now, live.trend_window_ms, cx)),
         )
-        .child(div().flex_1().min_h_0().p(SPACE_7).child(trend_chart(
-            series,
-            now,
-            live.trend_window_ms,
-            cx,
-        )))
-        .child(
-            div()
-                .flex_none()
-                .px(SPACE_7)
-                .pb(SPACE_5)
-                .text_size(FONT_CAPTION)
-                .text_color(theme.fg_dim)
-                .child("Use the chart button on a point to choose what is drawn."),
-        )
+        .when(pane_width >= ROOMY, |this| {
+            this.child(
+                div()
+                    .flex_none()
+                    .px(SPACE_7)
+                    .pb(SPACE_5)
+                    .text_size(FONT_CAPTION)
+                    .text_color(theme.fg_dim)
+                    .child("Pick what is drawn with the chart button on a point."),
+            )
+        })
         .into_any_element()
 }
