@@ -1,5 +1,5 @@
-//! Lucide icons (ISC licence, lucide.dev), embedded as SVG and tinted by the
-//! element's text colour.
+//! Lucide icons (ISC licence, lucide.dev) plus the Voltrus mark, embedded as
+//! SVG and tinted by the element's text colour.
 
 use gpui::{Hsla, Pixels, Styled, Svg, svg};
 
@@ -73,6 +73,8 @@ pub enum Icon {
     Trash,
     Unplug,
     Upload,
+    /// The Voltrus logo mark (Voltrus's own artwork, not Lucide).
+    Voltrus,
     Waypoints,
     Wifi,
     X,
@@ -150,6 +152,7 @@ impl Icon {
             Self::Trash => "icons/trash.svg",
             Self::Unplug => "icons/unplug.svg",
             Self::Upload => "icons/upload.svg",
+            Self::Voltrus => "icons/voltrus.svg",
             Self::Waypoints => "icons/waypoints.svg",
             Self::Wifi => "icons/wifi.svg",
             Self::X => "icons/x.svg",
@@ -245,6 +248,7 @@ mod tests {
             Icon::Trash,
             Icon::Unplug,
             Icon::Upload,
+            Icon::Voltrus,
             Icon::Waypoints,
             Icon::Wifi,
             Icon::X,

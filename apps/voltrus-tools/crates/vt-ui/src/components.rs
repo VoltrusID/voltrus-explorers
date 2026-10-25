@@ -1,9 +1,10 @@
-//! Small stateless building blocks. Every colour comes from the active theme.
+//! Small stateless building blocks. Every colour comes from the active theme,
+//! except the Voltrus logo, which keeps its brand colours in every theme.
 
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, Hsla, Pixels, SharedString, Window, div,
-    px, transparent_black,
+    px, rgb, transparent_black,
 };
 
 use crate::icon::{Icon, icon};
@@ -329,6 +330,27 @@ pub fn monogram(letters: impl Into<SharedString>, color: Hsla, size: Pixels) -> 
         })
         .font_weight(FontWeight::BOLD)
         .child(letters.into())
+}
+
+/// Voltrus brand green (the logo's stroke).
+pub const BRAND_GREEN: u32 = 0x00e676;
+/// The logo tile's background, as on the app icon.
+pub const BRAND_TILE: u32 = 0x0b0b0d;
+
+/// The Voltrus logo: the green mark on its dark tile, `size` square. Brand
+/// colours are fixed so the logo reads the same in light and dark themes.
+pub fn brand_mark(size: Pixels) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(size)
+        .rounded(size * 0.22)
+        .bg(rgb(BRAND_TILE))
+        .border_1()
+        .border_color(gpui::white().alpha(0.08))
+        .child(icon(Icon::Voltrus, size * 0.72, rgb(BRAND_GREEN).into()))
 }
 
 /// A small uppercase heading over a group of controls.

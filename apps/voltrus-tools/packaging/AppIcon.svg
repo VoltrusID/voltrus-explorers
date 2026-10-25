@@ -4,17 +4,14 @@
       <stop offset="0" stop-color="#1c1c20"/>
       <stop offset="1" stop-color="#0b0b0d"/>
     </linearGradient>
-    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4ade80"/>
-      <stop offset="1" stop-color="#16a34a"/>
-    </linearGradient>
   </defs>
   <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)"/>
   <rect x="100.5" y="100.5" width="823" height="823" rx="186" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M262 628 A250 250 0 0 1 762 628" stroke="#3f3f46" stroke-width="44"/>
-    <path d="M262 628 A250 250 0 0 1 637 411.5" stroke="url(#glow)" stroke-width="44"/>
-    <polyline points="250,700 380,700 438,560 512,800 586,600 640,700 774,700" stroke="url(#glow)" stroke-width="40"/>
+  <!-- The Voltrus mark, from vt-ui's icons/voltrus.svg. -->
+  <g transform="translate(152 148) scale(4)" fill="none" stroke="#00e676" stroke-width="8" stroke-miterlimit="8">
+    <circle cx="35" cy="42" r="9"/>
+    <circle cx="145" cy="42" r="9"/>
+    <polyline points="39.9,49.5 90,126 140.1,49.5"/>
+    <polyline points="52,86 90,145 128,86"/>
   </g>
-  <circle cx="637" cy="411.5" r="30" fill="#4ade80"/>
 </svg>
