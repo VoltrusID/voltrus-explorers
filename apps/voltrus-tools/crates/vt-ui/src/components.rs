@@ -119,6 +119,13 @@ impl RenderOnce for Button {
             ),
         };
         let height = if self.compact { CONTROL_SM } else { CONTROL_MD };
+        // The keyboard focus ring: Tab reaches every enabled button, and
+        // Enter or Space clicks the focused one.
+        let ring = if self.kind == ButtonKind::Primary {
+            theme.fg
+        } else {
+            theme.accent
+        };
         div()
             .id(self.id)
             .flex()
@@ -143,6 +150,8 @@ impl RenderOnce for Button {
             .when(self.disabled, |this| this.opacity(0.45))
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
+                    .tab_index(0)
+                    .focus(move |style| style.border_color(ring))
                     .hover(move |style| style.bg(hover))
                     .when_some(self.on_click, |this, handler| {
                         this.on_click(move |event, window, cx| handler(event, window, cx))
@@ -225,6 +234,7 @@ impl RenderOnce for IconButton {
             theme.fg_muted
         });
         let hover = theme.hover;
+        let ring = theme.accent;
         let glyph = if self.size > CONTROL_SM {
             ICON_LG
         } else {
@@ -238,11 +248,16 @@ impl RenderOnce for IconButton {
             .justify_center()
             .size(self.size)
             .rounded(RADIUS_MD)
+            // Transparent until focused, so the ring does not move the icon.
+            .border_1()
+            .border_color(transparent_black())
             .when(self.active, |this| this.bg(theme.selected))
             .child(icon(self.icon, glyph, color))
             .when(self.disabled, |this| this.opacity(0.4))
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
+                    .tab_index(0)
+                    .focus(move |style| style.border_color(ring))
                     .hover(move |style| style.bg(hover))
                     .when_some(self.on_click, |this, handler| {
                         this.on_click(move |event, window, cx| handler(event, window, cx))
@@ -447,6 +462,7 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
     let (selected_bg, selected_fg, fg, hover) =
         (theme.elevated, theme.fg, theme.fg_muted, theme.hover);
     let border = theme.border;
+    let ring = theme.accent;
     div()
         .flex()
         .flex_none()
@@ -484,8 +500,14 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
                         .text_color(color)
                         .whitespace_nowrap()
                         .cursor_pointer()
+                        .tab_index(0)
+                        // Every segment carries a border, transparent unless
+                        // selected, so the focus ring does not shift the row.
+                        .border_1()
+                        .border_color(transparent_black())
+                        .focus(move |style| style.border_color(ring))
                         .when(segment.selected, |this| {
-                            this.bg(selected_bg).border_1().border_color(border)
+                            this.bg(selected_bg).border_color(border)
                         })
                         .when(!segment.selected, |this| {
                             this.hover(move |style| style.bg(hover))

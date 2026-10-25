@@ -129,7 +129,8 @@ impl EventEmitter<InputEvent> for TextInput {}
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            // A tab stop: Tab moves between fields in paint order.
+            focus_handle: cx.focus_handle().tab_stop(true),
             content: SharedString::default(),
             placeholder: SharedString::default(),
             kind: InputKind::Text,
