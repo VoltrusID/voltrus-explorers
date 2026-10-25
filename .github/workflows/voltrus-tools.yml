@@ -42,9 +42,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Restore and save separately so a failing build still keeps the compiled
-      # dependencies (GPUI takes most of a cold build). One cache per lockfile:
-      # saved only when there was no exact hit, so runs don't pile up copies.
+      # One cache per lockfile, saved after the build steps succeed and only
+      # when there was no exact hit, so runs don't pile up copies and a broken
+      # build never replaces a good cache.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: cache
         with:
@@ -74,7 +74,7 @@ jobs:
         run: cargo build --locked --release -p vt-app
 
       - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: success() && steps.cache.outputs.cache-hit != 'true'
         with:
           path: |
             ~/.cargo/registry

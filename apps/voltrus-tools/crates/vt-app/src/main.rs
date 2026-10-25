@@ -88,7 +88,12 @@ fn main() -> ExitCode {
                     }
                     model
                 });
-                window.on_window_should_close(cx, |_, cx| {
+                // Closing the window ends the app: save and stop the sessions
+                // here as well, since quit hooks don't run on every path. A
+                // second save from the quit hook is harmless.
+                let weak = model.downgrade();
+                window.on_window_should_close(cx, move |_, cx| {
+                    let _ = weak.update(cx, |model, _| model.shutdown());
                     cx.quit();
                     true
                 });

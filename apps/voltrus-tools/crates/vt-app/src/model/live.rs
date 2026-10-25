@@ -9,8 +9,21 @@ use vt_protocol::{
 };
 use vt_ui::chart::History;
 
-/// Samples kept per point: 30 minutes at a 1 s poll.
-const HISTORY: usize = 1800;
+/// Trend history kept per point, in time: the longest trend window.
+const HISTORY_SPAN_MS: u64 = 15 * 60 * 1000;
+/// Samples kept per point at least (30 minutes at a 1 s poll) and at most
+/// (15 minutes at a 20 ms poll). Buffers grow as samples arrive.
+const HISTORY_MIN: usize = 1800;
+const HISTORY_MAX: usize = 45_000;
+
+/// Samples a point keeps so the longest trend window stays full when the
+/// session reports every `sample_ms`.
+pub fn history_capacity(sample_ms: u64) -> usize {
+    let samples = HISTORY_SPAN_MS / sample_ms.max(1);
+    usize::try_from(samples)
+        .unwrap_or(HISTORY_MAX)
+        .clamp(HISTORY_MIN, HISTORY_MAX)
+}
 const TRAFFIC: usize = 5000;
 const LOG: usize = 2000;
 /// Points shown on a trend before the user picks any.
@@ -36,6 +49,8 @@ pub struct Live {
     pub write_result: Option<(u32, Result<(), String>)>,
     /// The log keeps recording but stops following new entries.
     pub log_paused: bool,
+    /// Samples each point's history keeps; see [`history_capacity`].
+    history_capacity: usize,
 }
 
 impl Default for Live {
@@ -57,21 +72,30 @@ impl Default for Live {
             locked: BTreeSet::new(),
             write_result: None,
             log_paused: false,
+            history_capacity: HISTORY_MIN,
         }
     }
 }
 
 impl Live {
     /// Forget the previous run's data before a new session starts; keep what
-    /// the user chose (selection, trend picks, trend window).
-    pub fn restart(&mut self, session: SessionId) {
+    /// the user chose (selection, trend picks, trend window). The session
+    /// reports values every `sample_ms`, which sizes the trend history.
+    pub fn restart(&mut self, session: SessionId, sample_ms: u64) {
         self.session = Some(session);
         self.state = SessionState::Connecting;
         self.stats = Stats::default();
         self.write_result = None;
         self.locked.clear();
-        for history in &self.histories {
-            history.clear();
+        let capacity = history_capacity(sample_ms);
+        if capacity == self.history_capacity {
+            for history in &self.histories {
+                history.clear();
+            }
+        } else {
+            // Rebuilt at the new size when the session reports its points.
+            self.history_capacity = capacity;
+            self.histories.clear();
         }
     }
 
@@ -93,11 +117,12 @@ impl Live {
             }
             EventKind::Points(points) => {
                 let count = points.len();
-                let same_shape = self.points.len() == count;
+                let same_shape = self.points.len() == count && self.histories.len() == count;
                 self.points = points;
                 self.readings = vec![Reading::bad(); count];
                 if !same_shape {
-                    self.histories = (0..count).map(|_| History::new(HISTORY)).collect();
+                    let capacity = self.history_capacity;
+                    self.histories = (0..count).map(|_| History::new(capacity)).collect();
                 }
                 let limit = u32::try_from(count).unwrap_or(u32::MAX);
                 self.trend.retain(|point| *point < limit);
@@ -206,7 +231,7 @@ impl Live {
 mod tests {
     use vt_protocol::{EventKind, PointInfo, SessionId, SessionState};
 
-    use super::Live;
+    use super::{Live, history_capacity};
 
     fn point(id: u32) -> PointInfo {
         PointInfo {
@@ -223,7 +248,7 @@ mod tests {
     #[test]
     fn a_restart_keeps_choices_and_drops_the_old_run() {
         let mut live = Live::default();
-        live.restart(SessionId(1));
+        live.restart(SessionId(1), 1000);
         live.apply(EventKind::Points((0..3).map(point).collect()));
         live.selected = Some(2);
         live.apply(EventKind::Locked {
@@ -231,7 +256,7 @@ mod tests {
             locked: true,
         });
         assert!(live.locked.contains(&1));
-        live.restart(SessionId(2));
+        live.restart(SessionId(2), 1000);
         assert_eq!(live.session, Some(SessionId(2)));
         assert!(live.locked.is_empty(), "holds belong to the old run");
         assert_eq!(live.selected, Some(2), "the selection survives");
@@ -243,7 +268,7 @@ mod tests {
     #[test]
     fn a_stopped_session_detaches_and_steps_stay_in_range() {
         let mut live = Live::default();
-        live.restart(SessionId(7));
+        live.restart(SessionId(7), 1000);
         live.apply(EventKind::Points((0..3).map(point).collect()));
         assert_eq!(live.select_step(1), Some(0));
         assert_eq!(live.select_step(5), Some(2));
@@ -255,8 +280,8 @@ mod tests {
     #[test]
     fn events_of_a_replaced_session_are_ignored() {
         let mut live = Live::default();
-        live.restart(SessionId(1));
-        live.restart(SessionId(2));
+        live.restart(SessionId(1), 1000);
+        live.restart(SessionId(2), 1000);
         live.apply_from(SessionId(1), EventKind::Points((0..3).map(point).collect()));
         live.apply_from(
             SessionId(1),
@@ -266,5 +291,30 @@ mod tests {
         assert_eq!(live.session, Some(SessionId(2)), "the old run's close too");
         live.apply_from(SessionId(2), EventKind::Points(vec![point(0)]));
         assert_eq!(live.points.len(), 1);
+    }
+
+    #[test]
+    fn history_holds_the_longest_trend_window() {
+        // 15 minutes at the rate the session reports, within the bounds.
+        assert_eq!(history_capacity(1000), 1800);
+        assert_eq!(history_capacity(250), 3600);
+        assert_eq!(history_capacity(100), 9000);
+        assert_eq!(history_capacity(20), 45_000);
+        assert_eq!(history_capacity(1), 45_000);
+        assert_eq!(history_capacity(0), 45_000);
+        assert_eq!(history_capacity(60_000), 1800);
+    }
+
+    #[test]
+    fn a_faster_session_rebuilds_its_histories() {
+        let mut live = Live::default();
+        live.restart(SessionId(1), 1000);
+        live.apply(EventKind::Points((0..2).map(point).collect()));
+        let before = live.histories[0].clone();
+        live.restart(SessionId(2), 100);
+        assert!(live.histories.is_empty());
+        live.apply_from(SessionId(2), EventKind::Points((0..2).map(point).collect()));
+        assert_eq!(live.histories.len(), 2);
+        assert!(!std::rc::Rc::ptr_eq(&before, &live.histories[0]));
     }
 }

@@ -52,7 +52,9 @@ sequenceDiagram
   the session's control channel, so a slow device never blocks the window.
 - The app drains queued events in one batch per wake-up and redraws once.
 - Values land in per-point `History` ring buffers (`vt-ui::chart`), shared
-  with the charts by `Rc`: painting a frame never copies samples.
+  with the charts by `Rc`: painting a frame never copies samples. Each keeps
+  the longest trend window (15 min) at the session's reporting rate, between
+  1 800 and 45 000 samples, and grows only as samples arrive.
 - Trends request a new frame only while their session is live. gpui redraws
   a notified view and its ancestors, so the sidebar, tab strip, inspector,
   status bar and each pane are drawn by their own cached views

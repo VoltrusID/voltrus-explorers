@@ -255,7 +255,10 @@ impl AppModel {
         self.next_session += 1;
         let session = SessionId(self.next_session);
         self.sessions.insert(session, connection);
-        self.live.entry(connection).or_default().restart(session);
+        self.live
+            .entry(connection)
+            .or_default()
+            .restart(session, vt_engine::sample_interval_ms(&spec));
         self.engine.send(EngineCommand::Open { session, spec });
         cx.notify();
     }

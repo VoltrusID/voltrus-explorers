@@ -27,7 +27,7 @@ use crate::templates;
 /// How often template values drift, as in the Modbus Poll app.
 const SIMULATION_TICK: Duration = Duration::from_secs(1);
 /// How often the app sees the register image.
-const PUBLISH_TICK: Duration = Duration::from_millis(250);
+pub(crate) const PUBLISH_TICK: Duration = Duration::from_millis(250);
 /// How long a port still held by a closing session is retried.
 const BIND_RETRY: Duration = Duration::from_secs(2);
 const BIND_RETRY_STEP: Duration = Duration::from_millis(100);

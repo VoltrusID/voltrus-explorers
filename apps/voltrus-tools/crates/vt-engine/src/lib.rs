@@ -54,6 +54,17 @@ pub fn start() -> std::io::Result<(EngineHandle, async_channel::Receiver<Event>)
     ))
 }
 
+/// How often a session of this spec reports values, in milliseconds: a
+/// master's poll interval, a simulator's publish tick. Sizes trend history.
+pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
+    match spec {
+        SessionSpec::ModbusMaster(master) => master.poll_ms,
+        SessionSpec::ModbusSlave(_) => {
+            u64::try_from(modbus::slave::PUBLISH_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+    }
+}
+
 /// Messages from the engine loop to one session task.
 #[derive(Debug)]
 pub(crate) enum Control {
