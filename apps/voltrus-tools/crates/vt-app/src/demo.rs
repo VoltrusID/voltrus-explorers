@@ -1,8 +1,10 @@
 //! `--demo <scenario>`: a fixed, in-memory setup per screen, for screenshots
 //! and trying the app without hardware. Nothing is saved.
 
+use std::time::Duration;
+
 use gpui::{Context, Window};
-use vt_app_core::{Appearance, ConnectionId, PaneView};
+use vt_app_core::{Appearance, ConnectionId, PaneId, PaneView};
 
 use crate::model::AppModel;
 use crate::model::editor::EditorKind;
@@ -18,10 +20,15 @@ pub enum Scenario {
     Editor,
     Palette,
     Light,
+    MqttPoints,
+    MqttTrend,
+    MqttTraffic,
+    MqttInspector,
+    MqttEditor,
 }
 
 impl Scenario {
-    pub const NAMES: [&'static str; 8] = [
+    pub const NAMES: &'static [&'static str] = &[
         "welcome",
         "points",
         "trend",
@@ -30,6 +37,11 @@ impl Scenario {
         "editor",
         "palette",
         "light",
+        "mqtt-points",
+        "mqtt-trend",
+        "mqtt-traffic",
+        "mqtt-inspector",
+        "mqtt-editor",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -42,6 +54,11 @@ impl Scenario {
             "editor" => Self::Editor,
             "palette" => Self::Palette,
             "light" => Self::Light,
+            "mqtt-points" => Self::MqttPoints,
+            "mqtt-trend" => Self::MqttTrend,
+            "mqtt-traffic" => Self::MqttTraffic,
+            "mqtt-inspector" => Self::MqttInspector,
+            "mqtt-editor" => Self::MqttEditor,
             _ => return None,
         })
     }
@@ -72,6 +89,11 @@ pub fn apply(
     match scenario {
         Scenario::Welcome => {}
         Scenario::Editor => model.open_editor(EditorKind::Master, None, window, cx),
+        Scenario::MqttEditor => model.open_editor(EditorKind::MqttClient, None, window, cx),
+        Scenario::MqttPoints
+        | Scenario::MqttTrend
+        | Scenario::MqttTraffic
+        | Scenario::MqttInspector => mqtt(model, scenario, cx),
         Scenario::Palette => {
             model.start_demo_plant(cx);
             model.workspace.ui.inspector_open = false;
@@ -133,4 +155,93 @@ pub fn apply(
             }
         }
     }
+}
+
+/// What the MQTT demo trends: the Sparkplug metrics of the inverter, which
+/// carry their units.
+const MQTT_TREND: [&str; 4] = [
+    "› DC Power",
+    "› AC Power",
+    "› AC Frequency",
+    "› Temperature",
+];
+/// The point the MQTT inspector scenario shows.
+const MQTT_SELECTED: &str = "› AC Power";
+/// Topics are points once their first messages arrive (Sparkplug metrics
+/// after the client asks the node for its births): pick by name then.
+const MQTT_SETTLE: Duration = Duration::from_secs(3);
+
+fn mqtt(model: &mut AppModel, scenario: Scenario, cx: &mut Context<AppModel>) {
+    let Some((client, simulator)) = model.start_mqtt_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::MqttTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::MqttTraffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+        }
+        // One client with the inspector: the selected metric's message and
+        // the publish form.
+        Scenario::MqttInspector => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            model.publish.topic.update(cx, |input, cx| {
+                input.set_text("plant/inverter/temperature/set", cx)
+            });
+            model
+                .publish
+                .payload
+                .update(cx, |input, cx| input.set_text("48.5", cx));
+        }
+        _ => model.workspace.ui.inspector_open = false,
+    }
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(MQTT_SETTLE).await;
+        let _ = this.update(cx, |model, cx| {
+            let Some(live) = model.live.get(&client) else {
+                return;
+            };
+            let find = |suffix: &str| {
+                live.points
+                    .iter()
+                    .position(|point| point.name.ends_with(suffix))
+                    .and_then(|index| u32::try_from(index).ok())
+            };
+            let trend = MQTT_TREND
+                .iter()
+                .filter_map(|suffix| find(suffix))
+                .collect();
+            let selected = find(MQTT_SELECTED);
+            if let Some(live) = model.live.get_mut(&client) {
+                live.trend = trend;
+            }
+            if scenario == Scenario::MqttInspector
+                && let Some(point) = selected
+            {
+                model.select_point(client, point, cx);
+            }
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+fn pane_of(model: &AppModel, connection: ConnectionId) -> Option<PaneId> {
+    model
+        .workspace
+        .panes
+        .iter()
+        .find(|pane| pane.connection == connection)
+        .map(|pane| pane.id)
 }

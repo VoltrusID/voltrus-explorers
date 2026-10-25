@@ -160,6 +160,8 @@ pub(crate) async fn run(
                         out.locked(point, locked);
                     }
                 }
+                // Other controls don't apply to a slave.
+                Some(_) => {}
             },
         }
     }
@@ -221,7 +223,7 @@ async fn until_closed(control: &mut mpsc::UnboundedReceiver<Control>, out: &Emit
             Some(Control::Write { point, .. }) => {
                 out.written(point, Err("The simulator is not listening yet".into()));
             }
-            Some(Control::Lock { .. }) => {}
+            Some(_) => {}
         }
     }
 }

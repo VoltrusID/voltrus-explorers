@@ -5,7 +5,8 @@ use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use vt_protocol::{
-    EventKind, LogEntry, PointInfo, Quality, Reading, SessionId, SessionState, Stats, TrafficFrame,
+    EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId, SessionState, Stats,
+    TrafficFrame,
 };
 use vt_ui::chart::History;
 
@@ -49,6 +50,11 @@ pub struct Live {
     pub write_result: Option<(u32, Result<(), String>)>,
     /// The log keeps recording but stops following new entries.
     pub log_paused: bool,
+    /// The message behind each point's latest value, for message protocols
+    /// (MQTT); empty for the others.
+    pub payloads: Vec<String>,
+    /// Outcome of the last publish from the inspector.
+    pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
 }
@@ -72,6 +78,8 @@ impl Default for Live {
             locked: BTreeSet::new(),
             write_result: None,
             log_paused: false,
+            payloads: Vec::new(),
+            publish_result: None,
             history_capacity: HISTORY_MIN,
         }
     }
@@ -86,6 +94,7 @@ impl Live {
         self.state = SessionState::Connecting;
         self.stats = Stats::default();
         self.write_result = None;
+        self.publish_result = None;
         self.locked.clear();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
@@ -120,6 +129,7 @@ impl Live {
                 let same_shape = self.points.len() == count && self.histories.len() == count;
                 self.points = points;
                 self.readings = vec![Reading::bad(); count];
+                self.payloads = vec![String::new(); count];
                 if !same_shape {
                     let capacity = self.history_capacity;
                     self.histories = (0..count).map(|_| History::new(capacity)).collect();
@@ -171,6 +181,29 @@ impl Live {
                     self.locked.remove(&point);
                 }
             }
+            EventKind::PointsAdded(points) => {
+                self.points.extend(points);
+                let count = self.points.len();
+                self.readings.resize(count, Reading::bad());
+                self.payloads.resize(count, String::new());
+                let capacity = self.history_capacity;
+                while self.histories.len() < count {
+                    self.histories.push(History::new(capacity));
+                }
+            }
+            EventKind::Payloads(texts) => {
+                for PointText { point, text } in texts {
+                    if let Some(slot) = usize::try_from(point)
+                        .ok()
+                        .and_then(|index| self.payloads.get_mut(index))
+                    {
+                        *slot = text;
+                    }
+                }
+            }
+            EventKind::Published { topic, result } => {
+                self.publish_result = Some((topic, result));
+            }
         }
     }
 
@@ -205,6 +238,14 @@ impl Live {
 
     pub fn history(&self, point: u32) -> Option<&Rc<History>> {
         self.histories.get(usize::try_from(point).ok()?)
+    }
+
+    /// The message behind a point's latest value, if the protocol has one.
+    pub fn payload(&self, point: u32) -> Option<&str> {
+        self.payloads
+            .get(usize::try_from(point).ok()?)
+            .map(String::as_str)
+            .filter(|text| !text.is_empty())
     }
 
     /// Move the selection by `step` rows; returns the newly selected row.
@@ -316,5 +357,56 @@ mod tests {
         live.apply_from(SessionId(2), EventKind::Points((0..2).map(point).collect()));
         assert_eq!(live.histories.len(), 2);
         assert!(!std::rc::Rc::ptr_eq(&before, &live.histories[0]));
+    }
+
+    #[test]
+    fn topics_joining_later_keep_what_came_before() {
+        use vt_protocol::{PointText, Quality, Reading, ValueFrame};
+
+        let reading = |value: f64| Reading {
+            value,
+            raw: [0; 4],
+            raw_len: 0,
+            quality: Quality::Good,
+        };
+        let mut live = Live::default();
+        live.restart(SessionId(1), 250);
+        live.apply(EventKind::Points(Vec::new()));
+        live.apply(EventKind::PointsAdded(vec![point(0)]));
+        live.apply(EventKind::Values(ValueFrame {
+            at_ms: 1_000,
+            latency_us: 0,
+            readings: vec![reading(1.0)],
+        }));
+        live.trend.insert(0);
+        live.selected = Some(0);
+        let first = live.histories[0].clone();
+
+        live.apply(EventKind::PointsAdded(vec![point(1), point(2)]));
+        assert_eq!(live.points.len(), 3);
+        assert!(
+            std::rc::Rc::ptr_eq(&first, &live.histories[0]),
+            "history kept"
+        );
+        assert_eq!(live.histories[0].len(), 1);
+        assert_eq!(live.histories.len(), 3);
+        assert_eq!(live.readings[0].value, 1.0, "the value so far stays");
+        assert_eq!(live.readings[2].quality, Quality::Bad, "nothing yet");
+        assert_eq!(live.selected, Some(0));
+        assert!(live.trend.contains(&0));
+
+        live.apply(EventKind::Payloads(vec![
+            PointText {
+                point: 2,
+                text: "{\"v\": 3}".into(),
+            },
+            PointText {
+                point: 9,
+                text: "past the end".into(),
+            },
+        ]));
+        assert_eq!(live.payload(2), Some("{\"v\": 3}"));
+        assert_eq!(live.payload(1), None);
+        assert_eq!(live.payload(9), None);
     }
 }

@@ -15,6 +15,8 @@ use crate::actions::EDITOR;
 use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
+mod mqtt;
+
 /// A click handler that changes the open editor.
 fn on_edit(
     cx: &Context<AppModel>,
@@ -40,19 +42,31 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Master, true) => "Edit Modbus connection",
         (EditorKind::Slave, false) => "New Modbus simulator",
         (EditorKind::Slave, true) => "Edit Modbus simulator",
+        (EditorKind::MqttClient, false) => "New MQTT connection",
+        (EditorKind::MqttClient, true) => "Edit MQTT connection",
+        (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
+        (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
         EditorKind::Slave => "Serve a device's registers on this computer for masters to poll.",
+        EditorKind::MqttClient => {
+            "Subscribe to a broker's topics: numbers, JSON fields and Sparkplug B metrics become points."
+        }
+        EditorKind::MqttBroker => {
+            "Run a broker on this computer that publishes a simulated device for any MQTT client."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
         EditorKind::Slave => slave(editor, cx),
+        EditorKind::MqttClient => mqtt::client(editor, cx),
+        EditorKind::MqttBroker => mqtt::broker(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
-        (EditorKind::Master, false) => "Save and connect",
-        (EditorKind::Slave, false) => "Start simulator",
+        (EditorKind::Master | EditorKind::MqttClient, false) => "Save and connect",
+        (EditorKind::Slave | EditorKind::MqttBroker, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

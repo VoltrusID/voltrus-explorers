@@ -7,6 +7,7 @@
 
 mod emit;
 mod modbus;
+mod mqtt;
 pub mod templates;
 
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use vt_protocol::{Command, Event, EventKind, SessionId, SessionSpec, SessionState};
+use vt_protocol::{Command, Event, EventKind, MqttQos, SessionId, SessionSpec, SessionState};
 
 use emit::Emitter;
 
@@ -62,14 +63,33 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::ModbusSlave(_) => {
             u64::try_from(modbus::slave::PUBLISH_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::MqttClient(_) => {
+            u64::try_from(mqtt::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::MqttBroker(_) => {
+            u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
 /// Messages from the engine loop to one session task.
 #[derive(Debug)]
 pub(crate) enum Control {
-    Write { point: u32, value: f64 },
-    Lock { point: u32, locked: bool },
+    Write {
+        point: u32,
+        value: f64,
+    },
+    Lock {
+        point: u32,
+        locked: bool,
+    },
+    /// Message protocols: publish to a topic.
+    Publish {
+        topic: String,
+        payload: String,
+        qos: MqttQos,
+        retain: bool,
+    },
     Close,
 }
 
@@ -128,7 +148,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 }
                 let port = match &spec {
                     SessionSpec::ModbusSlave(slave) => Some(slave.port),
-                    SessionSpec::ModbusMaster(_) => None,
+                    SessionSpec::MqttBroker(broker) => Some(broker.port),
+                    SessionSpec::ModbusMaster(_) | SessionSpec::MqttClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -166,6 +187,22 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 point,
                 locked,
             } => forward(&sessions, session, Control::Lock { point, locked }),
+            Command::Publish {
+                session,
+                topic,
+                payload,
+                qos,
+                retain,
+            } => forward(
+                &sessions,
+                session,
+                Control::Publish {
+                    topic,
+                    payload,
+                    qos,
+                    retain,
+                },
+            ),
             Command::Shutdown => break,
         }
     }
@@ -184,5 +221,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
     match spec {
         SessionSpec::ModbusMaster(spec) => modbus::master::run(spec, control, &out).await,
         SessionSpec::ModbusSlave(spec) => modbus::slave::run(spec, control, &out).await,
+        SessionSpec::MqttClient(spec) => mqtt::client::run(spec, control, &out).await,
+        SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
     }
 }

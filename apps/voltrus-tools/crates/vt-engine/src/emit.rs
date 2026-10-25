@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
-    Event, EventKind, LogEntry, LogLevel, PointInfo, SessionId, SessionState, Stats, TrafficFrame,
-    ValueFrame,
+    Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId, SessionState, Stats,
+    TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -61,6 +61,18 @@ impl Emitter {
             level,
             message: message.into(),
         }));
+    }
+
+    pub(crate) fn points_added(&self, points: Vec<PointInfo>) {
+        self.emit(EventKind::PointsAdded(points));
+    }
+
+    pub(crate) fn payloads(&self, texts: Vec<PointText>) {
+        self.emit(EventKind::Payloads(texts));
+    }
+
+    pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
+        self.emit(EventKind::Published { topic, result });
     }
 }
 

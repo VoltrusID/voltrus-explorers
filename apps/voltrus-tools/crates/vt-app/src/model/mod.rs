@@ -7,6 +7,7 @@
 pub mod editor;
 pub mod live;
 pub mod palette;
+pub mod publish;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,13 +24,17 @@ use vt_app_core::{
     Appearance, Axis, Branch, ConnectionId, Pane, PaneId, PaneView, TabId, Workspace, store,
 };
 use vt_engine::{EngineHandle, templates};
-use vt_protocol::{Command as EngineCommand, Event, ModbusSlaveSpec, SessionId, SessionSpec};
+use vt_protocol::{
+    Command as EngineCommand, Event, ModbusSlaveSpec, MqttBrokerSpec, Protocol, Role, SessionId,
+    SessionSpec,
+};
 use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 use vt_ui::theme::{self, Theme, ThemeCatalog};
 
 use editor::{Editor, EditorKind};
 use live::Live;
 use palette::{Command, Mode, Palette};
+use publish::PublishForm;
 
 use crate::views::{self, cached::CachedView};
 
@@ -47,6 +52,12 @@ pub enum Overlay {
     Palette(Palette),
     /// Boxed: the editor holds a field entity per input.
     Editor(Box<Editor>),
+    /// The sidebar's "+" menu: which protocol to add, as a client or a
+    /// simulator, shown where it was clicked.
+    NewMenu {
+        role: Role,
+        at: Point<Pixels>,
+    },
 }
 
 pub enum Drag {
@@ -115,6 +126,8 @@ pub struct AppModel {
     pane_scrolls: RefCell<HashMap<PaneId, PaneScroll>>,
     pub chrome: Chrome,
     pub write_input: Entity<TextInput>,
+    /// The inspector's publish form (message protocols).
+    pub publish: PublishForm,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -209,6 +222,7 @@ impl AppModel {
                 panes: HashMap::new(),
             },
             write_input,
+            publish: PublishForm::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
         };
@@ -432,7 +446,7 @@ impl AppModel {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
         };
-        let Some(port) = self.free_port() else {
+        let Some(port) = self.free_port(5020..5100) else {
             self.show_toast(
                 "No free port between 5020 and 5099 for the simulator",
                 true,
@@ -452,6 +466,67 @@ impl AppModel {
             format!("{} {}", profile.manufacturer, profile.model),
             SessionSpec::ModbusMaster(templates::master_for(profile, "127.0.0.1", port, 1)),
         );
+        self.show_side_by_side(client, simulator, cx);
+        Some((client, simulator))
+    }
+
+    /// The SMA inverter template published by an MQTT broker simulator
+    /// (plain topics, a JSON nameplate and a Sparkplug B node), and a client
+    /// subscribed to all of it, side by side.
+    pub fn start_mqtt_demo(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(ConnectionId, ConnectionId)> {
+        let Some(profile) = templates::find_modbus("sma-inverter") else {
+            self.show_toast("The demo device template is missing", true, cx);
+            return None;
+        };
+        let Some(port) = self.free_port(1883..1984) else {
+            self.show_toast(
+                "No free port between 1883 and 1983 for the broker",
+                true,
+                cx,
+            );
+            return None;
+        };
+        let broker = MqttBrokerSpec {
+            port,
+            template: Some(profile.id.clone()),
+            sparkplug: true,
+            ..MqttBrokerSpec::default()
+        };
+        let client = broker.client();
+        let simulator = self
+            .workspace
+            .add_connection("Inverter broker", SessionSpec::MqttBroker(broker));
+        let client = self.workspace.add_connection(
+            format!("{} {} over MQTT", profile.manufacturer, profile.model),
+            SessionSpec::MqttClient(client),
+        );
+        self.show_side_by_side(client, simulator, cx);
+        Some((client, simulator))
+    }
+
+    /// Start a protocol's demo plant.
+    pub fn start_demo(&mut self, protocol: Protocol, cx: &mut Context<Self>) {
+        match protocol {
+            Protocol::Modbus => {
+                self.start_demo_plant(cx);
+            }
+            Protocol::Mqtt => {
+                self.start_mqtt_demo(cx);
+            }
+        }
+    }
+
+    /// Open a client with its simulator beside it, focus the client and
+    /// start both.
+    fn show_side_by_side(
+        &mut self,
+        client: ConnectionId,
+        simulator: ConnectionId,
+        cx: &mut Context<Self>,
+    ) {
         self.workspace.open(client);
         self.workspace
             .split(simulator, Axis::Horizontal, PaneView::Points);
@@ -467,22 +542,22 @@ impl AppModel {
         self.connect(simulator, cx);
         self.connect(client, cx);
         self.save(cx);
-        Some((client, simulator))
     }
 
-    /// A loopback port no saved simulator uses and nothing listens on.
-    fn free_port(&self) -> Option<u16> {
+    /// A loopback port in `ports` that no saved simulator uses and nothing
+    /// listens on.
+    fn free_port(&self, mut ports: std::ops::Range<u16>) -> Option<u16> {
         let taken: Vec<u16> = self
             .workspace
             .connections
             .iter()
             .filter_map(|connection| match &connection.spec {
                 SessionSpec::ModbusSlave(spec) => Some(spec.port),
-                SessionSpec::ModbusMaster(_) => None,
+                SessionSpec::MqttBroker(spec) => Some(spec.port),
+                SessionSpec::ModbusMaster(_) | SessionSpec::MqttClient(_) => None,
             })
             .collect();
-        (5020..5100)
-            .find(|port| !taken.contains(port) && TcpListener::bind(("127.0.0.1", *port)).is_ok())
+        ports.find(|port| !taken.contains(port) && TcpListener::bind(("127.0.0.1", *port)).is_ok())
     }
 
     // ── Points ────────────────────────────────────────────────────────────
@@ -493,6 +568,12 @@ impl AppModel {
                 live.write_result = None;
                 self.write_input
                     .update(cx, |input, cx| input.set_text("", cx));
+                // Publishing from the inspector starts at the point's topic.
+                if let Some(topic) = publish::topic_of(&self.workspace, connection, live, point) {
+                    self.publish
+                        .topic
+                        .update(cx, |input, cx| input.set_text(topic, cx));
+                }
             }
             live.selected = Some(point);
         }
@@ -649,11 +730,9 @@ impl AppModel {
                 .connection(id)
                 .map(|connection| (id, connection.name.clone(), connection.spec.clone()))
         });
-        let kind = match &existing {
-            Some((_, _, SessionSpec::ModbusSlave(_))) => EditorKind::Slave,
-            Some((_, _, SessionSpec::ModbusMaster(_))) => EditorKind::Master,
-            None => kind,
-        };
+        let kind = existing
+            .as_ref()
+            .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         cx.notify();
     }
@@ -706,6 +785,19 @@ impl AppModel {
                     slave.port,
                     slave.unit_id,
                 )),
+            );
+            self.workspace
+                .split(client, Axis::Horizontal, PaneView::Points);
+            self.connect(client, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::MqttBroker(broker) = &spec
+            && broker.template.is_some()
+        {
+            let client = self.workspace.add_connection(
+                format!("{name} client"),
+                SessionSpec::MqttClient(broker.client()),
             );
             self.workspace
                 .split(client, Axis::Horizontal, PaneView::Points);
@@ -805,6 +897,42 @@ impl AppModel {
         }
     }
 
+    /// Where the "+" menu opens from the keyboard: the top of the content,
+    /// beside the sidebar.
+    pub fn new_menu_anchor(&self) -> Point<Pixels> {
+        let ui = &self.workspace.ui;
+        let left = if ui.sidebar_open {
+            gpui::px(ui.sidebar_width)
+        } else {
+            gpui::px(0.0)
+        };
+        gpui::point(
+            left + theme::SPACE_4,
+            theme::TITLE_BAR_HEIGHT + theme::SPACE_4,
+        )
+    }
+
+    /// Show the menu of protocols to add a client or simulator for.
+    pub fn open_new_menu(&mut self, role: Role, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.restore_previewed_theme(cx);
+        self.overlay = Overlay::NewMenu { role, at };
+        cx.notify();
+    }
+
+    /// Open the editor for a new connection of `protocol` in `role`.
+    pub fn new_connection(
+        &mut self,
+        protocol: Protocol,
+        role: Role,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match EditorKind::for_protocol(protocol, role) {
+            Some(kind) => self.open_editor(kind, None, window, cx),
+            None => self.close_overlay(window, cx),
+        }
+    }
+
     pub fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.restore_previewed_theme(cx);
         self.overlay = Overlay::None;
@@ -824,6 +952,11 @@ impl AppModel {
             Command::NewSlave => self.open_editor(EditorKind::Slave, None, window, cx),
             Command::QuickStart => {
                 self.start_demo_plant(cx);
+            }
+            Command::NewMqttClient => self.open_editor(EditorKind::MqttClient, None, window, cx),
+            Command::NewMqttBroker => self.open_editor(EditorKind::MqttBroker, None, window, cx),
+            Command::MqttDemo => {
+                self.start_mqtt_demo(cx);
             }
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),
