@@ -1,0 +1,859 @@
+[
+  {
+    "id": "abb-analyzer",
+    "manufacturer": "ABB",
+    "model": "AZL402",
+    "description": "Water Quality Analyzer (pH, ORP, Turbidity, DO, Cond, Temp)",
+    "baseAddress": 200,
+    "registers": [
+      {
+        "name": "pH",
+        "unit": "pH",
+        "description": "pH value",
+        "initial": 7.2,
+        "min": 0,
+        "max": 14,
+        "drift": 0.02,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "ORP",
+        "unit": "mV",
+        "description": "Oxidation-reduction potential",
+        "initial": 245,
+        "min": -2000,
+        "max": 2000,
+        "drift": 2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Turbidity",
+        "unit": "NTU",
+        "description": "Water turbidity",
+        "initial": 0.45,
+        "min": 0,
+        "max": 100,
+        "drift": 0.02,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Dissolved_Oxygen",
+        "unit": "mg/L",
+        "description": "Dissolved oxygen concentration",
+        "initial": 8.2,
+        "min": 0,
+        "max": 20,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Conductivity",
+        "unit": "µS/cm",
+        "description": "Electrical conductivity",
+        "initial": 485,
+        "min": 0,
+        "max": 5000,
+        "drift": 3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Chlorine_Free",
+        "unit": "mg/L",
+        "description": "Free chlorine residual",
+        "initial": 0.85,
+        "min": 0,
+        "max": 5,
+        "drift": 0.02,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature",
+        "unit": "°C",
+        "description": "Water temperature",
+        "initial": 15.8,
+        "min": 0,
+        "max": 40,
+        "drift": 0.02,
+        "isCounter": false,
+        "counterRate": 0
+      }
+    ]
+  },
+  {
+    "id": "daniel-flow",
+    "manufacturer": "Emerson",
+    "model": "Daniel 1000",
+    "description": "Gas Flow Computer (orifice meter, AGA3/AGA8)",
+    "baseAddress": 3000,
+    "registers": [
+      {
+        "name": "Diff_Pressure",
+        "unit": "inH2O",
+        "description": "Orifice differential pressure",
+        "initial": 85,
+        "min": 0,
+        "max": 400,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Static_Pressure",
+        "unit": "psig",
+        "description": "Line static pressure",
+        "initial": 745,
+        "min": 0,
+        "max": 1500,
+        "drift": 2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature",
+        "unit": "°F",
+        "description": "Gas temperature",
+        "initial": 95,
+        "min": -40,
+        "max": 200,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Flow_Rate",
+        "unit": "MSCFH",
+        "description": "Instantaneous gas flow rate",
+        "initial": 1250,
+        "min": 0,
+        "max": 5000,
+        "drift": 20,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Volume_Today",
+        "unit": "MSCF",
+        "description": "Accumulated gas volume today",
+        "initial": 18500,
+        "min": 0,
+        "max": 120000,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.3472222222222222
+      },
+      {
+        "name": "Volume_Total",
+        "unit": "MMSCF",
+        "description": "Lifetime accumulated volume",
+        "initial": 8452.3,
+        "min": 0,
+        "max": 999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.00034722222222222224
+      },
+      {
+        "name": "Gas_Gravity",
+        "unit": "",
+        "description": "Specific gravity (air=1)",
+        "initial": 0.62,
+        "min": 0.5,
+        "max": 1,
+        "drift": 0.001,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Heating_Value",
+        "unit": "BTU/SCF",
+        "description": "Higher heating value",
+        "initial": 1025,
+        "min": 900,
+        "max": 1200,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "CH4",
+        "unit": "mol%",
+        "description": "Methane fraction",
+        "initial": 88.5,
+        "min": 0,
+        "max": 100,
+        "drift": 0.05,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "CO2",
+        "unit": "mol%",
+        "description": "Carbon dioxide fraction",
+        "initial": 1.8,
+        "min": 0,
+        "max": 30,
+        "drift": 0.02,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "H2S",
+        "unit": "ppm",
+        "description": "Hydrogen sulfide",
+        "initial": 12,
+        "min": 0,
+        "max": 5000,
+        "drift": 0.5,
+        "isCounter": false,
+        "counterRate": 0
+      }
+    ]
+  },
+  {
+    "id": "eh-flowmeter",
+    "manufacturer": "Endress+Hauser",
+    "model": "Promag 10W DN50",
+    "description": "Electromagnetic flowmeter, DN50, 0-50 m³/h",
+    "baseAddress": 100,
+    "registers": [
+      {
+        "name": "Flow_Rate",
+        "unit": "m³/h",
+        "description": "Instantaneous volume flow rate",
+        "initial": 12.5,
+        "min": 0,
+        "max": 50,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Flow_Velocity",
+        "unit": "m/s",
+        "description": "Flow velocity in pipe",
+        "initial": 1.77,
+        "min": 0,
+        "max": 7,
+        "drift": 0.05,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Volume_Total",
+        "unit": "m³",
+        "description": "Cumulative volume totalizer",
+        "initial": 245891,
+        "min": 0,
+        "max": 999999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.003472222222222222
+      },
+      {
+        "name": "Conductivity",
+        "unit": "µS/cm",
+        "description": "Fluid conductivity",
+        "initial": 520,
+        "min": 0,
+        "max": 5000,
+        "drift": 5,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature",
+        "unit": "°C",
+        "description": "Process fluid temperature",
+        "initial": 15.2,
+        "min": -20,
+        "max": 60,
+        "drift": 0.05,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Pipe_Volume",
+        "unit": "%",
+        "description": "Pipe fill level",
+        "initial": 100,
+        "min": 0,
+        "max": 100,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Signal_Quality",
+        "unit": "%",
+        "description": "Measurement signal quality",
+        "initial": 98.5,
+        "min": 0,
+        "max": 100,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      }
+    ]
+  },
+  {
+    "id": "pm5560",
+    "manufacturer": "Schneider Electric",
+    "model": "PM5560",
+    "description": "PM5560 3-Phase Power Quality Meter (0.2S, CT/VT)",
+    "baseAddress": 2999,
+    "registers": [
+      {
+        "name": "Voltage_L1N",
+        "unit": "V",
+        "description": "L1-N voltage",
+        "initial": 230.2,
+        "min": 0,
+        "max": 347,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Voltage_L2N",
+        "unit": "V",
+        "description": "L2-N voltage",
+        "initial": 229.8,
+        "min": 0,
+        "max": 347,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Voltage_L3N",
+        "unit": "V",
+        "description": "L3-N voltage",
+        "initial": 230.5,
+        "min": 0,
+        "max": 347,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L1",
+        "unit": "A",
+        "description": "L1 current (via CT)",
+        "initial": 142.5,
+        "min": 0,
+        "max": 6000,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L2",
+        "unit": "A",
+        "description": "L2 current (via CT)",
+        "initial": 138.7,
+        "min": 0,
+        "max": 6000,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L3",
+        "unit": "A",
+        "description": "L3 current (via CT)",
+        "initial": 145.3,
+        "min": 0,
+        "max": 6000,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Active_Power",
+        "unit": "W",
+        "description": "3-phase active power",
+        "initial": 95000,
+        "min": -999999,
+        "max": 999999,
+        "drift": 500,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Reactive_Power",
+        "unit": "var",
+        "description": "3-phase reactive power",
+        "initial": -12000,
+        "min": -999999,
+        "max": 999999,
+        "drift": 200,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Apparent_Power",
+        "unit": "VA",
+        "description": "3-phase apparent power",
+        "initial": 98000,
+        "min": 0,
+        "max": 999999,
+        "drift": 500,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Power_Factor",
+        "unit": "",
+        "description": "Overall power factor",
+        "initial": 0.96,
+        "min": -1,
+        "max": 1,
+        "drift": 0.003,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Frequency",
+        "unit": "Hz",
+        "description": "Grid frequency",
+        "initial": 50,
+        "min": 45,
+        "max": 65,
+        "drift": 0.002,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "THD_Voltage",
+        "unit": "%",
+        "description": "Avg voltage THD",
+        "initial": 1.8,
+        "min": 0,
+        "max": 50,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "THD_Current",
+        "unit": "%",
+        "description": "Avg current THD",
+        "initial": 6.2,
+        "min": 0,
+        "max": 50,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature",
+        "unit": "°C",
+        "description": "Internal temperature",
+        "initial": 38.5,
+        "min": -40,
+        "max": 85,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Energy_Import",
+        "unit": "kWh",
+        "description": "Cumulative active energy import",
+        "initial": 1587329,
+        "min": 0,
+        "max": 999999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.02638888888888889
+      },
+      {
+        "name": "Energy_Export",
+        "unit": "kWh",
+        "description": "Cumulative active energy export",
+        "initial": 2451,
+        "min": 0,
+        "max": 999999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.0001388888888888889
+      }
+    ]
+  },
+  {
+    "id": "raritan-pdu",
+    "manufacturer": "Raritan",
+    "model": "PX3-5902V",
+    "description": "Intelligent Rack PDU, 3-phase 32A, 24 outlets",
+    "baseAddress": 1,
+    "registers": [
+      {
+        "name": "Voltage_L1",
+        "unit": "V",
+        "description": "L1-N voltage at PDU inlet",
+        "initial": 208.5,
+        "min": 180,
+        "max": 240,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Voltage_L2",
+        "unit": "V",
+        "description": "L2-N voltage at PDU inlet",
+        "initial": 209.1,
+        "min": 180,
+        "max": 240,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Voltage_L3",
+        "unit": "V",
+        "description": "L3-N voltage at PDU inlet",
+        "initial": 208.8,
+        "min": 180,
+        "max": 240,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L1",
+        "unit": "A",
+        "description": "L1 branch circuit current",
+        "initial": 18.5,
+        "min": 0,
+        "max": 32,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L2",
+        "unit": "A",
+        "description": "L2 branch circuit current",
+        "initial": 17.2,
+        "min": 0,
+        "max": 32,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Current_L3",
+        "unit": "A",
+        "description": "L3 branch circuit current",
+        "initial": 19.1,
+        "min": 0,
+        "max": 32,
+        "drift": 0.2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Active_Power",
+        "unit": "W",
+        "description": "Total PDU active power",
+        "initial": 8650,
+        "min": 0,
+        "max": 13300,
+        "drift": 50,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Power_Factor",
+        "unit": "",
+        "description": "PDU overall power factor",
+        "initial": 0.98,
+        "min": 0,
+        "max": 1,
+        "drift": 0.005,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Energy_Total",
+        "unit": "kWh",
+        "description": "Cumulative energy",
+        "initial": 42580,
+        "min": 0,
+        "max": 999999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.002402777777777778
+      },
+      {
+        "name": "Temperature_Inlet",
+        "unit": "°C",
+        "description": "PDU inlet air temperature",
+        "initial": 24.5,
+        "min": 10,
+        "max": 50,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature_Outlet",
+        "unit": "°C",
+        "description": "PDU outlet air temperature",
+        "initial": 32.8,
+        "min": 10,
+        "max": 60,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Humidity",
+        "unit": "%",
+        "description": "Rack relative humidity",
+        "initial": 45,
+        "min": 10,
+        "max": 90,
+        "drift": 0.5,
+        "isCounter": false,
+        "counterRate": 0
+      }
+    ]
+  },
+  {
+    "id": "sma-inverter",
+    "manufacturer": "SMA",
+    "model": "STP 60-US-10",
+    "description": "Sunny Tripower 60TL-US 60kW String Inverter",
+    "baseAddress": 30769,
+    "registers": [
+      {
+        "name": "DC_Voltage_A",
+        "unit": "V",
+        "description": "DC input voltage string A",
+        "initial": 580,
+        "min": 0,
+        "max": 800,
+        "drift": 2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "DC_Voltage_B",
+        "unit": "V",
+        "description": "DC input voltage string B",
+        "initial": 575,
+        "min": 0,
+        "max": 800,
+        "drift": 2,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "DC_Current_A",
+        "unit": "A",
+        "description": "DC input current string A",
+        "initial": 52,
+        "min": 0,
+        "max": 110,
+        "drift": 1.5,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "DC_Current_B",
+        "unit": "A",
+        "description": "DC input current string B",
+        "initial": 49,
+        "min": 0,
+        "max": 110,
+        "drift": 1.5,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "DC_Power",
+        "unit": "W",
+        "description": "Total DC input power",
+        "initial": 58000,
+        "min": 0,
+        "max": 62000,
+        "drift": 500,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Voltage_L1",
+        "unit": "V",
+        "description": "AC output voltage L1-N",
+        "initial": 230.5,
+        "min": 207,
+        "max": 253,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Voltage_L2",
+        "unit": "V",
+        "description": "AC output voltage L2-N",
+        "initial": 229.8,
+        "min": 207,
+        "max": 253,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Voltage_L3",
+        "unit": "V",
+        "description": "AC output voltage L3-N",
+        "initial": 230.2,
+        "min": 207,
+        "max": 253,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Current_L1",
+        "unit": "A",
+        "description": "AC output current L1",
+        "initial": 86.5,
+        "min": 0,
+        "max": 100,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Current_L2",
+        "unit": "A",
+        "description": "AC output current L2",
+        "initial": 84.2,
+        "min": 0,
+        "max": 100,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Current_L3",
+        "unit": "A",
+        "description": "AC output current L3",
+        "initial": 85.8,
+        "min": 0,
+        "max": 100,
+        "drift": 1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Power",
+        "unit": "W",
+        "description": "Total AC active power output",
+        "initial": 56500,
+        "min": 0,
+        "max": 60000,
+        "drift": 400,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "AC_Frequency",
+        "unit": "Hz",
+        "description": "Grid frequency",
+        "initial": 50.01,
+        "min": 49.8,
+        "max": 50.2,
+        "drift": 0.003,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Efficiency",
+        "unit": "%",
+        "description": "Current conversion efficiency",
+        "initial": 97.4,
+        "min": 90,
+        "max": 98.5,
+        "drift": 0.1,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "PowerFactor",
+        "unit": "",
+        "description": "AC power factor",
+        "initial": 0.99,
+        "min": 0.9,
+        "max": 1,
+        "drift": 0.002,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Temperature",
+        "unit": "°C",
+        "description": "Inverter heatsink temperature",
+        "initial": 45.2,
+        "min": 10,
+        "max": 75,
+        "drift": 0.3,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Irradiance",
+        "unit": "W/m²",
+        "description": "Plane-of-array irradiance",
+        "initial": 856,
+        "min": 0,
+        "max": 1100,
+        "drift": 15,
+        "isCounter": false,
+        "counterRate": 0
+      },
+      {
+        "name": "Daily_Yield",
+        "unit": "kWh",
+        "description": "Energy produced today",
+        "initial": 185,
+        "min": 0,
+        "max": 400,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.015694444444444445
+      },
+      {
+        "name": "Total_Yield",
+        "unit": "kWh",
+        "description": "Lifetime energy produced",
+        "initial": 452380,
+        "min": 0,
+        "max": 9999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.015694444444444445
+      },
+      {
+        "name": "Operating_Time",
+        "unit": "h",
+        "description": "Total operating hours",
+        "initial": 8920,
+        "min": 0,
+        "max": 999999,
+        "drift": 0,
+        "isCounter": true,
+        "counterRate": 0.0002777777777777778
+      }
+    ]
+  }
+]

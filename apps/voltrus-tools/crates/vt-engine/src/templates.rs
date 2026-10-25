@@ -1,0 +1,116 @@
+//! Built-in device templates for the Modbus simulator: the same register maps
+//! the Modbus Poll app ships (converted from its `templates.ts`).
+
+use std::sync::LazyLock;
+
+use mt_modbus::SimDeviceProfile;
+use vt_protocol::{Area, DataType, ModbusLink, ModbusMasterSpec, RegisterBlock, WordOrder};
+
+const MODBUS: &str = include_str!("../templates/modbus.json");
+
+static TEMPLATES: LazyLock<Vec<SimDeviceProfile>> =
+    LazyLock::new(|| match serde_json::from_str(MODBUS) {
+        Ok(templates) => templates,
+        Err(error) => {
+            tracing::error!("built-in Modbus templates are invalid: {error}");
+            Vec::new()
+        }
+    });
+
+/// Every built-in Modbus device template.
+pub fn modbus() -> &'static [SimDeviceProfile] {
+    &TEMPLATES
+}
+
+pub fn find_modbus(id: &str) -> Option<&'static SimDeviceProfile> {
+    modbus().iter().find(|profile| profile.id == id)
+}
+
+/// Registers a template occupies after its base address: measurements are
+/// float32 (2 registers), counters float64 (4 registers).
+pub fn register_span(profile: &SimDeviceProfile) -> u32 {
+    profile
+        .registers
+        .iter()
+        .map(|register| if register.is_counter { 4 } else { 2 })
+        .sum()
+}
+
+/// A master that polls a simulated template device the way the simulator lays
+/// it out: one named block per register (holding area, big-endian) carrying
+/// the register's unit. The client merges adjacent blocks into bulk reads.
+pub fn master_for(
+    profile: &SimDeviceProfile,
+    host: &str,
+    port: u16,
+    unit_id: u8,
+) -> ModbusMasterSpec {
+    let mut blocks: Vec<RegisterBlock> = Vec::with_capacity(profile.registers.len());
+    let mut address = u32::from(profile.base_address);
+    for register in &profile.registers {
+        let Ok(start) = u16::try_from(address) else {
+            break;
+        };
+        blocks.push(RegisterBlock {
+            name: register.name.replace('_', " "),
+            area: Area::Holding,
+            start,
+            count: 1,
+            data_type: if register.is_counter {
+                DataType::F64
+            } else {
+                DataType::F32
+            },
+            unit: register.unit.clone(),
+        });
+        address += if register.is_counter { 4 } else { 2 };
+    }
+    ModbusMasterSpec {
+        link: ModbusLink::Tcp {
+            host: host.into(),
+            port,
+        },
+        unit_id,
+        poll_ms: 1000,
+        timeout_ms: 2000,
+        word_order: WordOrder::Big,
+        blocks,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_builtin_template_loads_and_fits_the_address_space() {
+        let templates = modbus();
+        assert!(templates.len() >= 6, "templates: {}", templates.len());
+        for profile in templates {
+            let end = u32::from(profile.base_address) + register_span(profile);
+            assert!(end <= 65_536, "{} runs past 65535", profile.id);
+        }
+    }
+
+    #[test]
+    fn master_blocks_cover_the_template_registers_in_order() {
+        for profile in modbus() {
+            let spec = master_for(profile, "127.0.0.1", 5020, 1);
+            assert_eq!(
+                spec.point_count(),
+                profile.registers.len(),
+                "{}",
+                profile.id
+            );
+            let mut expected = u32::from(profile.base_address);
+            for block in &spec.blocks {
+                assert_eq!(u32::from(block.start), expected, "{}", profile.id);
+                expected += u32::from(block.count) * u32::from(block.data_type.words());
+            }
+            for (block, register) in spec.blocks.iter().zip(&profile.registers) {
+                assert_eq!(block.unit, register.unit, "{}", profile.id);
+                assert!(!block.name.contains('_'), "{}", block.name);
+            }
+        }
+    }
+}

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1c20"/>
+      <stop offset="1" stop-color="#0b0b0d"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="186" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- The Voltrus mark, from vt-ui's icons/voltrus.svg. -->
+  <g transform="translate(152 148) scale(4)" fill="none" stroke="#00e676" stroke-width="8" stroke-miterlimit="8">
+    <circle cx="35" cy="42" r="9"/>
+    <circle cx="145" cy="42" r="9"/>
+    <polyline points="39.9,49.5 90,126 140.1,49.5"/>
+    <polyline points="52,86 90,145 128,86"/>
+  </g>
+</svg>

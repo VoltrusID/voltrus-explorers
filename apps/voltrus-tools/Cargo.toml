@@ -1,0 +1,59 @@
+# Voltrus Tools: every industrial protocol tool in one native GPUI app.
+#
+# An isolated workspace: GPUI's dependency graph stays out of the Tauri apps'
+# root workspace, while the protocol crates in ../../crates are shared by path.
+[workspace]
+resolver = "3"
+members = [
+    "crates/vt-protocol",
+    "crates/vt-engine",
+    "crates/vt-app-core",
+    "crates/vt-ui",
+    "crates/vt-app",
+]
+
+# Which workspace crates each crate may depend on. Structural changes update
+# this table and docs/architecture.md together.
+[workspace.metadata.architecture.allowed-dependencies]
+vt-protocol = []
+vt-engine = ["vt-protocol"]
+vt-app-core = ["vt-protocol"]
+vt-ui = []
+vt-app = ["vt-protocol", "vt-engine", "vt-app-core", "vt-ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/VoltrusID/voltrus-explorers"
+publish = false
+
+[workspace.dependencies]
+async-channel = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+tracing = "0.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+# gpui 0.2.2 from crates.io plus Metal memory and frame-pacing fixes, kept in
+# the VoltrusID fork of muxy-app/gpui (Apache-2.0) and pinned by commit.
+[patch.crates-io]
+gpui = { git = "https://github.com/VoltrusID/gpui", rev = "6c718f33b99b8d27e5987b746fe4b00dc6051a7c" }
