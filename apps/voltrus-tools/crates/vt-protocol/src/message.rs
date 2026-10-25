@@ -224,7 +224,7 @@ mod tests {
             },
             Command::DiscoverBacnet {
                 session: SessionId(4),
-                spec: crate::BacnetDiscoverSpec {
+                spec: BacnetDiscoverSpec {
                     bind: "0.0.0.0".into(),
                     broadcast_port: None,
                     directed: vec!["127.0.0.1:47809".into(), "[::1]:47808".into()],
@@ -238,7 +238,7 @@ mod tests {
         }
 
         for answer in [
-            Ok(vec![crate::BacnetDeviceInfo {
+            Ok(vec![BacnetDeviceInfo {
                 instance: 1001,
                 address: "192.168.1.40".into(),
                 port: 47808,

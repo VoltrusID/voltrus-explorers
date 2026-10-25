@@ -137,7 +137,6 @@ pub(crate) async fn run(
                 Some(Control::Relinquish { point }) => {
                     out.written(point, Err("Simulators release a point with Release".into()));
                 }
-                Some(_) => {}
             },
         }
     }

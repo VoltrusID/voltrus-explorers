@@ -120,7 +120,6 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        attempt = 0;
         out.points(link.points.clone());
         out.state(SessionState::Connected);
 

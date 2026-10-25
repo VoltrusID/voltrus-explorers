@@ -5,7 +5,7 @@ name: Voltrus Tools
 
 on:
   push:
-    branches: [main, tools-v2, tools-bacnet]
+    branches: [main, "tools-*"]
     paths:
       - apps/voltrus-tools/**
       - crates/mt-modbus/**
