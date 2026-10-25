@@ -506,6 +506,44 @@ pub fn segmented(id: impl Into<ElementId>, segments: Vec<Segment>, cx: &App) -> 
         .into_any_element()
 }
 
+/// A check box with its label; the whole row toggles.
+pub fn checkbox(
+    id: impl Into<ElementId>,
+    checked: bool,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = theme(cx);
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(SPACE_4)
+        .cursor_pointer()
+        .on_click(on_click)
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(16.0))
+                .rounded(RADIUS_SM)
+                .border_1()
+                .border_color(if checked {
+                    theme.accent
+                } else {
+                    theme.border_strong
+                })
+                .bg(if checked { theme.accent } else { theme.bg })
+                .when(checked, |this| {
+                    this.child(icon(Icon::Check, ICON_SM, theme.accent_fg))
+                }),
+        )
+        .child(div().text_size(FONT_BODY).child(label.into()))
+}
+
 /// A centred message for an empty area, with optional actions below.
 pub fn empty_state(
     glyph: Icon,

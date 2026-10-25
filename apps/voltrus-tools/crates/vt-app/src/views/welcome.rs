@@ -1,14 +1,13 @@
 //! What the window shows with no tab open.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, FontWeight, SharedString, div, px};
-use vt_protocol::Protocol;
+use gpui::{AnyElement, ClickEvent, Context, ElementId, FontWeight, SharedString, div, px};
+use vt_protocol::{Protocol, Role};
 use vt_ui::Icon;
 use vt_ui::components::{Button, brand_mark, kbd, monogram};
 use vt_ui::theme::*;
 
 use crate::model::AppModel;
-use crate::model::editor::EditorKind;
 
 pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let theme = theme(cx).clone();
@@ -102,16 +101,16 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .child(
                             Button::new("welcome-new", "New connection")
                                 .icon(Icon::Plus)
-                                .on_click(cx.listener(|model, _, window, cx| {
-                                    model.open_editor(EditorKind::Master, None, window, cx);
+                                .on_click(cx.listener(|model, event: &ClickEvent, _, cx| {
+                                    model.open_new_menu(Role::Client, event.position(), cx);
                                 })),
                         )
                         .child(
                             Button::new("welcome-sim", "New simulator")
                                 .icon(Icon::Server)
                                 .ghost()
-                                .on_click(cx.listener(|model, _, window, cx| {
-                                    model.open_editor(EditorKind::Slave, None, window, cx);
+                                .on_click(cx.listener(|model, event: &ClickEvent, _, cx| {
+                                    model.open_new_menu(Role::Simulator, event.position(), cx);
                                 })),
                         ),
                 )
@@ -146,8 +145,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                 .text_color(theme.fg_dim)
                                 .child("PROTOCOLS"),
                         )
-                        .child(div().flex().gap(SPACE_4).children(Protocol::ALL.iter().map(
-                            |protocol| {
+                        .child(div().flex().flex_col().gap(SPACE_5).children(
+                            Protocol::ALL.iter().copied().map(|protocol| {
                                 div()
                                     .flex()
                                     .items_center()
@@ -157,6 +156,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                         div()
                                             .flex()
                                             .flex_col()
+                                            .flex_1()
+                                            .min_w_0()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::MEDIUM)
@@ -169,8 +170,27 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                                     .child(protocol.summary()),
                                             ),
                                     )
-                            },
-                        ))),
+                                    .child(
+                                        Button::new(
+                                            ElementId::Name(
+                                                format!("welcome-demo-{}", protocol.monogram())
+                                                    .into(),
+                                            ),
+                                            "Demo",
+                                        )
+                                        .icon(Icon::Play)
+                                        .ghost()
+                                        .compact()
+                                        .tooltip(format!(
+                                            "A simulated {} plant and a client, side by side",
+                                            protocol.name()
+                                        ))
+                                        .on_click(cx.listener(move |model, _, _, cx| {
+                                            model.start_demo(protocol, cx);
+                                        })),
+                                    )
+                            }),
+                        )),
                 )
                 .child(
                     div()

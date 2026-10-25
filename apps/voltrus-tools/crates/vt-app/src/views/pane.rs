@@ -232,8 +232,11 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
 
     // Only template simulators hold values; a plain register image has
     // nothing that drifts.
-    let holds =
-        matches!(&connection.spec, SessionSpec::ModbusSlave(spec) if spec.template.is_some());
+    let holds = match &connection.spec {
+        SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
+        SessionSpec::MqttBroker(spec) => spec.template.is_some(),
+        _ => false,
+    };
     let body: AnyElement = match live {
         Some(live) if !live.points.is_empty() || running => match view {
             PaneView::Points => {
@@ -246,10 +249,19 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         _ => empty_state(
             if simulator { Icon::Server } else { Icon::Plug },
             if simulator { "Simulator stopped" } else { "Not connected" },
-            if simulator {
-                "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
-            } else {
-                "Connect to start polling. Values, trends and traffic appear here as they arrive."
+            match (&connection.spec, simulator) {
+                (SessionSpec::MqttBroker(_), _) => {
+                    "Start it to run a broker on this computer. Any MQTT client can connect, including this app."
+                }
+                (SessionSpec::MqttClient(_), _) => {
+                    "Connect to subscribe. Topics become points as their messages arrive."
+                }
+                (_, true) => {
+                    "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
+                }
+                (_, false) => {
+                    "Connect to start polling. Values, trends and traffic appear here as they arrive."
+                }
             },
             vec![
                 Button::new(

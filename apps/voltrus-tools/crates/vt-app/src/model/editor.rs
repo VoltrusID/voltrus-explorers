@@ -3,15 +3,47 @@
 use gpui::{App, AppContext as _, Context, Entity, Subscription, Window};
 use vt_app_core::ConnectionId;
 use vt_app_core::forms::{BlockForm, FormError, MasterForm, SlaveForm, Transport, next_block};
-use vt_protocol::{Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, SessionSpec, WordOrder};
+use vt_protocol::{
+    Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, MqttBrokerSpec, MqttClientSpec, Protocol,
+    Role, SessionSpec, WordOrder,
+};
 use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 
 use super::AppModel;
+
+mod mqtt;
+
+pub use mqtt::{MqttFields, SubscriptionRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
     Master,
     Slave,
+    MqttClient,
+    MqttBroker,
+}
+
+impl EditorKind {
+    /// The editor that makes a new connection of `protocol` in `role`, if
+    /// the suite has one (not every protocol has a simulator).
+    pub fn for_protocol(protocol: Protocol, role: Role) -> Option<Self> {
+        Some(match (protocol, role) {
+            (Protocol::Modbus, Role::Client) => Self::Master,
+            (Protocol::Modbus, Role::Simulator) => Self::Slave,
+            (Protocol::Mqtt, Role::Client) => Self::MqttClient,
+            (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
+        })
+    }
+
+    /// The editor of a saved connection.
+    pub fn for_spec(spec: &SessionSpec) -> Self {
+        match spec {
+            SessionSpec::ModbusMaster(_) => Self::Master,
+            SessionSpec::ModbusSlave(_) => Self::Slave,
+            SessionSpec::MqttClient(_) => Self::MqttClient,
+            SessionSpec::MqttBroker(_) => Self::MqttBroker,
+        }
+    }
 }
 
 pub struct BlockRow {
@@ -49,6 +81,7 @@ pub struct Editor {
     pub confirm_delete: bool,
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
+    pub mqtt: MqttFields,
 }
 
 fn input(
@@ -76,6 +109,8 @@ impl Editor {
         cx: &mut Context<AppModel>,
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
+        let mut mqtt_client = MqttClientSpec::default();
+        let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
             Some((_, name, SessionSpec::ModbusMaster(spec))) => {
                 (name, spec, ModbusSlaveSpec::default())
@@ -83,10 +118,28 @@ impl Editor {
             Some((_, name, SessionSpec::ModbusSlave(spec))) => {
                 (name, ModbusMasterSpec::default(), spec)
             }
+            Some((_, name, SessionSpec::MqttClient(spec))) => {
+                mqtt_client = spec;
+                (
+                    name,
+                    ModbusMasterSpec::default(),
+                    ModbusSlaveSpec::default(),
+                )
+            }
+            Some((_, name, SessionSpec::MqttBroker(spec))) => {
+                mqtt_broker = spec;
+                (
+                    name,
+                    ModbusMasterSpec::default(),
+                    ModbusSlaveSpec::default(),
+                )
+            }
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
                     EditorKind::Slave => "Modbus simulator".to_owned(),
+                    EditorKind::MqttClient => "MQTT broker".to_owned(),
+                    EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -148,6 +201,7 @@ impl Editor {
             confirm_delete: false,
             error: None,
             subscriptions: Vec::new(),
+            mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -163,7 +217,10 @@ impl Editor {
             editor.timeout.clone(),
             editor.bind.clone(),
             editor.registers.clone(),
-        ] {
+        ]
+        .into_iter()
+        .chain(editor.mqtt.inputs())
+        {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -275,6 +332,16 @@ impl Editor {
                 .slave_form(cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::ModbusSlave(spec))),
+            EditorKind::MqttClient => self
+                .mqtt
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MqttClient(spec))),
+            EditorKind::MqttBroker => self
+                .mqtt
+                .broker_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MqttBroker(spec))),
         }
     }
 }

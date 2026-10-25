@@ -5,17 +5,19 @@ name: Voltrus Tools
 
 on:
   push:
-    branches: [main, tools-v2]
+    branches: [main, "tools-*"]
     paths:
       - apps/voltrus-tools/**
       - crates/mt-modbus/**
       - crates/mt-protocol/**
+      - crates/mt-mqtt/**
       - .github/workflows/voltrus-tools.yml
   pull_request:
     paths:
       - apps/voltrus-tools/**
       - crates/mt-modbus/**
       - crates/mt-protocol/**
+      - crates/mt-mqtt/**
       - .github/workflows/voltrus-tools.yml
   workflow_dispatch:
 

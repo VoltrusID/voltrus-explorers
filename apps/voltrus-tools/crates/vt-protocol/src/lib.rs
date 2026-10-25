@@ -7,12 +7,19 @@
 
 mod message;
 mod modbus;
+mod mqtt;
 mod value;
 
-pub use message::{Command, Event, EventKind, LogEntry, LogLevel, SessionId, SessionState, Stats};
+pub use message::{
+    Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
+};
 pub use modbus::{
     Area, DataType, ModbusLink, ModbusMasterSpec, ModbusSlaveSpec, Parity, RegisterBlock,
     SerialLink, WordOrder,
+};
+pub use mqtt::{
+    MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
+    SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -26,19 +33,24 @@ pub enum SessionSpec {
     ModbusMaster(ModbusMasterSpec),
     /// Serve a Modbus register image, optionally driven by a device template.
     ModbusSlave(ModbusSlaveSpec),
+    /// Subscribe to an MQTT broker's topics and publish to it.
+    MqttClient(MqttClientSpec),
+    /// Run an MQTT broker, optionally publishing a simulated device.
+    MqttBroker(MqttBrokerSpec),
 }
 
 impl SessionSpec {
     pub fn protocol(&self) -> Protocol {
         match self {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
+            Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
-            Self::ModbusMaster(_) => Role::Client,
-            Self::ModbusSlave(_) => Role::Simulator,
+            Self::ModbusMaster(_) | Self::MqttClient(_) => Role::Client,
+            Self::ModbusSlave(_) | Self::MqttBroker(_) => Role::Simulator,
         }
     }
 
@@ -49,6 +61,19 @@ impl SessionSpec {
             Self::ModbusSlave(spec) => {
                 format!("{}:{} · unit {}", spec.bind, spec.port, spec.unit_id)
             }
+            Self::MqttClient(spec) => format!(
+                "{}{} · {}",
+                if spec.tls { "mqtts://" } else { "mqtt://" },
+                host_port(&spec.host, spec.port),
+                match spec.subscriptions.as_slice() {
+                    [only] => only.filter.clone(),
+                    many => format!("{} subscriptions", many.len()),
+                }
+            ),
+            Self::MqttBroker(spec) => match &spec.template {
+                Some(_) => format!("{} · {}/#", host_port(&spec.bind, spec.port), spec.prefix),
+                None => host_port(&spec.bind, spec.port),
+            },
         }
     }
 
@@ -57,7 +82,18 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(spec) => spec.link.to_string(),
             Self::ModbusSlave(spec) => format!("{}:{}", spec.bind, spec.port),
+            Self::MqttClient(spec) => host_port(&spec.host, spec.port),
+            Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
         }
+    }
+}
+
+/// `host:port`, with an IPv6 address in brackets.
+fn host_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
     }
 }
 
@@ -66,14 +102,16 @@ impl SessionSpec {
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     Modbus,
+    Mqtt,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus];
+    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
+            Self::Mqtt => "MQTT",
         }
     }
 
@@ -81,12 +119,16 @@ impl Protocol {
     pub fn monogram(self) -> &'static str {
         match self {
             Self::Modbus => "MB",
+            Self::Mqtt => "MQ",
         }
     }
 
     pub fn summary(self) -> &'static str {
         match self {
             Self::Modbus => "TCP and RTU master, register blocks, writes, and a slave simulator",
+            Self::Mqtt => {
+                "Wildcard subscriptions, JSON and Sparkplug B values, publish, and a broker simulator"
+            }
         }
     }
 }

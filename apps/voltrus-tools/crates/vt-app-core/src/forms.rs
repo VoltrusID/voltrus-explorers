@@ -7,6 +7,10 @@ use vt_protocol::{
     WordOrder,
 };
 
+mod mqtt;
+
+pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormError {
@@ -29,6 +33,13 @@ pub enum Field {
     /// A block row: its index and which of its fields.
     Block(usize, BlockField),
     Blocks,
+    /// MQTT: a subscription row and which of its fields.
+    Subscription(usize, SubscriptionField),
+    Subscriptions,
+    KeepAlive,
+    Username,
+    Prefix,
+    PublishMs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

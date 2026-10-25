@@ -1,7 +1,7 @@
 //! Saved connections, grouped into devices and simulators.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, div, px};
+use gpui::{AnyElement, ClickEvent, Context, ElementId, FontWeight, SharedString, div, px};
 use vt_app_core::Connection;
 use vt_protocol::Role;
 use vt_ui::Icon;
@@ -102,7 +102,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
                     "Devices",
                     "new-device",
                     "New connection  ⌘N",
-                    EditorKind::Master,
+                    Role::Client,
                     cx,
                 ))
                 .children(device_rows)
@@ -114,7 +114,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
                     "Simulators",
                     "new-simulator",
                     "New simulator  ⇧⌘N",
-                    EditorKind::Slave,
+                    Role::Simulator,
                     cx,
                 ))
                 .children(simulator_rows)
@@ -208,7 +208,7 @@ fn section(
     title: &'static str,
     id: &'static str,
     tooltip: &'static str,
-    kind: EditorKind,
+    role: Role,
     cx: &mut Context<AppModel>,
 ) -> impl IntoElement {
     div()
@@ -223,8 +223,8 @@ fn section(
             IconButton::new(id, Icon::Plus)
                 .size(px(20.0))
                 .tooltip(tooltip)
-                .on_click(cx.listener(move |model, _, window, cx| {
-                    model.open_editor(kind, None, window, cx);
+                .on_click(cx.listener(move |model, event: &ClickEvent, _, cx| {
+                    model.open_new_menu(role, event.position(), cx);
                 })),
         )
 }

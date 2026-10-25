@@ -126,7 +126,7 @@ pub(crate) async fn run(
                         write_and_report(&client, &tags, point, value, out).await;
                     }
                     // Masters serve nothing, so there is nothing to hold.
-                    Some(Control::Lock { .. }) => {}
+                    Some(_) => {}
                 },
             }
         }
@@ -164,7 +164,7 @@ async fn until_closed(control: &mut mpsc::UnboundedReceiver<Control>, out: &Emit
             Some(Control::Write { point, .. }) => {
                 out.written(point, Err("Not connected".into()));
             }
-            Some(Control::Lock { .. }) => {}
+            Some(_) => {}
         }
     }
 }
@@ -186,7 +186,7 @@ async fn read_or_close(
                 None | Some(Control::Close) => return None,
                 Some(Control::Write { point, value }) => deferred.push((point, value)),
                 // Masters serve nothing, so there is nothing to hold.
-                Some(Control::Lock { .. }) => {}
+                Some(_) => {}
             },
         }
     }
