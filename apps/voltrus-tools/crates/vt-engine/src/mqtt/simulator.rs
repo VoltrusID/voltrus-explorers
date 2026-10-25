@@ -186,7 +186,6 @@ pub(crate) async fn run(
                     }
                     out.published(topic, Ok(()));
                 }
-                Some(_) => {}
             },
         }
     }

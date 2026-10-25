@@ -72,31 +72,31 @@ pub(crate) fn plain(payload: &[u8], path: Option<&[PathStep]>) -> Vec<Extracted>
     if let Some(sample) = scalar(trimmed) {
         return vec![Extracted::new(String::new(), sample, clip(trimmed))];
     }
-    if trimmed.starts_with(['{', '[']) {
-        if let Ok(document) = serde_json::from_str::<Value>(trimmed) {
-            let shown = clip(&serde_json::to_string_pretty(&document).unwrap_or_default());
-            return match path {
-                Some(path) => match walk(&document, path).and_then(json_sample) {
-                    Some(sample) => vec![Extracted::new(path_label(path), sample, shown)],
-                    None => Vec::new(),
-                },
-                None => {
-                    let mut leaves = Vec::new();
-                    flatten(&document, String::new(), 0, &mut leaves);
-                    if leaves.is_empty() {
-                        return vec![Extracted::new(
-                            String::new(),
-                            Sample::Text(one_line(trimmed)),
-                            shown,
-                        )];
-                    }
-                    leaves
-                        .into_iter()
-                        .map(|(path, sample)| Extracted::new(path, sample, shown.clone()))
-                        .collect()
+    if trimmed.starts_with(['{', '['])
+        && let Ok(document) = serde_json::from_str::<Value>(trimmed)
+    {
+        let shown = clip(&serde_json::to_string_pretty(&document).unwrap_or_default());
+        return match path {
+            Some(path) => match walk(&document, path).and_then(json_sample) {
+                Some(sample) => vec![Extracted::new(path_label(path), sample, shown)],
+                None => Vec::new(),
+            },
+            None => {
+                let mut leaves = Vec::new();
+                flatten(&document, String::new(), 0, &mut leaves);
+                if leaves.is_empty() {
+                    return vec![Extracted::new(
+                        String::new(),
+                        Sample::Text(one_line(trimmed)),
+                        shown,
+                    )];
                 }
-            };
-        }
+                leaves
+                    .into_iter()
+                    .map(|(path, sample)| Extracted::new(path, sample, shown.clone()))
+                    .collect()
+            }
+        };
     }
     vec![Extracted::new(
         String::new(),

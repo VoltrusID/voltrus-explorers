@@ -93,7 +93,6 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        attempt = 0;
         out.state(SessionState::Connected);
         out.log(LogLevel::Info, format!("Connected to {url} as {client_id}"));
         traffic.push(frame(
