@@ -1001,7 +1001,9 @@ mod tests {
         assert_eq!(clamp_to_char_boundary("aé", 3), 3);
         assert_eq!(clamp_to_char_boundary("aé", 10), 3);
         assert_eq!(clamp_to_char_boundary("", 4), 0);
-        assert_eq!(clamp_range("aé", 10..2), 1..3);
+        // A backwards range (IME ranges can arrive reversed) is reordered.
+        let (start, end) = (10, 2);
+        assert_eq!(clamp_range("aé", start..end), 1..3);
     }
 
     #[test]
@@ -1015,7 +1017,8 @@ mod tests {
         assert_eq!(utf16_to_utf8(text, 99), 5);
         assert_eq!(utf8_to_utf16(text, 4), 2);
         assert_eq!(utf8_to_utf16(text, 5), 3);
-        assert_eq!(utf16_range_to_utf8(text, &(3..0)), 0..5);
+        let (start, end) = (3, 0);
+        assert_eq!(utf16_range_to_utf8(text, &(start..end)), 0..5);
         assert_eq!(utf8_range_to_utf16(text, &(0..5)), 0..3);
     }
 

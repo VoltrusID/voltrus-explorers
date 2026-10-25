@@ -316,11 +316,9 @@ impl AppModel {
             .borrow_mut()
             .retain(|pane, _| open.contains(pane));
         for pane in open {
-            if !self.chrome.panes.contains_key(&pane) {
-                let view =
-                    CachedView::new(move |model, _, cx| views::pane::render(model, pane, cx), cx);
-                self.chrome.panes.insert(pane, view);
-            }
+            self.chrome.panes.entry(pane).or_insert_with(|| {
+                CachedView::new(move |model, _, cx| views::pane::render(model, pane, cx), cx)
+            });
         }
     }
 

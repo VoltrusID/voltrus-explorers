@@ -302,6 +302,16 @@ fn at_end(offset: f32, max: f32, row: f32) -> bool {
     max <= slack || -offset >= max - slack
 }
 
+/// The colour of a session state: live, trying, failed or idle.
+pub(crate) fn state_color(state: &vt_protocol::SessionState, theme: &Theme) -> gpui::Hsla {
+    use vt_protocol::SessionState;
+    match state {
+        SessionState::Connected | SessionState::Listening { .. } => theme.success,
+        SessionState::Connecting | SessionState::Reconnecting { .. } => theme.warning,
+        SessionState::Closed { error: Some(_) } => theme.danger,
+        SessionState::Closed { error: None } => theme.fg_dim,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::at_end;
@@ -316,16 +326,5 @@ mod tests {
         // Scrolled back to read: stay put.
         assert!(!at_end(-100.0, 480.0, 24.0));
         assert!(!at_end(0.0, 480.0, 24.0));
-    }
-}
-
-/// The colour of a session state: live, trying, failed or idle.
-pub(crate) fn state_color(state: &vt_protocol::SessionState, theme: &Theme) -> gpui::Hsla {
-    use vt_protocol::SessionState;
-    match state {
-        SessionState::Connected | SessionState::Listening { .. } => theme.success,
-        SessionState::Connecting | SessionState::Reconnecting { .. } => theme.warning,
-        SessionState::Closed { error: Some(_) } => theme.danger,
-        SessionState::Closed { error: None } => theme.fg_dim,
     }
 }
