@@ -7,6 +7,10 @@ use vt_protocol::{
     WordOrder,
 };
 
+mod bacnet;
+
+pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
+
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormError {
@@ -29,6 +33,11 @@ pub enum Field {
     /// A block row: its index and which of its fields.
     Block(usize, BlockField),
     Blocks,
+    /// BACnet: the device object instance, the client's local UDP port and
+    /// its command priority.
+    DeviceInstance,
+    LocalPort,
+    Priority,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

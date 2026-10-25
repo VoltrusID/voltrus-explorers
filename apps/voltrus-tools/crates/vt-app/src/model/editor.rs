@@ -3,15 +3,32 @@
 use gpui::{App, AppContext as _, Context, Entity, Subscription, Window};
 use vt_app_core::ConnectionId;
 use vt_app_core::forms::{BlockForm, FormError, MasterForm, SlaveForm, Transport, next_block};
-use vt_protocol::{Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, SessionSpec, WordOrder};
+use vt_protocol::{
+    Area, DataType, ModbusMasterSpec, ModbusSlaveSpec, Protocol, Role, SessionSpec, WordOrder,
+};
 use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 
 use super::AppModel;
+use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
     Master,
     Slave,
+    BacnetClient,
+    BacnetDevice,
+}
+
+impl EditorKind {
+    /// The editor that makes a connection of `protocol` in `role`.
+    pub fn for_protocol(protocol: Protocol, role: Role) -> Option<Self> {
+        Some(match (protocol, role) {
+            (Protocol::Modbus, Role::Client) => Self::Master,
+            (Protocol::Modbus, Role::Simulator) => Self::Slave,
+            (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
+            (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+        })
+    }
 }
 
 pub struct BlockRow {
@@ -47,6 +64,7 @@ pub struct Editor {
     pub add_client: bool,
     /// The first Delete press arms it; the second deletes.
     pub confirm_delete: bool,
+    pub bacnet: BacnetFields,
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
 }
@@ -76,6 +94,7 @@ impl Editor {
         cx: &mut Context<AppModel>,
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
+        let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let (name, master, slave) = match editing {
             Some((_, name, SessionSpec::ModbusMaster(spec))) => {
                 (name, spec, ModbusSlaveSpec::default())
@@ -83,10 +102,17 @@ impl Editor {
             Some((_, name, SessionSpec::ModbusSlave(spec))) => {
                 (name, ModbusMasterSpec::default(), spec)
             }
+            Some((_, name, SessionSpec::BacnetClient(_) | SessionSpec::BacnetDevice(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
                     EditorKind::Slave => "Modbus simulator".to_owned(),
+                    EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -146,6 +172,7 @@ impl Editor {
             template: slave.template,
             add_client: id.is_none(),
             confirm_delete: false,
+            bacnet,
             error: None,
             subscriptions: Vec::new(),
         };
@@ -164,6 +191,9 @@ impl Editor {
             editor.bind.clone(),
             editor.registers.clone(),
         ] {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.bacnet.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -275,6 +305,16 @@ impl Editor {
                 .slave_form(cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::ModbusSlave(spec))),
+            EditorKind::BacnetClient => self
+                .bacnet
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::BacnetClient(spec))),
+            EditorKind::BacnetDevice => self
+                .bacnet
+                .device_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
         }
     }
 }

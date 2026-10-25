@@ -13,7 +13,7 @@
 //! encoding is hand-rolled in `wire`; the object model lives in `props`,
 //! request handling in `service` and COV in `cov`.
 
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -91,6 +91,10 @@ pub struct SimSnapPoint {
     pub min: Option<f64>,
     #[serde(default)]
     pub max: Option<f64>,
+    /// A command, an Out_Of_Service write or a UI value pins the present value:
+    /// the simulation leaves it alone until it is relinquished or released.
+    #[serde(default)]
+    pub held: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +199,16 @@ impl SimObj {
             self.forced = true;
         }
     }
+
+    /// Undo [`Self::ui_set`]: drop the forced value and the priority-16 command,
+    /// so the simulation (or a client's command) drives the point again.
+    fn ui_release(&mut self) {
+        self.forced = false;
+        if self.commandable {
+            self.slots[15] = None;
+            self.resolve();
+        }
+    }
 }
 
 /// Control handle returned by [`start`]; cheap to clone (Arc). Used to push
@@ -215,10 +229,13 @@ struct Inner {
 enum Cmd {
     Set { key: String, val: f64 },
     SetBool { key: String, active: bool },
+    Release { key: String },
 }
 
 type TickFn = Box<dyn Fn(SimSnapshot) + Send>;
 type WriteFn = Box<dyn Fn(String, f64) + Send>;
+/// Sees every datagram the device receives (`true`) or sends (`false`), with the peer's address.
+pub type FrameFn = Box<dyn Fn(bool, SocketAddr, &[u8]) + Send>;
 
 /// Validate the point definitions and build the object table.
 fn build_objects(points: &[SimPointDef]) -> Result<Vec<SimObj>, String> {
@@ -296,6 +313,21 @@ pub fn start(
     on_tick: TickFn,
     on_write: WriteFn,
 ) -> Result<SimDevice, String> {
+    let no_traffic: FrameFn = Box::new(|_: bool, _: SocketAddr, _: &[u8]| {});
+    start_with_traffic(device_id, requested_port, vendor_id, points, on_tick, on_write, no_traffic)
+}
+
+/// [`start`], also handing every received and sent datagram to `on_frame`
+/// (for a traffic monitor).
+pub fn start_with_traffic(
+    device_id: u32,
+    requested_port: u16,
+    vendor_id: u16,
+    points: Vec<SimPointDef>,
+    on_tick: TickFn,
+    on_write: WriteFn,
+    on_frame: FrameFn,
+) -> Result<SimDevice, String> {
     let objects = build_objects(&points)?;
     let socket = UdpSocket::bind(("0.0.0.0", requested_port))
         .or_else(|_| UdpSocket::bind("0.0.0.0:0"))
@@ -322,7 +354,7 @@ pub fn start(
     std::thread::Builder::new()
         .name("bacnet-sim-device".into())
         .spawn(move || {
-            run_loop(inner_loop, socket, rx, dev, objects, on_tick, on_write);
+            run_loop(inner_loop, socket, rx, dev, objects, on_tick, on_write, on_frame);
         })
         .map_err(|e| format!("spawn device thread: {e}"))?;
 
@@ -363,10 +395,20 @@ impl SimDevice {
             }
         }
     }
+    /// Hand a point back to the simulation: undo a value set from the UI.
+    /// Commands a client wrote at other priorities stay in force.
+    pub fn release(&self, key: &str) {
+        if let Ok(g) = self.inner.cmd_tx.lock() {
+            if let Some(tx) = g.as_ref() {
+                let _ = tx.send(Cmd::Release { key: key.to_string() });
+            }
+        }
+    }
 }
 
 // ── The device loop ──
 
+#[allow(clippy::too_many_arguments)]
 fn run_loop(
     inner: Arc<Inner>,
     socket: UdpSocket,
@@ -375,6 +417,7 @@ fn run_loop(
     mut objects: Vec<SimObj>,
     on_tick: TickFn,
     on_write: WriteFn,
+    on_frame: FrameFn,
 ) {
     let mut cov = CovState::new();
     let start = Instant::now();
@@ -403,6 +446,13 @@ fn run_loop(
                         publish(&inner, &objects, &on_tick);
                     }
                 }
+                Ok(Cmd::Release { key }) => {
+                    if let Some(o) = objects.iter_mut().find(|o| o.key == key) {
+                        o.ui_release();
+                        (on_write)(key.clone(), o.current);
+                        publish(&inner, &objects, &on_tick);
+                    }
+                }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     inner.running.store(false, Ordering::Relaxed);
@@ -421,6 +471,7 @@ fn run_loop(
         // Receive a request (non-blocking via the 250ms read timeout).
         match socket.recv_from(&mut buf) {
             Ok((len, src)) => {
+                on_frame(true, src, &buf[..len]);
                 if let Some(reply) = service::handle_packet(
                     &buf[..len],
                     src,
@@ -430,8 +481,9 @@ fn run_loop(
                     Instant::now(),
                     &on_write,
                 ) {
-                    if let Err(e) = socket.send_to(&reply.frame, reply.to) {
-                        eprintln!("sim: reply to {} failed: {e}", reply.to);
+                    match socket.send_to(&reply.frame, reply.to) {
+                        Ok(_) => on_frame(false, reply.to, &reply.frame),
+                        Err(e) => eprintln!("sim: reply to {} failed: {e}", reply.to),
                     }
                 }
             }
@@ -444,8 +496,9 @@ fn run_loop(
         // and retransmit unacknowledged confirmed notifications.
         cov.check(&objects, dev.id, Instant::now());
         for reply in cov.outbox.drain(..) {
-            if let Err(e) = socket.send_to(&reply.frame, reply.to) {
-                eprintln!("sim: COV notification to {} failed: {e}", reply.to);
+            match socket.send_to(&reply.frame, reply.to) {
+                Ok(_) => on_frame(false, reply.to, &reply.frame),
+                Err(e) => eprintln!("sim: COV notification to {} failed: {e}", reply.to),
             }
         }
     }
@@ -477,6 +530,7 @@ fn build_snapshot(device_id: u32, port: u16, running: bool, objects: &[SimObj]) 
             decimals: o.decimals,
             min: o.min,
             max: o.max,
+            held: o.frozen(),
         })
         .collect();
     SimSnapshot { device_id, port, running, points }

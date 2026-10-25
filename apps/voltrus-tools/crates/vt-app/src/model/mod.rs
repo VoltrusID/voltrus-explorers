@@ -4,6 +4,7 @@
 //! As in muxy, views are plain functions over `&AppModel`; this file holds
 //! every state transition.
 
+pub mod bacnet;
 pub mod editor;
 pub mod live;
 pub mod palette;
@@ -222,6 +223,17 @@ impl AppModel {
     // ── Engine ────────────────────────────────────────────────────────────
 
     fn apply_event(&mut self, event: Event) {
+        // The device picker's Who-Is runs under a request id, not a session.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::BacnetDevices(found),
+            } => {
+                self.bacnet_devices_found(session, found);
+                return;
+            }
+            event => event,
+        };
         let Some(connection) = self.sessions.get(&event.session).copied() else {
             return;
         };
@@ -478,7 +490,7 @@ impl AppModel {
             .iter()
             .filter_map(|connection| match &connection.spec {
                 SessionSpec::ModbusSlave(spec) => Some(spec.port),
-                SessionSpec::ModbusMaster(_) => None,
+                _ => None,
             })
             .collect();
         (5020..5100)
@@ -650,11 +662,17 @@ impl AppModel {
                 .map(|connection| (id, connection.name.clone(), connection.spec.clone()))
         });
         let kind = match &existing {
-            Some((_, _, SessionSpec::ModbusSlave(_))) => EditorKind::Slave,
-            Some((_, _, SessionSpec::ModbusMaster(_))) => EditorKind::Master,
+            Some((_, _, spec)) => {
+                EditorKind::for_protocol(spec.protocol(), spec.role()).unwrap_or(kind)
+            }
             None => kind,
         };
+        let discover = kind == EditorKind::BacnetClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
+        // A new BACnet client starts by looking for devices.
+        if discover {
+            self.discover_bacnet(cx);
+        }
         cx.notify();
     }
 
@@ -710,6 +728,12 @@ impl AppModel {
             self.workspace
                 .split(client, Axis::Horizontal, PaneView::Points);
             self.connect(client, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::BacnetDevice(device) = &spec
+        {
+            self.add_bacnet_client(&name, device, cx);
         }
         self.workspace.focus(
             self.workspace
@@ -824,6 +848,15 @@ impl AppModel {
             Command::NewSlave => self.open_editor(EditorKind::Slave, None, window, cx),
             Command::QuickStart => {
                 self.start_demo_plant(cx);
+            }
+            Command::NewBacnetClient => {
+                self.open_editor(EditorKind::BacnetClient, None, window, cx)
+            }
+            Command::NewBacnetDevice => {
+                self.open_editor(EditorKind::BacnetDevice, None, window, cx)
+            }
+            Command::BacnetDemo => {
+                self.start_bacnet_demo(cx);
             }
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),

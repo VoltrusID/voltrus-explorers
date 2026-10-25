@@ -2,7 +2,7 @@
 
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, px};
-use vt_protocol::Protocol;
+use vt_protocol::{Protocol, Role};
 use vt_ui::Icon;
 use vt_ui::components::{Button, brand_mark, kbd, monogram};
 use vt_ui::theme::*;
@@ -148,15 +148,31 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         )
                         .child(div().flex().gap(SPACE_4).children(Protocol::ALL.iter().map(
                             |protocol| {
+                                let protocol = *protocol;
                                 div()
+                                    .id(SharedString::from(format!("welcome-{}", protocol.name())))
                                     .flex()
+                                    .flex_1()
+                                    .min_w_0()
                                     .items_center()
                                     .gap(SPACE_4)
+                                    .p(SPACE_4)
+                                    .rounded(RADIUS_MD)
+                                    .cursor_pointer()
+                                    .hover(|style| style.bg(theme.hover))
+                                    .on_click(cx.listener(move |model, _, window, cx| {
+                                        if let Some(kind) =
+                                            EditorKind::for_protocol(protocol, Role::Client)
+                                        {
+                                            model.open_editor(kind, None, window, cx);
+                                        }
+                                    }))
                                     .child(monogram(protocol.monogram(), theme.accent, px(26.0)))
                                     .child(
                                         div()
                                             .flex()
                                             .flex_col()
+                                            .min_w_0()
                                             .child(
                                                 div()
                                                     .font_weight(FontWeight::MEDIUM)

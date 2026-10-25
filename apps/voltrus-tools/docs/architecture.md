@@ -83,11 +83,18 @@ running when the window closes and a phone can attach.
 1. Add a `SessionSpec` variant and its spec types in `vt-protocol`.
 2. Add a session module in `vt-engine` that turns the protocol crate's API into
    `Points`, `Values`, `Traffic`, `Log` and `Written` events.
-3. Add a form to `vt-app-core::forms` and its editor in `vt-app`.
+3. Add a form to `vt-app-core::forms` (a submodule per protocol, e.g.
+   `forms/bacnet.rs`) and its editor in `vt-app` (`model/bacnet.rs` for the
+   fields, `views/editor_bacnet.rs` for the sheet).
 
 The points, trend, traffic and log views work for any protocol that reports
 points; protocol-specific views (an OPC UA browse tree, an MQTT topic tree)
 go next to them in `vt-app/src/views`.
+
+Work that belongs to no session is still a message: the BACnet device picker
+sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
+the engine answers with one `EventKind::BacnetDevices` under that id, which
+the app hands to the open editor instead of a session.
 
 ## Design system
 

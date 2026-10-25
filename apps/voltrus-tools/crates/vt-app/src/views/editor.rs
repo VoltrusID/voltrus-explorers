@@ -16,7 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 /// A click handler that changes the open editor.
-fn on_edit(
+pub(super) fn on_edit(
     cx: &Context<AppModel>,
     change: impl Fn(&mut Editor) + 'static,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -40,19 +40,31 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Master, true) => "Edit Modbus connection",
         (EditorKind::Slave, false) => "New Modbus simulator",
         (EditorKind::Slave, true) => "Edit Modbus simulator",
+        (EditorKind::BacnetClient, false) => "New BACnet connection",
+        (EditorKind::BacnetClient, true) => "Edit BACnet connection",
+        (EditorKind::BacnetDevice, false) => "New BACnet device simulator",
+        (EditorKind::BacnetDevice, true) => "Edit BACnet device simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
         EditorKind::Slave => "Serve a device's registers on this computer for masters to poll.",
+        EditorKind::BacnetClient => {
+            "Find a device with Who-Is, read its objects, subscribe to changes and command them."
+        }
+        EditorKind::BacnetDevice => {
+            "Play a BACnet/IP device on this computer for clients to read and command."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
         EditorKind::Slave => slave(editor, cx),
+        EditorKind::BacnetClient => super::editor_bacnet::client(editor, cx),
+        EditorKind::BacnetDevice => super::editor_bacnet::device(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
-        (EditorKind::Master, false) => "Save and connect",
-        (EditorKind::Slave, false) => "Start simulator",
+        (EditorKind::Master | EditorKind::BacnetClient, false) => "Save and connect",
+        (EditorKind::Slave | EditorKind::BacnetDevice, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 
@@ -206,7 +218,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         .into_any_element()
 }
 
-fn row() -> gpui::Div {
+pub(super) fn row() -> gpui::Div {
     div().flex().gap(SPACE_6).items_end()
 }
 

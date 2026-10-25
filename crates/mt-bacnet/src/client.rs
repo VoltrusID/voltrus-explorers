@@ -13,7 +13,7 @@ use bacnet_rs::service::{
     ReadPropertyMultipleRequest, ReadPropertyRequest, WritePropertyRequest,
 };
 
-use crate::discovery::{decode_read_property_ack, decode_rpm_ack};
+use crate::discovery::{decode_read_property_ack, decode_rpm_ack, status_flags_text};
 use crate::helpers::{object_type_from_str, property_id_from_str};
 use crate::transport::{
     confirmed_request, confirmed_request_detailed, error_class_name, error_code_name, RequestFailure,
@@ -257,21 +257,18 @@ impl BacnetClient {
         .await
         .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))?
     }
-}
 
-impl ProtocolClient for BacnetClient {
-    type Config = BacnetConfig;
-    type Tag = BacnetObject;
-    type Value = BacnetValue;
-
-    async fn connect(config: Self::Config) -> Result<Self, ProtocolError> {
+    /// [`ProtocolClient::connect`] from a UDP socket bound to `local`: a chosen
+    /// interface (`192.168.1.20:0`) or port (`0.0.0.0:47808`, where devices
+    /// that answer to the BACnet port reach the client).
+    pub async fn connect_from(config: BacnetConfig, local: SocketAddr) -> Result<Self, ProtocolError> {
         let addr = format!("{}:{}", config.ip, config.port);
         let socket_addr: SocketAddr = addr
             .parse()
             .map_err(|e| ProtocolError::InvalidConfig(format!("Invalid address '{addr}': {e}")))?;
 
         let socket = tokio::task::spawn_blocking(move || {
-            std::net::UdpSocket::bind("0.0.0.0:0")
+            std::net::UdpSocket::bind(local)
                 .map_err(|e| ProtocolError::ConnectionFailed(format!("Socket bind: {e}")))
         })
         .await
@@ -327,11 +324,44 @@ impl ProtocolClient for BacnetClient {
         })
     }
 
-    async fn read(&self, tags: &[Self::Tag]) -> Result<Vec<Self::Value>, ProtocolError> {
-        if tags.is_empty() {
-            return Ok(Vec::new());
-        }
+    /// The local address the client's socket is bound to.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.socket.lock().ok().and_then(|socket| socket.local_addr().ok())
+    }
 
+    /// Whether reads still go out as ReadPropertyMultiple; `false` once the
+    /// device rejected the service and the client reads one ReadProperty per
+    /// property.
+    pub fn reads_multiple(&self) -> bool {
+        !self.rpm_unsupported.load(Ordering::Relaxed)
+    }
+
+    /// Read every tag and keep each property's own outcome: a device that
+    /// answers one property with an Error still yields the others' values.
+    /// `statusFlags` comes back as the named flags (`normal`, or e.g.
+    /// `in-alarm, out-of-service`), as COV notifications report them. `Err`
+    /// only for a request that failed as a whole (timeout, unresolvable tag).
+    pub async fn read_each(&self, tags: &[BacnetObject]) -> Result<Vec<Result<BacnetValue, String>>, ProtocolError> {
+        let (resolved, by_key) = self.fetch(tags).await?;
+        Ok(resolved
+            .iter()
+            .map(|&(object, property)| match by_key.get(&property_key(object, property)) {
+                Some(PropertyResultValue::Value(values)) => Ok(match (property, values.as_slice()) {
+                    (PropertyIdentifier::StatusFlags, [PropertyValue::BitString(bits)]) => {
+                        BacnetValue::String(status_flags_text(bits))
+                    }
+                    _ => property_value_to_bacnet(values),
+                }),
+                Some(PropertyResultValue::Error(class, code)) => {
+                    Err(format!("{} / {}", error_class_name(*class), error_code_name(*code)))
+                }
+                None => Err("missing from device response".into()),
+            })
+            .collect())
+    }
+
+    /// Resolve `tags` and read them, keyed by what the device reported.
+    async fn fetch(&self, tags: &[BacnetObject]) -> Result<(Vec<(ObjectIdentifier, PropertyIdentifier)>, HashMap<PropertyKey, PropertyResultValue>), ProtocolError> {
         // Resolve every tag up front; a tag that cannot be resolved is an error,
         // not a silently missing value (and never a different property).
         let mut resolved: Vec<(ObjectIdentifier, PropertyIdentifier)> = Vec::with_capacity(tags.len());
@@ -346,6 +376,9 @@ impl ProtocolClient for BacnetClient {
                 ProtocolError::InvalidConfig(format!("Tag '{}': unknown property '{}'", t.name, t.property))
             })?;
             resolved.push((ObjectIdentifier::new(ot, t.object_instance), property));
+        }
+        if resolved.is_empty() {
+            return Ok((resolved, HashMap::new()));
         }
 
         let addr = self.addr;
@@ -364,6 +397,25 @@ impl ProtocolClient for BacnetClient {
         })
         .await
         .map_err(|e| ProtocolError::Other(format!("Task join: {e}")))??;
+        Ok((resolved, by_key))
+    }
+}
+
+impl ProtocolClient for BacnetClient {
+    type Config = BacnetConfig;
+    type Tag = BacnetObject;
+    type Value = BacnetValue;
+
+    async fn connect(config: Self::Config) -> Result<Self, ProtocolError> {
+        Self::connect_from(config, SocketAddr::from(([0, 0, 0, 0], 0))).await
+    }
+
+    async fn read(&self, tags: &[Self::Tag]) -> Result<Vec<Self::Value>, ProtocolError> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (resolved, by_key) = self.fetch(tags).await?;
 
         let mut values = Vec::with_capacity(tags.len());
         let mut failures: Vec<String> = Vec::new();

@@ -1,12 +1,18 @@
-//! Built-in device templates for the Modbus simulator: the same register maps
-//! the Modbus Poll app ships (converted from its `templates.ts`).
+//! Built-in device templates: the Modbus simulator's register maps (the same
+//! ones the Modbus Poll app ships, converted from its `templates.ts`) and the
+//! BACnet device simulator's plants (from the BACnet Explorer app).
 
 use std::sync::LazyLock;
 
+use mt_bacnet::SimPointDef;
 use mt_modbus::SimDeviceProfile;
-use vt_protocol::{Area, DataType, ModbusLink, ModbusMasterSpec, RegisterBlock, WordOrder};
+use serde::Deserialize;
+use vt_protocol::{
+    Area, BacnetClientSpec, DataType, ModbusLink, ModbusMasterSpec, RegisterBlock, WordOrder,
+};
 
 const MODBUS: &str = include_str!("../templates/modbus.json");
+const BACNET: &str = include_str!("../templates/bacnet.json");
 
 static TEMPLATES: LazyLock<Vec<SimDeviceProfile>> =
     LazyLock::new(|| match serde_json::from_str(MODBUS) {
@@ -24,6 +30,45 @@ pub fn modbus() -> &'static [SimDeviceProfile] {
 
 pub fn find_modbus(id: &str) -> Option<&'static SimDeviceProfile> {
     modbus().iter().find(|profile| profile.id == id)
+}
+
+/// A plant the BACnet device simulator plays: its objects and how their
+/// values move.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BacnetTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub points: Vec<SimPointDef>,
+}
+
+static BACNET_TEMPLATES: LazyLock<Vec<BacnetTemplate>> =
+    LazyLock::new(|| match serde_json::from_str(BACNET) {
+        Ok(templates) => templates,
+        Err(error) => {
+            tracing::error!("built-in BACnet templates are invalid: {error}");
+            Vec::new()
+        }
+    });
+
+/// Every built-in BACnet plant.
+pub fn bacnet() -> &'static [BacnetTemplate] {
+    &BACNET_TEMPLATES
+}
+
+pub fn find_bacnet(id: &str) -> Option<&'static BacnetTemplate> {
+    bacnet().iter().find(|template| template.id == id)
+}
+
+/// A client of a simulated BACnet device on this computer, subscribing to
+/// its changes.
+pub fn bacnet_client_for(host: &str, port: u16, device_instance: u32) -> BacnetClientSpec {
+    BacnetClientSpec {
+        host: host.into(),
+        port,
+        device_instance: Some(device_instance),
+        ..BacnetClientSpec::default()
+    }
 }
 
 /// Registers a template occupies after its base address: measurements are
@@ -111,6 +156,31 @@ mod tests {
                 assert_eq!(block.unit, register.unit, "{}", profile.id);
                 assert!(!block.name.contains('_'), "{}", block.name);
             }
+        }
+    }
+
+    #[test]
+    fn every_bacnet_template_is_a_device_the_simulator_accepts() {
+        let templates = bacnet();
+        assert!(templates.len() >= 3, "templates: {}", templates.len());
+        for template in templates {
+            // The simulator validates the objects (types, binary flags,
+            // writable inputs, duplicates) before it binds.
+            let device = mt_bacnet::device::start(
+                1,
+                0,
+                0,
+                template.points.clone(),
+                Box::new(|_| {}),
+                Box::new(|_, _| {}),
+            )
+            .unwrap_or_else(|error| panic!("{}: {error}", template.id));
+            device.stop();
+            assert!(
+                template.points.iter().any(|point| point.writable),
+                "{} has nothing to command",
+                template.id
+            );
         }
     }
 }

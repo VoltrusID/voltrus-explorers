@@ -171,6 +171,8 @@ impl Live {
                     self.locked.remove(&point);
                 }
             }
+            // The device picker's answer: the editor takes it, not a session.
+            EventKind::BacnetDevices(_) => {}
         }
     }
 

@@ -65,7 +65,7 @@ pub use cov::{
     renewal_delay, subscribe_cov_blocking, unsubscribe_cov_blocking, CovNotification, CovPacket,
     CovPropertyValue, CovSubscriptionInfo,
 };
-pub use discovery::{browse_objects, discover_devices, inspect_device, read_object_properties};
+pub use discovery::{browse_objects, discover_devices, inspect_device, read_object_properties, units_label, who_is};
 pub use schedule::{
     read_schedule_blocking, DaySchedule, ScheduleData, ScheduleEntry,
 };

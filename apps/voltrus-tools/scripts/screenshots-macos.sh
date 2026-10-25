@@ -13,7 +13,8 @@ helper="$(mktemp -d)/window-id"
 swiftc -O -o "$helper" "$here/window-id.swift"
 
 status=0
-for scenario in welcome points trend traffic simulator editor palette light; do
+for scenario in welcome points trend traffic simulator editor palette light \
+  bacnet-points bacnet-trend bacnet-traffic bacnet-discover bacnet-command; do
   "$binary" --demo "$scenario" &
   pid=$!
   id=""
@@ -27,7 +28,10 @@ for scenario in welcome points trend traffic simulator editor palette light; do
   else
     # Let sessions connect and data flow: the trend scenario shows a 30 s
     # window, so it waits until the lines span the whole chart.
-    if [ "$scenario" = trend ]; then sleep 33; else sleep 6; fi
+    case "$scenario" in
+      *trend) sleep 33 ;;
+      *) sleep 6 ;;
+    esac
     screencapture -o -x -l "$id" "$out/$scenario.png"
     echo "captured $scenario ($(sips -g pixelWidth -g pixelHeight "$out/$scenario.png" | tail -2 | awk '{print $2}' | paste -sd x -))"
   fi

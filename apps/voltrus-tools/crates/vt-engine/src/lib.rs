@@ -5,6 +5,7 @@
 //! it through its control channel, so a slow device never blocks the app or
 //! another session.
 
+mod bacnet;
 mod emit;
 mod modbus;
 pub mod templates;
@@ -62,6 +63,10 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::ModbusSlave(_) => {
             u64::try_from(modbus::slave::PUBLISH_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::BacnetClient(client) => client.poll_ms,
+        SessionSpec::BacnetDevice(_) => {
+            u64::try_from(bacnet::device::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -70,6 +75,7 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
 pub(crate) enum Control {
     Write { point: u32, value: f64 },
     Lock { point: u32, locked: bool },
+    Relinquish { point: u32 },
     Close,
 }
 
@@ -80,7 +86,7 @@ const CLOSE_WAIT: Duration = Duration::from_secs(3);
 struct Session {
     control: mpsc::UnboundedSender<Control>,
     task: JoinHandle<()>,
-    /// The TCP port a simulator listens on.
+    /// The port a simulator listens on (TCP for Modbus, UDP for BACnet).
     port: Option<u16>,
 }
 
@@ -128,7 +134,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 }
                 let port = match &spec {
                     SessionSpec::ModbusSlave(slave) => Some(slave.port),
-                    SessionSpec::ModbusMaster(_) => None,
+                    SessionSpec::BacnetDevice(device) => Some(device.port),
+                    SessionSpec::ModbusMaster(_) | SessionSpec::BacnetClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -166,6 +173,21 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 point,
                 locked,
             } => forward(&sessions, session, Control::Lock { point, locked }),
+            Command::Relinquish { session, point } => {
+                forward(&sessions, session, Control::Relinquish { point });
+            }
+            Command::DiscoverBacnet { session, spec } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = bacnet::discover(spec).await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::BacnetDevices(found),
+                        })
+                        .await;
+                });
+            }
             Command::Shutdown => break,
         }
     }
@@ -184,5 +206,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
     match spec {
         SessionSpec::ModbusMaster(spec) => modbus::master::run(spec, control, &out).await,
         SessionSpec::ModbusSlave(spec) => modbus::slave::run(spec, control, &out).await,
+        SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
+        SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
     }
 }

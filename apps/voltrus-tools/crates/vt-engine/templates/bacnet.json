@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ahu",
+    "name": "AHU-1",
+    "description": "Rooftop air handler: temperatures, fan, damper, filter and operating mode",
+    "points": [
+      { "key": "supply_temp", "label": "Supply Air Temp", "object_type": "analogInput", "object_instance": 1, "base": 22.5, "variance": 0.4, "noise": 0.1, "period": 30000, "min": 18, "max": 28, "decimals": 1, "unit": "°C" },
+      { "key": "return_temp", "label": "Return Air Temp", "object_type": "analogInput", "object_instance": 2, "base": 24.1, "variance": 0.3, "noise": 0.1, "period": 35000, "min": 20, "max": 28, "decimals": 1, "unit": "°C" },
+      { "key": "outdoor_temp", "label": "Outdoor Air Temp", "object_type": "analogInput", "object_instance": 3, "base": 18.3, "variance": 0.2, "noise": 0.05, "period": 60000, "min": 10, "max": 25, "decimals": 1, "unit": "°C" },
+      { "key": "supply_pressure", "label": "Supply Static Pressure", "object_type": "analogInput", "object_instance": 4, "base": 245, "variance": 8, "noise": 2, "period": 20000, "min": 200, "max": 300, "decimals": 0, "unit": "Pa" },
+      { "key": "fan_speed", "label": "Supply Fan Speed", "object_type": "analogInput", "object_instance": 5, "base": 1450, "variance": 15, "noise": 5, "period": 25000, "min": 1400, "max": 1500, "decimals": 0, "unit": "RPM" },
+      { "key": "fan_status", "label": "Supply Fan Status", "object_type": "binaryInput", "object_instance": 1, "base": 1, "is_bool": true },
+      { "key": "filter_ok", "label": "Filter OK", "object_type": "binaryInput", "object_instance": 2, "base": 1, "is_bool": true },
+      { "key": "fan_command", "label": "Supply Fan Command", "object_type": "binaryOutput", "object_instance": 1, "base": 1, "is_bool": true, "writable": true },
+      { "key": "valve", "label": "Cooling Valve", "object_type": "analogOutput", "object_instance": 1, "base": 38, "variance": 6, "noise": 1, "period": 45000, "min": 0, "max": 100, "decimals": 1, "unit": "%", "writable": true },
+      { "key": "setpoint", "label": "Supply Temp Setpoint", "object_type": "analogValue", "object_instance": 1, "base": 23.0, "min": 15, "max": 30, "decimals": 1, "unit": "°C", "writable": true },
+      { "key": "damper", "label": "Outdoor Damper", "object_type": "analogValue", "object_instance": 2, "base": 45, "variance": 5, "noise": 1, "period": 40000, "min": 0, "max": 100, "decimals": 1, "unit": "%", "writable": true },
+      { "key": "mode", "label": "Operating Mode", "object_type": "multiStateValue", "object_instance": 1, "base": 4, "max": 4, "writable": true }
+    ]
+  },
+  {
+    "id": "chiller",
+    "name": "Chiller-1",
+    "description": "Centrifugal chiller: chilled and condenser water, compressor power, COP",
+    "points": [
+      { "key": "chw_supply", "label": "CHW Supply Temp", "object_type": "analogInput", "object_instance": 1, "base": 7.2, "variance": 0.3, "noise": 0.1, "period": 25000, "min": 5, "max": 10, "decimals": 1, "unit": "°C" },
+      { "key": "chw_return", "label": "CHW Return Temp", "object_type": "analogInput", "object_instance": 2, "base": 12.8, "variance": 0.4, "noise": 0.1, "period": 30000, "min": 10, "max": 16, "decimals": 1, "unit": "°C" },
+      { "key": "cw_supply", "label": "CW Supply Temp", "object_type": "analogInput", "object_instance": 3, "base": 32.1, "variance": 0.5, "noise": 0.2, "period": 35000, "min": 28, "max": 36, "decimals": 1, "unit": "°C" },
+      { "key": "cw_return", "label": "CW Return Temp", "object_type": "analogInput", "object_instance": 4, "base": 37.4, "variance": 0.5, "noise": 0.2, "period": 35000, "min": 34, "max": 42, "decimals": 1, "unit": "°C" },
+      { "key": "compressor_kw", "label": "Compressor Power", "object_type": "analogInput", "object_instance": 5, "base": 185, "variance": 8, "noise": 3, "period": 20000, "min": 150, "max": 220, "decimals": 1, "unit": "kW" },
+      { "key": "compressor_run", "label": "Compressor Running", "object_type": "binaryInput", "object_instance": 1, "base": 1, "is_bool": true },
+      { "key": "alarm", "label": "Chiller Alarm", "object_type": "binaryInput", "object_instance": 2, "base": 0, "is_bool": true },
+      { "key": "enable", "label": "Chiller Enable", "object_type": "binaryOutput", "object_instance": 1, "base": 1, "is_bool": true, "writable": true },
+      { "key": "cop", "label": "COP", "object_type": "analogValue", "object_instance": 1, "base": 4.2, "variance": 0.15, "noise": 0.05, "period": 30000, "min": 3.5, "max": 5.0, "decimals": 2 },
+      { "key": "chw_setpoint", "label": "CHW Setpoint", "object_type": "analogValue", "object_instance": 2, "base": 7.0, "min": 4, "max": 12, "decimals": 1, "unit": "°C", "writable": true }
+    ]
+  },
+  {
+    "id": "vav",
+    "name": "VAV-101",
+    "description": "Zone VAV box: zone temperature, airflow, occupancy and damper",
+    "points": [
+      { "key": "zone_temp", "label": "Zone Temp", "object_type": "analogInput", "object_instance": 1, "base": 23.4, "variance": 0.3, "noise": 0.1, "period": 25000, "min": 20, "max": 28, "decimals": 1, "unit": "°C" },
+      { "key": "airflow", "label": "Airflow", "object_type": "analogInput", "object_instance": 2, "base": 320, "variance": 15, "noise": 5, "period": 20000, "min": 100, "max": 600, "decimals": 0, "unit": "CFM" },
+      { "key": "discharge_temp", "label": "Discharge Air Temp", "object_type": "analogInput", "object_instance": 3, "base": 14.2, "variance": 0.5, "noise": 0.2, "period": 30000, "min": 10, "max": 20, "decimals": 1, "unit": "°C" },
+      { "key": "occupancy", "label": "Occupied", "object_type": "binaryInput", "object_instance": 1, "base": 1, "is_bool": true },
+      { "key": "setpoint", "label": "Zone Setpoint", "object_type": "analogValue", "object_instance": 1, "base": 24.0, "min": 18, "max": 30, "decimals": 1, "unit": "°C", "writable": true },
+      { "key": "min_airflow", "label": "Minimum Airflow", "object_type": "analogValue", "object_instance": 2, "base": 150, "min": 0, "max": 600, "decimals": 0, "unit": "CFM", "writable": true },
+      { "key": "damper", "label": "Damper Position", "object_type": "analogOutput", "object_instance": 1, "base": 45, "variance": 5, "noise": 2, "period": 20000, "min": 0, "max": 100, "decimals": 1, "unit": "%", "writable": true }
+    ]
+  }
+]

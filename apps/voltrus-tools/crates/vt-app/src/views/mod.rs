@@ -6,6 +6,7 @@
 
 pub mod cached;
 mod editor;
+mod editor_bacnet;
 pub mod inspector;
 mod log;
 mod palette;

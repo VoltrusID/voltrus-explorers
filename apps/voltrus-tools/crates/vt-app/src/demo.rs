@@ -18,10 +18,15 @@ pub enum Scenario {
     Editor,
     Palette,
     Light,
+    BacnetPoints,
+    BacnetTrend,
+    BacnetTraffic,
+    BacnetDiscover,
+    BacnetCommand,
 }
 
 impl Scenario {
-    pub const NAMES: [&'static str; 8] = [
+    pub const NAMES: [&'static str; 13] = [
         "welcome",
         "points",
         "trend",
@@ -30,6 +35,11 @@ impl Scenario {
         "editor",
         "palette",
         "light",
+        "bacnet-points",
+        "bacnet-trend",
+        "bacnet-traffic",
+        "bacnet-discover",
+        "bacnet-command",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -42,6 +52,11 @@ impl Scenario {
             "editor" => Self::Editor,
             "palette" => Self::Palette,
             "light" => Self::Light,
+            "bacnet-points" => Self::BacnetPoints,
+            "bacnet-trend" => Self::BacnetTrend,
+            "bacnet-traffic" => Self::BacnetTraffic,
+            "bacnet-discover" => Self::BacnetDiscover,
+            "bacnet-command" => Self::BacnetCommand,
             _ => return None,
         })
     }
@@ -54,6 +69,12 @@ const INTERESTING: [u32; 4] = [4, 11, 12, 15];
 /// Window of the trend scenario: the screenshot script waits a little longer
 /// than this so the lines span the whole chart.
 const TREND_WINDOW_MS: f64 = 30_000.0;
+
+/// Points of the AHU plant to trend: supply, return and outdoor air
+/// temperatures and the supply temperature setpoint.
+const BACNET_TREND: [u32; 4] = [0, 1, 2, 9];
+/// The AHU's supply temperature setpoint, a commandable analog value.
+const BACNET_SETPOINT: u32 = 9;
 
 pub fn apply(
     model: &mut AppModel,
@@ -77,6 +98,11 @@ pub fn apply(
             model.workspace.ui.inspector_open = false;
             model.open_palette(Mode::Commands, window, cx);
         }
+        Scenario::BacnetPoints
+        | Scenario::BacnetTrend
+        | Scenario::BacnetTraffic
+        | Scenario::BacnetDiscover
+        | Scenario::BacnetCommand => bacnet(model, scenario, window, cx),
         Scenario::Points
         | Scenario::Trend
         | Scenario::Traffic
@@ -132,5 +158,75 @@ pub fn apply(
                 _ => {}
             }
         }
+    }
+}
+
+/// The BACnet demo: a simulated air handler and a client subscribed to it.
+fn bacnet(
+    model: &mut AppModel,
+    scenario: Scenario,
+    window: &mut Window,
+    cx: &mut Context<AppModel>,
+) {
+    let Some((client, simulator)) = model.start_bacnet_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend = BACNET_TREND.into_iter().collect();
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    let pane_of = |model: &AppModel, connection: ConnectionId| {
+        model
+            .workspace
+            .panes
+            .iter()
+            .find(|pane| pane.connection == connection)
+            .map(|pane| pane.id)
+    };
+    match scenario {
+        Scenario::BacnetPoints => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(live) = model.live.get_mut(&client) {
+                live.selected = Some(BACNET_SETPOINT);
+            }
+        }
+        Scenario::BacnetTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::BacnetTraffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.set_view(pane, PaneView::Traffic);
+            }
+        }
+        // The device picker, with the simulator answering its Who-Is. The
+        // editor asks as it opens, maybe before the simulator listens: ask
+        // again once it does.
+        Scenario::BacnetDiscover => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::BacnetClient, None, window, cx);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(2))
+                    .await;
+                let _ = this.update(cx, |model, cx| model.discover_bacnet(cx));
+            })
+            .detach();
+        }
+        // One client with a commandable point in the inspector.
+        Scenario::BacnetCommand => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            if let Some(live) = model.live.get_mut(&client) {
+                live.selected = Some(BACNET_SETPOINT);
+            }
+        }
+        _ => {}
     }
 }

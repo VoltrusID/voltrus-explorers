@@ -88,7 +88,13 @@ fn point_detail(
         .map(|connection| &connection.spec);
     let simulator = spec.is_some_and(|spec| spec.role() == Role::Simulator);
     // Only template simulators drift, so only they hold values.
-    let holds = matches!(spec, Some(SessionSpec::ModbusSlave(slave)) if slave.template.is_some());
+    let holds = matches!(spec, Some(SessionSpec::ModbusSlave(slave)) if slave.template.is_some())
+        || matches!(spec, Some(SessionSpec::BacnetDevice(_)));
+    // BACnet clients command at a priority, and can give the command up.
+    let priority = match spec {
+        Some(SessionSpec::BacnetClient(client)) => Some(client.priority),
+        _ => None,
+    };
     let running = live.session.is_some();
     let good = reading.quality == Quality::Good && reading.value.is_finite();
     let locked = live.locked.contains(&point);
@@ -265,10 +271,10 @@ fn point_detail(
                 .flex_col()
                 .gap(SPACE_4)
                 .child(section_label(
-                    if simulator {
-                        "Set value"
-                    } else {
-                        "Write to device"
+                    match priority {
+                        Some(priority) => format!("Command at priority {priority}"),
+                        None if simulator => "Set value".to_owned(),
+                        None => "Write to device".to_owned(),
                     },
                     cx,
                 ))
@@ -287,6 +293,20 @@ fn point_detail(
                                 })),
                         ),
                 )
+                .when(priority.is_some(), |this| {
+                    this.child(
+                        div().flex().child(
+                            Button::new("relinquish", "Relinquish")
+                                .icon(Icon::LockOpen)
+                                .compact()
+                                .disabled(!running)
+                                .tooltip("Write NULL at this priority: the next priority or the default takes over")
+                                .on_click(cx.listener(|model, _, _, cx| {
+                                    model.relinquish_selected(cx);
+                                })),
+                        ),
+                    )
+                })
                 .when(!running, |this| {
                     this.child(
                         div()
@@ -312,6 +332,8 @@ fn point_detail(
                                 "Value set and held"
                             } else if simulator {
                                 "Value set"
+                            } else if priority.is_some() {
+                                "The device accepted it"
                             } else {
                                 "Written"
                             }

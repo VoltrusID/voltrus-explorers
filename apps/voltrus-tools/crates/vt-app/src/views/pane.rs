@@ -232,8 +232,8 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
 
     // Only template simulators hold values; a plain register image has
     // nothing that drifts.
-    let holds =
-        matches!(&connection.spec, SessionSpec::ModbusSlave(spec) if spec.template.is_some());
+    let holds = matches!(&connection.spec, SessionSpec::ModbusSlave(spec) if spec.template.is_some())
+        || matches!(&connection.spec, SessionSpec::BacnetDevice(_));
     let body: AnyElement = match live {
         Some(live) if !live.points.is_empty() || running => match view {
             PaneView::Points => {
