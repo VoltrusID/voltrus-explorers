@@ -13,7 +13,7 @@ use super::AppModel;
 
 mod mqtt;
 
-pub use mqtt::{MqttFields, SubscriptionRow};
+pub use mqtt::MqttFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
