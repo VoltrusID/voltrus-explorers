@@ -28,10 +28,7 @@ for scenario in welcome points trend traffic simulator editor palette light \
   else
     # Let sessions connect and data flow: the trend scenario shows a 30 s
     # window, so it waits until the lines span the whole chart.
-    case "$scenario" in
-      *trend) sleep 33 ;;
-      *) sleep 6 ;;
-    esac
+    case "$scenario" in *trend) sleep 33 ;; *) sleep 6 ;; esac
     screencapture -o -x -l "$id" "$out/$scenario.png"
     echo "captured $scenario ($(sips -g pixelWidth -g pixelHeight "$out/$scenario.png" | tail -2 | awk '{print $2}' | paste -sd x -))"
   fi

@@ -26,7 +26,7 @@ pub enum Scenario {
 }
 
 impl Scenario {
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: &'static [&'static str] = &[
         "welcome",
         "points",
         "trend",
