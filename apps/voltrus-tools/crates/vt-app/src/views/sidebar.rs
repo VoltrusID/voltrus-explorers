@@ -5,7 +5,7 @@ use gpui::{AnyElement, Context, ElementId, FontWeight, SharedString, div, px};
 use vt_app_core::Connection;
 use vt_protocol::Role;
 use vt_ui::Icon;
-use vt_ui::components::{Button, IconButton, kbd, monogram, section_label, status_dot};
+use vt_ui::components::{Button, IconButton, brand_mark, kbd, monogram, section_label, status_dot};
 use vt_ui::theme::*;
 
 use super::{resize_handle, state_color};
@@ -70,16 +70,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
                 .gap(SPACE_4)
                 .px(SPACE_6)
                 .pb(SPACE_6)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(28.0))
-                        .rounded(RADIUS_LG)
-                        .bg(theme.accent_soft)
-                        .child(vt_ui::icon(Icon::Activity, ICON_LG, theme.accent)),
-                )
+                .child(brand_mark(px(28.0)))
                 .child(
                     div()
                         .flex()

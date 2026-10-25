@@ -4,7 +4,7 @@ use gpui::prelude::*;
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, px};
 use vt_protocol::Protocol;
 use vt_ui::Icon;
-use vt_ui::components::{Button, kbd, monogram};
+use vt_ui::components::{Button, brand_mark, kbd, monogram};
 use vt_ui::theme::*;
 
 use crate::model::AppModel;
@@ -66,6 +66,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .flex()
                         .flex_col()
                         .gap(SPACE_4)
+                        .child(div().mb(SPACE_4).child(brand_mark(px(56.0))))
                         .child(
                             div()
                                 .text_size(FONT_DISPLAY)
