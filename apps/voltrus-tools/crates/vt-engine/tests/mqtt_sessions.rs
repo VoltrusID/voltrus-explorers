@@ -39,10 +39,10 @@ impl Seen {
                 self.points = points;
             }
             EventKind::PointsAdded(points) => {
-                for point in &points {
+                for (offset, point) in points.iter().enumerate() {
                     assert_eq!(
                         point.id as usize,
-                        self.points.len(),
+                        self.points.len() + offset,
                         "ids continue in order"
                     );
                 }
