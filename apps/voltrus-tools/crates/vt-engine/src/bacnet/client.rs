@@ -515,7 +515,8 @@ fn read_answer(
     latency_us: Option<u32>,
 ) -> TrafficFrame {
     let errors = results.iter().filter(|result| result.is_err()).count();
-    let mut detail = format!("{} values", results.len() - errors);
+    let values = results.len() - errors;
+    let mut detail = format!("{values} value{}", if values == 1 { "" } else { "s" });
     if errors > 0 {
         detail.push_str(&format!(
             " · {errors} error{}",
@@ -562,11 +563,11 @@ async fn poll_or_close(
             .collect()
     };
     out.traffic(vec![if polled.is_empty() {
-        traffic(
-            Direction::Tx,
-            "ReadProperty",
-            format!("Device {} systemStatus · every point on COV", link.instance),
-            0,
+        read_request(
+            &link.client,
+            1,
+            1,
+            &format!("Device {} systemStatus, every point on COV", link.instance),
         )
     } else {
         read_request(
