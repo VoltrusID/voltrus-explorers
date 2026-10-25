@@ -155,12 +155,14 @@ fn master_reconnects_when_the_device_appears() {
     let port = free_port();
     let master = SessionId(10);
     let slave = SessionId(11);
-    let mut spec = vt_protocol::ModbusMasterSpec::default();
-    spec.link = vt_protocol::ModbusLink::Tcp {
-        host: "127.0.0.1".into(),
-        port,
+    let spec = vt_protocol::ModbusMasterSpec {
+        link: vt_protocol::ModbusLink::Tcp {
+            host: "127.0.0.1".into(),
+            port,
+        },
+        poll_ms: 50,
+        ..vt_protocol::ModbusMasterSpec::default()
     };
-    spec.poll_ms = 50;
     engine.send(Command::Open {
         session: master,
         spec: SessionSpec::ModbusMaster(spec),

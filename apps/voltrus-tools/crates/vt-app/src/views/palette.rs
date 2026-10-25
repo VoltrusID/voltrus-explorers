@@ -27,7 +27,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
             count,
             cx.processor(
                 move |model: &mut AppModel, range: std::ops::Range<usize>, _, cx| {
-                    let theme = theme(cx).clone();
+                    let theme = vt_ui::theme::theme(cx).clone();
                     let Overlay::Palette(state) = &model.overlay else {
                         return Vec::new();
                     };

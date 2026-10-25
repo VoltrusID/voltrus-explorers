@@ -72,7 +72,7 @@ pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>)
             count,
             cx.processor(
                 move |model: &mut AppModel, range: std::ops::Range<usize>, _, cx| {
-                    let theme = theme(cx).clone();
+                    let theme = vt_ui::theme::theme(cx).clone();
                     let Some(live) = model.live.get(&connection) else {
                         return Vec::new();
                     };
