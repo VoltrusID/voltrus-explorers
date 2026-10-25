@@ -39,6 +39,8 @@ actions!(
 );
 
 const CONTEXT: &str = "TextInput";
+/// What a secure field draws for each character.
+const BULLET: char = '•';
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     let primary = if cfg!(target_os = "macos") {
@@ -110,6 +112,8 @@ pub struct TextInput {
     placeholder: SharedString,
     kind: InputKind,
     mono: bool,
+    /// Draw bullets instead of the text, and refuse copy and cut.
+    secure: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -130,6 +134,7 @@ impl TextInput {
             placeholder: SharedString::default(),
             kind: InputKind::Text,
             mono: false,
+            secure: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -158,6 +163,21 @@ impl TextInput {
     pub fn mono(mut self) -> Self {
         self.mono = true;
         self
+    }
+
+    /// Mask the content, for passwords.
+    #[must_use]
+    pub fn secure(mut self) -> Self {
+        self.secure = true;
+        self
+    }
+
+    fn to_display(&self, offset: usize) -> usize {
+        display_offset(&self.content, self.secure, offset)
+    }
+
+    fn from_display(&self, index: usize) -> usize {
+        content_offset(&self.content, self.secure, index)
     }
 
     #[must_use]
@@ -256,7 +276,7 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.secure && !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -264,7 +284,7 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.secure && !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -328,7 +348,7 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left() + self.scroll_x)
+        self.from_display(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -492,11 +512,11 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + layout.x_for_index(range.start) - self.scroll_x,
+                bounds.left() + layout.x_for_index(self.to_display(range.start)) - self.scroll_x,
                 bounds.top(),
             ),
             point(
-                bounds.left() + layout.x_for_index(range.end) - self.scroll_x,
+                bounds.left() + layout.x_for_index(self.to_display(range.end)) - self.scroll_x,
                 bounds.bottom(),
             ),
         ))
@@ -510,7 +530,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let local = self.last_bounds?.localize(&point)?;
         let layout = self.last_layout.as_ref()?;
-        let index = layout.index_for_x(local.x + self.scroll_x)?;
+        let index = self.from_display(layout.index_for_x(local.x + self.scroll_x)?);
         Some(self.offset_to_utf16(index))
     }
 }
@@ -633,12 +653,24 @@ impl Element for TextElement {
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
+        // Offsets in the drawn text: a secure field draws one bullet per character.
+        let display_cursor = input.to_display(cursor);
+        let display_selection =
+            input.to_display(selected_range.start)..input.to_display(selected_range.end);
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), theme.fg_dim)
         } else {
             (content, style.color)
+        };
+        let display_text: SharedString = if input.secure && !input.content.is_empty() {
+            BULLET
+                .to_string()
+                .repeat(input.content.chars().count())
+                .into()
+        } else {
+            display_text
         };
         let run = TextRun {
             len: display_text.len(),
@@ -648,7 +680,8 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = match input.marked_range.as_ref() {
+        // Composition offsets index the content, not the bullets of a masked field.
+        let runs = match input.marked_range.as_ref().filter(|_| !input.secure) {
             Some(marked) => vec![
                 TextRun {
                     len: marked.start,
@@ -683,7 +716,7 @@ impl Element for TextElement {
         let caret_x = if input.content.is_empty() {
             px(0.0)
         } else {
-            line.x_for_index(cursor)
+            line.x_for_index(display_cursor)
         };
         let width = bounds.size.width;
         if caret_x - scroll_x > width - px(2.0) {
@@ -713,11 +746,11 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::from_corners(
                         point(
-                            origin.x + line.x_for_index(selected_range.start),
+                            origin.x + line.x_for_index(display_selection.start),
                             bounds.top(),
                         ),
                         point(
-                            origin.x + line.x_for_index(selected_range.end),
+                            origin.x + line.x_for_index(display_selection.end),
                             bounds.bottom(),
                         ),
                     ),
@@ -772,9 +805,45 @@ impl Element for TextElement {
     }
 }
 
+/// Byte offset in the drawn text of byte `offset` in `content`.
+fn display_offset(content: &str, secure: bool, offset: usize) -> usize {
+    if secure {
+        content[..offset.min(content.len())].chars().count() * BULLET.len_utf8()
+    } else {
+        offset
+    }
+}
+
+/// Byte offset in `content` of byte `index` in the drawn text.
+fn content_offset(content: &str, secure: bool, index: usize) -> usize {
+    if secure {
+        content
+            .char_indices()
+            .nth(index / BULLET.len_utf8())
+            .map_or(content.len(), |(offset, _)| offset)
+    } else {
+        index
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::InputKind;
+    use super::{InputKind, content_offset, display_offset};
+
+    #[test]
+    fn masked_offsets_map_through_multibyte_characters() {
+        // "pä€" is 1 + 2 + 3 bytes; drawn as three 3-byte bullets.
+        let content = "pä€";
+        let boundaries = [0, 1, 3, 6];
+        for (index, offset) in boundaries.iter().enumerate() {
+            let drawn = display_offset(content, true, *offset);
+            assert_eq!(drawn, index * 3);
+            assert_eq!(content_offset(content, true, drawn), *offset);
+        }
+        // Plain fields draw the content itself.
+        assert_eq!(display_offset(content, false, 3), 3);
+        assert_eq!(content_offset(content, false, 3), 3);
+    }
 
     #[test]
     fn numeric_fields_reject_letters() {
