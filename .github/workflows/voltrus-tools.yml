@@ -1,0 +1,101 @@
+# Voltrus Tools (the native GPUI suite in apps/voltrus-tools): formatting, lints,
+# tests, an unsigned macOS app bundle and screenshots of every demo scenario.
+# No secrets: safe for forks.
+name: Voltrus Tools
+
+on:
+  push:
+    branches: [main, tools-v2]
+    paths:
+      - apps/voltrus-tools/**
+      - crates/mt-modbus/**
+      - crates/mt-protocol/**
+      - .github/workflows/voltrus-tools.yml
+  pull_request:
+    paths:
+      - apps/voltrus-tools/**
+      - crates/mt-modbus/**
+      - crates/mt-protocol/**
+      - .github/workflows/voltrus-tools.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voltrus-tools-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/voltrus-tools
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Restore and save separately so a failing build still keeps the compiled
+      # dependencies (GPUI takes most of a cold build).
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/voltrus-tools/target
+          key: voltrus-tools-macos-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            voltrus-tools-macos-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}-
+            voltrus-tools-macos-
+
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      # Only this workspace's packages: `--all` would also reformat the shared
+      # protocol crates, which follow the repository's own style.
+      - name: Format
+        run: cargo fmt -p vt-protocol -p vt-engine -p vt-app-core -p vt-ui -p vt-app -- --check
+
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+      - name: Build release
+        run: cargo build --locked --release -p vt-app
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/voltrus-tools/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - name: Bundle
+        run: scripts/bundle-macos.sh target/release/voltrus-tools dist
+
+      - name: Screenshots
+        run: scripts/screenshots-macos.sh "dist/Voltrus Tools.app" dist/screenshots
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: voltrus-tools-screenshots
+          path: apps/voltrus-tools/dist/screenshots
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: voltrus-tools-macos-arm64
+          path: apps/voltrus-tools/dist/Voltrus-Tools-macos-arm64.zip

@@ -1,0 +1,21 @@
+[package]
+name = "vt-engine"
+description = "Runs Voltrus Tools protocol sessions on the shared protocol crates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+vt-protocol = { path = "../vt-protocol" }
+mt-modbus = { path = "../../../../crates/mt-modbus" }
+mt-protocol = { path = "../../../../crates/mt-protocol" }
+async-channel.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

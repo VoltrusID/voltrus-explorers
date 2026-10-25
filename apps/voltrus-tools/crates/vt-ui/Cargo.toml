@@ -1,0 +1,16 @@
+[package]
+name = "vt-ui"
+description = "The Voltrus design system for GPUI: theme tokens, components, charts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = "0.2.2"
+unicode-segmentation = "1"
+
+[lints]
+workspace = true
