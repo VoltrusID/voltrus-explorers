@@ -152,7 +152,7 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             )
             .into(),
             detail: connection.spec.endpoint().into(),
-            icon: if running { Icon::Square } else { Icon::Play },
+            icon: if running { Icon::Unplug } else { Icon::Play },
             command: Command::Toggle(connection.id),
         });
         entries.push(Entry {

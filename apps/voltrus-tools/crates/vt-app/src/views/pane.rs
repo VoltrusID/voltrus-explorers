@@ -18,6 +18,10 @@ const COMPACT: f32 = 720.0;
 /// Below this width the state moves under the name and the session button
 /// becomes an icon.
 const NARROW: f32 = 520.0;
+/// Width a narrow header spends on everything but the name: padding (32),
+/// monogram (28), four gaps (40), icon-only switcher (116), session icon (22),
+/// plus a little slack.
+const NARROW_CHROME: f32 = 246.0;
 /// Assumed before the first layout measured the pane.
 const UNMEASURED: f32 = 1200.0;
 
@@ -76,7 +80,7 @@ pub fn render(
     };
     let session_id = ElementId::NamedInteger("session".into(), pane_id.0);
     let session_button = if narrow {
-        IconButton::new(session_id, if running { Icon::Square } else { Icon::Play })
+        IconButton::new(session_id, if running { Icon::Unplug } else { Icon::Play })
             .color(if running {
                 theme.fg_muted
             } else {
@@ -87,7 +91,7 @@ pub fn render(
             .into_any_element()
     } else {
         Button::new(session_id, session_label)
-            .icon(if running { Icon::Square } else { Icon::Play })
+            .icon(if running { Icon::Unplug } else { Icon::Play })
             .kind(if running {
                 ButtonKind::Secondary
             } else {
@@ -96,6 +100,12 @@ pub fn render(
             .on_click(cx.listener(move |model, _, _, cx| model.toggle_session(connection_id, cx)))
             .into_any_element()
     };
+    // Narrow headers hold the name over the state (or the failure) and drop
+    // the address. Text only truncates inside a known width, so give it one:
+    // what the header leaves after padding, monogram, gaps, the icon-only
+    // view switcher and the session icon.
+    let narrow_text = (width - NARROW_CHROME).max(48.0);
+    let narrow_status = detail.clone().unwrap_or_else(|| state.label().to_string());
     let has_detail = detail.is_some();
     let subtitle = detail.unwrap_or_else(|| connection.spec.endpoint());
 
@@ -131,43 +141,62 @@ pub fn render(
             theme.series(usize::try_from(connection_id.0).unwrap_or(0)),
             px(28.0),
         ))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(
+        .map(|this| {
+            if narrow {
+                this.child(
                     div()
                         .flex()
-                        .items_center()
-                        .gap(SPACE_4)
-                        .min_w_0()
+                        .flex_col()
+                        .flex_none()
+                        .w(px(narrow_text))
                         .child(
                             div()
-                                .min_w_0()
+                                .w(px(narrow_text))
                                 .truncate()
                                 .text_size(FONT_EMPHASIS)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(connection.name.clone()),
                         )
-                        .when(!narrow, |this| this.child(pill(state.label(), color))),
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(SPACE_3)
+                                .child(status_dot(color))
+                                .child(
+                                    div()
+                                        .w(px((narrow_text - 14.0).max(24.0)))
+                                        .truncate()
+                                        .text_size(FONT_CAPTION)
+                                        .text_color(color)
+                                        .child(narrow_status),
+                                ),
+                        ),
                 )
-                .child(
+                .child(div().flex_1())
+            } else {
+                this.child(
                     div()
                         .flex()
-                        .items_center()
-                        .gap(SPACE_3)
+                        .flex_col()
+                        .flex_1()
                         .min_w_0()
-                        .when(narrow, |this| {
-                            this.child(status_dot(color)).child(
-                                div()
-                                    .flex_none()
-                                    .text_size(FONT_CAPTION)
-                                    .text_color(color)
-                                    .child(state.label()),
-                            )
-                        })
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(SPACE_4)
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(FONT_EMPHASIS)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(connection.name.clone()),
+                                )
+                                .child(pill(state.label(), color)),
+                        )
                         .child(
                             div()
                                 .min_w_0()
@@ -177,8 +206,9 @@ pub fn render(
                                 .text_color(if has_detail { color } else { theme.fg_dim })
                                 .child(subtitle),
                         ),
-                ),
-        )
+                )
+            }
+        })
         .when_some(latency, |this, latency| {
             this.child(
                 div()
@@ -205,7 +235,7 @@ pub fn render(
             PaneView::Points => points::render(pane_id, connection_id, live, simulator, width, cx),
             PaneView::Trend => trend::render(connection_id, live, width, window, cx),
             PaneView::Traffic => traffic::render(connection_id, live, width, cx),
-            PaneView::Log => log::render(connection_id, live, cx),
+            PaneView::Log => log::render(connection_id, live, width, cx),
         },
         _ => empty_state(
             if simulator { Icon::Server } else { Icon::Plug },

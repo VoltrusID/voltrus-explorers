@@ -22,6 +22,14 @@ pub fn render(
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let stacked = pane_width < STACKED;
+    // Text only truncates inside a known width: what a row leaves after its
+    // padding (32), time (96), direction (24), gaps and, side by side, the
+    // 260 px summary.
+    let text_width = if stacked {
+        (pane_width - 172.0).max(40.0)
+    } else {
+        (pane_width - 442.0).max(40.0)
+    };
     let theme = theme(cx).clone();
     let count = live.traffic.len();
     let paused = live.traffic_paused;
@@ -90,12 +98,12 @@ pub fn render(
                             let frame = live.traffic.get(index)?;
                             let tx = frame.direction == Direction::Tx;
                             let summary = div()
-                                .min_w_0()
                                 .truncate()
                                 .text_color(theme.fg)
                                 .child(frame.summary.clone());
                             let detail = div()
-                                .min_w_0()
+                                .w(px(text_width))
+                                .flex_none()
                                 .truncate()
                                 .text_color(theme.fg_muted)
                                 .child(frame.detail.clone());
@@ -134,14 +142,13 @@ pub fn render(
                                                 div()
                                                     .flex()
                                                     .flex_col()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .child(summary)
+                                                    .flex_none()
+                                                    .child(summary.w(px(text_width)))
                                                     .child(detail.text_size(FONT_CAPTION)),
                                             )
                                         } else {
                                             this.child(summary.w(px(260.0)).flex_none())
-                                                .child(detail.flex_1())
+                                                .child(detail)
                                         }
                                     }),
                             )

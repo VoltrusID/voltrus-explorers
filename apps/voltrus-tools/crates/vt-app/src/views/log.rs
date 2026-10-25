@@ -12,7 +12,15 @@ use super::clock;
 use crate::model::AppModel;
 use crate::model::live::Live;
 
-pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>) -> AnyElement {
+pub fn render(
+    connection: ConnectionId,
+    live: &Live,
+    pane_width: f32,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
+    // Text only truncates inside a known width: what a row leaves after its
+    // padding (32), time (96), icon (12) and gaps (20).
+    let message_width = (pane_width - 160.0).max(40.0);
     let count = live.log.len();
     if count == 0 {
         return empty_state(
@@ -63,8 +71,8 @@ pub fn render(connection: ConnectionId, live: &Live, cx: &mut Context<AppModel>)
                                 .child(vt_ui::icon(glyph, ICON_SM, color))
                                 .child(
                                     div()
-                                        .flex_1()
-                                        .min_w_0()
+                                        .w(px(message_width))
+                                        .flex_none()
                                         .truncate()
                                         .child(entry.message.clone()),
                                 ),

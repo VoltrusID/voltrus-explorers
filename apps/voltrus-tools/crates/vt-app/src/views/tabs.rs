@@ -11,6 +11,10 @@ use super::state_color;
 use crate::model::AppModel;
 use crate::model::palette::Mode;
 
+/// Tabs share one title width, like a browser's: text only truncates inside a
+/// known width.
+const TAB_TITLE: f32 = 150.0;
+
 pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement {
     let theme = theme(cx).clone();
     let sidebar_open = model.workspace.ui.sidebar_open;
@@ -24,19 +28,16 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
 
     let tabs = model.workspace.tabs.iter().map(|tab| {
         let selected = Some(tab.id) == active;
-        let mut names: Vec<&str> = Vec::new();
-        for pane in tab.layout.panes() {
-            if let Some(name) = model
-                .workspace
-                .pane(pane)
-                .and_then(|pane| model.workspace.connection(pane.connection))
-                .map(|connection| connection.name.as_str())
-                && !names.contains(&name)
-            {
-                names.push(name);
-            }
-        }
-        let title: SharedString = names.join(" · ").into();
+        // The focused pane names the tab; a badge counts the other panes.
+        let panes = tab.layout.panes();
+        let title: SharedString = model
+            .workspace
+            .pane(tab.focused)
+            .and_then(|pane| model.workspace.connection(pane.connection))
+            .map(|connection| connection.name.clone())
+            .unwrap_or_default()
+            .into();
+        let others = panes.len().saturating_sub(1);
         let color = model
             .workspace
             .pane(tab.focused)
@@ -52,7 +53,6 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
             .items_center()
             .gap(SPACE_3)
             .h(px(28.0))
-            .max_w(px(240.0))
             .pl(SPACE_5)
             .pr(SPACE_2)
             .rounded(RADIUS_MD)
@@ -71,7 +71,19 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
             })
             .on_click(cx.listener(move |model, _, _, cx| model.select_tab(id, cx)))
             .child(status_dot(color))
-            .child(div().flex_1().min_w_0().truncate().child(title))
+            .child(div().flex_none().w(px(TAB_TITLE)).truncate().child(title))
+            .when(others > 0, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .px(SPACE_2)
+                        .rounded(RADIUS_SM)
+                        .bg(theme.hover)
+                        .text_size(FONT_CAPTION)
+                        .text_color(theme.fg_muted)
+                        .child(format!("+{others}")),
+                )
+            })
             .child(
                 div()
                     .flex_none()

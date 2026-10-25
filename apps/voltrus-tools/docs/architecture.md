@@ -54,6 +54,9 @@ sequenceDiagram
 - Values land in per-point `History` ring buffers (`vt-ui::chart`), shared
   with the charts by `Rc`: painting a frame never copies samples.
 - Trends request a new frame only while their session is live.
+- Each pane records its width at layout (`AppModel::pane_widths`); the
+  header, points columns, trend and traffic rows adapt to it on the next
+  frame, so a split pane stays readable on a small screen.
 
 ## Why the engine speaks messages
 

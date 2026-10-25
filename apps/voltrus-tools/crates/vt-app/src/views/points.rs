@@ -23,12 +23,14 @@ const ACTIONS: f32 = 52.0;
 
 /// Which optional columns fit the pane. They drop in order: raw words, the
 /// sparkline, the type, then the row actions (the inspector has them too).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Columns {
     raw: bool,
     spark: bool,
     data_type: bool,
     actions: bool,
+    /// Width left for the name: text only truncates inside a known width.
+    name: f32,
 }
 
 impl Columns {
@@ -53,6 +55,7 @@ impl Columns {
             spark,
             data_type,
             actions,
+            name: NAME_MIN + room.max(0.0),
         }
     }
 }
@@ -252,7 +255,18 @@ fn row(
                 .min_w_0()
                 .items_center()
                 .gap(SPACE_3)
-                .child(div().min_w_0().truncate().child(info.name.clone()))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(if locked {
+                            columns.name - f32::from(ICON_SM + SPACE_3)
+                        } else {
+                            columns.name
+                        }))
+                        .truncate()
+                        .child(info.name.clone()),
+                )
                 .when(locked, |this| {
                     this.child(vt_ui::icon(Icon::Lock, ICON_SM, theme.warning))
                 }),

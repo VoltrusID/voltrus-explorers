@@ -16,9 +16,12 @@ standalone Tauri apps in this repository.
   PM5560, Endress+Hauser flowmeter, ABB analyser, Emerson Daniel flow
   computer, Raritan PDU) or a plain register image. Values drift
   realistically; set any value to hold it.
-- **Live points**: every value with its address, type, raw words and a
-  sparkline of the last minute.
+- **Live points**: every value with its Modicon address, name, unit, type, raw
+  words and a sparkline of the last minute. Clients of a simulated template
+  get its register names and units. Columns drop out as a pane narrows.
 - **Trends**: multi-series charts of the points you pick, 30 s to 15 min.
+  Series of very different size (watts beside hertz) get stacked lanes, each
+  with its own scale.
 - **Traffic and log**: every request and response, every connect and failure.
 - **Tabs and splits**: watch a device and its simulator side by side, or two
   views of one session. Layout and connections are restored on launch.
@@ -38,6 +41,9 @@ workspace:
 cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traffic,
                                                  # simulator, editor, palette, light
 ```
+
+Demo scenarios use the dark house theme (`light` the light one) whatever the
+system appearance, so screenshots are comparable.
 
 ## Shortcuts
 

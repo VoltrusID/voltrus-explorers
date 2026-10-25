@@ -328,7 +328,7 @@ fn row(model: &AppModel, connection: &Connection, cx: &mut Context<AppModel>) ->
                         .child(
                             IconButton::new(
                                 ElementId::NamedInteger("toggle".into(), id.0),
-                                if running { Icon::Square } else { Icon::Play },
+                                if running { Icon::Unplug } else { Icon::Play },
                             )
                             .size(px(20.0))
                             .tooltip(match (running, simulator) {
