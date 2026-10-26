@@ -70,10 +70,25 @@ impl Events {
                 }
                 scanned += 1;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for an event from {session}"
-            );
+            if Instant::now() >= deadline {
+                // What the session did say: its logs, states and answers, not its values.
+                let said: Vec<String> = self
+                    .kept
+                    .iter()
+                    .filter(|event| event.session == session)
+                    .filter(|event| {
+                        !matches!(
+                            event.kind,
+                            EventKind::Values(_) | EventKind::Stats(_) | EventKind::Payloads(_)
+                        )
+                    })
+                    .map(|event| format!("{:?}", event.kind))
+                    .collect();
+                panic!(
+                    "timed out waiting for an event from {session}; it said:\n{}",
+                    said.join("\n")
+                );
+            }
             match self.receiver.try_recv() {
                 Ok(event) => self.kept.push(event),
                 Err(_) => std::thread::sleep(Duration::from_millis(5)),
