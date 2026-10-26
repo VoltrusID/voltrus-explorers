@@ -7,6 +7,10 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 | `ci.yml` | push to `main`, pull requests, manual | none | crate tests, frontend typecheck/build/tests (Linux); unsigned universal build of both apps (macOS) |
 | `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release |
 
+Voltrus Tools (the GPUI suite in `apps/voltrus-tools`) has its own Mac App Store path: `release.yml` with
+`app=voltrus-tools`, a 14-day trial and a one-time unlock through StoreKit 2. See
+[apps/voltrus-tools/docs/release.md](../apps/voltrus-tools/docs/release.md).
+
 ## Running a release
 
 1. Bump `version` in `apps/<app>/src-tauri/tauri.conf.json` and `apps/<app>/package.json`, merge to `main`.

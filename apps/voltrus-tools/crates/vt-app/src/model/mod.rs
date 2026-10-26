@@ -8,9 +8,12 @@ pub mod bacnet;
 pub mod dnp3;
 pub mod editor;
 pub mod enip;
+pub mod licence;
 pub mod live;
+pub mod nats;
 pub mod palette;
 pub mod publish;
+pub mod s7;
 pub mod serial;
 pub mod terminal;
 
@@ -117,7 +120,9 @@ pub struct Chrome {
 pub struct AppModel {
     pub workspace: Workspace,
     store: Option<PathBuf>,
-    engine: EngineHandle,
+    /// The session engine behind the licence gate (store builds lock it once
+    /// the trial is over).
+    engine: licence::GatedEngine,
     pub live: HashMap<ConnectionId, Live>,
     sessions: HashMap<SessionId, ConnectionId>,
     next_session: u64,
@@ -136,10 +141,14 @@ pub struct AppModel {
     pub publish: PublishForm,
     /// Each open serial pane's send bar.
     pub serial_consoles: HashMap<ConnectionId, SerialConsole>,
+    /// The inspector's NATS publish/request form and JetStream browsers.
+    pub nats: nats::NatsPanel,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
     /// The inspector's explicit message form (EtherNet/IP).
     pub cip: enip::CipForm,
+    /// The App Store trial and unlock, and their sheets.
+    pub licensing: licence::Licensing,
 }
 
 impl AppModel {
@@ -196,10 +205,11 @@ impl AppModel {
             async {}
         });
         let subscriptions = vec![write_events, appearance, quit];
+        let licensing = licence::Licensing::new(cx.focus_handle());
         let mut model = Self {
             workspace: boot.workspace,
             store: boot.store,
-            engine,
+            engine: licence::GatedEngine::new(engine, licensing.gate.clone()),
             live: HashMap::new(),
             sessions: HashMap::new(),
             next_session: 0,
@@ -234,11 +244,14 @@ impl AppModel {
             write_input,
             publish: PublishForm::new(window, cx),
             serial_consoles: HashMap::new(),
+            nats: nats::NatsPanel::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
             cip: enip::CipForm::new(window, cx),
+            licensing,
         };
         window.focus(&model.focus);
+        model.start_licensing(cx);
         if let Some(notice) = boot.notice {
             model.show_toast(notice, true, cx);
         }
@@ -274,6 +287,17 @@ impl AppModel {
             }
             event => event,
         };
+        // A NATS client's replies and JetStream answers go to the inspector.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::Nats(nats),
+            } => {
+                self.nats_event(session, nats);
+                return;
+            }
+            event => event,
+        };
         let Some(connection) = self.sessions.get(&event.session).copied() else {
             return;
         };
@@ -281,11 +305,18 @@ impl AppModel {
             &event.kind,
             vt_protocol::EventKind::State(state) if !state.is_running()
         );
+        let connected = matches!(
+            &event.kind,
+            vt_protocol::EventKind::State(vt_protocol::SessionState::Connected)
+        );
         if let Some(live) = self.live.get_mut(&connection) {
             live.apply_from(event.session, event.kind);
         }
         if closed {
             self.sessions.remove(&event.session);
+        }
+        if connected {
+            self.nats_connected(connection);
         }
     }
 
@@ -303,6 +334,9 @@ impl AppModel {
         else {
             return;
         };
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.stop(connection);
         self.next_session += 1;
         let session = SessionId(self.next_session);
@@ -480,6 +514,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("sma-inverter") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
@@ -515,6 +552,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("sma-inverter") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
@@ -547,6 +587,9 @@ impl AppModel {
 
     /// Start a protocol's demo plant.
     pub fn start_demo(&mut self, protocol: Protocol, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         match protocol {
             Protocol::Modbus => {
                 self.start_demo_plant(cx);
@@ -565,6 +608,12 @@ impl AppModel {
             }
             Protocol::Serial => {
                 self.start_serial_demo(cx);
+            }
+            Protocol::S7 => {
+                self.start_s7_demo(cx);
+            }
+            Protocol::Nats => {
+                self.start_nats_demo(cx);
             }
         }
     }
@@ -627,6 +676,11 @@ impl AppModel {
                     self.publish
                         .topic
                         .update(cx, |input, cx| input.set_text(topic, cx));
+                }
+                if let Some(subject) = nats::subject_of(&self.workspace, connection, live, point) {
+                    self.nats
+                        .subject
+                        .update(cx, |input, cx| input.set_text(subject, cx));
                 }
             }
             live.selected = Some(point);
@@ -895,6 +949,19 @@ impl AppModel {
         {
             self.add_serial_monitor(&name, device, cx);
         }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::S7Server(server) = &spec
+        {
+            self.add_s7_client(&name, server, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::NatsServer(server) = &spec
+            && server.template.is_some()
+        {
+            self.add_nats_client(&name, server, cx);
+        }
         self.workspace.focus(
             self.workspace
                 .panes
@@ -1059,6 +1126,12 @@ impl AppModel {
             Command::BacnetDemo => {
                 self.start_bacnet_demo(cx);
             }
+            Command::NewS7Client => self.open_editor(EditorKind::S7Client, None, window, cx),
+            Command::NewS7Server => self.open_editor(EditorKind::S7Server, None, window, cx),
+            Command::S7Demo => {
+                self.start_s7_demo(cx);
+            }
+            Command::ReadS7Plc(connection) => self.read_s7_plc(connection, cx),
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),
             Command::ClosePane => self.close_pane(cx),
@@ -1092,6 +1165,24 @@ impl AppModel {
             Command::SerialMacro(connection, index) => {
                 self.run_serial_macro(connection, index, cx);
             }
+            Command::NewNatsClient => self.open_editor(EditorKind::NatsClient, None, window, cx),
+            Command::NewNatsServer => self.open_editor(EditorKind::NatsServer, None, window, cx),
+            Command::NatsDemo => {
+                self.start_nats_demo(cx);
+            }
+            Command::NatsRequest => self.nats_request(window, cx),
+            Command::NatsJetStream => match self.focused_nats_client() {
+                Some(connection) => {
+                    self.workspace.ui.inspector_open = true;
+                    if let Some(live) = self.live.get_mut(&connection) {
+                        live.selected = None;
+                    }
+                    self.nats_refresh_streams(connection, cx);
+                }
+                None => {
+                    self.show_toast("Focus a NATS connection to browse its JetStream", true, cx)
+                }
+            },
         }
     }
 

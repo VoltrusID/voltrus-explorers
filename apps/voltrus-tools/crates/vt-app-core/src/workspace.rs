@@ -35,6 +35,10 @@ pub enum PaneView {
     Trend,
     Traffic,
     Log,
+    /// A protocol's own view of the device (an S7 CPU's identity, mode,
+    /// diagnostics and blocks). Offered only for connections whose
+    /// protocol has one, so it is not in [`PaneView::ALL`].
+    Device,
 }
 
 impl PaneView {
@@ -51,6 +55,7 @@ impl PaneView {
             Self::Trend => "Trend",
             Self::Traffic => "Traffic",
             Self::Log => "Log",
+            Self::Device => "Device",
         }
     }
 }

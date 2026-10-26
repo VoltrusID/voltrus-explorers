@@ -162,6 +162,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(plant) = templates::find_dnp3(DEMO_PLANT) else {
             self.show_toast("The demo plant template is missing", true, cx);
             return None;

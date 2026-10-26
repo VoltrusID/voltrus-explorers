@@ -6,15 +6,19 @@
 
 pub mod cached;
 mod cip;
+mod device;
 mod dnp3;
 mod editor;
 pub mod inspector;
+mod licence;
 mod log;
+mod nats;
 mod new_menu;
 mod palette;
 pub mod pane;
 mod points;
 mod publish;
+mod s7;
 pub mod sidebar;
 mod splits;
 pub mod status_bar;
@@ -42,6 +46,7 @@ use crate::model::{AppModel, Drag, Overlay};
 impl Render for AppModel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_pane_views(cx);
+        self.sync_licence_sheet(window, cx);
         self.sync_serial_consoles(window, cx);
         let theme = theme(cx).clone();
         let ui = self.workspace.ui.clone();
@@ -167,6 +172,8 @@ impl Render for AppModel {
                     model.focus_serial_send(connection, window, cx);
                 }
             }))
+            .on_action(cx.listener(|model, _: &ShowDevice, _, cx| model.show_device_view(cx)))
+            .on_action(cx.listener(|model, _: &RefreshDevice, _, cx| model.refresh_device(cx)))
             .on_mouse_move(cx.listener(|model, event: &MouseMoveEvent, _, cx| {
                 if model.drag.is_some() {
                     if event.pressed_button == Some(MouseButton::Left) {
@@ -218,6 +225,8 @@ impl Render for AppModel {
                 Overlay::Editor(_) => this.child(editor::render(self, cx)),
                 Overlay::NewMenu { .. } => this.child(new_menu::render(self, cx)),
             })
+            // Above every overlay: a refused command can come from any of them.
+            .child(licence::render(self, cx))
             .when_some(self.toast.as_ref(), |this, toast| {
                 let color = if toast.error {
                     theme.danger

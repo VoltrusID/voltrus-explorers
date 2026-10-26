@@ -10,6 +10,7 @@ flowchart LR
     APP --> CORE["vt-app-core<br/>workspace, forms, store"]
     APP --> ENGINE["vt-engine<br/>sessions"]
     APP --> PROTO["vt-protocol<br/>messages"]
+    APP --> STORE["vt-store<br/>App Store licence"]
     CORE --> PROTO
     ENGINE --> PROTO
     ENGINE --> MT["../../crates/mt-*<br/>protocol crates"]
@@ -21,6 +22,7 @@ flowchart LR
 | `vt-engine` | One tokio task per session on its own runtime thread. Polls, writes, simulates, reports. | no |
 | `vt-app-core` | Saved connections, tabs, split tree, form validation, fuzzy search, atomic storage. | no |
 | `vt-ui` | Theme tokens from a colour scheme, metrics, components, text input, charts. No app state. | yes |
+| `vt-store` | The Mac App Store trial and unlock: licence state machine, cached entitlements, StoreKit 2 through a Swift bridge (`store` feature). See [release.md](release.md). | no |
 | `vt-app` | The binary: one `AppModel` entity, views as functions over it. | yes |
 
 The allowed dependencies are listed in `Cargo.toml`
@@ -124,6 +126,17 @@ internal indications arrive as `EventKind::Dnp3Iin` whenever they change. A
 DNP3 master names its points up front (`Points`) and adds every other point
 the outstation reports with `PointsAdded`, like MQTT topics; point flags map to
 `Quality` and their names go in `Payloads` for the inspector.
+Work a running session does on request, with an answer that is not a value,
+is one command and one event per protocol: a NATS client takes
+`Command::Nats { session, request }` (publish with headers, request/reply,
+list streams, open a stream, fetch from a consumer) and answers with
+`EventKind::Nats` (publishes with `Published`). Each waiting request runs on
+its own task beside the subscriptions; a request to a session that is not
+running is answered "Not connected" at once. The app keeps the replies and
+the JetStream browser per connection (`vt-app/src/model/nats.rs`) and draws
+them in the inspector (`vt-app/src/views/nats.rs`). The NATS simulator runs
+`mt-nats`'s embedded server in the session task (it stops and rebinds
+in-process); its request service is an ordinary client of that server.
 
 The serial port picker works the same way: it sends `Command::ListSerialPorts`
 under a request id every two seconds while the editor is open (so a device
@@ -136,6 +149,20 @@ panes. Sends, macros and logging are `Command::SerialSend` and
 writes exactly what it is given. The serial device simulator prints on a
 pseudo-terminal from `mt-serial` (`pty::VirtualPort`) and links it into the
 temporary folder under a stable name, which is what its monitors open.
+What a device says about itself, beyond its points, goes in the pane's
+**Device** view (`PaneView::Device`, `vt-app/src/views/device.rs`). It is not
+in `PaneView::ALL`: the switcher offers it, and ⌘5 opens it, only for
+connections whose protocol has one (`model::s7::has_device_view`), and
+`views/device.rs` hands each protocol to its own module. An S7 client's is the
+PLC view (`views/s7.rs`): the session reads the CPU's identity, mode,
+diagnostic buffer and blocks over its own connection after connecting and on
+`Command::ReadS7Plc`, between polls, and answers with one `EventKind::S7Plc`
+whose parts fail on their own (a CPU may refuse one and serve the rest).
+
+The S7 simulator keeps `mt-s7`'s server image in step with its template
+through `S7Server::apply_unless_written`, which moves the simulated tags and
+returns the client writes since the last tick under one lock, so a value a
+client writes is never overwritten and the point is reported `Locked`.
 
 ## Design system
 

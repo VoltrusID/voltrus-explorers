@@ -105,6 +105,41 @@ standalone Tauri apps in this repository.
   printing its drifting values as `key=value` or CSV lines. It answers
   `HELP`, `READ`, `SET <name> <value>` (held until `RELEASE`) and
   `RATE <ms>`; a value set from the app is held too.
+- **Siemens S7 client** (on `mt-s7`, ISO-on-TCP): host and port, rack and
+  slot (with S7-1200/1500, S7-300 and S7-400 presets) and the PDU size to
+  ask for. Tags are addresses as engineers write them (`DB1.DBD0`,
+  `DB1.DBX4.0`, `MW20`, `I0.3`, `QB2`, `T5`, `C10`, `%`-prefixed or German
+  `E`/`A`/`Z` too), validated as you type, read as Bool, Byte, Word, Int,
+  DWord, DInt, Real, String, Timer (ms) or Counter, packed into as few
+  requests as the negotiated PDU allows. A tag the CPU refuses (a missing DB)
+  goes bad on its own and is logged; the rest keep reading. Writes are checked
+  against the type before they go out. The **PLC** view (⌘5) shows the CPU's
+  identity (module, order number, firmware, serial, station), its operating
+  mode, the diagnostic buffer newest first and every block by type; ⌘R reads
+  it again.
+- **S7 PLC simulator** (`mt-s7`'s server): plays an S7-1500 motor drive, an
+  S7-300 reactor or an S7-1200 packaging line on any TCP port, with data
+  blocks, inputs, outputs, markers, timers, counters and strings, a CPU
+  identity, diagnostic buffer and block list. A value set from the app or
+  written by any client is held until released.
+- **NATS client** (on `mt-nats`, the official `async-nats` client): host and
+  port, TLS against the built-in web trust roots, and a token, user and
+  password, user NKey seed or `.creds` file (chosen in an open panel and kept
+  with the connection). Subscriptions take `*` and `>` wildcards and an
+  optional queue group; every concrete subject becomes a point (a number,
+  true/false, each numeric field of a JSON message or only the one at a JSON
+  path), with its unit when the message has a `Unit` header. The inspector
+  publishes any payload with headers, sends a request and shows the reply
+  with its round trip, and browses JetStream: streams with their subjects,
+  size and sequences, each stream's consumers and newest messages, and a
+  fetch (with acknowledgement) from a pull consumer. Writing a point
+  publishes to its subject. A dropped connection is retried and reported.
+- **NATS server simulator**: `mt-nats`'s embedded server (core protocol,
+  wildcards, queue groups, user/password login and an in-memory JetStream) on
+  any port, publishing a device template at `<prefix>.<value>` with a JSON
+  nameplate at `<prefix>.status`, all kept in a JetStream stream with a
+  durable consumer. A service on it answers requests: `<prefix>.get` with
+  every value, `<prefix>.<value>.set` takes a value and holds it.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -115,14 +150,17 @@ standalone Tauri apps in this repository.
   words, a BACnet client's requests, answers and COV notifications, an
   EtherNet/IP client's frames by service and tag, the requests a simulator
   receives, and every connect, failure and external
+  words, a BACnet client's requests, answers and COV notifications, an S7
+  client's and simulator's PDUs with their addresses and item results, the
+  requests a simulator receives, and every connect, failure and external
   write. Both follow new entries until you scroll back or pause.
 - **Tabs and splits**: watch a device and its simulator side by side, or two
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet, DNP3, EtherNet/IP and serial are ported. The others in
-this repository (OPC UA, S7, NATS, BLE) are being ported next; each plugs
-into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
+Modbus, MQTT, BACnet, DNP3, EtherNet/IP, serial, S7 and NATS are ported. The
+others in this repository (OPC UA, BLE) are being ported next; each plugs into
+the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
@@ -146,7 +184,12 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # serial-terminal,
                                                  # serial-hex, serial-trend,
                                                  # serial-points, serial-editor,
-                                                 # serial-simulator
+                                                 # serial-simulator, s7-points, s7-trend,
+                                                 # s7-traffic, s7-plc, s7-write, s7-editor,
+                                                 # nats-points,
+                                                 # nats-trend, nats-traffic,
+                                                 # nats-inspector, nats-jetstream,
+                                                 # nats-editor
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the
@@ -160,6 +203,7 @@ system appearance, so screenshots are comparable.
 | ⌘N / ⇧⌘N | New connection / simulator (pick the protocol) |
 | ⌘Enter | Connect or disconnect the focused pane |
 | ⌘1 … ⌘4 | Points, trend, traffic, log |
+| ⌘5 / ⌘R | Device view (an S7 client's PLC) / read it again |
 | ⌘D / ⇧⌘D | Split right / down |
 | ⌘W | Close pane |
 | ⌘B / ⌘I | Sidebar / inspector |
@@ -185,6 +229,11 @@ scripts/bundle-macos.sh target/release/voltrus-tools dist
 
 Linux needs the usual GPUI libraries (`libxkbcommon`, `libwayland`, `libvulkan`,
 `libfontconfig`) and `libudev` for serial ports.
+
+Built from source, every tool is unlocked. The Mac App Store build
+(`--features store`) is a free download with a 14-day trial and a one-time
+unlock: how it is licensed, sandboxed, built and uploaded is in
+[docs/release.md](docs/release.md).
 
 Architecture: [docs/architecture.md](docs/architecture.md). Third-party
 notices: [NOTICE.md](NOTICE.md).

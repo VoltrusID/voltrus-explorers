@@ -1,0 +1,28 @@
+[package]
+name = "vt-store"
+description = "Voltrus Tools licensing without UI: the App Store trial and unlock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Mac App Store build: the 14-day trial and the unlock are bought through
+# StoreKit 2 (swift/StoreKitBridge.swift, compiled by build.rs). Without it
+# (source and GitHub builds) everything is unlocked and nothing is sold.
+store = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

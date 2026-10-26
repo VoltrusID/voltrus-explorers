@@ -18,7 +18,9 @@ for scenario in welcome points trend traffic simulator editor palette light \
   bacnet-points bacnet-trend bacnet-traffic bacnet-discover bacnet-command \
   dnp3-points dnp3-trend dnp3-traffic dnp3-control dnp3-station dnp3-editor \
   enip-points enip-trend enip-traffic enip-discover enip-message \
-  serial-terminal serial-hex serial-trend serial-points serial-editor serial-simulator; do
+  serial-terminal serial-hex serial-trend serial-points serial-editor serial-simulator \
+  s7-points s7-trend s7-traffic s7-plc s7-write s7-editor \
+  nats-points nats-trend nats-traffic nats-inspector nats-jetstream nats-editor; do
   "$binary" --demo "$scenario" &
   pid=$!
   id=""
@@ -35,6 +37,28 @@ for scenario in welcome points trend traffic simulator editor palette light \
     case "$scenario" in *trend) sleep 33 ;; *) sleep 6 ;; esac
     screencapture -o -x -l "$id" "$out/$scenario.png"
     echo "captured $scenario ($(sips -g pixelWidth -g pixelHeight "$out/$scenario.png" | tail -2 | awk '{print $2}' | paste -sd x -))"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+done
+
+# The App Store licence sheets and the trial gate, previewed in this source
+# build (`--licence-preview`; store builds ignore the flag).
+for preview in not-started trial expired unlocked gate; do
+  "$binary" --licence-preview "$preview" &
+  pid=$!
+  id=""
+  for _ in $(seq 1 60); do
+    if id="$("$helper" "$pid" 2>/dev/null)"; then break; fi
+    sleep 0.5
+  done
+  if [ -z "$id" ]; then
+    echo "::warning::licence-$preview: no window appeared"
+    status=1
+  else
+    sleep 6
+    screencapture -o -x -l "$id" "$out/licence-$preview.png"
+    echo "captured licence-$preview"
   fi
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true

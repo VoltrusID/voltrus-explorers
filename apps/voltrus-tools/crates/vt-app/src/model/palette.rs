@@ -46,6 +46,18 @@ pub enum Command {
     SerialDemo,
     /// Send a serial connection's macro, by index.
     SerialMacro(ConnectionId, usize),
+    NewS7Client,
+    NewS7Server,
+    S7Demo,
+    /// Read an S7 client's CPU identity, mode, diagnostics and blocks again.
+    ReadS7Plc(ConnectionId),
+    NewNatsClient,
+    NewNatsServer,
+    NatsDemo,
+    /// Send the inspector's NATS request from the focused client.
+    NatsRequest,
+    /// Show the focused NATS client's JetStream streams.
+    NatsJetStream,
 }
 
 pub struct Entry {
@@ -345,6 +357,36 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             Icon::Zap,
             Command::SerialDemo,
         ),
+        (
+            "New NATS connection…",
+            "Subscribe to subjects, publish, request and browse JetStream",
+            Icon::Plus,
+            Command::NewNatsClient,
+        ),
+        (
+            "New NATS server simulator…",
+            "A NATS server with JetStream on this computer publishing a device",
+            Icon::Server,
+            Command::NewNatsServer,
+        ),
+        (
+            "Start the NATS demo",
+            "An inverter on a simulated NATS server and a client subscribed to it",
+            Icon::Zap,
+            Command::NatsDemo,
+        ),
+        (
+            "Send NATS request",
+            "The inspector's subject and payload, from the focused connection",
+            Icon::Send,
+            Command::NatsRequest,
+        ),
+        (
+            "Browse JetStream",
+            "Streams, consumers and stored messages of the focused connection",
+            Icon::Database,
+            Command::NatsJetStream,
+        ),
     ];
     entries.extend(
         fixed
@@ -380,5 +422,6 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             }
         }));
     }
+    entries.extend(super::s7::palette_entries(model));
     entries
 }

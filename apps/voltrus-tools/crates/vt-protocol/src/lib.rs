@@ -11,6 +11,8 @@ mod enip;
 mod message;
 mod modbus;
 mod mqtt;
+mod nats;
+mod s7;
 mod serial;
 mod value;
 
@@ -36,6 +38,15 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use nats::{
+    NATS_PORT, NatsAuth, NatsClientSpec, NatsConsumer, NatsEvent, NatsHeader, NatsReply,
+    NatsRequest, NatsServerSpec, NatsStoredMessage, NatsStream, NatsStreamDetail, NatsSubscription,
+    parse_headers, valid_subject, valid_subject_filter,
+};
+pub use s7::{
+    S7_DEFAULT_PDU, S7_MAX_PDU, S7_MIN_PDU, S7_PORT, S7Address, S7Area, S7Block, S7ClientSpec,
+    S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec, S7TagSpec, S7Type, S7Width,
 };
 pub use serial::{
     FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
@@ -75,6 +86,16 @@ pub enum SessionSpec {
     SerialMonitor(SerialMonitorSpec),
     /// Play an instrument on a virtual serial port.
     SerialDevice(SerialDeviceSpec),
+    /// Read and write a Siemens S7 CPU's tags, and read its diagnostics.
+    S7Client(S7ClientSpec),
+    /// Play an S7 CPU with a template's simulated memory.
+    S7Server(S7ServerSpec),
+    /// Subscribe to a NATS server's subjects, publish, request and browse
+    /// JetStream.
+    NatsClient(NatsClientSpec),
+    /// Run a NATS server with JetStream, optionally publishing a simulated
+    /// device.
+    NatsServer(NatsServerSpec),
 }
 
 impl SessionSpec {
@@ -86,6 +107,8 @@ impl SessionSpec {
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
             Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
+            Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
+            Self::NatsClient(_) | Self::NatsServer(_) => Protocol::Nats,
         }
     }
 
@@ -99,6 +122,10 @@ impl SessionSpec {
             Self::EnipAdapter(_) => Role::Simulator,
             Self::SerialMonitor(_) => Role::Client,
             Self::SerialDevice(_) => Role::Simulator,
+            Self::S7Client(_) => Role::Client,
+            Self::S7Server(_) => Role::Simulator,
+            Self::NatsClient(_) => Role::Client,
+            Self::NatsServer(_) => Role::Simulator,
         }
     }
 
@@ -155,6 +182,27 @@ impl SessionSpec {
                 spec.link.stop_bits
             ),
             Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
+            Self::S7Client(spec) => format!(
+                "{} · rack {} slot {}",
+                host_port(&spec.host, spec.port),
+                spec.rack,
+                spec.slot
+            ),
+            Self::S7Server(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::NatsClient(spec) => format!(
+                "{}{} · {}",
+                if spec.tls { "tls://" } else { "nats://" },
+                host_port(&spec.host, spec.port),
+                match spec.subscriptions.as_slice() {
+                    [] => "no subscriptions".to_owned(),
+                    [only] => only.subject.clone(),
+                    many => format!("{} subscriptions", many.len()),
+                }
+            ),
+            Self::NatsServer(spec) => match &spec.template {
+                Some(_) => format!("{} · {}.>", host_port(&spec.bind, spec.port), spec.prefix),
+                None => host_port(&spec.bind, spec.port),
+            },
         }
     }
 
@@ -173,6 +221,10 @@ impl SessionSpec {
             Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
             Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
             Self::SerialDevice(spec) => spec.alias.clone(),
+            Self::S7Client(spec) => host_port(&spec.host, spec.port),
+            Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::NatsClient(spec) => host_port(&spec.host, spec.port),
+            Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
         }
     }
 }
@@ -196,6 +248,8 @@ pub enum Protocol {
     Dnp3,
     Enip,
     Serial,
+    S7,
+    Nats,
 }
 
 impl Protocol {
@@ -206,6 +260,8 @@ impl Protocol {
         Protocol::Dnp3,
         Protocol::Enip,
         Protocol::Serial,
+        Protocol::S7,
+        Protocol::Nats,
     ];
 
     pub fn name(self) -> &'static str {
@@ -216,6 +272,8 @@ impl Protocol {
             Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
             Self::Serial => "Serial",
+            Self::S7 => "Siemens S7",
+            Self::Nats => "NATS",
         }
     }
 
@@ -228,6 +286,8 @@ impl Protocol {
             Self::Dnp3 => "DN",
             Self::Enip => "EI",
             Self::Serial => "SE",
+            Self::S7 => "S7",
+            Self::Nats => "NA",
         }
     }
 
@@ -248,6 +308,12 @@ impl Protocol {
             }
             Self::Serial => {
                 "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
+            }
+            Self::S7 => {
+                "DB, I, Q, M, timer and counter tags, writes, CPU diagnostics, blocks, and a PLC simulator"
+            }
+            Self::Nats => {
+                "Wildcard subjects, JSON values, publish and request/reply, JetStream browsing, and a server simulator"
             }
         }
     }
