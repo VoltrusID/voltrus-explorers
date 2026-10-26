@@ -62,6 +62,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
             this.child(div().font_family(MONO).child(format!("{frames} frames")))
         })
         .child(div().flex_1())
+        // Store builds: the trial's days left, or read-only.
+        .children(super::licence::status_item(model, cx))
         .child(
             div()
                 .id("theme")
