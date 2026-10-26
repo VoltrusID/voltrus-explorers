@@ -113,5 +113,10 @@ scripts/bundle-macos.sh target/release/voltrus-tools dist
 Linux needs the usual GPUI libraries (`libxkbcommon`, `libwayland`, `libvulkan`,
 `libfontconfig`) and `libudev` for serial ports.
 
+Built from source, every tool is unlocked. The Mac App Store build
+(`--features store`) is a free download with a 14-day trial and a one-time
+unlock: how it is licensed, sandboxed, built and uploaded is in
+[docs/release.md](docs/release.md).
+
 Architecture: [docs/architecture.md](docs/architecture.md). Third-party
 notices: [NOTICE.md](NOTICE.md).

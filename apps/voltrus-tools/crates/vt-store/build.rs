@@ -4,6 +4,7 @@
 //! (`/usr/lib/swift`). Other builds compile nothing.
 
 use std::env;
+use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -56,8 +57,12 @@ fn main() -> io::Result<()> {
         .arg(BRIDGE))?;
 
     // The bridge's objects ask the linker for the Swift runtime libraries
-    // (-lswiftCore, -lswift_Concurrency, ...): point it at the SDK's stubs and
-    // the toolchain's static helpers.
+    // (-lswiftCore, -lswift_Concurrency, ...) and the static
+    // -lswiftCompatibilityPacks. The runtime must come from the SDK's stubs,
+    // whose install names are /usr/lib/swift/...: the toolchain folder also
+    // holds back-deployment dylibs named @rpath/..., which macOS can't find
+    // at launch. So link against the SDK only, plus copies of the toolchain's
+    // static helpers.
     let info = run(Command::new("xcrun").args([
         "--sdk",
         "macosx",
@@ -67,19 +72,28 @@ fn main() -> io::Result<()> {
         &target,
     ]))?;
     let info: serde_json::Value = serde_json::from_str(&info).map_err(io::Error::other)?;
-    let sdk = run(Command::new("xcrun").args(["--sdk", "macosx", "--show-sdk-path"]))?;
-    let mut search = vec![format!("{}/usr/lib/swift", sdk.trim())];
-    for key in ["runtimeLibraryPaths", "runtimeLibraryImportPaths"] {
-        search.extend(
-            info["paths"][key]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|path| path.as_str().map(str::to_owned)),
-        );
+    for dir in info["paths"]["runtimeLibraryPaths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|path| path.as_str())
+    {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("libswiftCompatibility") && name.ends_with(".a") {
+                fs::copy(entry.path(), out_dir.join(&*name))?;
+            }
+        }
     }
-    search.push(out_dir.display().to_string());
-    for path in search {
+    let sdk = run(Command::new("xcrun").args(["--sdk", "macosx", "--show-sdk-path"]))?;
+    for path in [
+        format!("{}/usr/lib/swift", sdk.trim()),
+        out_dir.display().to_string(),
+    ] {
         writeln!(out, "cargo:rustc-link-search=native={path}")?;
     }
     writeln!(out, "cargo:rustc-link-lib=static=vtstorekit")?;
