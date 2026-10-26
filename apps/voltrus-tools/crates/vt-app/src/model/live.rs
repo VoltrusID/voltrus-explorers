@@ -57,6 +57,9 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// BLE sessions: each point's characteristic (service, properties,
+    /// notifications, decoder); empty for other protocols.
+    pub ble: Vec<vt_protocol::BleCharacteristicInfo>,
 }
 
 impl Default for Live {
@@ -81,6 +84,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            ble: Vec::new(),
         }
     }
 }
@@ -206,7 +210,17 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            // The BLE scan's answer goes to the editor too.
+            EventKind::BleDevices(_) => {}
+            EventKind::BleGatt(characteristics) => self.ble = characteristics,
         }
+    }
+
+    /// The BLE characteristic behind `point`.
+    pub fn ble_characteristic(&self, point: u32) -> Option<&vt_protocol::BleCharacteristicInfo> {
+        self.ble
+            .iter()
+            .find(|characteristic| characteristic.point == point)
     }
 
     /// The points drawn on the trend.

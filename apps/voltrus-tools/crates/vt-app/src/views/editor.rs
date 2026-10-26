@@ -16,6 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 mod bacnet;
+mod ble;
 mod mqtt;
 
 /// A click handler that changes the open editor.
@@ -51,6 +52,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::BleClient, false) => "New Bluetooth LE connection",
+        (EditorKind::BleClient, true) => "Edit Bluetooth LE connection",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -67,6 +70,9 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::BleClient => {
+            "Scan for a peripheral, then browse its GATT services: read, write and subscribe to every characteristic."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -75,6 +81,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::BleClient => ble::client(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -84,6 +91,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::BleClient, false) => "Save and connect",
     };
     let confirm_delete = editor.confirm_delete;
 

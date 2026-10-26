@@ -6,6 +6,7 @@
 //! another session.
 
 mod bacnet;
+pub mod ble;
 mod emit;
 mod modbus;
 mod mqtt;
@@ -74,6 +75,9 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::MqttBroker(_) => {
             u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::BleClient(_) => {
+            u64::try_from(ble::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -100,6 +104,8 @@ pub(crate) enum Control {
         point: u32,
     },
     Close,
+    /// BLE clients: read, write, subscribe to or re-decode a characteristic.
+    Ble(vt_protocol::BleRequest),
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -161,7 +167,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::BacnetDevice(device) => Some(device.port),
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
-                    | SessionSpec::BacnetClient(_) => None,
+                    | SessionSpec::BacnetClient(_)
+                    | SessionSpec::BleClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -230,6 +237,18 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::ScanBle { session, spec } => {
+                let events = events.clone();
+                tokio::spawn(ble::scan(spec, move |found| {
+                    let _ = events.try_send(Event {
+                        session,
+                        kind: EventKind::BleDevices(found),
+                    });
+                }));
+            }
+            Command::Ble { session, request } => {
+                forward(&sessions, session, Control::Ble(request));
+            }
             Command::Shutdown => break,
         }
     }
@@ -252,5 +271,6 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
         SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
+        SessionSpec::BleClient(spec) => ble::client::run(spec, control, &out).await,
     }
 }

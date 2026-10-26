@@ -106,6 +106,7 @@ impl BleManager {
                 }
             };
 
+            let advertisement = advertisement_of(&props);
             let name = props.local_name.unwrap_or_default();
             let rssi = props.rssi.unwrap_or(-128);
             let address = format!("{}", peripheral.address());
@@ -121,6 +122,7 @@ impl BleManager {
                 rssi,
                 address,
                 connected: is_connected,
+                advertisement,
             });
 
             cache.insert(id, peripheral.clone());
@@ -173,6 +175,22 @@ impl BleManager {
         char_map.retain(|k, _| !k.starts_with(id));
 
         Ok(())
+    }
+
+    /// Whether the device is connected now. A device no scan has seen is an
+    /// error.
+    pub async fn is_connected(&self, id: &str) -> Result<bool, String> {
+        let peripheral = {
+            let peripherals = self.peripherals.lock().await;
+            peripherals
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Device not found: {}", id))?
+        };
+        peripheral
+            .is_connected()
+            .await
+            .map_err(|e| format!("Failed to query the connection: {}", e))
     }
 
     pub async fn discover_services(&self, id: &str) -> Result<Vec<BleService>, String> {
@@ -387,6 +405,32 @@ impl BleManager {
             .into_iter()
             .find(|c| c.uuid == uuid)
             .ok_or_else(|| format!("Characteristic not found: {}", char_uuid))
+    }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn advertisement_of(props: &btleplug::api::PeripheralProperties) -> BleAdvertisement {
+    BleAdvertisement {
+        local_name: props.local_name.clone(),
+        manufacturer_data: (!props.manufacturer_data.is_empty()).then(|| {
+            props
+                .manufacturer_data
+                .iter()
+                .map(|(company, data)| (*company, to_hex(data)))
+                .collect()
+        }),
+        service_uuids: props.services.iter().map(|uuid| uuid.to_string()).collect(),
+        tx_power_level: props
+            .tx_power_level
+            .map(|level| level.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8),
+        service_data: props
+            .service_data
+            .iter()
+            .map(|(uuid, data)| (uuid.to_string(), to_hex(data)))
+            .collect(),
     }
 }
 

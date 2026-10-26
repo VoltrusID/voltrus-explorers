@@ -263,6 +263,9 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
                 }
+                (SessionSpec::BleClient(_), _) => {
+                    "Connect to find the peripheral and browse its GATT services. Every characteristic becomes a point: read, written or pushed by notifications."
+                }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
                 }

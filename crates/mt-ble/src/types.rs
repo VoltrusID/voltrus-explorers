@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BleDevice {
@@ -7,6 +8,10 @@ pub struct BleDevice {
     pub rssi: i16,
     pub address: String,
     pub connected: bool,
+    /// What the device last advertised: manufacturer and service data, the
+    /// services it offers and its transmit power.
+    #[serde(default)]
+    pub advertisement: BleAdvertisement,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,12 +49,16 @@ impl Default for BleCharProperties {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BleAdvertisement {
     pub local_name: Option<String>,
-    pub manufacturer_data: Option<std::collections::HashMap<u16, String>>,
+    /// Manufacturer data as hex, keyed by Bluetooth SIG company identifier.
+    pub manufacturer_data: Option<HashMap<u16, String>>,
     pub service_uuids: Vec<String>,
     pub tx_power_level: Option<i8>,
+    /// Service data as hex, keyed by service UUID.
+    #[serde(default)]
+    pub service_data: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

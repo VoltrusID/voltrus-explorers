@@ -3,7 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    BacnetDeviceInfo, BacnetDiscoverSpec, BleCharacteristicInfo, BleRequest, BleScan, BleScanSpec,
+    MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -62,6 +63,18 @@ pub enum Command {
         session: SessionId,
         spec: BacnetDiscoverSpec,
     },
+    /// Scan for BLE peripherals; what it sees comes back as
+    /// [`EventKind::BleDevices`] under `session`, which names the scan (no
+    /// session runs under it), until an answer that is `done`.
+    ScanBle {
+        session: SessionId,
+        spec: BleScanSpec,
+    },
+    /// BLE sessions: read, write, subscribe to or re-decode a characteristic.
+    Ble {
+        session: SessionId,
+        request: BleRequest,
+    },
 }
 
 /// Engine → app.
@@ -105,6 +118,12 @@ pub enum EventKind {
     },
     /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
     BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
+    /// Answers to [`Command::ScanBle`]: the peripherals seen so far.
+    BleDevices(Result<BleScan, String>),
+    /// BLE sessions: each point's characteristic, its service and properties,
+    /// whether it notifies and how it is decoded. Sent after `Points` and
+    /// whenever one of them changes.
+    BleGatt(Vec<BleCharacteristicInfo>),
 }
 
 /// The text behind one point's latest value.
@@ -365,6 +384,117 @@ mod tests {
             let event = Event {
                 session: SessionId(4),
                 kind: EventKind::BacnetDevices(answer),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+    }
+
+    #[test]
+    fn ble_messages_round_trip_through_json() {
+        use crate::{
+            BleAdapter, BleClientSpec, BleDecoder, BleDeviceInfo, BleFormat, BleManufacturerData,
+            BleProperties, BleServiceData,
+        };
+
+        let mut spec = BleClientSpec {
+            adapter: BleAdapter::Simulated,
+            peripheral: "5C3A1F2E-0000-4000-8000-00000000BEEF".into(),
+            name: "Voltrus HRM".into(),
+            poll_ms: 0,
+            notify: false,
+            decoders: Vec::new(),
+        };
+        spec.set_decoder(
+            "00002a6e-0000-1000-8000-00805f9b34fb",
+            BleDecoder {
+                format: BleFormat::I16Be,
+                offset: 2,
+                scale: 0.01,
+            },
+        );
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::BleClient(spec),
+            },
+            Command::ScanBle {
+                session: SessionId(2),
+                spec: BleScanSpec {
+                    adapter: BleAdapter::System,
+                    duration_ms: 5000,
+                },
+            },
+            Command::Ble {
+                session: SessionId(1),
+                request: BleRequest::Write {
+                    point: 4,
+                    data: vec![0x00, 0xff, 0x7f],
+                },
+            },
+            Command::Ble {
+                session: SessionId(1),
+                request: BleRequest::Notify {
+                    point: 0,
+                    enabled: false,
+                },
+            },
+            Command::Ble {
+                session: SessionId(1),
+                request: BleRequest::Decode {
+                    point: 2,
+                    decoder: BleDecoder::of(BleFormat::F64Le),
+                },
+            },
+            Command::Ble {
+                session: SessionId(1),
+                request: BleRequest::Read { point: 3 },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let device = BleDeviceInfo {
+            id: "AA:BB:CC:DD:EE:FF".into(),
+            name: String::new(),
+            address: "AA:BB:CC:DD:EE:FF".into(),
+            rssi: Some(-67),
+            tx_power: None,
+            services: vec!["0000180d-0000-1000-8000-00805f9b34fb".into()],
+            manufacturer: vec![BleManufacturerData {
+                company: 0x0059,
+                data: vec![1, 2, 3],
+            }],
+            service_data: vec![BleServiceData {
+                service: "0000feaa-0000-1000-8000-00805f9b34fb".into(),
+                data: Vec::new(),
+            }],
+            connected: false,
+        };
+        let events = [
+            EventKind::BleDevices(Ok(BleScan {
+                devices: vec![device],
+                done: false,
+            })),
+            EventKind::BleDevices(Err("Bluetooth is off".into())),
+            EventKind::BleGatt(vec![BleCharacteristicInfo {
+                point: 0,
+                service: "0000180d-0000-1000-8000-00805f9b34fb".into(),
+                uuid: "00002a37-0000-1000-8000-00805f9b34fb".into(),
+                properties: BleProperties {
+                    notify: true,
+                    ..BleProperties::default()
+                },
+                notifying: true,
+                decoder: BleDecoder::default(),
+            }]),
+        ];
+        for kind in events {
+            let event = Event {
+                session: SessionId(2),
+                kind,
             };
             let text = serde_json::to_string(&event).unwrap();
             assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);

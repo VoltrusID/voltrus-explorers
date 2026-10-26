@@ -14,6 +14,7 @@ mt-modbus = { path = "../../../../crates/mt-modbus" }
 mt-protocol = { path = "../../../../crates/mt-protocol" }
 mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
+mt-ble = { path = "../../../../crates/mt-ble" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
 # Sparkplug B payloads. Same versions as mt-mqtt uses.

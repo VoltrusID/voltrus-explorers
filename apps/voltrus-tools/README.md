@@ -45,6 +45,23 @@ standalone Tauri apps in this repository.
   on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
   with a 16-level priority array, and SubscribeCOV. A value set from the app
   or commanded by any client is held until released or relinquished.
+- **Bluetooth LE client** (on `mt-ble`): a scan that lists advertising
+  peripherals with their signal (dBm and bars), advertised services,
+  manufacturer and service data and transmit power. Connecting browses the
+  GATT services and makes every characteristic a point, named by its
+  Bluetooth SIG number: readable ones are read and re-read, notifying and
+  indicating ones subscribed. Standard characteristics decode themselves
+  (heart rate, battery, temperature and IEEE 11073 thermometer readings,
+  humidity, pressure, elevation, device information text); any other can be
+  decoded as an integer or float of any width and byte order at an offset
+  with a scale, as UTF-8 or as hex, and the choice is kept with the
+  connection. The inspector shows the service, UUID and properties, reads
+  on demand, turns notifications on and off, and writes a number in the
+  characteristic's layout or raw bytes or text. A lost link reconnects.
+  A **Simulated** adapter (a heart rate monitor, an environment sensor with a
+  writable setpoint and a UART that echoes, and a beacon) runs the same
+  session without hardware. The app asks for Bluetooth access the first time
+  it scans.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -59,9 +76,10 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT and BACnet are ported. The others in this repository (OPC UA,
-S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
-into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
+Modbus, MQTT, BACnet and Bluetooth LE are ported. The others in this
+repository (OPC UA, S7, EtherNet/IP, DNP3, NATS, serial) are being ported
+next; each plugs into the same engine and views
+([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
@@ -76,7 +94,9 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # mqtt-inspector, mqtt-editor
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
-                                                 # bacnet-command
+                                                 # bacnet-command, ble-points,
+                                                 # ble-trend, ble-scan,
+                                                 # ble-inspector
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the
@@ -111,7 +131,12 @@ scripts/bundle-macos.sh target/release/voltrus-tools dist
 ```
 
 Linux needs the usual GPUI libraries (`libxkbcommon`, `libwayland`, `libvulkan`,
-`libfontconfig`) and `libudev` for serial ports.
+`libfontconfig`), `libudev` for serial ports and `libdbus-1` for Bluetooth.
+
+macOS only lets an app with a Bluetooth usage description use the radio:
+try Bluetooth LE on real peripherals from the bundle (`dist/Voltrus Tools.app`),
+not `cargo run`. The sandboxed build needs the `com.apple.security.device.bluetooth`
+entitlement.
 
 Architecture: [docs/architecture.md](docs/architecture.md). Third-party
 notices: [NOTICE.md](NOTICE.md).

@@ -61,7 +61,7 @@ impl Seen {
                     .map(|frame| format!("{} {}", frame.summary, frame.detail)),
             ),
             EventKind::Log(entry) => self.log.push(entry.message),
-            EventKind::Stats(_) | EventKind::Payloads(_) | EventKind::BacnetDevices(_) => {}
+            _ => {}
         }
     }
 

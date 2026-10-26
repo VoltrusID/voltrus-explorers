@@ -5,6 +5,7 @@
 //! every state transition.
 
 pub mod bacnet;
+pub mod ble;
 pub mod editor;
 pub mod live;
 pub mod palette;
@@ -131,6 +132,9 @@ pub struct AppModel {
     pub publish: PublishForm,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    /// BLE: the inspector's characteristic tools and the adapter new
+    /// connections start on.
+    pub ble: ble::BleState,
 }
 
 impl AppModel {
@@ -226,6 +230,7 @@ impl AppModel {
             publish: PublishForm::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
+            ble: ble::BleState::new(window, cx),
         };
         window.focus(&model.focus);
         if let Some(notice) = boot.notice {
@@ -244,6 +249,17 @@ impl AppModel {
                 kind: vt_protocol::EventKind::BacnetDevices(found),
             } => {
                 self.bacnet_devices_found(session, found);
+                return;
+            }
+            event => event,
+        };
+        // So does the BLE editor's scan.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::BleDevices(found),
+            } => {
+                self.ble_devices_found(session, found);
                 return;
             }
             event => event,
@@ -531,6 +547,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Ble => {
+                self.start_ble_demo(cx);
+            }
         }
     }
 
@@ -592,6 +611,7 @@ impl AppModel {
             }
             live.selected = Some(point);
         }
+        self.sync_ble_inspector(connection, point, cx);
         cx.notify();
     }
 
@@ -616,6 +636,9 @@ impl AppModel {
         self.pane_scroll(pane)
             .points
             .scroll_to_item(next, gpui::ScrollStrategy::Center);
+        if let Ok(point) = u32::try_from(next) {
+            self.sync_ble_inspector(connection, point, cx);
+        }
         cx.notify();
     }
 
@@ -749,10 +772,19 @@ impl AppModel {
             .as_ref()
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
+        let scan = kind == EditorKind::BleClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         // A new BACnet client starts by looking for devices.
         if discover {
             self.discover_bacnet(cx);
+        }
+        // So does a new BLE connection, on the adapter used last.
+        if scan {
+            let adapter = self.ble.adapter;
+            if let Some(editor) = self.editor_mut() {
+                editor.ble.adapter = adapter;
+            }
+            self.scan_ble(cx);
         }
         cx.notify();
     }
@@ -1001,6 +1033,10 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewBleClient => self.open_editor(EditorKind::BleClient, None, window, cx),
+            Command::BleDemo => {
+                self.start_ble_demo(cx);
+            }
         }
     }
 

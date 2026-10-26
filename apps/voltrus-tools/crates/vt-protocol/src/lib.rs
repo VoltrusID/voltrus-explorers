@@ -6,6 +6,7 @@
 //! in muxy) without changing either side's model.
 
 mod bacnet;
+mod ble;
 mod message;
 mod modbus;
 mod mqtt;
@@ -13,6 +14,11 @@ mod value;
 
 pub use bacnet::{
     BACNET_PORT, BacnetClientSpec, BacnetDeviceInfo, BacnetDeviceSpec, BacnetDiscoverSpec,
+};
+pub use ble::{
+    BleAdapter, BleCharacteristicInfo, BleClientSpec, BleDecoder, BleDecoderRule, BleDeviceInfo,
+    BleFormat, BleManufacturerData, BleProperties, BleRequest, BleScan, BleScanSpec,
+    BleServiceData,
 };
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
@@ -45,6 +51,9 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Connect to a Bluetooth Low Energy peripheral and read, write and
+    /// subscribe to its characteristics.
+    BleClient(BleClientSpec),
 }
 
 impl SessionSpec {
@@ -53,12 +62,14 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::BleClient(_) => Protocol::Ble,
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
+            Self::BleClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
         }
     }
@@ -92,6 +103,7 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::BleClient(spec) => format!("{} · {}", spec.adapter.name(), ble_label(spec)),
         }
     }
 
@@ -104,6 +116,7 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::BleClient(spec) => ble_label(spec),
         }
     }
 }
@@ -117,6 +130,15 @@ fn host_port(host: &str, port: u16) -> String {
     }
 }
 
+/// A peripheral by its name, else its identifier.
+fn ble_label(spec: &BleClientSpec) -> String {
+    if spec.name.trim().is_empty() {
+        spec.peripheral.clone()
+    } else {
+        spec.name.clone()
+    }
+}
+
 /// The protocols the suite speaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -124,16 +146,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Ble,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::Ble,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Ble => "Bluetooth LE",
         }
     }
 
@@ -143,6 +172,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Ble => "BL",
         }
     }
 
@@ -154,6 +184,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Ble => {
+                "Scan with signal and advertisements, browse GATT, read, write and notify with SIG decoders"
             }
         }
     }

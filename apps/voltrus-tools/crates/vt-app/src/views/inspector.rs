@@ -9,6 +9,7 @@ use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
 use vt_ui::theme::*;
 
+use super::ble;
 use super::{now_ms, publish, resize_handle, state_color};
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Drag};
@@ -463,6 +464,11 @@ fn point_detail(
         content = content
             .child(divider(cx))
             .child(publish::card(live, &model.publish, cx));
+    }
+    if spec.is_some_and(|spec| spec.protocol() == Protocol::Ble) {
+        content = content
+            .child(divider(cx))
+            .child(ble::card(live, point, &model.ble, cx));
     }
     content.into_any_element()
 }

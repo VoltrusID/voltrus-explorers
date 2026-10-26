@@ -33,6 +33,8 @@ pub enum Command {
     NewBacnetClient,
     NewBacnetDevice,
     BacnetDemo,
+    NewBleClient,
+    BleDemo,
 }
 
 pub struct Entry {
@@ -277,6 +279,18 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "Colour schemes, previewed live",
             Icon::Palette,
             Command::ChooseTheme,
+        ),
+        (
+            "New Bluetooth LE connection…",
+            "Scan for a peripheral, browse its GATT services, read, write and subscribe",
+            Icon::Bluetooth,
+            Command::NewBleClient,
+        ),
+        (
+            "Start the Bluetooth LE demo",
+            "A simulated heart rate monitor and environment sensor",
+            Icon::Zap,
+            Command::BleDemo,
         ),
     ];
     entries.extend(

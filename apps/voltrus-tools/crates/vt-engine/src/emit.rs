@@ -74,6 +74,10 @@ impl Emitter {
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
     }
+
+    pub(crate) fn ble_gatt(&self, characteristics: Vec<vt_protocol::BleCharacteristicInfo>) {
+        self.emit(EventKind::BleGatt(characteristics));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

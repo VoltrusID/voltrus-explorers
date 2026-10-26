@@ -13,6 +13,9 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod ble;
+
+pub use ble::BleClientForm;
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,8 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// BLE: the peripheral to connect to.
+    Peripheral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
