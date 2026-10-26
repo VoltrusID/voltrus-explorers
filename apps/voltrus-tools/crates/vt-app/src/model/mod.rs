@@ -5,6 +5,7 @@
 //! every state transition.
 
 pub mod bacnet;
+pub mod dnp3;
 pub mod editor;
 pub mod live;
 pub mod palette;
@@ -532,6 +533,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Dnp3 => {
+                self.start_dnp3_demo(cx);
+            }
             Protocol::S7 => {
                 self.start_s7_demo(cx);
             }
@@ -835,6 +839,12 @@ impl AppModel {
         }
         if editing.is_none()
             && add_client
+            && let SessionSpec::Dnp3Outstation(outstation) = &spec
+        {
+            self.add_dnp3_master(&name, outstation, cx);
+        }
+        if editing.is_none()
+            && add_client
             && let SessionSpec::S7Server(server) = &spec
         {
             self.add_s7_client(&name, server, cx);
@@ -1017,6 +1027,14 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewDnp3Master => self.open_editor(EditorKind::Dnp3Master, None, window, cx),
+            Command::NewDnp3Outstation => {
+                self.open_editor(EditorKind::Dnp3Outstation, None, window, cx)
+            }
+            Command::Dnp3Demo => {
+                self.start_dnp3_demo(cx);
+            }
+            Command::Dnp3(connection, action) => self.dnp3_action(connection, action, cx),
         }
     }
 

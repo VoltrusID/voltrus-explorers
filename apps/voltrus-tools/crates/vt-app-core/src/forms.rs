@@ -13,6 +13,11 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod dnp3;
+
+pub use dnp3::{
+    Dnp3MasterForm, Dnp3OutstationForm, Dnp3PointField, Dnp3PointForm, next_dnp3_point,
+};
 mod s7;
 
 pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
@@ -51,6 +56,13 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// DNP3: the master's own link address and the outstation's, the poll
+    /// periods, and a point-name row with which of its fields.
+    LinkAddress,
+    OutstationAddress,
+    IntegrityMs,
+    EventMs,
+    Dnp3Point(usize, Dnp3PointField),
     /// S7: the CPU's rack, slot and PDU size, and a tag row and which of its fields.
     S7Rack,
     S7Slot,

@@ -12,8 +12,10 @@ use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 
+mod dnp3;
 mod mqtt;
 
+pub use dnp3::{Dnp3Fields, NEW_MASTER_NAME, NEW_OUTSTATION_NAME};
 pub use mqtt::MqttFields;
 mod s7;
 
@@ -27,6 +29,8 @@ pub enum EditorKind {
     MqttBroker,
     BacnetClient,
     BacnetDevice,
+    Dnp3Master,
+    Dnp3Outstation,
     S7Client,
     S7Server,
 }
@@ -42,6 +46,8 @@ impl EditorKind {
             (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+            (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
+            (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
             (Protocol::S7, Role::Client) => Self::S7Client,
             (Protocol::S7, Role::Simulator) => Self::S7Server,
         })
@@ -56,6 +62,8 @@ impl EditorKind {
             SessionSpec::MqttBroker(_) => Self::MqttBroker,
             SessionSpec::BacnetClient(_) => Self::BacnetClient,
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+            SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
+            SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
             SessionSpec::S7Client(_) => Self::S7Client,
             SessionSpec::S7Server(_) => Self::S7Server,
         }
@@ -99,6 +107,7 @@ pub struct Editor {
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
+    pub dnp3: Dnp3Fields,
     pub s7: S7Fields,
 }
 
@@ -128,6 +137,7 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let s7 = S7Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
@@ -159,6 +169,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::Dnp3Master(_) | SessionSpec::Dnp3Outstation(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             Some((_, name, SessionSpec::S7Client(_) | SessionSpec::S7Server(_))) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -172,6 +187,8 @@ impl Editor {
                     EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
+                    EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
+                    EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
                     EditorKind::S7Client => NEW_S7_CLIENT_NAME.to_owned(),
                     EditorKind::S7Server => NEW_S7_SERVER_NAME.to_owned(),
                 },
@@ -237,6 +254,7 @@ impl Editor {
             error: None,
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
+            dnp3,
             s7,
         };
         for block in master.blocks {
@@ -260,6 +278,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.dnp3.inputs() {
             editor.watch(&field, window, cx);
         }
         for field in editor.s7.inputs() {
@@ -395,6 +416,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
+            EditorKind::Dnp3Master => self
+                .dnp3
+                .master_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Master(spec))),
+            EditorKind::Dnp3Outstation => self
+                .dnp3
+                .outstation_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Outstation(spec))),
             EditorKind::S7Client => self
                 .s7
                 .client_form(Self::text(&self.name, cx), cx)

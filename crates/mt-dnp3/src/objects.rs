@@ -18,6 +18,28 @@ pub struct Dnp3PointValue {
     pub value: f64,
     /// The object was an event, not a static value.
     pub event: bool,
+    /// The flags octet (bit 0 ONLINE, 1 RESTART, 2 COMM_LOST, 3 REMOTE_FORCED, 4 LOCAL_FORCED,
+    /// then type-specific bits). `None` for objects without one: packed bits and the variations
+    /// without flags, which by definition are online.
+    pub flags: Option<u8>,
+    /// Absolute time stamp of an event object that carries one, in milliseconds since the Unix
+    /// epoch (the 48-bit DNP3 time).
+    pub time: Option<u64>,
+}
+
+/// Bits of a point's flags octet (IEEE 1815-2012 clause 11.9).
+pub mod flag {
+    pub const ONLINE: u8 = 0x01;
+    pub const RESTART: u8 = 0x02;
+    pub const COMM_LOST: u8 = 0x04;
+    pub const REMOTE_FORCED: u8 = 0x08;
+    pub const LOCAL_FORCED: u8 = 0x10;
+    /// Binary inputs: CHATTER_FILTER. Analog inputs: OVER_RANGE. Counters: ROLLOVER.
+    pub const BIT5: u8 = 0x20;
+    /// Analog inputs: REFERENCE_ERR. Counters: DISCONTINUITY.
+    pub const BIT6: u8 = 0x40;
+    /// Binary inputs and outputs: the state.
+    pub const STATE: u8 = 0x80;
 }
 
 /// Human-readable name for a group/variation pair.
@@ -28,8 +50,15 @@ pub fn group_variation_name(group: u8, variation: u8) -> &'static str {
         (2, 1) => "Binary Input Event",
         (2, 2) => "Binary Input Event (absolute time)",
         (2, 3) => "Binary Input Event (relative time)",
+        (3, 1) => "Double-bit Input (packed)",
+        (3, 2) => "Double-bit Input (with flags)",
+        (4, 1) => "Double-bit Input Event",
+        (4, 2) => "Double-bit Input Event (absolute time)",
+        (4, 3) => "Double-bit Input Event (relative time)",
         (10, 1) => "Binary Output Status (packed)",
         (10, 2) => "Binary Output Status (with flags)",
+        (11, 1) => "Binary Output Event",
+        (11, 2) => "Binary Output Event (absolute time)",
         (12, 1) => "Control Relay Output Block",
         (20, 1) => "Counter (uint32 with flags)",
         (20, 2) => "Counter (uint16 with flags)",
@@ -67,6 +96,14 @@ pub fn group_variation_name(group: u8, variation: u8) -> &'static str {
         (41, 2) => "Analog Output Block (int16)",
         (41, 3) => "Analog Output Block (float32)",
         (41, 4) => "Analog Output Block (float64)",
+        (42, 1) => "Analog Output Event (int32)",
+        (42, 2) => "Analog Output Event (int16)",
+        (42, 3) => "Analog Output Event (int32 with time)",
+        (42, 4) => "Analog Output Event (int16 with time)",
+        (42, 5) => "Analog Output Event (float32)",
+        (42, 6) => "Analog Output Event (float64)",
+        (42, 7) => "Analog Output Event (float32 with time)",
+        (42, 8) => "Analog Output Event (float64 with time)",
         (50, 1) => "Time and Date",
         (52, 1) => "Time Delay (coarse)",
         (52, 2) => "Time Delay (fine)",
@@ -248,6 +285,28 @@ fn layout(group: u8, variation: u8) -> Option<Layout> {
 /// State bit of a binary flags octet.
 fn binary_state(flags: u8) -> f64 {
     if flags & 0x80 != 0 { 1.0 } else { 0.0 }
+}
+
+/// Little-endian 48-bit DNP3 time at the start of `bytes`.
+fn time48(bytes: &[u8]) -> Option<u64> {
+    let bytes = bytes.get(..6)?;
+    Some(bytes.iter().rev().fold(0u64, |acc, &b| (acc << 8) | u64::from(b)))
+}
+
+/// The flags octet and absolute time of one object, where its variation carries them.
+fn item_meta(group: u8, variation: u8, bytes: &[u8]) -> (Option<u8>, Option<u64>) {
+    if let Some(num) = numeric(group, variation) {
+        if !num.flag {
+            return (None, None);
+        }
+        let time = if num.time { time48(&bytes[1 + num.num.width()..]) } else { None };
+        return (bytes.first().copied(), time);
+    }
+    let time = match (group, variation) {
+        (2 | 4 | 11, 2) => time48(&bytes[1..]),
+        _ => None,
+    };
+    (bytes.first().copied(), time)
 }
 
 fn decode_item(group: u8, variation: u8, bytes: &[u8]) -> Option<f64> {
@@ -438,7 +497,15 @@ impl ObjectBlock<'_> {
                         _ => continue,
                     };
                     let Some(index) = u16::try_from(self.start + i as u32).ok() else { break };
-                    out.push(Dnp3PointValue { group, variation: self.variation, index, value, event });
+                    out.push(Dnp3PointValue {
+                        group,
+                        variation: self.variation,
+                        index,
+                        value,
+                        event,
+                        flags: None,
+                        time: None,
+                    });
                 }
             }
             Layout::Bytes(size) => {
@@ -452,7 +519,16 @@ impl ObjectBlock<'_> {
                     };
                     let Some(value) = decode_item(self.group, self.variation, object) else { return out };
                     let Ok(index) = u16::try_from(index) else { continue };
-                    out.push(Dnp3PointValue { group, variation: self.variation, index, value, event });
+                    let (flags, time) = item_meta(self.group, self.variation, object);
+                    out.push(Dnp3PointValue {
+                        group,
+                        variation: self.variation,
+                        index,
+                        value,
+                        event,
+                        flags,
+                        time,
+                    });
                 }
             }
         }
@@ -606,6 +682,40 @@ mod tests {
         assert_eq!(issue, None);
         assert_eq!(points.len(), 1);
         assert_eq!(points[0].value, 3.5);
+    }
+
+    #[test]
+    fn flags_and_times_come_with_the_objects_that_carry_them() {
+        // g2v2 binary event: flags 0x81 (ONLINE + state), time 1 700 000 000 123 ms.
+        let mut data = vec![2, 2, 0x17, 1, 9, 0x81];
+        data.extend_from_slice(&1_700_000_000_123u64.to_le_bytes()[..6]);
+        // g2v3 relative time: flags only.
+        data.extend_from_slice(&[2, 3, 0x17, 1, 3, 0x05, 0x10, 0x00]);
+        // g1v1 packed: no flags at all.
+        data.extend_from_slice(&[1, 1, 0x00, 0, 1, 0b10]);
+        // g30v3 int32 without flags.
+        data.extend_from_slice(&[30, 3, 0x00, 0, 0]);
+        data.extend_from_slice(&42i32.to_le_bytes());
+        // g22v5 counter event with flags (ROLLOVER) and time.
+        data.extend_from_slice(&[22, 5, 0x17, 1, 2, flag::ONLINE | flag::BIT5]);
+        data.extend_from_slice(&9u32.to_le_bytes());
+        data.extend_from_slice(&[1, 0, 0, 0, 0, 0]);
+        let (points, issue) = parse_points(&data);
+        assert_eq!(issue, None);
+        let meta: Vec<(u8, u16, Option<u8>, Option<u64>)> =
+            points.iter().map(|p| (p.group, p.index, p.flags, p.time)).collect();
+        assert_eq!(
+            meta,
+            [
+                (1, 9, Some(0x81), Some(1_700_000_000_123)),
+                (1, 3, Some(0x05), None),
+                (1, 0, None, None),
+                (1, 1, None, None),
+                (30, 0, None, None),
+                (20, 2, Some(0x21), Some(1)),
+            ]
+        );
+        assert_eq!(points[1].value, 0.0, "COMM_LOST without the state bit is off");
     }
 
     #[test]

@@ -57,6 +57,8 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// DNP3: what the session last reported about its outstation.
+    pub dnp3: super::dnp3::Dnp3Live,
     /// S7 clients: what the CPU last said about itself.
     pub s7_plc: Option<Result<vt_protocol::S7PlcReport, String>>,
     /// S7 clients: a read of the CPU is on its way.
@@ -85,6 +87,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            dnp3: super::dnp3::Dnp3Live::default(),
             s7_plc: None,
             s7_plc_reading: false,
         }
@@ -102,6 +105,7 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.dnp3 = super::dnp3::Dnp3Live::default();
         self.s7_plc = None;
         // A connecting S7 client reads its CPU first.
         self.s7_plc_reading = true;
@@ -215,6 +219,13 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            EventKind::Dnp3Iin(iin) => self.dnp3.iin = Some(iin),
+            EventKind::Dnp3Done { action, result } => {
+                if self.dnp3.busy == Some(action) {
+                    self.dnp3.busy = None;
+                }
+                self.dnp3.last = Some((action, result));
+            }
             EventKind::S7Plc(report) => {
                 self.s7_plc = Some(report);
                 self.s7_plc_reading = false;

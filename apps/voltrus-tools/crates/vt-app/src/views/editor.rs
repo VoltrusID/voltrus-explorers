@@ -16,6 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 mod bacnet;
+mod dnp3;
 mod mqtt;
 mod s7;
 
@@ -52,6 +53,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::Dnp3Master, false) => "New DNP3 connection",
+        (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
+        (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
+        (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
         (EditorKind::S7Client, false) => "New Siemens S7 connection",
         (EditorKind::S7Client, true) => "Edit Siemens S7 connection",
         (EditorKind::S7Server, false) => "New S7 PLC simulator",
@@ -72,6 +77,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::Dnp3Master => {
+            "Poll an outstation over TCP: integrity and event polls, flags, controls and time sync."
+        }
+        EditorKind::Dnp3Outstation => {
+            "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
+        }
         EditorKind::S7Client => {
             "Poll a CPU's DB, I, Q, M, timer and counter tags over ISO-on-TCP, write them, and read its diagnostics."
         }
@@ -86,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::Dnp3Master => dnp3::master(editor, cx),
+        EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
         EditorKind::S7Client => s7::client(editor, cx),
         EditorKind::S7Server => s7::server(editor, cx),
     };
@@ -97,6 +110,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::Dnp3Master, false) => "Save and connect",
+        (EditorKind::Dnp3Outstation, false) => "Start simulator",
         (EditorKind::S7Client, false) => "Save and connect",
         (EditorKind::S7Server, false) => "Start simulator",
     };

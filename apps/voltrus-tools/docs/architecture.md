@@ -106,6 +106,15 @@ sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
 the app hands to the open editor instead of a session.
 
+Commands that belong to a protocol but to no point are messages of their own:
+a DNP3 master's station commands (integrity and class polls, time sync,
+counter freeze, restarts, and controls with an explicit CROB or mode) go as
+`Command::Dnp3` and come back as `EventKind::Dnp3Done`; the outstation's
+internal indications arrive as `EventKind::Dnp3Iin` whenever they change. A
+DNP3 master names its points up front (`Points`) and adds every other point
+the outstation reports with `PointsAdded`, like MQTT topics; point flags map to
+`Quality` and their names go in `Payloads` for the inspector.
+
 What a device says about itself, beyond its points, goes in the pane's
 **Device** view (`PaneView::Device`, `vt-app/src/views/device.rs`). It is not
 in `PaneView::ALL`: the switcher offers it, and ⌘5 opens it, only for

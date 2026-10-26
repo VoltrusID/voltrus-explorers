@@ -33,6 +33,11 @@ pub enum Command {
     NewBacnetClient,
     NewBacnetDevice,
     BacnetDemo,
+    NewDnp3Master,
+    NewDnp3Outstation,
+    Dnp3Demo,
+    /// A DNP3 station command for a connection's session.
+    Dnp3(ConnectionId, vt_protocol::Dnp3Action),
     NewS7Client,
     NewS7Server,
     S7Demo,
@@ -229,6 +234,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             Command::BacnetDemo,
         ),
         (
+            "New DNP3 connection…",
+            "Poll an outstation: integrity and class polls, controls, time sync",
+            Icon::Plus,
+            Command::NewDnp3Master,
+        ),
+        (
+            "New DNP3 outstation simulator…",
+            "Play a feeder, transformer bay or solar plant on this computer",
+            Icon::Server,
+            Command::NewDnp3Outstation,
+        ),
+        (
+            "Start the DNP3 demo",
+            "A simulated distribution feeder and a master polling it",
+            Icon::Zap,
+            Command::Dnp3Demo,
+        ),
+        (
             "Split right",
             "Show another connection beside this one",
             Icon::Columns,
@@ -294,6 +317,7 @@ fn commands(model: &AppModel) -> Vec<Entry> {
                 command,
             }),
     );
+    entries.extend(super::dnp3::palette_entries(model));
     entries.extend(super::s7::palette_entries(model));
     entries
 }
