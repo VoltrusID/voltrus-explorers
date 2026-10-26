@@ -6,6 +6,7 @@
 //! another session.
 
 mod bacnet;
+mod dnp3;
 mod emit;
 mod modbus;
 mod mqtt;
@@ -18,7 +19,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use vt_protocol::{Command, Event, EventKind, MqttQos, SessionId, SessionSpec, SessionState};
+use vt_protocol::{
+    Command, Dnp3Action, Event, EventKind, MqttQos, SessionId, SessionSpec, SessionState,
+};
 
 use emit::Emitter;
 
@@ -74,6 +77,10 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::MqttBroker(_) => {
             u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::Dnp3Master(master) => master.sample_ms(),
+        SessionSpec::Dnp3Outstation(_) => {
+            u64::try_from(dnp3::outstation::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -100,6 +107,8 @@ pub(crate) enum Control {
         point: u32,
     },
     Close,
+    /// DNP3 sessions: a station command.
+    Dnp3(Dnp3Action),
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -162,6 +171,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
                     | SessionSpec::BacnetClient(_) => None,
+                    SessionSpec::Dnp3Outstation(outstation) => Some(outstation.port),
+                    SessionSpec::Dnp3Master(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -231,6 +242,9 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 });
             }
             Command::Shutdown => break,
+            Command::Dnp3 { session, action } => {
+                forward(&sessions, session, Control::Dnp3(action));
+            }
         }
     }
     for running in sessions.into_values() {
@@ -252,5 +266,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
         SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
+        SessionSpec::Dnp3Master(spec) => dnp3::master::run(spec, control, &out).await,
+        SessionSpec::Dnp3Outstation(spec) => dnp3::outstation::run(spec, control, &out).await,
     }
 }

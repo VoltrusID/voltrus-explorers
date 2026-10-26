@@ -319,6 +319,11 @@ pub fn build_warm_restart_request(sequence: u8) -> Vec<u8> {
     build_request(FunctionCode::WarmRestart, sequence, &[])
 }
 
+/// WRITE of 0 to IIN1.7 DEVICE_RESTART: g80v1, qualifier 0x00, index 7..7, one packed bit.
+pub fn build_clear_restart_request(sequence: u8) -> Vec<u8> {
+    build_request(FunctionCode::Write, sequence, &[80, 1, 0x00, 7, 7, 0x00])
+}
+
 /// Application-layer CONFIRM for a received fragment with CON set. Echoes that fragment's
 /// sequence number; `uns` is set when confirming an unsolicited response.
 pub fn build_confirm(sequence: u8, uns: bool) -> Vec<u8> {
@@ -447,6 +452,11 @@ mod tests {
         assert_eq!(build_freeze_request(2), [0xC2, 0x07, 20, 0, 0x06]);
         assert_eq!(build_cold_restart_request(3), [0xC3, 0x0D]);
         assert_eq!(build_warm_restart_request(4), [0xC4, 0x0E]);
+    }
+
+    #[test]
+    fn clear_restart_writes_iin_bit_7_as_zero() {
+        assert_eq!(build_clear_restart_request(5), [0xC5, 0x02, 80, 1, 0x00, 7, 7, 0x00]);
     }
 
     #[test]
