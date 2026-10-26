@@ -18,6 +18,9 @@ mod mqtt;
 
 pub use dnp3::{Dnp3Fields, NEW_MASTER_NAME, NEW_OUTSTATION_NAME};
 pub use mqtt::MqttFields;
+mod enip;
+
+pub use enip::{EnipDiscovery, EnipFields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -31,6 +34,8 @@ pub enum EditorKind {
     OpcuaServer,
     Dnp3Master,
     Dnp3Outstation,
+    EnipClient,
+    EnipAdapter,
 }
 
 impl EditorKind {
@@ -48,6 +53,8 @@ impl EditorKind {
             (Protocol::Opcua, Role::Simulator) => Self::OpcuaServer,
             (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
             (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
+            (Protocol::Enip, Role::Client) => Self::EnipClient,
+            (Protocol::Enip, Role::Simulator) => Self::EnipAdapter,
         })
     }
 
@@ -64,6 +71,8 @@ impl EditorKind {
             SessionSpec::OpcuaServer(_) => Self::OpcuaServer,
             SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
             SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
+            SessionSpec::EnipClient(_) => Self::EnipClient,
+            SessionSpec::EnipAdapter(_) => Self::EnipAdapter,
         }
     }
 }
@@ -107,6 +116,7 @@ pub struct Editor {
     pub mqtt: MqttFields,
     pub opcua: OpcuaFields,
     pub dnp3: Dnp3Fields,
+    pub enip: EnipFields,
 }
 
 fn input(
@@ -137,6 +147,7 @@ impl Editor {
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let opcua = OpcuaFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let enip = EnipFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -177,6 +188,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::EnipClient(_) | SessionSpec::EnipAdapter(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -189,6 +205,8 @@ impl Editor {
                     EditorKind::OpcuaServer => super::opcua::NEW_SERVER_NAME.to_owned(),
                     EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
                     EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
+                    EditorKind::EnipClient => super::enip::NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::EnipAdapter => super::enip::NEW_ADAPTER_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -254,6 +272,7 @@ impl Editor {
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
             opcua,
             dnp3,
+            enip,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -282,6 +301,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.dnp3.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.enip.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -433,6 +455,16 @@ impl Editor {
                 .outstation_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::Dnp3Outstation(spec))),
+            EditorKind::EnipClient => self
+                .enip
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::EnipClient(spec))),
+            EditorKind::EnipAdapter => self
+                .enip
+                .adapter_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::EnipAdapter(spec))),
         }
     }
 }

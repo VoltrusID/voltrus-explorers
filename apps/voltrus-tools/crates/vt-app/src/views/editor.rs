@@ -17,6 +17,7 @@ use crate::model::{AppModel, Overlay};
 
 mod bacnet;
 mod dnp3;
+mod enip;
 mod mqtt;
 mod opcua;
 
@@ -61,6 +62,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
         (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
         (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
+        (EditorKind::EnipClient, false) => "New EtherNet/IP connection",
+        (EditorKind::EnipClient, true) => "Edit EtherNet/IP connection",
+        (EditorKind::EnipAdapter, false) => "New EtherNet/IP adapter simulator",
+        (EditorKind::EnipAdapter, true) => "Edit EtherNet/IP adapter simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -89,6 +94,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::Dnp3Outstation => {
             "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
         }
+        EditorKind::EnipClient => {
+            "Find a device with ListIdentity, read and write its Logix tags and CIP attributes."
+        }
+        EditorKind::EnipAdapter => {
+            "Play an EtherNet/IP adapter on this computer for any client to browse, read and write."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -101,6 +112,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::OpcuaServer => opcua::server(editor, cx),
         EditorKind::Dnp3Master => dnp3::master(editor, cx),
         EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
+        EditorKind::EnipClient => enip::client(editor, cx),
+        EditorKind::EnipAdapter => enip::adapter(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -114,6 +127,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::OpcuaServer, false) => "Start simulator",
         (EditorKind::Dnp3Master, false) => "Save and connect",
         (EditorKind::Dnp3Outstation, false) => "Start simulator",
+        (EditorKind::EnipClient, false) => "Save and connect",
+        (EditorKind::EnipAdapter, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

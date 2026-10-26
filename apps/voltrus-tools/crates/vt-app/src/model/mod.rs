@@ -7,6 +7,7 @@
 pub mod bacnet;
 pub mod dnp3;
 pub mod editor;
+pub mod enip;
 pub mod live;
 pub mod opcua;
 pub mod palette;
@@ -135,6 +136,8 @@ pub struct AppModel {
     _subscriptions: Vec<Subscription>,
     /// OPC UA browsers and the inspector's typed inputs.
     pub opcua: opcua::OpcuaModel,
+    /// The inspector's explicit message form (EtherNet/IP).
+    pub cip: enip::CipForm,
 }
 
 impl AppModel {
@@ -231,6 +234,7 @@ impl AppModel {
             _tasks: vec![pump],
             _subscriptions: subscriptions,
             opcua: opcua::OpcuaModel::new(window, cx),
+            cip: enip::CipForm::new(window, cx),
         };
         window.focus(&model.focus);
         if let Some(notice) = boot.notice {
@@ -249,6 +253,13 @@ impl AppModel {
                 kind: vt_protocol::EventKind::BacnetDevices(found),
             } => {
                 self.bacnet_devices_found(session, found);
+                return;
+            }
+            Event {
+                session,
+                kind: vt_protocol::EventKind::EnipDevices(found),
+            } => {
+                self.enip_devices_found(session, found);
                 return;
             }
             event => event,
@@ -560,6 +571,9 @@ impl AppModel {
             Protocol::Dnp3 => {
                 self.start_dnp3_demo(cx);
             }
+            Protocol::Enip => {
+                self.start_enip_demo(cx);
+            }
         }
     }
 
@@ -607,6 +621,10 @@ impl AppModel {
     // ── Points ────────────────────────────────────────────────────────────
 
     pub fn select_point(&mut self, connection: ConnectionId, point: u32, cx: &mut Context<Self>) {
+        let changed = self
+            .live
+            .get(&connection)
+            .is_some_and(|live| live.selected != Some(point));
         if let Some(live) = self.live.get_mut(&connection) {
             if live.selected != Some(point) {
                 live.write_result = None;
@@ -623,6 +641,10 @@ impl AppModel {
                 }
             }
             live.selected = Some(point);
+        }
+        // Explicit messages from the inspector start at the point's attribute.
+        if changed {
+            self.aim_cip_at(connection, point, cx);
         }
         cx.notify();
     }
@@ -781,10 +803,14 @@ impl AppModel {
             .as_ref()
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
+        let discover_enip = kind == EditorKind::EnipClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         // A new BACnet client starts by looking for devices.
         if discover {
             self.discover_bacnet(cx);
+        }
+        if discover_enip {
+            self.discover_enip(cx);
         }
         cx.notify();
     }
@@ -872,6 +898,12 @@ impl AppModel {
             && let SessionSpec::Dnp3Outstation(outstation) = &spec
         {
             self.add_dnp3_master(&name, outstation, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::EnipAdapter(adapter) = &spec
+        {
+            self.add_enip_client(&name, adapter, cx);
         }
         self.workspace.focus(
             self.workspace
@@ -1058,6 +1090,11 @@ impl AppModel {
                 self.start_dnp3_demo(cx);
             }
             Command::Dnp3(connection, action) => self.dnp3_action(connection, action, cx),
+            Command::NewEnipClient => self.open_editor(EditorKind::EnipClient, None, window, cx),
+            Command::NewEnipAdapter => self.open_editor(EditorKind::EnipAdapter, None, window, cx),
+            Command::EnipDemo => {
+                self.start_enip_demo(cx);
+            }
         }
     }
 

@@ -41,6 +41,9 @@ pub enum Command {
     Dnp3Demo,
     /// A DNP3 station command for a connection's session.
     Dnp3(ConnectionId, vt_protocol::Dnp3Action),
+    NewEnipClient,
+    NewEnipAdapter,
+    EnipDemo,
 }
 
 pub struct Entry {
@@ -266,6 +269,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "A simulated distribution feeder and a master polling it",
             Icon::Zap,
             Command::Dnp3Demo,
+        ),
+        (
+            "New EtherNet/IP connection…",
+            "Find a device with ListIdentity, read Logix tags and assemblies, send CIP messages",
+            Icon::Plus,
+            Command::NewEnipClient,
+        ),
+        (
+            "New EtherNet/IP adapter simulator…",
+            "Play a motor drive, tank farm or packaging line on this computer",
+            Icon::Server,
+            Command::NewEnipAdapter,
+        ),
+        (
+            "Start the EtherNet/IP demo",
+            "A simulated motor drive and a client reading its tags",
+            Icon::Zap,
+            Command::EnipDemo,
         ),
         (
             "Split right",

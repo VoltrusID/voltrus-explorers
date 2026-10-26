@@ -4172,6 +4172,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-enip"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "if-addrs",
+ "mt-protocol",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mt-modbus"
 version = "2.0.0"
 dependencies = [
@@ -7784,6 +7799,7 @@ dependencies = [
  "dirs 6.0.0",
  "mt-bacnet",
  "mt-dnp3",
+ "mt-enip",
  "mt-modbus",
  "mt-mqtt",
  "mt-opcua",
