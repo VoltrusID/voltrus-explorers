@@ -26,6 +26,13 @@ pub use mqtt::{
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
+mod opcua;
+pub use opcua::{
+    OPCUA_PORT, OpcuaArgument, OpcuaAttribute, OpcuaAuth, OpcuaBrowseNode, OpcuaClientSpec,
+    OpcuaEndpoint, OpcuaEvent, OpcuaMethodInfo, OpcuaNode, OpcuaNodeClass, OpcuaRequest,
+    OpcuaScalar, OpcuaSecurityMode, OpcuaSecurityPolicy, OpcuaServerSpec, opcua_host_port,
+    opcua_writable_type, parse_opcua_value,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +52,10 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Browse an OPC UA server's address space, monitor variables, write and call methods.
+    OpcuaClient(OpcuaClientSpec),
+    /// Run an OPC UA server with a simulated plant's address space.
+    OpcuaServer(OpcuaServerSpec),
 }
 
 impl SessionSpec {
@@ -53,6 +64,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::OpcuaClient(_) | Self::OpcuaServer(_) => Protocol::Opcua,
         }
     }
 
@@ -60,6 +72,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::OpcuaClient(_) => Role::Client,
+            Self::OpcuaServer(_) => Role::Simulator,
         }
     }
 
@@ -92,6 +106,12 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::OpcuaClient(spec) => match spec.nodes.as_slice() {
+                [] => spec.endpoint.clone(),
+                [_] => format!("{} · 1 variable", spec.endpoint),
+                many => format!("{} · {} variables", spec.endpoint, many.len()),
+            },
+            Self::OpcuaServer(spec) => format!("opc.tcp://0.0.0.0:{} · plant", spec.port),
         }
     }
 
@@ -104,6 +124,10 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::OpcuaClient(spec) => opcua_host_port(&spec.endpoint)
+                .unwrap_or(&spec.endpoint)
+                .to_owned(),
+            Self::OpcuaServer(spec) => format!("0.0.0.0:{}", spec.port),
         }
     }
 }
@@ -124,16 +148,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Opcua,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::Opcua,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Opcua => "OPC UA",
         }
     }
 
@@ -143,6 +174,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Opcua => "UA",
         }
     }
 
@@ -154,6 +186,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Opcua => {
+                "Endpoint discovery, secure sign-in, address-space browser, subscriptions, writes and method calls, and a plant server"
             }
         }
     }

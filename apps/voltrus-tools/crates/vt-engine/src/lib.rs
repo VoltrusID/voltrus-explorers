@@ -9,6 +9,7 @@ mod bacnet;
 mod emit;
 mod modbus;
 mod mqtt;
+pub mod opcua;
 pub mod templates;
 
 use std::collections::HashMap;
@@ -74,6 +75,12 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::MqttBroker(_) => {
             u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::OpcuaClient(client) => {
+            u64::from(client.publishing_ms.max(opcua::client::MIN_PUBLISHING_MS))
+        }
+        SessionSpec::OpcuaServer(_) => {
+            u64::try_from(opcua::server::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -100,6 +107,8 @@ pub(crate) enum Control {
         point: u32,
     },
     Close,
+    /// OPC UA clients: browse, read attributes, monitor, write, call.
+    Opcua(vt_protocol::OpcuaRequest),
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -162,6 +171,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
                     | SessionSpec::BacnetClient(_) => None,
+                    SessionSpec::OpcuaServer(server) => Some(server.port),
+                    SessionSpec::OpcuaClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -231,6 +242,21 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                 });
             }
             Command::Shutdown => break,
+            Command::Opcua { session, request } => match request {
+                vt_protocol::OpcuaRequest::Endpoints { url } => {
+                    let events = events.clone();
+                    tokio::spawn(async move {
+                        let found = opcua::endpoints(url).await;
+                        let _ = events
+                            .send(Event {
+                                session,
+                                kind: EventKind::Opcua(vt_protocol::OpcuaEvent::Endpoints(found)),
+                            })
+                            .await;
+                    });
+                }
+                request => forward(&sessions, session, Control::Opcua(request)),
+            },
         }
     }
     for running in sessions.into_values() {
@@ -252,5 +278,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
         SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
+        SessionSpec::OpcuaClient(spec) => opcua::client::run(spec, control, &out).await,
+        SessionSpec::OpcuaServer(spec) => opcua::server::run(spec, control, &out).await,
     }
 }

@@ -11,6 +11,7 @@ use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
+use super::opcua::OpcuaFields;
 
 mod mqtt;
 
@@ -24,6 +25,8 @@ pub enum EditorKind {
     MqttBroker,
     BacnetClient,
     BacnetDevice,
+    OpcuaClient,
+    OpcuaServer,
 }
 
 impl EditorKind {
@@ -37,6 +40,8 @@ impl EditorKind {
             (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+            (Protocol::Opcua, Role::Client) => Self::OpcuaClient,
+            (Protocol::Opcua, Role::Simulator) => Self::OpcuaServer,
         })
     }
 
@@ -49,6 +54,8 @@ impl EditorKind {
             SessionSpec::MqttBroker(_) => Self::MqttBroker,
             SessionSpec::BacnetClient(_) => Self::BacnetClient,
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+            SessionSpec::OpcuaClient(_) => Self::OpcuaClient,
+            SessionSpec::OpcuaServer(_) => Self::OpcuaServer,
         }
     }
 }
@@ -90,6 +97,7 @@ pub struct Editor {
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
+    pub opcua: OpcuaFields,
 }
 
 fn input(
@@ -118,6 +126,7 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let opcua = OpcuaFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -148,6 +157,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::OpcuaClient(_) | SessionSpec::OpcuaServer(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -156,6 +170,8 @@ impl Editor {
                     EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
+                    EditorKind::OpcuaClient => super::opcua::NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::OpcuaServer => super::opcua::NEW_SERVER_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -219,6 +235,7 @@ impl Editor {
             error: None,
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
+            opcua,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -241,6 +258,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.opcua.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -372,6 +392,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
+            EditorKind::OpcuaClient => self
+                .opcua
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::OpcuaClient(spec))),
+            EditorKind::OpcuaServer => self
+                .opcua
+                .server_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::OpcuaServer(spec))),
         }
     }
 }

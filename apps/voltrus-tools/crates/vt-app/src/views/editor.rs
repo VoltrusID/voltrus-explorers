@@ -17,6 +17,7 @@ use crate::model::{AppModel, Overlay};
 
 mod bacnet;
 mod mqtt;
+mod opcua;
 
 /// A click handler that changes the open editor.
 pub(super) fn on_edit(
@@ -51,6 +52,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::OpcuaClient, false) => "New OPC UA connection",
+        (EditorKind::OpcuaClient, true) => "Edit OPC UA connection",
+        (EditorKind::OpcuaServer, false) => "New OPC UA server simulator",
+        (EditorKind::OpcuaServer, true) => "Edit OPC UA server simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -67,6 +72,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::OpcuaClient => {
+            "Sign in to a server, browse its address space, monitor variables, write them and call methods."
+        }
+        EditorKind::OpcuaServer => {
+            "Serve a process plant's address space on this computer for any OPC UA client."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -75,6 +86,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::OpcuaClient => opcua::client(editor, cx),
+        EditorKind::OpcuaServer => opcua::server(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -84,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::OpcuaClient, false) => "Save and connect",
+        (EditorKind::OpcuaServer, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

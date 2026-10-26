@@ -17,6 +17,9 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> impl IntoElement 
     let theme = theme(cx).clone();
     let width = model.workspace.ui.inspector_width;
     let body = match model.focused_connection() {
+        Some(connection) if super::opcua::inspects_node(model, connection) => {
+            super::opcua::node_detail(model, connection, cx)
+        }
         Some(connection) => match model
             .live
             .get(&connection)
@@ -92,9 +95,12 @@ fn point_detail(
         Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
         Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
         Some(SessionSpec::BacnetDevice(_)) => true,
+        Some(SessionSpec::OpcuaServer(_)) => true,
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
+    // OPC UA points take typed text writes, in their own section.
+    let opcua = spec.is_some_and(|spec| spec.protocol() == Protocol::Opcua);
     // BACnet clients command at a priority, and can give the command up.
     let priority = match spec {
         Some(SessionSpec::BacnetClient(client)) => Some(client.priority),
@@ -318,7 +324,13 @@ fn point_detail(
 
     content = content.child(divider(cx));
 
-    if info.writable {
+    if opcua {
+        content = content.child(super::opcua::point_section(
+            model, connection, live, point, info, cx,
+        ));
+    }
+
+    if info.writable && !opcua {
         let result = live
             .write_result
             .as_ref()

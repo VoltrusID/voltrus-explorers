@@ -62,6 +62,14 @@ pub enum Command {
         session: SessionId,
         spec: BacnetDiscoverSpec,
     },
+    /// OPC UA clients: browse, describe, monitor, write and call (answered by
+    /// [`EventKind::Opcua`] and the usual point events). An
+    /// [`OpcuaRequest::Endpoints`] needs no session: its answer comes back
+    /// under `session`, which names the request.
+    Opcua {
+        session: SessionId,
+        request: crate::OpcuaRequest,
+    },
 }
 
 /// Engine → app.
@@ -105,6 +113,8 @@ pub enum EventKind {
     },
     /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
     BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
+    /// Answers to [`Command::Opcua`].
+    Opcua(crate::OpcuaEvent),
 }
 
 /// The text behind one point's latest value.
@@ -369,5 +379,142 @@ mod tests {
             let text = serde_json::to_string(&event).unwrap();
             assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
         }
+    }
+
+    #[test]
+    fn opcua_messages_round_trip_through_json() {
+        use crate::{
+            OpcuaArgument, OpcuaAttribute, OpcuaAuth, OpcuaBrowseNode, OpcuaClientSpec,
+            OpcuaEndpoint, OpcuaEvent, OpcuaMethodInfo, OpcuaNode, OpcuaNodeClass, OpcuaRequest,
+            OpcuaSecurityMode, OpcuaSecurityPolicy, OpcuaServerSpec,
+        };
+
+        let client = OpcuaClientSpec {
+            endpoint: "opc.tcp://plc.local:4840/UA".into(),
+            policy: OpcuaSecurityPolicy::Aes256Sha256RsaPss,
+            mode: OpcuaSecurityMode::SignAndEncrypt,
+            auth: OpcuaAuth::Certificate {
+                certificate: "/Users/me/operator.der".into(),
+                private_key: "/Users/me/operator.pem".into(),
+            },
+            publishing_ms: 1000,
+            sampling_ms: 100,
+            nodes: vec![
+                OpcuaNode::new("ns=2;s=Plant.Reactor.Temperature", "Reactor › Temperature"),
+                OpcuaNode::new("i=2258", ""),
+            ],
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::OpcuaClient(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::OpcuaServer(OpcuaServerSpec::default()),
+            },
+            Command::Opcua {
+                session: SessionId(3),
+                request: OpcuaRequest::Endpoints {
+                    url: "opc.tcp://localhost:4840".into(),
+                },
+            },
+            Command::Opcua {
+                session: SessionId(1),
+                request: OpcuaRequest::Browse {
+                    node_id: "Objects".into(),
+                },
+            },
+            Command::Opcua {
+                session: SessionId(1),
+                request: OpcuaRequest::Monitor {
+                    nodes: vec![OpcuaNode::new("ns=2;s=Plant.Boiler.SteamPressure", "")],
+                },
+            },
+            Command::Opcua {
+                session: SessionId(1),
+                request: OpcuaRequest::Write {
+                    point: 4,
+                    text: "  batch 7 ".into(),
+                },
+            },
+            Command::Opcua {
+                session: SessionId(1),
+                request: OpcuaRequest::Call {
+                    object_id: "ns=2;s=Plant.Reactor".into(),
+                    method_id: "ns=2;s=Plant.Reactor.StartBatch".into(),
+                    arguments: vec!["Pale ale".into(), "250".into()],
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let events = [
+            OpcuaEvent::Endpoints(Ok(vec![OpcuaEndpoint {
+                url: "opc.tcp://localhost:4840/".into(),
+                policy: Some(OpcuaSecurityPolicy::Basic256Sha256),
+                policy_uri: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256".into(),
+                mode: OpcuaSecurityMode::Sign,
+                security_level: 3,
+                user_tokens: vec!["Anonymous".into(), "UserName".into()],
+            }])),
+            OpcuaEvent::Endpoints(Err("BadTcpEndpointUrlInvalid".into())),
+            OpcuaEvent::Children {
+                parent: "i=85".into(),
+                result: Ok(vec![OpcuaBrowseNode {
+                    node_id: "ns=2;s=Plant".into(),
+                    browse_name: "Plant".into(),
+                    display_name: "Plant".into(),
+                    class: OpcuaNodeClass::Object,
+                    data_type: String::new(),
+                    has_children: true,
+                }]),
+            },
+            OpcuaEvent::Attributes {
+                node_id: "i=2258".into(),
+                result: Ok(vec![OpcuaAttribute {
+                    name: "Value".into(),
+                    value: "2026-10-26T08:30:00Z".into(),
+                    status: "Good".into(),
+                }]),
+            },
+            OpcuaEvent::Monitored(vec![
+                ("ns=2;s=Plant.Reactor.Level".into(), Ok(())),
+                ("ns=2;s=Nope".into(), Err("BadNodeIdUnknown".into())),
+            ]),
+            OpcuaEvent::Method {
+                method_id: "ns=2;s=Plant.Reactor.StartBatch".into(),
+                result: Ok(OpcuaMethodInfo {
+                    inputs: vec![OpcuaArgument {
+                        name: "Quantity".into(),
+                        data_type: "Double".into(),
+                        description: "Litres".into(),
+                    }],
+                    outputs: Vec::new(),
+                }),
+            },
+            OpcuaEvent::Called {
+                method_id: "ns=2;s=Plant.Reactor.StartBatch".into(),
+                result: Err("BadInvalidArgument".into()),
+            },
+        ];
+        for answer in events {
+            let event = Event {
+                session: SessionId(1),
+                kind: EventKind::Opcua(answer),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // A saved user-name client keeps its credentials; a saved server without a user has none.
+        let saved = r#"{"kind":"opcua_server","port":4841,"anonymous":true}"#;
+        let SessionSpec::OpcuaServer(server) = serde_json::from_str(saved).unwrap() else {
+            panic!("an OPC UA server spec");
+        };
+        assert!(server.username.is_empty() && server.password.is_empty());
     }
 }

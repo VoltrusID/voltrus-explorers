@@ -206,6 +206,8 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            // The browser and the endpoint picker take OPC UA answers.
+            EventKind::Opcua(_) => {}
         }
     }
 

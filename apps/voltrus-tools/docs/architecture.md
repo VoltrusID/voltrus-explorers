@@ -106,6 +106,17 @@ sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
 the app hands to the open editor instead of a session.
 
+OPC UA keeps its requests in one `Command::Opcua { session, request }` and its
+answers in one `EventKind::Opcua`: browse a level, read attributes, monitor
+more variables (they join as `PointsAdded`), typed text writes (answered by
+`Written`), method arguments and calls. `OpcuaRequest::Endpoints` is the
+session-less one, answered under its request id like the BACnet picker. The
+address-space browser is a column of the points view of OPC UA client panes
+(`vt-app/src/views/opcua.rs`, state in `model/opcua.rs`); the inspector shows
+the node picked in it. The plant server simulator is `mt-opcua`'s
+`PlantServer`, driven by `vt-engine/src/opcua/plant.rs`; certificates live in
+`<data dir>/Voltrus Tools/opcua-pki`.
+
 ## Design system
 
 `vt-ui::theme::Theme` derives every token (surfaces, borders, accent, status

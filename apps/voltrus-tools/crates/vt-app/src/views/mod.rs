@@ -9,6 +9,7 @@ mod editor;
 pub mod inspector;
 mod log;
 mod new_menu;
+mod opcua;
 mod palette;
 pub mod pane;
 mod points;
@@ -158,6 +159,11 @@ impl Render for AppModel {
             .on_action(cx.listener(|model, _: &PaletteConfirm, window, cx| {
                 model.confirm_palette(window, cx)
             }))
+            .on_action(
+                cx.listener(|model, _: &crate::model::opcua::FocusBrowser, window, cx| {
+                    model.focus_browser(window, cx);
+                }),
+            )
             .on_mouse_move(cx.listener(|model, event: &MouseMoveEvent, _, cx| {
                 if model.drag.is_some() {
                     if event.pressed_button == Some(MouseButton::Left) {

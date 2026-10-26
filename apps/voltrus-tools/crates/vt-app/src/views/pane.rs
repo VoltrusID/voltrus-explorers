@@ -236,10 +236,15 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
+        SessionSpec::OpcuaServer(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
         Some(live) if !live.points.is_empty() || running => match view {
+            // OPC UA clients browse the address space beside their points.
+            PaneView::Points if matches!(connection.spec, SessionSpec::OpcuaClient(_)) => {
+                super::opcua::points(model, pane_id, connection_id, live, width, scroll.points, cx)
+            }
             PaneView::Points => {
                 points::render(pane_id, connection_id, live, holds, width, scroll.points, cx)
             }
@@ -262,6 +267,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
+                }
+                (SessionSpec::OpcuaServer(_), _) => {
+                    "Start it to serve the plant on this computer. Any OPC UA client can browse, subscribe, write and call methods, including this app."
+                }
+                (SessionSpec::OpcuaClient(_), _) => {
+                    "Connect to browse the server's address space and monitor its variables."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

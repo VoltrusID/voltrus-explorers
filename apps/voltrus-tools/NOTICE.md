@@ -12,6 +12,7 @@ carries all of these texts in `Contents/Resources/Licenses`.
 | [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | Monospace face for values and addresses | SIL OFL 1.1 (`vt-ui/assets/fonts/OFL-JetBrainsMono.txt`) |
 | [iTerm2 Color Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes), © 2011 to present Mark Badolato | Origin of most bundled colour schemes, as distributed with Ghostty | MIT (below) |
 | [rumqttc](https://github.com/bytebeamio/rumqtt), Bytebeam | MQTT client (through `mt-mqtt`) and the packet codec of the MQTT broker simulator (`vt-engine/src/mqtt/broker.rs`) | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) |
+| [async-opcua](https://github.com/FreeOpcUa/async-opcua) 0.18 (`async-opcua-*` crates), the async-opcua and OPC UA for Rust authors | OPC UA client, server and security (through `mt-opcua`); used unmodified from crates.io, where its source is available | MPL-2.0 (`packaging/licenses/async-opcua-LICENSE-MPL-2.0.txt`) |
 
 The MIT notice required by muxy:
 

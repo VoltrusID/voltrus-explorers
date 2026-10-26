@@ -33,6 +33,9 @@ pub enum Command {
     NewBacnetClient,
     NewBacnetDevice,
     BacnetDemo,
+    NewOpcuaClient,
+    NewOpcuaServer,
+    OpcuaDemo,
 }
 
 pub struct Entry {
@@ -222,6 +225,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "A simulated air handler and a client subscribed to it",
             Icon::Zap,
             Command::BacnetDemo,
+        ),
+        (
+            "New OPC UA connection…",
+            "Sign in to a server, browse its address space, monitor and write",
+            Icon::Plus,
+            Command::NewOpcuaClient,
+        ),
+        (
+            "New OPC UA server simulator…",
+            "Serve a process plant's address space on this computer",
+            Icon::Server,
+            Command::NewOpcuaServer,
+        ),
+        (
+            "Start the OPC UA demo",
+            "A simulated process plant and a client browsing it",
+            Icon::Zap,
+            Command::OpcuaDemo,
         ),
         (
             "Split right",

@@ -13,6 +13,9 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod opcua;
+
+pub use opcua::{OpcuaAuthKind, OpcuaClientForm, OpcuaServerForm};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,14 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// OPC UA: the endpoint URL, its security, the sign-in and the subscription intervals.
+    Endpoint,
+    Security,
+    Password,
+    Certificate,
+    PrivateKey,
+    PublishingMs,
+    SamplingMs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,6 +7,7 @@
 pub mod bacnet;
 pub mod editor;
 pub mod live;
+pub mod opcua;
 pub mod palette;
 pub mod publish;
 
@@ -131,6 +132,8 @@ pub struct AppModel {
     pub publish: PublishForm,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    /// OPC UA browsers and the inspector's typed inputs.
+    pub opcua: opcua::OpcuaModel,
 }
 
 impl AppModel {
@@ -226,6 +229,7 @@ impl AppModel {
             publish: PublishForm::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
+            opcua: opcua::OpcuaModel::new(window, cx),
         };
         window.focus(&model.focus);
         if let Some(notice) = boot.notice {
@@ -248,6 +252,17 @@ impl AppModel {
             }
             event => event,
         };
+        // OPC UA answers (and the endpoint picker's, under a request id).
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::Opcua(answer),
+            } => {
+                self.opcua_answer(session, answer);
+                return;
+            }
+            event => event,
+        };
         let Some(connection) = self.sessions.get(&event.session).copied() else {
             return;
         };
@@ -255,11 +270,18 @@ impl AppModel {
             &event.kind,
             vt_protocol::EventKind::State(state) if !state.is_running()
         );
+        let connected = matches!(
+            &event.kind,
+            vt_protocol::EventKind::State(vt_protocol::SessionState::Connected)
+        );
         if let Some(live) = self.live.get_mut(&connection) {
             live.apply_from(event.session, event.kind);
         }
         if closed {
             self.sessions.remove(&event.session);
+        }
+        if connected {
+            self.opcua_connected(connection);
         }
     }
 
@@ -531,6 +553,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Opcua => {
+                self.start_opcua_demo(cx);
+            }
         }
     }
 
@@ -582,6 +607,9 @@ impl AppModel {
             if live.selected != Some(point) {
                 live.write_result = None;
                 self.write_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                self.opcua
+                    .write_input
                     .update(cx, |input, cx| input.set_text("", cx));
                 // Publishing from the inspector starts at the point's topic.
                 if let Some(topic) = publish::topic_of(&self.workspace, connection, live, point) {
@@ -829,6 +857,12 @@ impl AppModel {
         {
             self.add_bacnet_client(&name, device, cx);
         }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::OpcuaServer(server) = &spec
+        {
+            self.add_opcua_client(&name, server, cx);
+        }
         self.workspace.focus(
             self.workspace
                 .panes
@@ -1001,6 +1035,11 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewOpcuaClient => self.open_editor(EditorKind::OpcuaClient, None, window, cx),
+            Command::NewOpcuaServer => self.open_editor(EditorKind::OpcuaServer, None, window, cx),
+            Command::OpcuaDemo => {
+                self.start_opcua_demo(cx);
+            }
         }
     }
 

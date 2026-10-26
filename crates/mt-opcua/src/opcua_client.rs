@@ -17,6 +17,13 @@ use crate::types::{
     OpcUaConfig, OpcUaNode, OpcUaValue, ReferenceInfo, ServerInfo, SubscriptionConfig,
 };
 
+mod explore;
+
+pub use explore::{
+    ArgumentInfo, BrowseNode, UaQuality, UaValue, UserIdentity, VariableInfo, canonical_node_id, json_variant,
+    type_name, variant_text,
+};
+
 /// Receives live subscription data-change notifications out of the OPC UA session
 /// thread. Implemented by the Tauri layer (which forwards to a webview event);
 /// the crate stays free of any Tauri dependency.
@@ -25,6 +32,10 @@ pub trait NotificationSink: Send + Sync {
 }
 
 fn parse_node_id(s: &str) -> Result<NodeId> {
+    // Every form the standard prints (`i=85`, `ns=2;s=Pump`, `ns=1;g=…`, `ns=1;b=…`).
+    if let Ok(id) = <NodeId as std::str::FromStr>::from_str(s.trim()) {
+        return Ok(id);
+    }
     let rest = s.strip_prefix("ns=").ok_or_else(|| anyhow!("missing ns="))?;
     let (ns_str, id_part) = rest.split_once(';').ok_or_else(|| anyhow!("missing ;"))?;
     let ns: u16 = ns_str.parse()?;
@@ -282,7 +293,15 @@ impl OpcUaProtocolClient {
             }
             _ => IdentityToken::Anonymous,
         };
+        self.connect_with_token(config, identity_token).await
+    }
 
+    /// Connect with an explicit identity token (anonymous, user name or X.509).
+    async fn connect_with_token(
+        &mut self,
+        config: OpcUaConfig,
+        identity_token: IdentityToken,
+    ) -> Result<(), String> {
         let pki_dir = crate::pki::client_dir();
         let endpoint_url = config.endpoint_url.clone();
         let policy_uri = policy_uri(&config.security_policy);
@@ -345,9 +364,15 @@ impl OpcUaProtocolClient {
             }
             Ok(false) => {
                 eprintln!("[OPCUA-CLIENT] wait_for_connection returned false");
-                return Err("Connection failed — session reported not connected".to_string());
+                // The event loop ends with the status that stopped it, e.g. a refused identity.
+                let reason = match tokio::time::timeout(std::time::Duration::from_secs(1), _handle).await {
+                    Ok(Ok(status)) if !status.is_good() => format!(" ({status})"),
+                    _ => String::new(),
+                };
+                return Err(format!("Connection failed — session reported not connected{reason}"));
             }
             Err(_) => {
+                _handle.abort();
                 eprintln!("[OPCUA-CLIENT] Connection timeout after 10s");
                 return Err(
                     "Connection timeout after 10s — ensure server is reachable and the \

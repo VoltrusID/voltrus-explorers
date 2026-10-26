@@ -53,6 +53,7 @@ fn main() -> ExitCode {
             let initial = catalog.resolve(&boot.workspace.ui.dark_theme, true);
             vt_ui::init(initial, cx);
             cx.bind_keys(actions::key_bindings());
+            cx.bind_keys(model::opcua::key_bindings());
             cx.set_menus(actions::menus());
             // The model saves on the way out (`AppModel::new` hooks app quit).
             cx.on_action(|_: &actions::Quit, cx| cx.quit());

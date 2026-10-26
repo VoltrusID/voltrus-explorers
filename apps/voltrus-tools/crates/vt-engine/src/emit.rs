@@ -74,6 +74,11 @@ impl Emitter {
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
     }
+
+    /// Answers of the OPC UA client.
+    pub(crate) fn opcua(&self, event: vt_protocol::OpcuaEvent) {
+        self.emit(EventKind::Opcua(event));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

@@ -12,6 +12,7 @@ on:
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
       - crates/mt-mqtt/**
+      - crates/mt-opcua/**
       - .github/workflows/voltrus-tools.yml
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
       - crates/mt-mqtt/**
+      - crates/mt-opcua/**
       - .github/workflows/voltrus-tools.yml
   workflow_dispatch:
 
@@ -73,6 +75,11 @@ jobs:
 
       - name: Test
         run: cargo test --locked --no-fail-fast --workspace
+
+      # The workspace test leaves the shared protocol crates' own tests out.
+      - name: Test shared protocol crates
+        working-directory: .
+        run: cargo test --locked -p mt-opcua
 
       - name: Build release
         run: cargo build --locked --release -p vt-app

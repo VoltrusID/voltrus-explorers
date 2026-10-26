@@ -45,6 +45,22 @@ standalone Tauri apps in this repository.
   on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
   with a 16-level priority array, and SubscribeCOV. A value set from the app
   or commanded by any client is held until released or relinquished.
+- **OPC UA client**: GetEndpoints lists the security policies, modes and
+  sign-in a server offers; connect with None, Basic256Sha256 or the Aes
+  policies (Sign or Sign & Encrypt), anonymously, with a user name or with an
+  X.509 user certificate chosen in an open panel. An address-space browser
+  beside the points reads the tree a level at a time and walks it from the
+  keyboard (↑↓ move, →← open and close, Enter adds a variable, ⌘⇧B jumps in);
+  the inspector shows a picked node's attributes and calls methods with typed
+  arguments. Variables are monitored in one subscription with the publishing
+  and sampling intervals you set, keep their units, and take typed writes
+  (Boolean, integers, floats, text, times); OPC UA statuses and source times
+  ride with each value.
+- **OPC UA server simulator**: a process plant (batch reactor, steam boiler,
+  utilities) with units, ranges and the StartBatch and ResetAlarms methods,
+  on None, Basic256Sha256 and Aes256 RsaPss endpoints, for anonymous clients,
+  a user and a generated user certificate. Writes from any client hold a
+  measured value or change a setpoint.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -59,8 +75,8 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT and BACnet are ported. The others in this repository (OPC UA,
-S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
+Modbus, MQTT, BACnet and OPC UA are ported. The others in this repository
+(S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
@@ -77,6 +93,8 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
                                                  # bacnet-command
+                                                 # opcua-points, opcua-trend,
+                                                 # opcua-method, opcua-editor
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the

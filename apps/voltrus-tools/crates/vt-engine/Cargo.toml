@@ -14,6 +14,7 @@ mt-modbus = { path = "../../../../crates/mt-modbus" }
 mt-protocol = { path = "../../../../crates/mt-protocol" }
 mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
+mt-opcua = { path = "../../../../crates/mt-opcua" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
 # Sparkplug B payloads. Same versions as mt-mqtt uses.
@@ -24,6 +25,8 @@ serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+# Where the OPC UA certificates live: under the app's data directory.
+dirs = "6"
 
 [lints]
 workspace = true
