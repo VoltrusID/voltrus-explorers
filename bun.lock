@@ -101,7 +101,7 @@
     },
     "apps/modbus-poll": {
       "name": "modbus-poll",
-      "version": "1.3.5",
+      "version": "1.3.6",
       "dependencies": {
         "@mactools/export": "workspace:*",
         "@mactools/ui": "workspace:*",
