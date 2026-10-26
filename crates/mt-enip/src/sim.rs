@@ -10,8 +10,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
-use crate::server::{assign_scalar, start_enip_server};
-use crate::packets::build_list_identity_response;
+use crate::server::{answer_list_identity, assign_scalar, start_enip_server};
 use crate::types::*;
 
 // ── Public types ──
@@ -337,7 +336,7 @@ impl EnipSimDevice {
         // UDP ListIdentity responder — lets device discovery find the sim on the
         // same port as the TCP listener (44818). The reply's source port equals
         // the bind port, so the scanner records the connectable TCP port.
-        let udp_running = running.clone();
+        let udp_shutdown = shutdown_tx.subscribe();
         let udp_bind = format!("{}:{}", bind_addr, port);
         let udp_port = port;
         tokio::spawn(async move {
@@ -349,26 +348,7 @@ impl EnipSimDevice {
                 Ok(s) => s,
                 Err(_) => return, // port busy/unavailable — sim still works over TCP
             };
-            let resp = build_list_identity_response(ip, udp_port);
-            let mut buf = vec![0u8; 512];
-            loop {
-                if !udp_running.load(Ordering::Relaxed) {
-                    break;
-                }
-                match tokio::time::timeout(
-                    std::time::Duration::from_millis(250),
-                    sock.recv_from(&mut buf),
-                )
-                .await
-                {
-                    Ok(Ok((n, peer))) => {
-                        if n >= 2 && u16::from_le_bytes([buf[0], buf[1]]) == CMD_LIST_IDENTITY {
-                            let _ = sock.send_to(&resp, peer).await;
-                        }
-                    }
-                    _ => continue,
-                }
-            }
+            answer_list_identity(sock, ip, udp_port, udp_shutdown, |_, _, _| {}).await;
         });
 
         Ok(EnipSimDevice {
