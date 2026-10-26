@@ -1047,17 +1047,16 @@ impl AppModel {
             OpcuaAuthKind::UserName => "UserName",
             OpcuaAuthKind::Certificate => "Certificate",
         };
-        if !offers(chosen) {
-            if let Some(kind) = [
+        if !offers(chosen)
+            && let Some(kind) = [
                 ("Anonymous", OpcuaAuthKind::Anonymous),
                 ("UserName", OpcuaAuthKind::UserName),
                 ("Certificate", OpcuaAuthKind::Certificate),
             ]
             .into_iter()
             .find_map(|(token, kind)| offers(token).then_some(kind))
-            {
-                editor.opcua.auth = kind;
-            }
+        {
+            editor.opcua.auth = kind;
         }
         editor.error = None;
         cx.notify();
