@@ -218,7 +218,17 @@ fn a_client_polls_writes_and_diagnoses_a_simulated_cpu() {
         );
     }
 
-    // Every tag reads good; the string arrives as text.
+    // Each poll sends a string's text (when it changes) before the values,
+    // and waiting consumes what came before: the text first.
+    let text = events.wait(client, |kind| match kind {
+        EventKind::Payloads(texts) => texts
+            .iter()
+            .find(|text| text.point == drive)
+            .map(|text| text.text.clone()),
+        _ => None,
+    });
+    assert_eq!(text, "M-101 conveyor drive");
+    // Every tag reads good.
     let readings = events.wait(client, |kind| {
         values(kind).filter(|readings| {
             readings
@@ -228,14 +238,6 @@ fn a_client_polls_writes_and_diagnoses_a_simulated_cpu() {
     });
     assert!((1400.0..=1500.0).contains(&readings[speed as usize].value));
     assert_eq!(readings[running as usize].value, 1.0);
-    let text = events.wait(client, |kind| match kind {
-        EventKind::Payloads(texts) => texts
-            .iter()
-            .find(|text| text.point == drive)
-            .map(|text| text.text.clone()),
-        _ => None,
-    });
-    assert_eq!(text, "M-101 conveyor drive");
 
     // A write lands in the CPU, which holds it against its simulation.
     engine.send(Command::Write {
@@ -372,11 +374,7 @@ fn a_missing_data_block_fails_only_its_own_tag() {
             ..S7ClientSpec::default()
         }),
     });
-    let readings = events.wait(client, values);
-    assert_eq!(readings[0].quality, Quality::Good);
-    assert_eq!(readings[0].value, 500.0);
-    assert_eq!(readings[1].quality, Quality::Bad);
-    assert_eq!(readings[2].value, 1.0);
+    // The warning goes out before the values of the same poll.
     let warning = events.wait(client, |kind| match kind {
         EventKind::Log(entry) if entry.message.starts_with("DB99.DBW0") => {
             Some(entry.message.clone())
@@ -384,6 +382,11 @@ fn a_missing_data_block_fails_only_its_own_tag() {
         _ => None,
     });
     assert!(warning.contains("does not exist"), "{warning}");
+    let readings = events.wait(client, values);
+    assert_eq!(readings[0].quality, Quality::Good);
+    assert_eq!(readings[0].value, 500.0);
+    assert_eq!(readings[1].quality, Quality::Bad);
+    assert_eq!(readings[2].value, 1.0);
     engine.send(Command::Shutdown);
 }
 
