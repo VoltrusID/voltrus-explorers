@@ -40,6 +40,8 @@ actions!(
         SendMacro7,
         SendMacro8,
         SendMacro9,
+        ShowDevice,
+        RefreshDevice,
     ]
 );
 
@@ -100,6 +102,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-7", SendMacro7, Some(SERIAL_SEND)),
         KeyBinding::new("ctrl-8", SendMacro8, Some(SERIAL_SEND)),
         KeyBinding::new("ctrl-9", SendMacro9, Some(SERIAL_SEND)),
+        KeyBinding::new(&key("5"), ShowDevice, Some(PANE_KEYS)),
+        KeyBinding::new(&key("r"), RefreshDevice, Some(PANE_KEYS)),
     ]
 }
 
@@ -144,6 +148,8 @@ pub fn menus() -> Vec<Menu> {
                 MenuItem::action("Trend", ShowTrend),
                 MenuItem::action("Traffic", ShowTraffic),
                 MenuItem::action("Log", ShowLog),
+                MenuItem::action("Device (S7 PLC)", ShowDevice),
+                MenuItem::action("Read Device Again", RefreshDevice),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Inspector", ToggleInspector),

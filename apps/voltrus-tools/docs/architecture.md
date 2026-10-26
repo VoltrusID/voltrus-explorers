@@ -138,6 +138,20 @@ panes. Sends, macros and logging are `Command::SerialSend` and
 writes exactly what it is given. The serial device simulator prints on a
 pseudo-terminal from `mt-serial` (`pty::VirtualPort`) and links it into the
 temporary folder under a stable name, which is what its monitors open.
+What a device says about itself, beyond its points, goes in the pane's
+**Device** view (`PaneView::Device`, `vt-app/src/views/device.rs`). It is not
+in `PaneView::ALL`: the switcher offers it, and ⌘5 opens it, only for
+connections whose protocol has one (`model::s7::has_device_view`), and
+`views/device.rs` hands each protocol to its own module. An S7 client's is the
+PLC view (`views/s7.rs`): the session reads the CPU's identity, mode,
+diagnostic buffer and blocks over its own connection after connecting and on
+`Command::ReadS7Plc`, between polls, and answers with one `EventKind::S7Plc`
+whose parts fail on their own (a CPU may refuse one and serve the rest).
+
+The S7 simulator keeps `mt-s7`'s server image in step with its template
+through `S7Server::apply_unless_written`, which moves the simulated tags and
+returns the client writes since the last tick under one lock, so a value a
+client writes is never overwritten and the point is reported `Locked`.
 
 ## Design system
 
