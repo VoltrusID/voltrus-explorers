@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BacnetDeviceInfo, BacnetDiscoverSpec, CipRequest, CipResponse, Dnp3Action, Dnp3Iin,
-    EnipDeviceInfo, EnipDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    EnipDeviceInfo, EnipDiscoverSpec, MqttQos, PointInfo, SerialChunk, SerialPortInfo, SessionSpec,
+    TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -81,6 +82,19 @@ pub enum Command {
         session: SessionId,
         request: CipRequest,
     },
+    /// Serial monitors and devices: write raw bytes to the port. Answered by
+    /// [`EventKind::SerialSent`]; what went out shows in [`EventKind::SerialData`].
+    SerialSend { session: SessionId, bytes: Vec<u8> },
+    /// Serial monitors and devices: log every chunk that crosses the port to
+    /// a CSV file at `path` (a path the user picked), or stop with `None`.
+    /// Answered by [`EventKind::SerialLogging`].
+    SerialLog {
+        session: SessionId,
+        path: Option<String>,
+    },
+    /// List the system's serial ports; the answer comes back as
+    /// [`EventKind::SerialPorts`] under `session`, which names the request.
+    ListSerialPorts { session: SessionId },
     /// OPC UA clients: browse, describe, monitor, write and call (answered by
     /// [`EventKind::Opcua`] and the usual point events). An
     /// [`OpcuaRequest::Endpoints`] needs no session: its answer comes back
@@ -148,6 +162,14 @@ pub enum EventKind {
     /// `@0x04/100/3+24:REAL`), aligned with the points, after `Points`: the
     /// table shows a short one.
     EnipAddresses(Vec<String>),
+    /// Bytes that crossed a serial port, in order.
+    SerialData(Vec<SerialChunk>),
+    /// Outcome of a [`Command::SerialSend`]: the bytes written.
+    SerialSent(Result<u32, String>),
+    /// Where the session now logs (`None`: it stopped), or why it could not.
+    SerialLogging(Result<Option<String>, String>),
+    /// Answer to [`Command::ListSerialPorts`].
+    SerialPorts(Result<Vec<SerialPortInfo>, String>),
     /// Answers to [`Command::Opcua`].
     Opcua(crate::OpcuaEvent),
 }
@@ -631,6 +653,113 @@ mod tests {
             panic!("an EtherNet/IP client spec");
         };
         assert!(spec.route_path.is_empty() && spec.points.is_empty());
+    }
+
+    #[test]
+    fn serial_messages_round_trip_through_json() {
+        use crate::{
+            Direction, LineEnding, LineParser, SerialDeviceSpec, SerialFormat, SerialMacro,
+            SerialMonitorSpec,
+        };
+
+        let monitor = SerialMonitorSpec {
+            line_ending: LineEnding::CrLf,
+            parser: LineParser::Csv {
+                delimiter: ';',
+                names: vec!["Temperature".into(), "Humidity".into()],
+            },
+            macros: vec![SerialMacro {
+                name: "Poll".into(),
+                payload: "01 03 00 00 00 0A C5 CD".into(),
+                hex: true,
+            }],
+            ..SerialMonitorSpec::default()
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::SerialMonitor(monitor),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::SerialMonitor(SerialMonitorSpec {
+                    parser: LineParser::Regex {
+                        pattern: r"T=(?P<temp>-?\d+\.\d+)".into(),
+                    },
+                    ..SerialMonitorSpec::default()
+                }),
+            },
+            Command::Open {
+                session: SessionId(3),
+                spec: SessionSpec::SerialDevice(SerialDeviceSpec {
+                    format: SerialFormat::Csv,
+                    ..SerialDeviceSpec::default()
+                }),
+            },
+            Command::SerialSend {
+                session: SessionId(1),
+                bytes: vec![0x00, 0x0D, 0x0A, 0xFF],
+            },
+            Command::SerialLog {
+                session: SessionId(1),
+                path: Some("/Users/me/Documents/capture.csv".into()),
+            },
+            Command::SerialLog {
+                session: SessionId(1),
+                path: None,
+            },
+            Command::ListSerialPorts {
+                session: SessionId(9),
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let events = [
+            EventKind::SerialData(vec![
+                SerialChunk {
+                    at_ms: 1_700_000_000_000,
+                    direction: Direction::Rx,
+                    bytes: b"pH=7.21\r\n".to_vec(),
+                },
+                SerialChunk {
+                    at_ms: 1_700_000_000_001,
+                    direction: Direction::Tx,
+                    bytes: Vec::new(),
+                },
+            ]),
+            EventKind::SerialSent(Ok(6)),
+            EventKind::SerialSent(Err("Not connected".into())),
+            EventKind::SerialLogging(Ok(Some("/tmp/x.csv".into()))),
+            EventKind::SerialLogging(Ok(None)),
+            EventKind::SerialLogging(Err("Permission denied".into())),
+            EventKind::SerialPorts(Ok(vec![SerialPortInfo {
+                path: "/dev/cu.usbserial-0001".into(),
+                kind: "USB".into(),
+                description: "FTDI FT232R".into(),
+            }])),
+            EventKind::SerialPorts(Err("Enumerating ports failed".into())),
+        ];
+        for kind in events {
+            let event = Event {
+                session: SessionId(1),
+                kind,
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // A monitor saved with only its link takes the defaults.
+        let saved = r#"{"kind":"serial_monitor","link":{"port":"/dev/cu.x","baud":9600,
+            "data_bits":8,"parity":"none","stop_bits":1}}"#;
+        let SessionSpec::SerialMonitor(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("a serial monitor spec");
+        };
+        assert_eq!(spec.parser, LineParser::KeyValue);
+        assert_eq!(spec.line_ending, LineEnding::Lf);
+        assert!(spec.macros.is_empty());
     }
 
     #[test]

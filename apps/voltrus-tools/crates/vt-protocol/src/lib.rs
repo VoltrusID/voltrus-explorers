@@ -11,6 +11,7 @@ mod enip;
 mod message;
 mod modbus;
 mod mqtt;
+mod serial;
 mod value;
 
 pub use bacnet::{
@@ -35,6 +36,11 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use serial::{
+    FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
+    SerialMonitorSpec, SerialPortInfo, encode_send, parse_hex, short_port, unescape,
+    virtual_port_path,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 mod opcua;
@@ -76,6 +82,10 @@ pub enum SessionSpec {
     EnipClient(EnipClientSpec),
     /// Play an EtherNet/IP adapter whose tags a plant template drives.
     EnipAdapter(EnipAdapterSpec),
+    /// Watch and talk to a serial port; parse its lines into points.
+    SerialMonitor(SerialMonitorSpec),
+    /// Play an instrument on a virtual serial port.
+    SerialDevice(SerialDeviceSpec),
 }
 
 impl SessionSpec {
@@ -87,6 +97,7 @@ impl SessionSpec {
             Self::OpcuaClient(_) | Self::OpcuaServer(_) => Protocol::Opcua,
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
+            Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
         }
     }
 
@@ -100,6 +111,8 @@ impl SessionSpec {
             Self::Dnp3Outstation(_) => Role::Simulator,
             Self::EnipClient(_) => Role::Client,
             Self::EnipAdapter(_) => Role::Simulator,
+            Self::SerialMonitor(_) => Role::Client,
+            Self::SerialDevice(_) => Role::Simulator,
         }
     }
 
@@ -153,6 +166,15 @@ impl SessionSpec {
                 route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
             },
             Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::SerialMonitor(spec) => format!(
+                "{} · {} {}{}{}",
+                short_port(&spec.link.port),
+                spec.link.baud,
+                spec.link.data_bits,
+                spec.link.parity.letter(),
+                spec.link.stop_bits
+            ),
+            Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
         }
     }
 
@@ -173,6 +195,8 @@ impl SessionSpec {
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
             Self::EnipClient(spec) => host_port(&spec.host, spec.port),
             Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
+            Self::SerialDevice(spec) => spec.alias.clone(),
         }
     }
 }
@@ -196,6 +220,7 @@ pub enum Protocol {
     Opcua,
     Dnp3,
     Enip,
+    Serial,
 }
 
 impl Protocol {
@@ -206,6 +231,7 @@ impl Protocol {
         Protocol::Opcua,
         Protocol::Dnp3,
         Protocol::Enip,
+        Protocol::Serial,
     ];
 
     pub fn name(self) -> &'static str {
@@ -216,6 +242,7 @@ impl Protocol {
             Self::Opcua => "OPC UA",
             Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
+            Self::Serial => "Serial",
         }
     }
 
@@ -228,6 +255,7 @@ impl Protocol {
             Self::Opcua => "UA",
             Self::Dnp3 => "DN",
             Self::Enip => "EI",
+            Self::Serial => "SE",
         }
     }
 
@@ -248,6 +276,9 @@ impl Protocol {
             }
             Self::Enip => {
                 "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"
+            }
+            Self::Serial => {
+                "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
             }
         }
     }

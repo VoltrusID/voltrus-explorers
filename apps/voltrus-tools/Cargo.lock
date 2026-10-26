@@ -4247,6 +4247,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-serial"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-serial",
+ "tracing",
+]
+
+[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7784,6 +7800,7 @@ name = "vt-app-core"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -7805,7 +7822,9 @@ dependencies = [
  "mt-mqtt",
  "mt-opcua",
  "mt-protocol",
+ "mt-serial",
  "prost",
+ "regex",
  "rumqttc",
  "serde",
  "serde_json",

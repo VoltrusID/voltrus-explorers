@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
     CipResponse, Dnp3Action, Dnp3Iin, Event, EventKind, LogEntry, LogLevel, PointInfo, PointText,
-    SessionId, SessionState, Stats, TrafficFrame, ValueFrame,
+    SerialChunk, SessionId, SessionState, Stats, TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -94,6 +94,19 @@ impl Emitter {
 
     pub(crate) fn enip_addresses(&self, addresses: Vec<String>) {
         self.emit(EventKind::EnipAddresses(addresses));
+    }
+    pub(crate) fn serial_data(&self, chunks: Vec<SerialChunk>) {
+        if !chunks.is_empty() {
+            self.emit(EventKind::SerialData(chunks));
+        }
+    }
+
+    pub(crate) fn serial_sent(&self, result: Result<u32, String>) {
+        self.emit(EventKind::SerialSent(result));
+    }
+
+    pub(crate) fn serial_logging(&self, result: Result<Option<String>, String>) {
+        self.emit(EventKind::SerialLogging(result));
     }
 }
 

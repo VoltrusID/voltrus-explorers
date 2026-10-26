@@ -10,6 +10,8 @@ use vt_protocol::{
 };
 use vt_ui::chart::History;
 
+use super::terminal::Terminal;
+
 /// Trend history kept per point, in time: the longest trend window.
 const HISTORY_SPAN_MS: u64 = 15 * 60 * 1000;
 /// Samples kept per point at least (30 minutes at a 1 s poll) and at most
@@ -65,6 +67,8 @@ pub struct Live {
     pub cip_waiting: bool,
     /// EtherNet/IP: each point's whole address (the table shows a short one).
     pub enip_addresses: Vec<String>,
+    /// Serial sessions: the bytes that crossed the port, sends and logging.
+    pub terminal: Terminal,
 }
 
 impl Default for Live {
@@ -93,6 +97,7 @@ impl Default for Live {
             cip_reply: None,
             cip_waiting: false,
             enip_addresses: Vec::new(),
+            terminal: Terminal::new(),
         }
     }
 }
@@ -107,6 +112,9 @@ impl Live {
         self.stats = Stats::default();
         self.write_result = None;
         self.publish_result = None;
+        // A new run is not logging until asked to.
+        self.terminal.logging = None;
+        self.terminal.sent = None;
         self.locked.clear();
         self.dnp3 = super::dnp3::Dnp3Live::default();
         self.cip_reply = None;
@@ -238,6 +246,11 @@ impl Live {
                 self.cip_reply = Some(result);
             }
             EventKind::EnipAddresses(addresses) => self.enip_addresses = addresses,
+            EventKind::SerialData(chunks) => self.terminal.push(&chunks),
+            EventKind::SerialSent(result) => self.terminal.sent = Some(result),
+            EventKind::SerialLogging(result) => self.terminal.set_logging(result),
+            // The port picker's answer: the editor takes it, not a session.
+            EventKind::SerialPorts(_) => {}
         }
     }
 

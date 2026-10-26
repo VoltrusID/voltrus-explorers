@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 vt-protocol = { path = "../vt-protocol" }
 dirs = "6"
+# Serial monitor forms check a line pattern compiles, as the engine will.
+regex = "1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
