@@ -24,6 +24,21 @@ pub use explore::{
     type_name, variant_text,
 };
 
+/// The threads every client session's event loop runs on, made on first use.
+static EVENT_LOOP_RUNTIME: std::sync::LazyLock<Option<tokio::runtime::Runtime>> =
+    std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("opcua-client")
+            .enable_all()
+            .build()
+            .ok()
+    });
+
+fn event_loop_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    EVENT_LOOP_RUNTIME.as_ref()
+}
+
 /// Receives live subscription data-change notifications out of the OPC UA session
 /// thread. Implemented by the Tauri layer (which forwards to a webview event);
 /// the crate stays free of any Tauri dependency.
@@ -350,7 +365,12 @@ impl OpcUaProtocolClient {
 
         eprintln!("[OPCUA-CLIENT] Session built, spawning event loop...");
 
-        let _handle = event_loop.spawn();
+        // The session's I/O runs on threads of its own, so it never shares a worker with the
+        // caller's tasks.
+        let _handle = match event_loop_runtime() {
+            Some(runtime) => runtime.spawn(event_loop.run()),
+            None => event_loop.spawn(),
+        };
 
         eprintln!("[OPCUA-CLIENT] Event loop spawned, waiting for connection (10s timeout)...");
 

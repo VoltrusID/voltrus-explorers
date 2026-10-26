@@ -243,8 +243,22 @@ pub(crate) async fn run(
                                 Vec::new()
                             }
                             Err(_) => {
-                                out.log(LogLevel::Warn, "Reading the values directly got no answer within 10 s");
-                                Vec::new()
+                                // A session that answers nothing is as good as lost: start over.
+                                let error = format!("{} stopped answering", spec.endpoint);
+                                stats.errors += 1;
+                                out.log(LogLevel::Error, error.clone());
+                                out.values(ValueFrame {
+                                    at_ms: now_ms(),
+                                    latency_us: 0,
+                                    readings: vec![Reading::bad(); states.len()],
+                                });
+                                out.stats(stats);
+                                link.client.close().await;
+                                attempt = 1;
+                                if !retry(&mut control, attempt, &error, out).await {
+                                    break 'session;
+                                }
+                                continue 'session;
                             }
                         };
                         let before = changed;
