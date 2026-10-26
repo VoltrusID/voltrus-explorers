@@ -353,7 +353,7 @@ impl PlantServer {
         };
         for (id, key, outputs) in methods {
             let on_call = on_call.clone();
-            node_manager.add_method_callback(id, move |inputs: &[Variant]| {
+            node_manager.inner().add_method_callback(id, move |inputs: &[Variant]| {
                 let inputs: Vec<serde_json::Value> = inputs.iter().map(variant_json).collect();
                 let outputs_json =
                     on_call(key.as_str(), inputs.as_slice()).map_err(|_| StatusCode::BadInvalidArgument)?;
