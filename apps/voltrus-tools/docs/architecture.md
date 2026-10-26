@@ -104,7 +104,17 @@ go next to them in `vt-app/src/views`.
 Work that belongs to no session is still a message: the BACnet device picker
 sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
-the app hands to the open editor instead of a session.
+the app hands to the open editor instead of a session. The EtherNet/IP picker
+does the same with `Command::DiscoverEnip` and `EventKind::EnipDevices`.
+
+Requests that belong to a running session but are no point write go through
+its control channel and come back under the session: MQTT's
+`Command::Publish` / `Published`, and EtherNet/IP's explicit message,
+`Command::CipRequest` / `EventKind::CipReply`, which the inspector's card
+(`vt-app/src/views/cip.rs`) sends and shows. The EtherNet/IP adapter
+simulator is `mt-enip`'s target (`start_enip_server`) with the plant's values
+moved by the session task, plus `answer_list_identity` on the same UDP port
+so the picker finds it.
 
 Commands that belong to a protocol but to no point are messages of their own:
 a DNP3 master's station commands (integrity and class polls, time sync,
@@ -125,6 +135,18 @@ the JetStream browser per connection (`vt-app/src/model/nats.rs`) and draws
 them in the inspector (`vt-app/src/views/nats.rs`). The NATS simulator runs
 `mt-nats`'s embedded server in the session task (it stops and rebinds
 in-process); its request service is an ordinary client of that server.
+
+The serial port picker works the same way: it sends `Command::ListSerialPorts`
+under a request id every two seconds while the editor is open (so a device
+plugged in shows up), and `EventKind::SerialPorts` comes back to the editor.
+Serial sessions carry raw bytes as `SerialData` chunks; the app keeps them as
+ready-to-draw text and hex rows (`vt-app/src/model/terminal.rs`), and the
+terminal (`vt-app/src/views/terminal.rs`) replaces the traffic view for serial
+panes. Sends, macros and logging are `Command::SerialSend` and
+`Command::SerialLog`; the app encodes text or hex into bytes, so the engine
+writes exactly what it is given. The serial device simulator prints on a
+pseudo-terminal from `mt-serial` (`pty::VirtualPort`) and links it into the
+temporary folder under a stable name, which is what its monitors open.
 
 ## Design system
 

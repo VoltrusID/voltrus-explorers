@@ -7,10 +7,12 @@
 
 mod bacnet;
 mod dnp3;
+mod enip;
 mod message;
 mod modbus;
 mod mqtt;
 mod nats;
+mod serial;
 mod value;
 
 pub use bacnet::{
@@ -20,6 +22,10 @@ pub use dnp3::{
     DNP3_MAX_ADDRESS, DNP3_MAX_CONTROL_INDEX, DNP3_PORT, Dnp3Action, Dnp3ControlMode, Dnp3Crob,
     Dnp3CrobCode, Dnp3Iin, Dnp3IinBit, Dnp3MasterSpec, Dnp3Operation, Dnp3OutstationSpec,
     Dnp3PointKind, Dnp3PointName,
+};
+pub use enip::{
+    CipRequest, CipResponse, CipType, ENIP_PORT, EnipAdapterSpec, EnipAddress, EnipClientSpec,
+    EnipDeviceInfo, EnipDiscoverSpec, EnipPoint,
 };
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
@@ -36,6 +42,11 @@ pub use nats::{
     NATS_PORT, NatsAuth, NatsClientSpec, NatsConsumer, NatsEvent, NatsHeader, NatsReply,
     NatsRequest, NatsServerSpec, NatsStoredMessage, NatsStream, NatsStreamDetail, NatsSubscription,
     parse_headers, valid_subject, valid_subject_filter,
+};
+pub use serial::{
+    FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
+    SerialMonitorSpec, SerialPortInfo, encode_send, parse_hex, short_port, unescape,
+    virtual_port_path,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -61,6 +72,15 @@ pub enum SessionSpec {
     Dnp3Master(Dnp3MasterSpec),
     /// Play a DNP3 outstation with a plant's simulated points.
     Dnp3Outstation(Dnp3OutstationSpec),
+    /// Read and write a Logix controller's tags and CIP attributes over
+    /// EtherNet/IP, and send it explicit messages.
+    EnipClient(EnipClientSpec),
+    /// Play an EtherNet/IP adapter whose tags a plant template drives.
+    EnipAdapter(EnipAdapterSpec),
+    /// Watch and talk to a serial port; parse its lines into points.
+    SerialMonitor(SerialMonitorSpec),
+    /// Play an instrument on a virtual serial port.
+    SerialDevice(SerialDeviceSpec),
     /// Subscribe to a NATS server's subjects, publish, request and browse
     /// JetStream.
     NatsClient(NatsClientSpec),
@@ -76,6 +96,8 @@ impl SessionSpec {
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
+            Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
+            Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
             Self::NatsClient(_) | Self::NatsServer(_) => Protocol::Nats,
         }
     }
@@ -86,6 +108,10 @@ impl SessionSpec {
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
             Self::Dnp3Master(_) => Role::Client,
             Self::Dnp3Outstation(_) => Role::Simulator,
+            Self::EnipClient(_) => Role::Client,
+            Self::EnipAdapter(_) => Role::Simulator,
+            Self::SerialMonitor(_) => Role::Client,
+            Self::SerialDevice(_) => Role::Simulator,
             Self::NatsClient(_) => Role::Client,
             Self::NatsServer(_) => Role::Simulator,
         }
@@ -130,6 +156,20 @@ impl SessionSpec {
                 host_port(&spec.bind, spec.port),
                 spec.outstation_address
             ),
+            Self::EnipClient(spec) => match spec.route_path.trim() {
+                "" => host_port(&spec.host, spec.port),
+                route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
+            },
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::SerialMonitor(spec) => format!(
+                "{} · {} {}{}{}",
+                short_port(&spec.link.port),
+                spec.link.baud,
+                spec.link.data_bits,
+                spec.link.parity.letter(),
+                spec.link.stop_bits
+            ),
+            Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
             Self::NatsClient(spec) => format!(
                 "{}{} · {}",
                 if spec.tls { "tls://" } else { "nats://" },
@@ -158,6 +198,10 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
             Self::Dnp3Master(spec) => host_port(&spec.host, spec.port),
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
+            Self::EnipClient(spec) => host_port(&spec.host, spec.port),
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
+            Self::SerialDevice(spec) => spec.alias.clone(),
             Self::NatsClient(spec) => host_port(&spec.host, spec.port),
             Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
         }
@@ -181,6 +225,8 @@ pub enum Protocol {
     Mqtt,
     Bacnet,
     Dnp3,
+    Enip,
+    Serial,
     Nats,
 }
 
@@ -190,6 +236,8 @@ impl Protocol {
         Protocol::Mqtt,
         Protocol::Bacnet,
         Protocol::Dnp3,
+        Protocol::Enip,
+        Protocol::Serial,
         Protocol::Nats,
     ];
 
@@ -199,6 +247,8 @@ impl Protocol {
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
             Self::Dnp3 => "DNP3",
+            Self::Enip => "EtherNet/IP",
+            Self::Serial => "Serial",
             Self::Nats => "NATS",
         }
     }
@@ -210,6 +260,8 @@ impl Protocol {
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
             Self::Dnp3 => "DN",
+            Self::Enip => "EI",
+            Self::Serial => "SE",
             Self::Nats => "NA",
         }
     }
@@ -225,6 +277,12 @@ impl Protocol {
             }
             Self::Dnp3 => {
                 "Integrity and class polls, flags and events, SBO controls, and an outstation simulator"
+            }
+            Self::Enip => {
+                "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"
+            }
+            Self::Serial => {
+                "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
             }
             Self::Nats => {
                 "Wildcard subjects, JSON values, publish and request/reply, JetStream browsing, and a server simulator"

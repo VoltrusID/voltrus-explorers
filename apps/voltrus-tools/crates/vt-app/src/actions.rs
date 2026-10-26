@@ -28,12 +28,26 @@ actions!(
         PaletteUp,
         PaletteDown,
         PaletteConfirm,
+        FocusSend,
+        SendHistoryPrevious,
+        SendHistoryNext,
+        SendMacro1,
+        SendMacro2,
+        SendMacro3,
+        SendMacro4,
+        SendMacro5,
+        SendMacro6,
+        SendMacro7,
+        SendMacro8,
+        SendMacro9,
     ]
 );
 
 pub const WORKSPACE: &str = "Workspace";
 pub const PALETTE: &str = "Palette";
 pub const EDITOR: &str = "Editor";
+/// A serial pane's send bar: ↑↓ walk its history, ⌃1…⌃9 send macros.
+pub const SERIAL_SEND: &str = "SerialSend";
 /// Pane shortcuts: the workspace, but not behind the editor sheet or palette.
 const PANE_KEYS: &str = "Workspace && !Editor && !Palette";
 /// Where ↑↓ move through points: as above, and not while a text field has
@@ -74,6 +88,18 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", PaletteDown, Some(PALETTE)),
         KeyBinding::new("enter", PaletteConfirm, Some(PALETTE)),
         KeyBinding::new("escape", Dismiss, Some(PALETTE)),
+        KeyBinding::new(&key("l"), FocusSend, Some(PANE_KEYS)),
+        KeyBinding::new("up", SendHistoryPrevious, Some(SERIAL_SEND)),
+        KeyBinding::new("down", SendHistoryNext, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-1", SendMacro1, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-2", SendMacro2, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-3", SendMacro3, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-4", SendMacro4, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-5", SendMacro5, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-6", SendMacro6, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-7", SendMacro7, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-8", SendMacro8, Some(SERIAL_SEND)),
+        KeyBinding::new("ctrl-9", SendMacro9, Some(SERIAL_SEND)),
     ]
 }
 

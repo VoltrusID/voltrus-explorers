@@ -8,10 +8,14 @@
 mod bacnet;
 mod dnp3;
 mod emit;
+mod enip;
 mod modbus;
 mod mqtt;
 mod nats;
+mod serial;
 pub mod templates;
+
+pub use enip::cip_service_name;
 
 use std::collections::HashMap;
 use std::thread;
@@ -82,6 +86,16 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::Dnp3Outstation(_) => {
             u64::try_from(dnp3::outstation::TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::EnipClient(client) => client.poll_ms,
+        SessionSpec::EnipAdapter(_) => {
+            u64::try_from(enip::adapter::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::SerialMonitor(_) => {
+            u64::try_from(serial::monitor::SAMPLE.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::SerialDevice(_) => {
+            u64::try_from(serial::device::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
         SessionSpec::NatsClient(_) => {
             u64::try_from(nats::client::TICK.as_millis()).unwrap_or(u64::MAX)
         }
@@ -116,6 +130,16 @@ pub(crate) enum Control {
     Close,
     /// DNP3 sessions: a station command.
     Dnp3(Dnp3Action),
+    /// EtherNet/IP clients: send one explicit CIP message.
+    CipRequest(vt_protocol::CipRequest),
+    /// Serial: write raw bytes to the port.
+    SerialSend {
+        bytes: Vec<u8>,
+    },
+    /// Serial: log every chunk to a file, or stop.
+    SerialLog {
+        path: Option<String>,
+    },
     /// NATS: publish with headers, request/reply, JetStream browsing.
     Nats(vt_protocol::NatsRequest),
 }
@@ -183,6 +207,10 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     | SessionSpec::BacnetClient(_) => None,
                     SessionSpec::Dnp3Outstation(outstation) => Some(outstation.port),
                     SessionSpec::Dnp3Master(_) => None,
+                    SessionSpec::EnipAdapter(adapter) => Some(adapter.port),
+                    SessionSpec::EnipClient(_) => None,
+                    // A virtual serial device's port is a fresh pty each run.
+                    SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_) => None,
                     SessionSpec::NatsClient(_) => None,
                 };
                 if let Some(port) = port {
@@ -252,6 +280,24 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::SerialSend { session, bytes } => {
+                forward(&sessions, session, Control::SerialSend { bytes });
+            }
+            Command::SerialLog { session, path } => {
+                forward(&sessions, session, Control::SerialLog { path });
+            }
+            Command::ListSerialPorts { session } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = serial::list_ports().await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::SerialPorts(found),
+                        })
+                        .await;
+                });
+            }
             Command::Nats { session, request } => {
                 if sessions.contains_key(&session) {
                     forward(&sessions, session, Control::Nats(request));
@@ -263,6 +309,21 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
             Command::Shutdown => break,
             Command::Dnp3 { session, action } => {
                 forward(&sessions, session, Control::Dnp3(action));
+            }
+            Command::DiscoverEnip { session, spec } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = enip::discover(spec).await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::EnipDevices(found),
+                        })
+                        .await;
+                });
+            }
+            Command::CipRequest { session, request } => {
+                forward(&sessions, session, Control::CipRequest(request));
             }
         }
     }
@@ -287,6 +348,10 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
         SessionSpec::Dnp3Master(spec) => dnp3::master::run(spec, control, &out).await,
         SessionSpec::Dnp3Outstation(spec) => dnp3::outstation::run(spec, control, &out).await,
+        SessionSpec::EnipClient(spec) => enip::client::run(spec, control, &out).await,
+        SessionSpec::EnipAdapter(spec) => enip::adapter::run(spec, control, &out).await,
+        SessionSpec::SerialMonitor(spec) => serial::monitor::run(spec, control, &out).await,
+        SessionSpec::SerialDevice(spec) => serial::device::run(spec, control, &out).await,
         SessionSpec::NatsClient(spec) => nats::client::run(spec, control, &out).await,
         SessionSpec::NatsServer(spec) => nats::server::run(spec, control, &out).await,
     }

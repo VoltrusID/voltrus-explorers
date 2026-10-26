@@ -36,6 +36,17 @@ pub enum Scenario {
     Dnp3Control,
     Dnp3Station,
     Dnp3Editor,
+    EnipPoints,
+    EnipTrend,
+    EnipTraffic,
+    EnipDiscover,
+    EnipMessage,
+    SerialTerminal,
+    SerialHex,
+    SerialTrend,
+    SerialPoints,
+    SerialEditor,
+    SerialSimulator,
     NatsPoints,
     NatsTrend,
     NatsTraffic,
@@ -70,6 +81,17 @@ impl Scenario {
         "dnp3-control",
         "dnp3-station",
         "dnp3-editor",
+        "enip-points",
+        "enip-trend",
+        "enip-traffic",
+        "enip-discover",
+        "enip-message",
+        "serial-terminal",
+        "serial-hex",
+        "serial-trend",
+        "serial-points",
+        "serial-editor",
+        "serial-simulator",
         "nats-points",
         "nats-trend",
         "nats-traffic",
@@ -104,6 +126,17 @@ impl Scenario {
             "dnp3-control" => Self::Dnp3Control,
             "dnp3-station" => Self::Dnp3Station,
             "dnp3-editor" => Self::Dnp3Editor,
+            "enip-points" => Self::EnipPoints,
+            "enip-trend" => Self::EnipTrend,
+            "enip-traffic" => Self::EnipTraffic,
+            "enip-discover" => Self::EnipDiscover,
+            "enip-message" => Self::EnipMessage,
+            "serial-terminal" => Self::SerialTerminal,
+            "serial-hex" => Self::SerialHex,
+            "serial-trend" => Self::SerialTrend,
+            "serial-points" => Self::SerialPoints,
+            "serial-editor" => Self::SerialEditor,
+            "serial-simulator" => Self::SerialSimulator,
             "nats-points" => Self::NatsPoints,
             "nats-trend" => Self::NatsTrend,
             "nats-traffic" => Self::NatsTraffic,
@@ -162,6 +195,17 @@ pub fn apply(
         | Scenario::Dnp3Control
         | Scenario::Dnp3Station
         | Scenario::Dnp3Editor => dnp3(model, scenario, window, cx),
+        Scenario::EnipPoints
+        | Scenario::EnipTrend
+        | Scenario::EnipTraffic
+        | Scenario::EnipDiscover
+        | Scenario::EnipMessage => enip(model, scenario, window, cx),
+        Scenario::SerialTerminal
+        | Scenario::SerialHex
+        | Scenario::SerialTrend
+        | Scenario::SerialPoints
+        | Scenario::SerialEditor
+        | Scenario::SerialSimulator => serial(model, scenario, window, cx),
         Scenario::NatsEditor => model.open_editor(EditorKind::NatsClient, None, window, cx),
         Scenario::NatsPoints
         | Scenario::NatsTrend
@@ -480,6 +524,163 @@ fn dnp3(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut 
         })
         .detach();
     }
+}
+
+/// Points of the drive to trend: current, torque, temperature and frequency.
+const ENIP_TREND: [u32; 4] = [2, 3, 6, 1];
+/// The drive's speed reference, a setpoint the speed follows.
+const ENIP_SETPOINT: u32 = 11;
+
+/// The EtherNet/IP demo: a simulated motor drive and a client reading it.
+fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Context<AppModel>) {
+    let Some((client, simulator)) = model.start_enip_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend = ENIP_TREND.into_iter().collect();
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::EnipPoints => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(live) = model.live.get_mut(&client) {
+                live.selected = Some(ENIP_SETPOINT);
+            }
+        }
+        Scenario::EnipTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::EnipTraffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.set_view(pane, PaneView::Traffic);
+            }
+        }
+        // The device picker, with the adapter answering ListIdentity. The
+        // editor asks as it opens, maybe before the adapter listens: ask
+        // again once it does.
+        Scenario::EnipDiscover => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::EnipClient, None, window, cx);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |model, cx| model.discover_enip(cx));
+            })
+            .detach();
+        }
+        // One client with an explicit message answered in the inspector:
+        // the adapter's input assembly, every tag's value as bytes.
+        Scenario::EnipMessage => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            let request = [
+                (model.cip.service.clone(), "0x0E"),
+                (model.cip.class.clone(), "0x04"),
+                (model.cip.instance.clone(), "100"),
+                (model.cip.attribute.clone(), "3"),
+            ];
+            for (input, text) in request {
+                input.update(cx, |input, cx| input.set_text(text, cx));
+            }
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |model, cx| model.dispatch_cip_request(cx));
+            })
+            .detach();
+        }
+        _ => {}
+    }
+}
+/// What the serial demo trends: the analyser's temperature, dissolved
+/// oxygen, pH and turbidity, named as its lines name them.
+const SERIAL_TREND: [&str; 4] = ["Temperature", "Dissolved_Oxygen", "pH", "Turbidity"];
+/// Lines become points as the device prints them: pick by name then.
+const SERIAL_SETTLE: Duration = Duration::from_millis(2500);
+
+/// The serial demo: an ABB water analyser printing on a virtual port and a
+/// monitor reading it, with commands typed at the device.
+fn serial(
+    model: &mut AppModel,
+    scenario: Scenario,
+    window: &mut Window,
+    cx: &mut Context<AppModel>,
+) {
+    let Some((client, simulator)) = model.start_serial_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::SerialTerminal | Scenario::SerialHex => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(live) = model.live.get_mut(&client) {
+                live.terminal.hex = scenario == Scenario::SerialHex;
+            }
+        }
+        Scenario::SerialTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        // The monitor's points with its line settings and macros beside.
+        Scenario::SerialPoints => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            model.set_view(PaneView::Points, cx);
+        }
+        // The port picker, listing the analyser's virtual port.
+        Scenario::SerialEditor => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::SerialMonitor, None, window, cx);
+        }
+        // The device's side: what it printed and the commands it took.
+        Scenario::SerialSimulator => {
+            if let Some(pane) = pane_of(model, client) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, simulator) {
+                model.focus_pane(pane, cx);
+            }
+            model.set_view(PaneView::Traffic, cx);
+        }
+        _ => {}
+    }
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(SERIAL_SETTLE).await;
+        let _ = this.update(cx, |model, cx| {
+            // Help, then hold the temperature: the device answers both.
+            model.run_serial_macro(client, 1, cx);
+            model.run_serial_macro(client, 2, cx);
+            if let Some(console) = model.serial_consoles.get(&client) {
+                console
+                    .input
+                    .update(cx, |input, cx| input.set_text("RATE 250", cx));
+            }
+            if let Some(live) = model.live.get_mut(&client) {
+                live.trend = SERIAL_TREND
+                    .iter()
+                    .filter_map(|name| {
+                        live.points
+                            .iter()
+                            .position(|point| point.name == *name)
+                            .and_then(|index| u32::try_from(index).ok())
+                    })
+                    .collect();
+            }
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 /// What the NATS demo trends: subjects of the inverter, which carry their
