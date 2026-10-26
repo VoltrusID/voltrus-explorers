@@ -229,6 +229,7 @@ impl Part {
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
                         .text_size(FONT_BODY)
                         .text_color(theme.fg_muted)
                         .child(text),
@@ -255,10 +256,11 @@ fn price(model: &AppModel) -> Option<String> {
     model.licensing.prices.unlock.clone()
 }
 
-/// "for $49.00, once" / "once" when the price is unknown.
+/// "with a one-time purchase of $49.00", without the price while it's
+/// unknown (offline).
 fn for_price(model: &AppModel) -> String {
     match price(model) {
-        Some(price) => format!("for {price}, once"),
+        Some(price) => format!("with a one-time purchase of {price}"),
         None => "with a one-time purchase".to_owned(),
     }
 }
@@ -481,7 +483,7 @@ fn footer(model: &AppModel, sheet: Sheet, cx: &mut Context<AppModel>) -> AnyElem
                 .text_size(FONT_CAPTION)
                 .text_color(theme.fg_dim)
                 .when_some(fine_print, |this, text| {
-                    this.child(div().flex_1().child(text))
+                    this.child(div().flex_1().min_w_0().child(text))
                 })
                 .when(fine_print.is_none(), |this| this.child(div().flex_1()))
                 .child(hint("↵", primary_hint(sheet, licence), &theme, cx))
