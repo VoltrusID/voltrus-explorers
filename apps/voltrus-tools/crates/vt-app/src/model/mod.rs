@@ -11,6 +11,8 @@ pub mod enip;
 pub mod live;
 pub mod palette;
 pub mod publish;
+pub mod serial;
+pub mod terminal;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -38,6 +40,7 @@ use editor::{Editor, EditorKind};
 use live::Live;
 use palette::{Command, Mode, Palette};
 use publish::PublishForm;
+use serial::SerialConsole;
 
 use crate::views::{self, cached::CachedView};
 
@@ -131,6 +134,8 @@ pub struct AppModel {
     pub write_input: Entity<TextInput>,
     /// The inspector's publish form (message protocols).
     pub publish: PublishForm,
+    /// Each open serial pane's send bar.
+    pub serial_consoles: HashMap<ConnectionId, SerialConsole>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
     /// The inspector's explicit message form (EtherNet/IP).
@@ -228,6 +233,7 @@ impl AppModel {
             },
             write_input,
             publish: PublishForm::new(window, cx),
+            serial_consoles: HashMap::new(),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
             cip: enip::CipForm::new(window, cx),
@@ -256,6 +262,14 @@ impl AppModel {
                 kind: vt_protocol::EventKind::EnipDevices(found),
             } => {
                 self.enip_devices_found(session, found);
+                return;
+            }
+            // The port picker's list runs under a request id too.
+            Event {
+                session,
+                kind: vt_protocol::EventKind::SerialPorts(found),
+            } => {
+                self.serial_ports_found(session, found);
                 return;
             }
             event => event,
@@ -549,6 +563,9 @@ impl AppModel {
             Protocol::Enip => {
                 self.start_enip_demo(cx);
             }
+            Protocol::Serial => {
+                self.start_serial_demo(cx);
+            }
         }
     }
 
@@ -777,6 +794,7 @@ impl AppModel {
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
         let discover_enip = kind == EditorKind::EnipClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
+        self.prepare_serial_editor(cx);
         // A new BACnet client starts by looking for devices.
         if discover {
             self.discover_bacnet(cx);
@@ -870,6 +888,12 @@ impl AppModel {
             && let SessionSpec::EnipAdapter(adapter) = &spec
         {
             self.add_enip_client(&name, adapter, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::SerialDevice(device) = &spec
+        {
+            self.add_serial_monitor(&name, device, cx);
         }
         self.workspace.focus(
             self.workspace
@@ -1055,6 +1079,18 @@ impl AppModel {
             Command::NewEnipAdapter => self.open_editor(EditorKind::EnipAdapter, None, window, cx),
             Command::EnipDemo => {
                 self.start_enip_demo(cx);
+            }
+            Command::NewSerialMonitor => {
+                self.open_editor(EditorKind::SerialMonitor, None, window, cx)
+            }
+            Command::NewSerialDevice => {
+                self.open_editor(EditorKind::SerialDevice, None, window, cx)
+            }
+            Command::SerialDemo => {
+                self.start_serial_demo(cx);
+            }
+            Command::SerialMacro(connection, index) => {
+                self.run_serial_macro(connection, index, cx);
             }
         }
     }

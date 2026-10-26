@@ -19,6 +19,7 @@ pub mod sidebar;
 mod splits;
 pub mod status_bar;
 pub mod tabs;
+mod terminal;
 mod traffic;
 mod trend;
 mod welcome;
@@ -39,8 +40,9 @@ use crate::model::palette::Mode;
 use crate::model::{AppModel, Drag, Overlay};
 
 impl Render for AppModel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_pane_views(cx);
+        self.sync_serial_consoles(window, cx);
         let theme = theme(cx).clone();
         let ui = self.workspace.ui.clone();
         let has_tabs = self.workspace.active_tab().is_some();
@@ -159,6 +161,11 @@ impl Render for AppModel {
             .on_action(cx.listener(|model, _: &PaletteDown, _, cx| model.move_palette(1, cx)))
             .on_action(cx.listener(|model, _: &PaletteConfirm, window, cx| {
                 model.confirm_palette(window, cx)
+            }))
+            .on_action(cx.listener(|model, _: &FocusSend, window, cx| {
+                if let Some(connection) = model.focused_connection() {
+                    model.focus_serial_send(connection, window, cx);
+                }
             }))
             .on_mouse_move(cx.listener(|model, event: &MouseMoveEvent, _, cx| {
                 if model.drag.is_some() {

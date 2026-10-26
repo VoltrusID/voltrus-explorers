@@ -86,6 +86,25 @@ standalone Tauri apps in this repository.
   assembly 150, Forward_Open and class 1 I/O, and ListIdentity on the same UDP
   port. A value set from the app or written by any client is held until
   released.
+- **Serial monitor** (on `mt-serial`): a port picker that lists USB, Bluetooth
+  and built-in ports and updates as devices come and go (the same picker fills
+  a Modbus RTU master's port), baud with presets, 5 to 8 data bits, parity,
+  stop bits and RTS/CTS or XON/XOFF flow control. A missing or busy port is
+  retried every second, so a device plugged in later is picked up. The
+  terminal shows what crosses the port as text lines (CR, LF or CR LF;
+  control bytes as ␂-style pictures) or a hex dump, with timestamps, pause and
+  clear. The send bar sends text (with `\r`, `\n`, `\xNN` escapes and the
+  connection's line ending) or hex, keeps a history (↑ ↓), and runs saved
+  macros (⌃1 … ⌃9, the inspector or ⌘K). **Log to file…** writes every byte in
+  and out to a CSV file you pick. Received lines become points that trend:
+  `name=value` pairs with their units, CSV columns (named by a header line or
+  the form), or a regular expression's capture groups. Modbus RTU stays a
+  Modbus connection: **Poll as Modbus RTU** carries the port settings over.
+- **Serial device simulator**: plays any device template on a virtual serial
+  port (a pseudo-terminal) with a stable link in the temporary folder,
+  printing its drifting values as `key=value` or CSV lines. It answers
+  `HELP`, `READ`, `SET <name> <value>` (held until `RELEASE`) and
+  `RATE <ms>`; a value set from the app is held too.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -101,8 +120,8 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet, DNP3 and EtherNet/IP are ported. The others in this
-repository (OPC UA, S7, NATS, serial, BLE) are being ported next; each plugs
+Modbus, MQTT, BACnet, DNP3, EtherNet/IP and serial are ported. The others in
+this repository (OPC UA, S7, NATS, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
@@ -123,7 +142,11 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # dnp3-control, dnp3-station,
                                                  # dnp3-editor, enip-points,
                                                  # enip-trend, enip-traffic,
-                                                 # enip-discover, enip-message
+                                                 # enip-discover, enip-message,
+                                                 # serial-terminal,
+                                                 # serial-hex, serial-trend,
+                                                 # serial-points, serial-editor,
+                                                 # serial-simulator
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the
@@ -141,6 +164,9 @@ system appearance, so screenshots are comparable.
 | ⌘W | Close pane |
 | ⌘B / ⌘I | Sidebar / inspector |
 | ↑ ↓ | Move through points |
+| ⌘L | Type in a serial pane's send bar |
+| ↑ ↓ (send bar) | Walk the sends history |
+| ⌃1 … ⌃9 (send bar) | Send a macro |
 
 ## Build
 

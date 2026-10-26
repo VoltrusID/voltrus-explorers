@@ -45,6 +45,7 @@
 pub mod client;
 #[cfg(unix)]
 pub mod pty;
+pub mod stream;
 pub mod types;
 
 // Re-export the primary public API at the crate root.
@@ -52,3 +53,6 @@ pub use client::{SerialClient, list_ports, read_tags, write_tag};
 pub use types::{
     FlowControl, Parity, PortInfo, SerialConfig, SerialTag, SerialValue,
 };
+pub use stream::{is_pseudo_terminal, open_stream};
+/// The async stream [`open_stream`] returns.
+pub use tokio_serial::SerialStream;
