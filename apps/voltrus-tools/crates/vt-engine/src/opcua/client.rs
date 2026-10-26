@@ -236,7 +236,19 @@ pub(crate) async fn run(
                     if !link.points.is_empty() && last_heard.elapsed() >= QUIET {
                         last_heard = Instant::now();
                         let ids: Vec<String> = link.points.iter().map(|point| point.node_id.clone()).collect();
-                        if let Ok(Ok(read)) = tokio::time::timeout(REQUEST_WAIT, link.client.read_values(&ids)).await {
+                        let read = match tokio::time::timeout(REQUEST_WAIT, link.client.read_values(&ids)).await {
+                            Ok(Ok(read)) => read,
+                            Ok(Err(error)) => {
+                                out.log(LogLevel::Warn, format!("Reading the values directly failed: {error}"));
+                                Vec::new()
+                            }
+                            Err(_) => {
+                                out.log(LogLevel::Warn, "Reading the values directly got no answer within 10 s");
+                                Vec::new()
+                            }
+                        };
+                        let before = changed;
+                        {
                             for (index, value) in read.into_iter().enumerate() {
                                 let fresh = PointState {
                                     number: value.number,
@@ -253,6 +265,9 @@ pub(crate) async fn run(
                                     changed = true;
                                 }
                             }
+                        }
+                        if changed && !before {
+                            out.log(LogLevel::Info, "The subscription was quiet; read the values directly");
                         }
                     }
                 }
