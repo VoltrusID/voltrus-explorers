@@ -76,11 +76,9 @@ jobs:
       - name: Test
         run: cargo test --locked --no-fail-fast --workspace
 
-      # mt-enip lives in the repository's root workspace: run the target and
-      # codec tests of the parts this app extends (assemblies, discovery).
-      - name: Test mt-enip
+      - name: Test shared protocol crates
         working-directory: .
-        run: cargo +1.92.0 test --locked -p mt-enip
+        run: cargo test --locked -p mt-enip
 
       - name: Build release
         run: cargo build --locked --release -p vt-app

@@ -110,7 +110,7 @@ pub fn valid_route_path(route: &str) -> Result<(), String> {
         return Ok(());
     }
     let hops: Vec<&str> = route.split([',', '/']).map(str::trim).collect();
-    if hops.len() % 2 != 0 || hops.iter().any(|hop| hop.is_empty()) {
+    if !hops.len().is_multiple_of(2) || hops.iter().any(|hop| hop.is_empty()) {
         return Err("Write the route as port,slot pairs, e.g. 1,0 (backplane, slot 0)".into());
     }
     for pair in hops.chunks(2) {
@@ -224,7 +224,7 @@ pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
     if let Some(bad) = digits.chars().find(|c| !c.is_ascii_hexdigit()) {
         return Err(format!("“{bad}” is not a hex digit"));
     }
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return Err("The data needs whole bytes: two hex digits each".into());
     }
     (0..digits.len())

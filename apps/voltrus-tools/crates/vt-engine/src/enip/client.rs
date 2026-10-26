@@ -125,7 +125,6 @@ pub(crate) async fn run(
         let Some(plan) = plan.as_mut() else {
             break 'session;
         };
-        attempt = 0;
 
         let mut ticker = tokio::time::interval(poll);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -533,21 +532,21 @@ async fn poll_once(client: &EnipClient, plan: &mut Plan) -> Result<Vec<Outcome>,
             }
         }
     }
-    for index in 0..plan.tags.len() {
-        if tag_results[index].is_some() {
+    for (index, result) in tag_results.iter_mut().enumerate() {
+        if result.is_some() {
             continue;
         }
         match client.read(std::slice::from_ref(&plan.tags[index])).await {
             Ok(values) => {
                 plan.isolated[index] = false;
-                tag_results[index] = values.first().map(tag_outcome);
+                *result = values.first().map(tag_outcome);
             }
             Err(error) => {
                 let error = error.to_string();
                 if link_lost(&error) {
                     return Err(error);
                 }
-                tag_results[index] = Some(Outcome::Failed(strip(&error)));
+                *result = Some(Outcome::Failed(strip(&error)));
             }
         }
     }
