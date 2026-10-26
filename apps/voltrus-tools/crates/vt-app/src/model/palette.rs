@@ -248,6 +248,8 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "A simulated process plant and a client browsing it",
             Icon::Zap,
             Command::OpcuaDemo,
+        ),
+        (
             "New DNP3 connection…",
             "Poll an outstation: integrity and class polls, controls, time sync",
             Icon::Plus,
