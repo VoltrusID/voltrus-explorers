@@ -58,6 +58,8 @@ pub enum Command {
     NatsRequest,
     /// Show the focused NATS client's JetStream streams.
     NatsJetStream,
+    NewBleClient,
+    BleDemo,
 }
 
 pub struct Entry {
@@ -386,6 +388,18 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "Streams, consumers and stored messages of the focused connection",
             Icon::Database,
             Command::NatsJetStream,
+        ),
+        (
+            "New Bluetooth LE connection…",
+            "Scan for a peripheral, browse its GATT services, read, write and subscribe",
+            Icon::Bluetooth,
+            Command::NewBleClient,
+        ),
+        (
+            "Start the Bluetooth LE demo",
+            "A simulated heart rate monitor and environment sensor",
+            Icon::Zap,
+            Command::BleDemo,
         ),
     ];
     entries.extend(

@@ -164,6 +164,17 @@ through `S7Server::apply_unless_written`, which moves the simulated tags and
 returns the client writes since the last tick under one lock, so a value a
 client writes is never overwritten and the point is reported `Locked`.
 
+A BLE scan works the same way, except that it answers more than once:
+`Command::ScanBle` gets an `EventKind::BleDevices` every few hundred
+milliseconds with the peripherals seen so far, the last one marked `done`.
+BLE sessions take `Command::Ble` (read now, write bytes, notifications on or
+off, a new decoder) and describe each point's characteristic with
+`EventKind::BleGatt`. The session and the scan are written against one
+`Central` trait (`vt-engine/src/ble/central.rs`): `system.rs` drives this
+computer's radio through `mt-ble`, `simulated.rs` plays a few peripherals
+in-process. The demo and the tests use the simulated one, so they take the
+session's real paths without Bluetooth hardware.
+
 ## Design system
 
 `vt-ui::theme::Theme` derives every token (surfaces, borders, accent, status

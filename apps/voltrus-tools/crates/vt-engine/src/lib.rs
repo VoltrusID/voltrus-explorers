@@ -6,6 +6,7 @@
 //! another session.
 
 mod bacnet;
+pub mod ble;
 mod dnp3;
 mod emit;
 mod enip;
@@ -105,6 +106,9 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::NatsServer(_) => {
             u64::try_from(nats::server::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::BleClient(_) => {
+            u64::try_from(ble::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -147,6 +151,8 @@ pub(crate) enum Control {
     ReadS7Plc,
     /// NATS: publish with headers, request/reply, JetStream browsing.
     Nats(vt_protocol::NatsRequest),
+    /// BLE clients: read, write, subscribe to or re-decode a characteristic.
+    Ble(vt_protocol::BleRequest),
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -219,6 +225,7 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::S7Server(server) => Some(server.port),
                     SessionSpec::S7Client(_) => None,
                     SessionSpec::NatsClient(_) => None,
+                    SessionSpec::BleClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -313,6 +320,18 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     nats::client::refuse(request, "Not connected", &out);
                 }
             }
+            Command::ScanBle { session, spec } => {
+                let events = events.clone();
+                tokio::spawn(ble::scan(spec, move |found| {
+                    let _ = events.try_send(Event {
+                        session,
+                        kind: EventKind::BleDevices(found),
+                    });
+                }));
+            }
+            Command::Ble { session, request } => {
+                forward(&sessions, session, Control::Ble(request));
+            }
             Command::Shutdown => break,
             Command::Dnp3 { session, action } => {
                 forward(&sessions, session, Control::Dnp3(action));
@@ -376,5 +395,6 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::S7Server(spec) => s7::server::run(spec, control, &out).await,
         SessionSpec::NatsClient(spec) => nats::client::run(spec, control, &out).await,
         SessionSpec::NatsServer(spec) => nats::server::run(spec, control, &out).await,
+        SessionSpec::BleClient(spec) => ble::client::run(spec, control, &out).await,
     }
 }

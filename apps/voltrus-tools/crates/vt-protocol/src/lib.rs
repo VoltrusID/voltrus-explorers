@@ -6,6 +6,7 @@
 //! in muxy) without changing either side's model.
 
 mod bacnet;
+mod ble;
 mod dnp3;
 mod enip;
 mod message;
@@ -18,6 +19,11 @@ mod value;
 
 pub use bacnet::{
     BACNET_PORT, BacnetClientSpec, BacnetDeviceInfo, BacnetDeviceSpec, BacnetDiscoverSpec,
+};
+pub use ble::{
+    BleAdapter, BleCharacteristicInfo, BleClientSpec, BleDecoder, BleDecoderRule, BleDeviceInfo,
+    BleFormat, BleManufacturerData, BleProperties, BleRequest, BleScan, BleScanSpec,
+    BleServiceData,
 };
 pub use dnp3::{
     DNP3_MAX_ADDRESS, DNP3_MAX_CONTROL_INDEX, DNP3_PORT, Dnp3Action, Dnp3ControlMode, Dnp3Crob,
@@ -96,6 +102,9 @@ pub enum SessionSpec {
     /// Run a NATS server with JetStream, optionally publishing a simulated
     /// device.
     NatsServer(NatsServerSpec),
+    /// Connect to a Bluetooth Low Energy peripheral and read, write and
+    /// subscribe to its characteristics.
+    BleClient(BleClientSpec),
 }
 
 impl SessionSpec {
@@ -109,12 +118,14 @@ impl SessionSpec {
             Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
             Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
             Self::NatsClient(_) | Self::NatsServer(_) => Protocol::Nats,
+            Self::BleClient(_) => Protocol::Ble,
         }
     }
 
     pub fn role(&self) -> Role {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
+            Self::BleClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
             Self::Dnp3Master(_) => Role::Client,
             Self::Dnp3Outstation(_) => Role::Simulator,
@@ -203,6 +214,7 @@ impl SessionSpec {
                 Some(_) => format!("{} · {}.>", host_port(&spec.bind, spec.port), spec.prefix),
                 None => host_port(&spec.bind, spec.port),
             },
+            Self::BleClient(spec) => format!("{} · {}", spec.adapter.name(), ble_label(spec)),
         }
     }
 
@@ -225,6 +237,7 @@ impl SessionSpec {
             Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
             Self::NatsClient(spec) => host_port(&spec.host, spec.port),
             Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
+            Self::BleClient(spec) => ble_label(spec),
         }
     }
 }
@@ -235,6 +248,15 @@ fn host_port(host: &str, port: u16) -> String {
         format!("[{host}]:{port}")
     } else {
         format!("{host}:{port}")
+    }
+}
+
+/// A peripheral by its name, else its identifier.
+fn ble_label(spec: &BleClientSpec) -> String {
+    if spec.name.trim().is_empty() {
+        spec.peripheral.clone()
+    } else {
+        spec.name.clone()
     }
 }
 
@@ -250,6 +272,7 @@ pub enum Protocol {
     Serial,
     S7,
     Nats,
+    Ble,
 }
 
 impl Protocol {
@@ -262,6 +285,7 @@ impl Protocol {
         Protocol::Serial,
         Protocol::S7,
         Protocol::Nats,
+        Protocol::Ble,
     ];
 
     pub fn name(self) -> &'static str {
@@ -274,6 +298,7 @@ impl Protocol {
             Self::Serial => "Serial",
             Self::S7 => "Siemens S7",
             Self::Nats => "NATS",
+            Self::Ble => "Bluetooth LE",
         }
     }
 
@@ -288,6 +313,7 @@ impl Protocol {
             Self::Serial => "SE",
             Self::S7 => "S7",
             Self::Nats => "NA",
+            Self::Ble => "BL",
         }
     }
 
@@ -314,6 +340,9 @@ impl Protocol {
             }
             Self::Nats => {
                 "Wildcard subjects, JSON values, publish and request/reply, JetStream browsing, and a server simulator"
+            }
+            Self::Ble => {
+                "Scan with signal and advertisements, browse GATT, read, write and notify with SIG decoders"
             }
         }
     }

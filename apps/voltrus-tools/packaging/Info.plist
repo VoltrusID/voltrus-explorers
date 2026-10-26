@@ -26,5 +26,7 @@
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Voltrus Tools connects to PLCs, meters and other devices on your network.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Voltrus Tools scans for Bluetooth LE devices and reads, writes and subscribes to the ones you connect to.</string>
 </dict>
 </plist>

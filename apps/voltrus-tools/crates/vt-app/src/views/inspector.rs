@@ -9,6 +9,7 @@ use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
 use vt_ui::theme::*;
 
+use super::ble;
 use super::{cip, now_ms, publish, resize_handle, state_color};
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Drag};
@@ -235,6 +236,11 @@ fn point_detail(
                         .when(locked, |this| this.child(pill("HELD", theme.warning))),
                 ),
         );
+
+    // BLE: the characteristic, its notifications and decoder, right under its value.
+    if spec.is_some_and(|spec| spec.protocol() == Protocol::Ble) {
+        content = content.child(ble::card(live, point, &model.ble, cx));
+    }
 
     if !words.is_empty() && good {
         content = content.child(

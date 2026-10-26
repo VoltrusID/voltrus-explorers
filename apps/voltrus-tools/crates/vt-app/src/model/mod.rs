@@ -5,6 +5,7 @@
 //! every state transition.
 
 pub mod bacnet;
+pub mod ble;
 pub mod dnp3;
 pub mod editor;
 pub mod enip;
@@ -149,6 +150,9 @@ pub struct AppModel {
     pub cip: enip::CipForm,
     /// The App Store trial and unlock, and their sheets.
     pub licensing: licence::Licensing,
+    /// BLE: the inspector's characteristic tools and the adapter new
+    /// connections start on.
+    pub ble: ble::BleState,
 }
 
 impl AppModel {
@@ -249,6 +253,7 @@ impl AppModel {
             _subscriptions: subscriptions,
             cip: enip::CipForm::new(window, cx),
             licensing,
+            ble: ble::BleState::new(window, cx),
         };
         window.focus(&model.focus);
         model.start_licensing(cx);
@@ -294,6 +299,17 @@ impl AppModel {
                 kind: vt_protocol::EventKind::Nats(nats),
             } => {
                 self.nats_event(session, nats);
+                return;
+            }
+            event => event,
+        };
+        // So does the BLE editor's scan.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::BleDevices(found),
+            } => {
+                self.ble_devices_found(session, found);
                 return;
             }
             event => event,
@@ -615,6 +631,9 @@ impl AppModel {
             Protocol::Nats => {
                 self.start_nats_demo(cx);
             }
+            Protocol::Ble => {
+                self.start_ble_demo(cx);
+            }
         }
     }
 
@@ -689,6 +708,7 @@ impl AppModel {
         if changed {
             self.aim_cip_at(connection, point, cx);
         }
+        self.sync_ble_inspector(connection, point, cx);
         cx.notify();
     }
 
@@ -713,6 +733,9 @@ impl AppModel {
         self.pane_scroll(pane)
             .points
             .scroll_to_item(next, gpui::ScrollStrategy::Center);
+        if let Ok(point) = u32::try_from(next) {
+            self.sync_ble_inspector(connection, point, cx);
+        }
         cx.notify();
     }
 
@@ -847,6 +870,7 @@ impl AppModel {
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
         let discover_enip = kind == EditorKind::EnipClient && existing.is_none();
+        let scan = kind == EditorKind::BleClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         self.prepare_serial_editor(cx);
         // A new BACnet client starts by looking for devices.
@@ -855,6 +879,14 @@ impl AppModel {
         }
         if discover_enip {
             self.discover_enip(cx);
+        }
+        // So does a new BLE connection, on the adapter used last.
+        if scan {
+            let adapter = self.ble.adapter;
+            if let Some(editor) = self.editor_mut() {
+                editor.ble.adapter = adapter;
+            }
+            self.scan_ble(cx);
         }
         cx.notify();
     }
@@ -1183,6 +1215,10 @@ impl AppModel {
                     self.show_toast("Focus a NATS connection to browse its JetStream", true, cx)
                 }
             },
+            Command::NewBleClient => self.open_editor(EditorKind::BleClient, None, window, cx),
+            Command::BleDemo => {
+                self.start_ble_demo(cx);
+            }
         }
     }
 

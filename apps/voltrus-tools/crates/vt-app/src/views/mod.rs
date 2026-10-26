@@ -4,6 +4,7 @@
 //! their own [`cached::CachedView`]s, so a pane that animates (a live trend)
 //! redraws itself and this thin shell, not the whole window.
 
+mod ble;
 pub mod cached;
 mod cip;
 mod device;
