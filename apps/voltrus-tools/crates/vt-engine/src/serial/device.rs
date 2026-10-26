@@ -241,7 +241,7 @@ impl Instrument {
                 None => Reply::Text("ERR usage: RELEASE <name|ALL>\r\n".into()),
             },
             "RATE" => match words.next().map(str::parse::<u64>) {
-                Some(Ok(ms)) if ms >= SerialDeviceSpec::MIN_INTERVAL_MS && ms <= 3_600_000 => {
+                Some(Ok(ms)) if (SerialDeviceSpec::MIN_INTERVAL_MS..=3_600_000).contains(&ms) => {
                     self.interval_ms = ms;
                     Reply::Text(format!("OK RATE {ms}\r\n"))
                 }

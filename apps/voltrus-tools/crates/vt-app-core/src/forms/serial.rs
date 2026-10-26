@@ -215,9 +215,8 @@ impl SerialMonitorForm {
 }
 
 fn delimiter(text: &str) -> Result<char, FormError> {
-    match text {
-        "\\t" | "tab" | "\t" => return Ok('\t'),
-        _ => {}
+    if matches!(text, "\\t" | "tab" | "\t") {
+        return Ok('\t');
     }
     let mut chars = text.trim().chars();
     match (chars.next(), chars.next()) {

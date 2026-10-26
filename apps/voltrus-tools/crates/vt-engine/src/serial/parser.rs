@@ -156,10 +156,6 @@ impl Parser {
         matches!(self.kind, Kind::None)
     }
 
-    pub fn points(&self) -> &[PointInfo] {
-        &self.points
-    }
-
     /// The latest value of every point; bad until a point's first value.
     pub fn readings(&self) -> Vec<Reading> {
         self.values
@@ -527,7 +523,7 @@ mod tests {
         // A group that matched text, not a number, is skipped.
         let parsed = parser.line("T=1.0 H=2 ALARM");
         assert!(parsed.added.is_empty());
-        assert_eq!(parser.points().len(), 2);
+        assert_eq!(parser.readings().len(), 2);
     }
 
     #[test]

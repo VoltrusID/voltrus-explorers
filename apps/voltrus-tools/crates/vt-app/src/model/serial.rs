@@ -94,9 +94,14 @@ pub fn history_step(cursor: Option<usize>, len: usize, step: isize) -> Option<us
 /// A connection's macros and the line ending its sends use.
 fn sending(spec: &SessionSpec) -> Option<(&[SerialMacro], LineEnding)> {
     match spec {
-        SessionSpec::SerialMonitor(monitor) => Some((&monitor.macros, monitor.line_ending)),
+        SessionSpec::SerialMonitor(monitor) => {
+            Some((monitor.macros.as_slice(), monitor.line_ending))
+        }
         // The virtual device answers with CR LF, as instruments do.
-        SessionSpec::SerialDevice(_) => Some((&[], LineEnding::CrLf)),
+        SessionSpec::SerialDevice(_) => {
+            let none: &[SerialMacro] = &[];
+            Some((none, LineEnding::CrLf))
+        }
         _ => None,
     }
 }
@@ -347,7 +352,8 @@ impl AppModel {
             .filter(|documents| documents.is_dir())
             .or(home)
             .unwrap_or_else(std::env::temp_dir);
-        let answer = cx.prompt_for_new_path(&directory, Some(&format!("{name}.csv")));
+        let suggested = format!("{name}.csv");
+        let answer = cx.prompt_for_new_path(&directory, Some(suggested.as_str()));
         cx.spawn(async move |this, cx| {
             let picked = answer.await;
             let _ = this.update(cx, |model, cx| match picked {
