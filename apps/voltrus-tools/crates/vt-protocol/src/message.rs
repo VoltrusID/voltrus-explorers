@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     BacnetDeviceInfo, BacnetDiscoverSpec, BleCharacteristicInfo, BleRequest, BleScan, BleScanSpec,
-    Dnp3Action, Dnp3Iin, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    CipRequest, CipResponse, Dnp3Action, Dnp3Iin, EnipDeviceInfo, EnipDiscoverSpec, MqttQos,
+    PointInfo, SessionSpec, TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -69,6 +70,18 @@ pub enum Command {
         session: SessionId,
         action: Dnp3Action,
     },
+    /// Send an EtherNet/IP ListIdentity; the devices that answer come back as
+    /// [`EventKind::EnipDevices`] under `session`, which names the request.
+    DiscoverEnip {
+        session: SessionId,
+        spec: EnipDiscoverSpec,
+    },
+    /// EtherNet/IP clients: send one explicit CIP message to the device,
+    /// answered by [`EventKind::CipReply`].
+    CipRequest {
+        session: SessionId,
+        request: CipRequest,
+    },
     /// Scan for BLE peripherals; what it sees comes back as
     /// [`EventKind::BleDevices`] under `session`, which names the scan (no
     /// session runs under it), until an answer that is `done`.
@@ -131,6 +144,15 @@ pub enum EventKind {
         action: Dnp3Action,
         result: Result<String, String>,
     },
+    /// Answer to [`Command::DiscoverEnip`]: the devices that answered ListIdentity.
+    EnipDevices(Result<Vec<EnipDeviceInfo>, String>),
+    /// Outcome of a [`Command::CipRequest`]: the reply data, or the CIP
+    /// status (or transport failure) as text.
+    CipReply(Result<CipResponse, String>),
+    /// EtherNet/IP: each point's whole address (`Program:Main.Motor1.Speed`,
+    /// `@0x04/100/3+24:REAL`), aligned with the points, after `Points`: the
+    /// table shows a short one.
+    EnipAddresses(Vec<String>),
     /// Answers to [`Command::ScanBle`]: the peripherals seen so far.
     BleDevices(Result<BleScan, String>),
     /// BLE sessions: each point's characteristic, its service and properties,
@@ -502,6 +524,122 @@ mod tests {
             panic!("a DNP3 master spec");
         };
         assert!(spec.points.is_empty());
+    }
+
+    #[test]
+    fn enip_messages_round_trip_through_json() {
+        use crate::{
+            CipRequest, CipResponse, CipType, EnipAdapterSpec, EnipAddress, EnipClientSpec,
+            EnipDeviceInfo, EnipDiscoverSpec, EnipPoint,
+        };
+
+        let client = EnipClientSpec {
+            host: "plc-7.local".into(),
+            route_path: "1,0".into(),
+            poll_ms: 250,
+            points: vec![
+                EnipPoint {
+                    name: "Speed".into(),
+                    address: EnipAddress::parse("Program:Main.Motor1.Speed").unwrap(),
+                    unit: "RPM".into(),
+                },
+                EnipPoint {
+                    name: String::new(),
+                    address: EnipAddress::Attribute {
+                        class: 4,
+                        instance: 100,
+                        attribute: 3,
+                        offset: 12,
+                        data_type: CipType::Lreal,
+                    },
+                    unit: String::new(),
+                },
+            ],
+            ..EnipClientSpec::default()
+        };
+        let request = CipRequest {
+            service: 0x10,
+            class: 4,
+            instance: 150,
+            attribute: Some(3),
+            data: vec![0, 0x80, 0xFF],
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::EnipClient(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::EnipAdapter(EnipAdapterSpec::default()),
+            },
+            Command::DiscoverEnip {
+                session: SessionId(3),
+                spec: EnipDiscoverSpec {
+                    broadcast_port: None,
+                    directed: vec!["127.0.0.1:44819".into()],
+                    wait_ms: 1200,
+                },
+            },
+            Command::CipRequest {
+                session: SessionId(1),
+                request: request.clone(),
+            },
+            // Get_Attributes_All addresses no attribute: not attribute 0.
+            Command::CipRequest {
+                session: SessionId(1),
+                request: CipRequest {
+                    service: 0x01,
+                    class: 1,
+                    instance: 1,
+                    attribute: None,
+                    data: Vec::new(),
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let events = [
+            EventKind::EnipDevices(Ok(vec![EnipDeviceInfo {
+                address: "192.168.1.20".into(),
+                port: 44818,
+                product: "1756-L83E/B".into(),
+                vendor: "Rockwell Automation/Allen-Bradley".into(),
+                device_type: "Programmable Logic Controller".into(),
+                revision: "33.11".into(),
+                serial: 0x00C0_FFEE,
+                also: vec!["127.0.0.1:44818".into()],
+            }])),
+            EventKind::EnipDevices(Err("Network is unreachable".into())),
+            EventKind::CipReply(Ok(CipResponse {
+                request,
+                data: Vec::new(),
+                latency_us: 812,
+            })),
+            EventKind::CipReply(Err("CIP error 0x14: Attribute not supported".into())),
+            EventKind::EnipAddresses(vec![
+                "Program:Main.Motor1.Speed".into(),
+                "@0x04/100/3+24:REAL".into(),
+            ]),
+        ];
+        for kind in events {
+            let event = Event {
+                session: SessionId(1),
+                kind,
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // Saved before route paths and points existed: a direct, browse-all client.
+        let saved = r#"{"kind":"enip_client","host":"10.0.0.5","port":44818,"poll_ms":1000}"#;
+        let SessionSpec::EnipClient(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("an EtherNet/IP client spec");
+        };
+        assert!(spec.route_path.is_empty() && spec.points.is_empty());
     }
 
     #[test]

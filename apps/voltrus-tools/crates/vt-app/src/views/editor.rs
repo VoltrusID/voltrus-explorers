@@ -18,6 +18,7 @@ use crate::model::{AppModel, Overlay};
 mod bacnet;
 mod ble;
 mod dnp3;
+mod enip;
 mod mqtt;
 
 /// A click handler that changes the open editor.
@@ -57,6 +58,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
         (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
         (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
+        (EditorKind::EnipClient, false) => "New EtherNet/IP connection",
+        (EditorKind::EnipClient, true) => "Edit EtherNet/IP connection",
+        (EditorKind::EnipAdapter, false) => "New EtherNet/IP adapter simulator",
+        (EditorKind::EnipAdapter, true) => "Edit EtherNet/IP adapter simulator",
         (EditorKind::BleClient, false) => "New Bluetooth LE connection",
         (EditorKind::BleClient, true) => "Edit Bluetooth LE connection",
     };
@@ -81,6 +86,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::Dnp3Outstation => {
             "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
         }
+        EditorKind::EnipClient => {
+            "Find a device with ListIdentity, read and write its Logix tags and CIP attributes."
+        }
+        EditorKind::EnipAdapter => {
+            "Play an EtherNet/IP adapter on this computer for any client to browse, read and write."
+        }
         EditorKind::BleClient => {
             "Scan for a peripheral, then browse its GATT services: read, write and subscribe to every characteristic."
         }
@@ -94,6 +105,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
         EditorKind::Dnp3Master => dnp3::master(editor, cx),
         EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
+        EditorKind::EnipClient => enip::client(editor, cx),
+        EditorKind::EnipAdapter => enip::adapter(editor, cx),
         EditorKind::BleClient => ble::client(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
@@ -106,6 +119,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         }
         (EditorKind::Dnp3Master, false) => "Save and connect",
         (EditorKind::Dnp3Outstation, false) => "Start simulator",
+        (EditorKind::EnipClient, false) => "Save and connect",
+        (EditorKind::EnipAdapter, false) => "Start simulator",
         (EditorKind::BleClient, false) => "Save and connect",
     };
     let confirm_delete = editor.confirm_delete;
