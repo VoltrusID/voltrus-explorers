@@ -57,8 +57,10 @@ standalone Tauri apps in this repository.
   first elements, structures by their members). Writes go to tags by name and
   to attributes with Set_Attribute_Single, range-checked against the type. An
   optional route path (`1,0`) reaches a ControlLogix through its Ethernet
-  module. The inspector sends any explicit message (service, class, instance,
-  attribute, data) and shows the reply as hex and as the values it may hold.
+  module. The points table shows each tag's program (or `Ctrl`) and the
+  inspector its whole address. The inspector sends any explicit message
+  (service, class, instance, attribute, data) and shows the reply as hex and
+  as the values it may hold.
 - **EtherNet/IP adapter simulator**: plays a motor drive, a tank farm or a
   packaging line on any port, as a Logix-style target: tag browse, Read/Write
   Tag, the Identity object, input assembly 100 (every tag's value) and output
