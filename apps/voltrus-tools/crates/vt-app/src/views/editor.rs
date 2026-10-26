@@ -16,6 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 mod bacnet;
+mod dnp3;
 mod mqtt;
 mod opcua;
 
@@ -56,6 +57,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::OpcuaClient, true) => "Edit OPC UA connection",
         (EditorKind::OpcuaServer, false) => "New OPC UA server simulator",
         (EditorKind::OpcuaServer, true) => "Edit OPC UA server simulator",
+        (EditorKind::Dnp3Master, false) => "New DNP3 connection",
+        (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
+        (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
+        (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -78,6 +83,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::OpcuaServer => {
             "Serve a process plant's address space on this computer for any OPC UA client."
         }
+        EditorKind::Dnp3Master => {
+            "Poll an outstation over TCP: integrity and event polls, flags, controls and time sync."
+        }
+        EditorKind::Dnp3Outstation => {
+            "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -88,6 +99,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
         EditorKind::OpcuaClient => opcua::client(editor, cx),
         EditorKind::OpcuaServer => opcua::server(editor, cx),
+        EditorKind::Dnp3Master => dnp3::master(editor, cx),
+        EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -99,6 +112,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         }
         (EditorKind::OpcuaClient, false) => "Save and connect",
         (EditorKind::OpcuaServer, false) => "Start simulator",
+        (EditorKind::Dnp3Master, false) => "Save and connect",
+        (EditorKind::Dnp3Outstation, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

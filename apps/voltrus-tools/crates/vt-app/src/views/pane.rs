@@ -237,6 +237,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
         SessionSpec::OpcuaServer(_) => true,
+        SessionSpec::Dnp3Outstation(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
@@ -273,6 +274,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::OpcuaClient(_), _) => {
                     "Connect to browse the server's address space and monitor its variables."
+                }
+                (SessionSpec::Dnp3Outstation(_), _) => {
+                    "Start it to play the outstation on this computer. Any DNP3 master can poll and command it, including this app."
+                }
+                (SessionSpec::Dnp3Master(_), _) => {
+                    "Connect to poll the outstation. Every point it reports appears here, with its flags and events."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

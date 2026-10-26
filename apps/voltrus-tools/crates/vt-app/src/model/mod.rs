@@ -5,6 +5,7 @@
 //! every state transition.
 
 pub mod bacnet;
+pub mod dnp3;
 pub mod editor;
 pub mod live;
 pub mod opcua;
@@ -556,6 +557,9 @@ impl AppModel {
             Protocol::Opcua => {
                 self.start_opcua_demo(cx);
             }
+            Protocol::Dnp3 => {
+                self.start_dnp3_demo(cx);
+            }
         }
     }
 
@@ -863,6 +867,12 @@ impl AppModel {
         {
             self.add_opcua_client(&name, server, cx);
         }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::Dnp3Outstation(outstation) = &spec
+        {
+            self.add_dnp3_master(&name, outstation, cx);
+        }
         self.workspace.focus(
             self.workspace
                 .panes
@@ -1040,6 +1050,14 @@ impl AppModel {
             Command::OpcuaDemo => {
                 self.start_opcua_demo(cx);
             }
+            Command::NewDnp3Master => self.open_editor(EditorKind::Dnp3Master, None, window, cx),
+            Command::NewDnp3Outstation => {
+                self.open_editor(EditorKind::Dnp3Outstation, None, window, cx)
+            }
+            Command::Dnp3Demo => {
+                self.start_dnp3_demo(cx);
+            }
+            Command::Dnp3(connection, action) => self.dnp3_action(connection, action, cx),
         }
     }
 

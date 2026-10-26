@@ -16,7 +16,8 @@ status=0
 for scenario in welcome points trend traffic simulator editor palette light \
   mqtt-points mqtt-trend mqtt-traffic mqtt-inspector mqtt-editor \
   bacnet-points bacnet-trend bacnet-traffic bacnet-discover bacnet-command \
-  opcua-points opcua-trend opcua-method opcua-editor; do
+  opcua-points opcua-trend opcua-method opcua-editor \
+  dnp3-points dnp3-trend dnp3-traffic dnp3-control dnp3-station dnp3-editor; do
   "$binary" --demo "$scenario" &
   pid=$!
   id=""

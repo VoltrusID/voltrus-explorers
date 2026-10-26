@@ -13,8 +13,10 @@ use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 use super::opcua::OpcuaFields;
 
+mod dnp3;
 mod mqtt;
 
+pub use dnp3::{Dnp3Fields, NEW_MASTER_NAME, NEW_OUTSTATION_NAME};
 pub use mqtt::MqttFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,8 @@ pub enum EditorKind {
     BacnetDevice,
     OpcuaClient,
     OpcuaServer,
+    Dnp3Master,
+    Dnp3Outstation,
 }
 
 impl EditorKind {
@@ -42,6 +46,8 @@ impl EditorKind {
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
             (Protocol::Opcua, Role::Client) => Self::OpcuaClient,
             (Protocol::Opcua, Role::Simulator) => Self::OpcuaServer,
+            (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
+            (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
         })
     }
 
@@ -56,6 +62,8 @@ impl EditorKind {
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
             SessionSpec::OpcuaClient(_) => Self::OpcuaClient,
             SessionSpec::OpcuaServer(_) => Self::OpcuaServer,
+            SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
+            SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
         }
     }
 }
@@ -98,6 +106,7 @@ pub struct Editor {
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
     pub opcua: OpcuaFields,
+    pub dnp3: Dnp3Fields,
 }
 
 fn input(
@@ -127,6 +136,7 @@ impl Editor {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let opcua = OpcuaFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -162,6 +172,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::Dnp3Master(_) | SessionSpec::Dnp3Outstation(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -172,6 +187,8 @@ impl Editor {
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
                     EditorKind::OpcuaClient => super::opcua::NEW_CLIENT_NAME.to_owned(),
                     EditorKind::OpcuaServer => super::opcua::NEW_SERVER_NAME.to_owned(),
+                    EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
+                    EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -236,6 +253,7 @@ impl Editor {
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
             opcua,
+            dnp3,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -261,6 +279,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.opcua.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.dnp3.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -402,6 +423,16 @@ impl Editor {
                 .server_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::OpcuaServer(spec))),
+            EditorKind::Dnp3Master => self
+                .dnp3
+                .master_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Master(spec))),
+            EditorKind::Dnp3Outstation => self
+                .dnp3
+                .outstation_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Outstation(spec))),
         }
     }
 }

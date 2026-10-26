@@ -57,6 +57,8 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// DNP3: what the session last reported about its outstation.
+    pub dnp3: super::dnp3::Dnp3Live,
 }
 
 impl Default for Live {
@@ -81,6 +83,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            dnp3: super::dnp3::Dnp3Live::default(),
         }
     }
 }
@@ -96,6 +99,7 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.dnp3 = super::dnp3::Dnp3Live::default();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -208,6 +212,13 @@ impl Live {
             EventKind::BacnetDevices(_) => {}
             // The browser and the endpoint picker take OPC UA answers.
             EventKind::Opcua(_) => {}
+            EventKind::Dnp3Iin(iin) => self.dnp3.iin = Some(iin),
+            EventKind::Dnp3Done { action, result } => {
+                if self.dnp3.busy == Some(action) {
+                    self.dnp3.busy = None;
+                }
+                self.dnp3.last = Some((action, result));
+            }
         }
     }
 

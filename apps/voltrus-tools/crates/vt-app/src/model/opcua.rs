@@ -1115,6 +1115,7 @@ impl AppModel {
                 SessionSpec::OpcuaServer(server) => Some(server.port),
                 SessionSpec::ModbusSlave(slave) => Some(slave.port),
                 SessionSpec::MqttBroker(broker) => Some(broker.port),
+                SessionSpec::Dnp3Outstation(outstation) => Some(outstation.port),
                 _ => None,
             })
             .collect();
