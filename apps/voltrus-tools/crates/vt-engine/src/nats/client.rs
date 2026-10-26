@@ -104,7 +104,6 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        attempt = 0;
         let info = client.inner().server_info();
         out.state(SessionState::Connected);
         out.log(

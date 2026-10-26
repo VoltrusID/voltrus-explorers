@@ -126,8 +126,9 @@ pub(crate) async fn run(
         }
         Err(error) => {
             let message = format!(
-                "Cannot listen on {}: {error}",
-                super::url_host(&ip.to_string()) + ":" + &spec.port.to_string()
+                "Cannot listen on {}:{}: {error}",
+                url_host(&ip.to_string()),
+                spec.port
             );
             out.log(LogLevel::Error, message.clone());
             out.state(SessionState::Closed {
