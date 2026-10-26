@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 
 use crate::types::*;
 use crate::vars::*;
+use crate::traffic::TrafficSender;
 use crate::{blocks, framing, szl};
 
 // ── Inner client (owns the TCP stream, requires &mut self) ──
@@ -29,6 +30,28 @@ const COTP_DT_HEADER_LEN: usize = 3;
 /// Smallest PDU that can carry a one-item read (10 + 2 + 12 request, 12 + 2 + 4 + data response).
 const MIN_PDU_SIZE: u16 = 32;
 
+/// How [`S7Client::connect_with_options`] connects.
+#[derive(Debug, Clone)]
+pub struct S7ConnectOptions {
+    /// PDU size to ask the PLC for; it answers with what it can do, at most this. Kept within
+    /// 32 and [`MAX_PDU_SIZE`].
+    pub pdu_size: u16,
+    /// How long the connection and each request may take.
+    pub timeout: Duration,
+    /// Receives a description of every frame sent and received.
+    pub traffic: Option<TrafficSender>,
+}
+
+impl Default for S7ConnectOptions {
+    fn default() -> Self {
+        Self {
+            pdu_size: DEFAULT_PDU_SIZE,
+            timeout: REQUEST_TIMEOUT,
+            traffic: None,
+        }
+    }
+}
+
 /// Low-level S7 PLC client managing a single TCP connection.
 ///
 /// This struct contains the mutable connection state and is wrapped in an async
@@ -43,17 +66,21 @@ struct Inner {
     /// Set after a timeout or I/O failure. The stream may hold a half-read or late response, so it
     /// cannot be used again.
     broken: bool,
+    /// Where every PDU sent and received is described, if anyone listens.
+    traffic: Option<TrafficSender>,
 }
 
 impl Inner {
-    /// Perform the full COTP + S7 Setup Communication handshake.
+    /// Perform the full COTP + S7 Setup Communication handshake, asking for `requested_pdu`.
     ///
     /// `stream` must already be connected to the PLC.
     async fn negotiate(
         mut stream: TcpStream,
         rack: u8,
         slot: u8,
+        requested_pdu: u16,
         request_timeout: Duration,
+        traffic: Option<TrafficSender>,
     ) -> Result<Self, ProtocolError> {
         // COTP Connection Request, then Connection Confirm.
         let cotp_cr = build_cotp_cr(rack, slot);
@@ -61,23 +88,43 @@ impl Inner {
             .write_all(&cotp_cr)
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("COTP CR send: {e}")))?;
+        crate::traffic::emit(
+            traffic.as_ref(),
+            true,
+            "COTP Connect".into(),
+            format!("rack {rack}, slot {slot}"),
+            cotp_cr.len(),
+        );
 
         let cc = tokio::time::timeout(request_timeout, read_cotp_cc(&mut stream))
             .await
             .map_err(|_| ProtocolError::ConnectionFailed("COTP CC timed out".into()))??;
-        let tpdu_size = parse_cotp_cc(&cc)?;
+        let tpdu_size = parse_cotp_cc(&cc);
+        crate::traffic::emit(
+            traffic.as_ref(),
+            false,
+            "COTP Confirm".into(),
+            match &tpdu_size {
+                Ok(size) => format!("TPDU {size} bytes"),
+                Err(e) => e.to_string(),
+            },
+            cc.len() + 4,
+        );
+        let tpdu_size = tpdu_size?;
 
         // S7 Setup Communication.
         let pdu_ref = AtomicU16::new(1u16);
-        let setup = build_s7_setup_comm(&pdu_ref);
+        let setup = build_s7_setup_comm_for(&pdu_ref, requested_pdu);
         send_pdu(&mut stream, &setup)
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm send: {e}")))?;
+        crate::traffic::emit_pdu(traffic.as_ref(), true, &setup);
 
         let resp = tokio::time::timeout(request_timeout, recv_pdu(&mut stream))
             .await
             .map_err(|_| ProtocolError::ConnectionFailed("S7 Setup Comm timed out".into()))?
             .map_err(|e| ProtocolError::ConnectionFailed(format!("S7 Setup Comm recv: {e}")))?;
+        crate::traffic::emit_pdu(traffic.as_ref(), false, &resp);
         let negotiated = parse_setup_comm_response(&resp)?;
 
         // One S7 PDU plus its COTP DT header has to fit one TPDU, because we never fragment.
@@ -98,6 +145,7 @@ impl Inner {
             pdu_size,
             request_timeout,
             broken: false,
+            traffic,
         })
     }
 
@@ -114,11 +162,14 @@ impl Inner {
         if self.broken {
             return Err("the connection to the PLC was lost, reconnect".into());
         }
+        let traffic = self.traffic.clone();
         let result = tokio::time::timeout(self.request_timeout, async {
             send_pdu(&mut self.stream, s7).await.map_err(|e| e.to_string())?;
+            crate::traffic::emit_pdu(traffic.as_ref(), true, s7);
             let pdu_ref = s7.get(4..6);
             for _ in 0..4 {
                 let response = recv_pdu(&mut self.stream).await?;
+                crate::traffic::emit_pdu(traffic.as_ref(), false, &response);
                 if response.get(4..6) == pdu_ref {
                     return Ok(response);
                 }
@@ -507,17 +558,40 @@ impl S7Client {
         config: S7Config,
         timeout: Duration,
     ) -> Result<Self, ProtocolError> {
+        Self::connect_with_options(config, S7ConnectOptions { timeout, ..S7ConnectOptions::default() }).await
+    }
+
+    /// Connect with a PDU size to ask for, a request timeout and, optionally, a channel that
+    /// receives a description of every frame sent and received.
+    pub async fn connect_with_options(
+        config: S7Config,
+        options: S7ConnectOptions,
+    ) -> Result<Self, ProtocolError> {
+        let timeout = options.timeout;
         let addr = format!("{}:{}", config.host, config.port);
         let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
             .await
             .map_err(|_| ProtocolError::ConnectionFailed(format!("{addr}: no answer")))?
             .map_err(|e| ProtocolError::ConnectionFailed(format!("{addr}: {e}")))?;
 
-        let inner = Inner::negotiate(stream, config.rack, config.slot, timeout).await?;
+        let requested = options.pdu_size.clamp(MIN_PDU_SIZE, MAX_PDU_SIZE);
+        let inner =
+            Inner::negotiate(stream, config.rack, config.slot, requested, timeout, options.traffic).await?;
 
         Ok(Self {
             inner: tokio::sync::Mutex::new(Some(inner)),
         })
+    }
+
+    /// The PDU size the PLC agreed to, `None` once disconnected.
+    pub async fn pdu_size(&self) -> Option<u16> {
+        self.inner.lock().await.as_ref().map(|inner| inner.pdu_size)
+    }
+
+    /// Whether the connection can still be used: not disconnected, and no request on it timed
+    /// out or failed on the socket (after which the stream may hold a late answer).
+    pub async fn is_connected(&self) -> bool {
+        self.inner.lock().await.as_ref().is_some_and(|inner| !inner.broken)
     }
 
     pub async fn read_cpu_info(&self) -> Result<CpuInfo, ProtocolError> {
@@ -791,7 +865,13 @@ fn build_cotp_cr(rack: u8, slot: u8) -> Vec<u8> {
     tpkt
 }
 
+#[cfg(test)]
 fn build_s7_setup_comm(pdu_ref: &AtomicU16) -> Vec<u8> {
+    build_s7_setup_comm_for(pdu_ref, DEFAULT_PDU_SIZE)
+}
+
+/// The Setup Communication job, asking for a PDU of `pdu_size` bytes.
+fn build_s7_setup_comm_for(pdu_ref: &AtomicU16, pdu_size: u16) -> Vec<u8> {
     let pdu_ref = pdu_ref.fetch_add(1, Ordering::Relaxed);
 
     let mut params = Vec::new();
@@ -799,7 +879,7 @@ fn build_s7_setup_comm(pdu_ref: &AtomicU16) -> Vec<u8> {
     params.push(0x00);
     params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ calling: one job at a time
     params.extend_from_slice(&1u16.to_be_bytes()); // max AmQ called
-    params.extend_from_slice(&DEFAULT_PDU_SIZE.to_be_bytes());
+    params.extend_from_slice(&pdu_size.to_be_bytes());
 
     let mut s7 = Vec::new();
     s7.push(S7_PROTOCOL_ID);

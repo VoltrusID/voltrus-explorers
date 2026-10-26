@@ -98,6 +98,7 @@ fn point_detail(
         }
         Some(SessionSpec::EnipAdapter(_)) => true,
         Some(SessionSpec::SerialDevice(_)) => true,
+        Some(SessionSpec::S7Server(_)) => true,
         Some(SessionSpec::NatsServer(server)) => server.template.is_some(),
         _ => false,
     };
@@ -241,7 +242,14 @@ fn point_detail(
                 .flex()
                 .flex_col()
                 .gap(SPACE_4)
-                .child(section_label("Registers", cx))
+                .child(section_label(
+                    if spec.is_some_and(|spec| spec.protocol() == Protocol::S7) {
+                        "On the wire"
+                    } else {
+                        "Registers"
+                    },
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()

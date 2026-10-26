@@ -29,6 +29,9 @@ mod serial;
 pub use serial::{
     BAUD_PRESETS, MacroField, MacroForm, ParserKind, SerialDeviceForm, SerialMonitorForm,
 };
+mod s7;
+
+pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
 mod nats;
 
 pub use nats::{NatsAuthKind, NatsClientForm, NatsServerForm, NatsSubjectField, NatsSubjectForm};
@@ -87,6 +90,12 @@ pub enum Field {
     IntervalMs,
     Alias,
     Template,
+    /// S7: the CPU's rack, slot and PDU size, and a tag row and which of its fields.
+    S7Rack,
+    S7Slot,
+    S7Pdu,
+    S7Tag(usize, S7TagField),
+    S7Tags,
     /// NATS: a subscription row and which of its fields, and the token,
     /// NKey seed or creds file of the chosen login.
     NatsSubject(usize, NatsSubjectField),

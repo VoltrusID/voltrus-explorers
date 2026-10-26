@@ -4155,6 +4155,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-s7"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mt-serial"
 version = "2.0.0"
 dependencies = [
@@ -7813,6 +7826,7 @@ dependencies = [
  "mt-mqtt",
  "mt-nats",
  "mt-protocol",
+ "mt-s7",
  "mt-serial",
  "prost 0.14.4",
  "regex",
