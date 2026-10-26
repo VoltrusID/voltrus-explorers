@@ -455,7 +455,7 @@ mod tests {
         }
 
         for kind in [
-            EventKind::Dnp3Iin(crate::Dnp3Iin {
+            EventKind::Dnp3Iin(Dnp3Iin {
                 iin1: 0x90,
                 iin2: 0x02,
             }),

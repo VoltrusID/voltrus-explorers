@@ -464,7 +464,6 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        attempt = 0;
         client
             .set_response_timeout(Duration::from_millis(spec.timeout_ms.max(100)))
             .await;
