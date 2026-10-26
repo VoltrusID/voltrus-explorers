@@ -16,6 +16,7 @@ carries all of these texts in `Contents/Resources/Licenses`.
 | [serialport](https://github.com/serialport/serialport-rs) | Serial ports for the serial monitor and Modbus RTU (through `mt-serial` and `mt-modbus`); its source is on [crates.io](https://crates.io/crates/serialport) | MPL-2.0 (`packaging/licenses/serialport-LICENSE-MPL.txt`; the licence text is at https://mozilla.org/MPL/2.0/) |
 | [tokio-serial](https://github.com/berkowski/tokio-serial), © 2017 Zac Berkowitz and contributors | Async serial port streams (through `mt-serial`) | MIT (`packaging/licenses/tokio-serial-LICENSE-MIT.txt`) |
 | [regex](https://github.com/rust-lang/regex), The Rust Project Developers | The serial monitor's line patterns | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) or MIT |
+| [async-nats](https://github.com/nats-io/nats.rs) and [nkeys](https://github.com/wasmcloud/nkeys), The NATS Authors / wasmCloud | NATS client (through `mt-nats`, and directly in `vt-engine/src/nats`) and NKey/creds signing | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) |
 
 The MIT notice required by muxy:
 

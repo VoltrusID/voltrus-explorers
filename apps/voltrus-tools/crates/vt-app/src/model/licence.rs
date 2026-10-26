@@ -662,6 +662,8 @@ mod tests {
             (Protocol::S7, Role::Simulator) => SessionSpec::S7Server(Default::default()),
             (Protocol::Opcua, Role::Client) => SessionSpec::OpcuaClient(Default::default()),
             (Protocol::Opcua, Role::Simulator) => SessionSpec::OpcuaServer(Default::default()),
+            (Protocol::Nats, Role::Client) => SessionSpec::NatsClient(Default::default()),
+            (Protocol::Nats, Role::Simulator) => SessionSpec::NatsServer(Default::default()),
         }
     }
 
@@ -720,6 +722,10 @@ mod tests {
             },
             EngineCommand::ReadS7Plc { session },
             EngineCommand::Relinquish { session, point: 0 },
+            EngineCommand::Nats {
+                session,
+                request: vt_protocol::NatsRequest::Streams,
+            },
         ] {
             assert!(!gate.admit(&command), "{command:?} passed after the trial");
             assert!(gate.take_refused());

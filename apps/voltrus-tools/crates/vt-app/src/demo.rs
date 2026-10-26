@@ -57,6 +57,12 @@ pub enum Scenario {
     S7Plc,
     S7Write,
     S7Editor,
+    NatsPoints,
+    NatsTrend,
+    NatsTraffic,
+    NatsInspector,
+    NatsJetstream,
+    NatsEditor,
 }
 
 impl Scenario {
@@ -106,6 +112,12 @@ impl Scenario {
         "s7-plc",
         "s7-write",
         "s7-editor",
+        "nats-points",
+        "nats-trend",
+        "nats-traffic",
+        "nats-inspector",
+        "nats-jetstream",
+        "nats-editor",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -155,6 +167,12 @@ impl Scenario {
             "s7-plc" => Self::S7Plc,
             "s7-write" => Self::S7Write,
             "s7-editor" => Self::S7Editor,
+            "nats-points" => Self::NatsPoints,
+            "nats-trend" => Self::NatsTrend,
+            "nats-traffic" => Self::NatsTraffic,
+            "nats-inspector" => Self::NatsInspector,
+            "nats-jetstream" => Self::NatsJetstream,
+            "nats-editor" => Self::NatsEditor,
             _ => return None,
         })
     }
@@ -228,6 +246,12 @@ pub fn apply(
         | Scenario::S7Plc
         | Scenario::S7Write
         | Scenario::S7Editor => s7(model, scenario, window, cx),
+        Scenario::NatsEditor => model.open_editor(EditorKind::NatsClient, None, window, cx),
+        Scenario::NatsPoints
+        | Scenario::NatsTrend
+        | Scenario::NatsTraffic
+        | Scenario::NatsInspector
+        | Scenario::NatsJetstream => nats(model, scenario, cx),
         Scenario::Palette => {
             model.start_demo_plant(cx);
             model.workspace.ui.inspector_open = false;
@@ -836,4 +860,95 @@ fn s7(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Co
         }
         _ => {}
     }
+}
+
+/// What the NATS demo trends: subjects of the inverter, which carry their
+/// units in a header.
+const NATS_TREND: [&str; 4] = [
+    "plant.inverter.dc_power",
+    "plant.inverter.ac_power",
+    "plant.inverter.ac_frequency",
+    "plant.inverter.temperature",
+];
+/// The point the NATS inspector scenario shows.
+const NATS_SELECTED: &str = "plant.inverter.ac_power";
+/// Subjects are points once their first messages arrive; the client's
+/// JetStream streams come right after it connects.
+const NATS_SETTLE: Duration = Duration::from_secs(2);
+
+/// The NATS demo: an inverter on a simulated NATS server with JetStream and
+/// a client subscribed to it.
+fn nats(model: &mut AppModel, scenario: Scenario, cx: &mut Context<AppModel>) {
+    let Some((client, simulator)) = model.start_nats_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::NatsTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::NatsTraffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+        }
+        // One client with the inspector: a request and its reply, or the
+        // JetStream browser.
+        Scenario::NatsInspector | Scenario::NatsJetstream => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            model.workspace.ui.inspector_open = true;
+        }
+        _ => model.workspace.ui.inspector_open = false,
+    }
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(NATS_SETTLE).await;
+        let _ = this.update(cx, |model, cx| {
+            let Some(live) = model.live.get(&client) else {
+                return;
+            };
+            let find = |name: &str| {
+                live.points
+                    .iter()
+                    .position(|point| point.name == name)
+                    .and_then(|index| u32::try_from(index).ok())
+            };
+            let trend = NATS_TREND.iter().filter_map(|name| find(name)).collect();
+            let selected = find(NATS_SELECTED);
+            if let Some(live) = model.live.get_mut(&client) {
+                live.trend = trend;
+            }
+            match scenario {
+                Scenario::NatsInspector => {
+                    if let Some(point) = selected {
+                        model.select_point(client, point, cx);
+                    }
+                    model
+                        .nats
+                        .subject
+                        .update(cx, |input, cx| input.set_text("plant.inverter.get", cx));
+                    model.send_nats_request(cx);
+                }
+                Scenario::NatsJetstream => {
+                    let stream = vt_protocol::NatsServerSpec::default().stream_name();
+                    model.nats_toggle_stream(client, stream.clone(), cx);
+                    model.nats_fetch(
+                        client,
+                        stream,
+                        vt_protocol::NatsServerSpec::CONSUMER.to_owned(),
+                        cx,
+                    );
+                }
+                _ => {}
+            }
+            cx.notify();
+        });
+    })
+    .detach();
 }

@@ -26,6 +26,9 @@ pub use serial::SerialFields;
 mod s7;
 
 pub use s7::{CPU_PRESETS, NEW_S7_CLIENT_NAME, NEW_S7_SERVER_NAME, S7Fields};
+mod nats;
+
+pub use nats::NatsFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -45,6 +48,8 @@ pub enum EditorKind {
     SerialDevice,
     S7Client,
     S7Server,
+    NatsClient,
+    NatsServer,
 }
 
 impl EditorKind {
@@ -68,6 +73,8 @@ impl EditorKind {
             (Protocol::Serial, Role::Simulator) => Self::SerialDevice,
             (Protocol::S7, Role::Client) => Self::S7Client,
             (Protocol::S7, Role::Simulator) => Self::S7Server,
+            (Protocol::Nats, Role::Client) => Self::NatsClient,
+            (Protocol::Nats, Role::Simulator) => Self::NatsServer,
         })
     }
 
@@ -90,6 +97,8 @@ impl EditorKind {
             SessionSpec::SerialDevice(_) => Self::SerialDevice,
             SessionSpec::S7Client(_) => Self::S7Client,
             SessionSpec::S7Server(_) => Self::S7Server,
+            SessionSpec::NatsClient(_) => Self::NatsClient,
+            SessionSpec::NatsServer(_) => Self::NatsServer,
         }
     }
 }
@@ -136,6 +145,7 @@ pub struct Editor {
     pub enip: EnipFields,
     pub serial: SerialFields,
     pub s7: S7Fields,
+    pub nats: NatsFields,
 }
 
 fn input(
@@ -169,6 +179,14 @@ impl Editor {
         let enip = EnipFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let serial = SerialFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let s7 = S7Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let nats_client = match editing.as_ref().map(|(_, _, spec)| spec) {
+            Some(SessionSpec::NatsClient(spec)) => spec.clone(),
+            _ => vt_protocol::NatsClientSpec::default(),
+        };
+        let nats_server = match editing.as_ref().map(|(_, _, spec)| spec) {
+            Some(SessionSpec::NatsServer(spec)) => spec.clone(),
+            _ => vt_protocol::NatsServerSpec::default(),
+        };
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -224,6 +242,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::NatsClient(_) | SessionSpec::NatsServer(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -242,6 +265,8 @@ impl Editor {
                     EditorKind::SerialDevice => super::serial::NEW_SIMULATOR_NAME.to_owned(),
                     EditorKind::S7Client => NEW_S7_CLIENT_NAME.to_owned(),
                     EditorKind::S7Server => NEW_S7_SERVER_NAME.to_owned(),
+                    EditorKind::NatsClient => "NATS server".to_owned(),
+                    EditorKind::NatsServer => "NATS simulator".to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -310,6 +335,7 @@ impl Editor {
             enip,
             serial,
             s7,
+            nats: NatsFields::new(&nats_client, &nats_server, cx),
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -350,6 +376,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         editor.watch_s7_addresses(window, cx);
+        for field in editor.nats.inputs() {
+            editor.watch(&field, window, cx);
+        }
         editor.name.update(cx, |name, _| name.focus(window));
         editor
     }
@@ -529,6 +558,16 @@ impl Editor {
                 .server_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::S7Server(spec))),
+            EditorKind::NatsClient => self
+                .nats
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::NatsClient(spec))),
+            EditorKind::NatsServer => self
+                .nats
+                .server_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::NatsServer(spec))),
         }
     }
 }

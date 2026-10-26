@@ -111,6 +111,9 @@ impl Emitter {
     pub(crate) fn emit_s7_plc(&self, report: Result<vt_protocol::S7PlcReport, String>) {
         self.emit(EventKind::S7Plc(report));
     }
+    pub(crate) fn nats(&self, event: vt_protocol::NatsEvent) {
+        self.emit(EventKind::Nats(event));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

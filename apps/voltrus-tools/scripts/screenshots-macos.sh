@@ -20,7 +20,8 @@ for scenario in welcome points trend traffic simulator editor palette light \
   dnp3-points dnp3-trend dnp3-traffic dnp3-control dnp3-station dnp3-editor \
   enip-points enip-trend enip-traffic enip-discover enip-message \
   serial-terminal serial-hex serial-trend serial-points serial-editor serial-simulator \
-  s7-points s7-trend s7-traffic s7-plc s7-write s7-editor; do
+  s7-points s7-trend s7-traffic s7-plc s7-write s7-editor \
+  nats-points nats-trend nats-traffic nats-inspector nats-jetstream nats-editor; do
   "$binary" --demo "$scenario" &
   pid=$!
   id=""

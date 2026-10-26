@@ -264,6 +264,9 @@ impl Live {
                 self.s7_plc = Some(report);
                 self.s7_plc_reading = false;
             }
+            // NATS replies and JetStream answers: the inspector's panel
+            // takes them (`AppModel::nats_event`).
+            EventKind::Nats(_) => {}
         }
     }
 

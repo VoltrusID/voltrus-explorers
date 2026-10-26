@@ -436,6 +436,12 @@ impl JetStreamState {
             "DELETE" if parts.len() >= 4 => {
                 self.consumer_delete(parts[2], parts[3], reply, server).await;
             }
+            "LIST" => {
+                self.consumer_list(parts[2], reply, server).await;
+            }
+            "NAMES" => {
+                self.consumer_names(parts[2], reply, server).await;
+            }
             "MSG" if parts.len() >= 5 && parts[2] == "NEXT" => {
                 self.consumer_msg_next(parts[3], parts[4], payload, reply, server).await;
             }
@@ -444,6 +450,53 @@ impl JetStreamState {
                 js_reply(server, reply, err).await;
             }
         }
+    }
+
+    /// Names of a stream's consumers (`CONSUMER.NAMES.<stream>`), or `None`
+    /// when the stream does not exist.
+    async fn consumer_names_of(&self, stream: &str) -> Option<Vec<String>> {
+        if !self.streams.read().await.contains_key(stream) {
+            return None;
+        }
+        let cons = self.consumers.read().await;
+        let mut names: Vec<String> = cons
+            .get(stream)
+            .map(|list| list.iter().map(|c| c.name.clone()).collect())
+            .unwrap_or_default();
+        names.sort();
+        Some(names)
+    }
+
+    async fn consumer_list(&self, stream: &str, reply: String, server: &NatsServerState) {
+        let Some(names) = self.consumer_names_of(stream).await else {
+            js_reply(server, reply, json_err(10059, "stream not found")).await;
+            return;
+        };
+        let mut infos = Vec::with_capacity(names.len());
+        for name in &names {
+            infos.push(self.consumer_info_json(stream, name).await);
+        }
+        let resp = serde_json::json!({
+            "total": infos.len(),
+            "offset": 0,
+            "limit": infos.len().max(1),
+            "consumers": infos,
+        });
+        js_reply(server, reply, serde_json::to_vec(&resp).unwrap_or_default()).await;
+    }
+
+    async fn consumer_names(&self, stream: &str, reply: String, server: &NatsServerState) {
+        let Some(names) = self.consumer_names_of(stream).await else {
+            js_reply(server, reply, json_err(10059, "stream not found")).await;
+            return;
+        };
+        let resp = serde_json::json!({
+            "total": names.len(),
+            "offset": 0,
+            "limit": names.len().max(1),
+            "consumers": names,
+        });
+        js_reply(server, reply, serde_json::to_vec(&resp).unwrap_or_default()).await;
     }
 
     async fn consumer_create(
