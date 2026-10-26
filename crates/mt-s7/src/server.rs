@@ -16,17 +16,18 @@
 //! address see the same data.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::blocks::{self, SimBlock};
 use crate::framing::{ERR_BLOCK_NOT_FOUND, ERR_BLOCK_PROTECTED};
 use crate::sim::SimSession;
+use crate::traffic::{self, TrafficSender};
 use crate::types::*;
 use crate::vars::*;
 
@@ -63,11 +64,60 @@ struct Image {
     memory: HashMap<(u8, u16), Vec<u8>>,
     /// Tags that were seeded or set, so the image can be listed as tags again.
     tags: HashSet<TagCoord>,
+    /// What clients wrote since [`S7Server::apply_unless_written`] last took them.
+    client_writes: Vec<ClientWrite>,
+}
+
+/// Client writes kept until taken; older ones are dropped beyond this.
+const MAX_CLIENT_WRITES: usize = 1024;
+
+/// Memory a client changed with a Write Var.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientWrite {
+    pub area: S7Area,
+    /// 0 for areas other than DBs.
+    pub db_number: u16,
+    /// First byte written. Timers and counters take two bytes each, at `number * 2`.
+    pub start: usize,
+    /// Bytes written.
+    pub len: usize,
+    /// The bit, when only one bit of the byte at `start` was written.
+    pub bit: Option<u8>,
+}
+
+impl ClientWrite {
+    /// Whether the write changed (some of) the memory `tag` reads.
+    pub fn touches(&self, tag: &S7Tag) -> bool {
+        let db = if tag.area == S7Area::DB { tag.db_number } else { 0 };
+        if self.area != tag.area || self.db_number != db {
+            return false;
+        }
+        let start = Image::byte_offset(tag);
+        let len = match tag.data_type {
+            // A string is as long as its maximum, which only the PLC knows: count to the end.
+            S7DataType::String => usize::MAX - start,
+            _ => tag.data_len().max(1),
+        };
+        if self.start >= start.saturating_add(len) || start >= self.start + self.len {
+            return false;
+        }
+        match (self.bit, tag.data_type) {
+            (Some(bit), S7DataType::Bool) => bit == tag.bit_offset,
+            _ => true,
+        }
+    }
 }
 
 impl Image {
     fn exists(&self, area: u8, db: u16) -> bool {
         area != AREA_DB || self.memory.contains_key(&(area, db))
+    }
+
+    fn record_client_write(&mut self, write: ClientWrite) {
+        if self.client_writes.len() >= MAX_CLIENT_WRITES {
+            self.client_writes.remove(0);
+        }
+        self.client_writes.push(write);
     }
 
     /// `len` bytes at `offset`, zero-filled past what was ever written. `None` if the DB is missing.
@@ -171,11 +221,29 @@ impl Image {
 
 type SharedImage = Arc<RwLock<Image>>;
 
+/// How [`S7Server::start_with_options`] serves.
+#[derive(Debug, Clone)]
+pub struct S7ServerOptions {
+    /// Most PDU bytes the simulated CPU offers in Setup Communication.
+    pub pdu_size: u16,
+    /// Receives a description of every frame received and answered (after the handshake).
+    pub traffic: Option<TrafficSender>,
+}
+
+impl Default for S7ServerOptions {
+    fn default() -> Self {
+        Self { pdu_size: DEFAULT_PDU_SIZE, traffic: None }
+    }
+}
+
 /// A running S7 simulator instance.
 pub struct S7Server {
     running: Arc<AtomicBool>,
     store: SharedImage,
     handle: Mutex<Option<JoinHandle<()>>>,
+    /// The tasks serving connected clients, so stopping drops them too.
+    connections: Arc<std::sync::Mutex<Vec<AbortHandle>>>,
+    requests: Arc<AtomicU64>,
     port: u16,
 }
 
@@ -193,6 +261,15 @@ impl S7Server {
         initial: Vec<(S7Tag, S7Value)>,
         pdu_size: u16,
     ) -> std::io::Result<Self> {
+        Self::start_with_options(port, initial, S7ServerOptions { pdu_size, traffic: None }).await
+    }
+
+    /// Like [`start`](Self::start), with a PDU size limit and a traffic channel.
+    pub async fn start_with_options(
+        port: u16,
+        initial: Vec<(S7Tag, S7Value)>,
+        options: S7ServerOptions,
+    ) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port)).await?;
         let actual_port = listener.local_addr()?.port();
 
@@ -202,9 +279,15 @@ impl S7Server {
         }
         let store: SharedImage = Arc::new(RwLock::new(image));
         let running = Arc::new(AtomicBool::new(true));
+        let connections: Arc<std::sync::Mutex<Vec<AbortHandle>>> = Arc::default();
+        let requests = Arc::new(AtomicU64::new(0));
 
         let store_c = Arc::clone(&store);
         let running_c = Arc::clone(&running);
+        let connections_c = Arc::clone(&connections);
+        let requests_c = Arc::clone(&requests);
+        let pdu_size = options.pdu_size;
+        let traffic = options.traffic;
         let handle = tokio::spawn(async move {
             loop {
                 if !running_c.load(Ordering::Relaxed) {
@@ -213,9 +296,15 @@ impl S7Server {
                 match listener.accept().await {
                     Ok((stream, _peer)) => {
                         let s = Arc::clone(&store_c);
-                        tokio::spawn(async move {
-                            let _ = handle_client(stream, s, pdu_size).await;
+                        let served = Arc::clone(&requests_c);
+                        let traffic = traffic.clone();
+                        let task = tokio::spawn(async move {
+                            let _ = handle_client(stream, s, pdu_size, &served, traffic.as_ref()).await;
                         });
+                        if let Ok(mut open) = connections_c.lock() {
+                            open.retain(|connection| !connection.is_finished());
+                            open.push(task.abort_handle());
+                        }
                     }
                     Err(_) => break,
                 }
@@ -226,6 +315,8 @@ impl S7Server {
             running,
             store,
             handle: Mutex::new(Some(handle)),
+            connections,
+            requests,
             port: actual_port,
         })
     }
@@ -233,6 +324,11 @@ impl S7Server {
     /// The actually-bound port (useful when started on port 0).
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Requests answered so far, over every connection.
+    pub fn requests_served(&self) -> u64 {
+        self.requests.load(Ordering::Relaxed)
     }
 
     /// Overwrite a single tag's value in the image.
@@ -245,6 +341,26 @@ impl S7Server {
         self.store.write().await.put(tag, &S7Value::Bool(active));
     }
 
+    /// Move the simulation on: put each value in the image unless a client wrote to its tag since
+    /// the last call, and return those client writes. Both happen under one lock, so a value a
+    /// client writes is never overwritten by the simulation it was meant to override.
+    pub async fn apply_unless_written(&self, updates: &[(S7Tag, S7Value)]) -> Vec<ClientWrite> {
+        let mut image = self.store.write().await;
+        let writes = std::mem::take(&mut image.client_writes);
+        for (tag, value) in updates {
+            if !writes.iter().any(|write| write.touches(tag)) {
+                image.put(tag, value);
+            }
+        }
+        writes
+    }
+
+    /// The value of each tag as a client would read it now.
+    pub async fn read_values(&self, tags: &[S7Tag]) -> Vec<S7Value> {
+        let image = self.store.read().await;
+        tags.iter().map(|tag| image.get(coord_of(tag))).collect()
+    }
+
     /// Snapshot of every tag coordinate → value (for UI display).
     pub async fn snapshot(&self) -> Vec<(S7Tag, S7Value)> {
         let image = self.store.read().await;
@@ -255,11 +371,18 @@ impl S7Server {
             .collect()
     }
 
-    /// Stop accepting connections and abort the accept loop.
+    /// Stop accepting connections, drop the connected clients and release the port.
     pub async fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
         if let Some(h) = self.handle.lock().await.take() {
             h.abort();
+            // The listener is dropped once the aborted task is.
+            let _ = h.await;
+        }
+        if let Ok(mut open) = self.connections.lock() {
+            for connection in open.drain(..) {
+                connection.abort();
+            }
         }
     }
 }
@@ -342,7 +465,10 @@ async fn handle_client(
     mut stream: TcpStream,
     store: SharedImage,
     pdu_limit: u16,
+    requests: &AtomicU64,
+    traffic: Option<&TrafficSender>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let peer = stream.peer_addr().map(|peer| peer.to_string()).unwrap_or_default();
     // 1. COTP Connection Request → Connection Confirm.
     let cr = read_tpkt_payload(&mut stream).await?;
     let mut cc = cr.clone();
@@ -350,6 +476,8 @@ async fn handle_client(
         cc[1] = COTP_CC;
     }
     write_tpkt(&mut stream, &cc).await?;
+    traffic::emit(traffic, false, "COTP Connect".into(), peer.clone(), cr.len() + 4);
+    traffic::emit(traffic, true, "COTP Confirm".into(), peer.clone(), cc.len() + 4);
 
     // 2. S7 Setup Communication: answer with the smaller of the PDU size asked for and ours.
     let setup = read_tpkt_payload(&mut stream).await?;
@@ -367,6 +495,8 @@ async fn handle_client(
     let pdu_size = requested.min(pdu_limit);
     let setup_resp = build_setup_comm_resp(pdu_ref, pdu_size);
     write_tpkt(&mut stream, &cotp_dt_wrap(&setup_resp)).await?;
+    traffic::emit_pdu(traffic, false, setup.get(3..).unwrap_or(&[]));
+    traffic::emit_pdu(traffic, true, &setup_resp);
 
     // 3. Request loop. What SZL reads, block lists and uploads leave open between requests is
     // kept per connection.
@@ -380,6 +510,7 @@ async fn handle_client(
             break;
         }
         let s7 = &pkt[3..]; // skip COTP DT header
+        traffic::emit_pdu(traffic, false, s7);
         if s7.len() < 10 || s7[0] != S7_PROTOCOL_ID {
             break;
         }
@@ -421,6 +552,8 @@ async fn handle_client(
         };
         // A real CPU answers a request whose response would not fit the PDU with an error.
         let resp = if resp.len() > pdu_size as usize { ack_error(pdu_ref, 0x8500) } else { resp };
+        requests.fetch_add(1, Ordering::Relaxed);
+        traffic::emit_pdu(traffic, true, &resp);
         if write_tpkt(&mut stream, &cotp_dt_wrap(&resp)).await.is_err() {
             break;
         }
@@ -545,13 +678,26 @@ async fn build_write_resp(pdu_ref: u16, params: &[u8], data: &[u8], store: &Shar
         let code = match item.locate() {
             Err(code) => code,
             Ok((_, _, _, len)) if bytes.len() != len => 0x07, // data type inconsistent with the item size
-            Ok((db, offset, bit, _)) => {
+            Ok((db, offset, bit, len)) => {
                 let written = if item.ts == TS_BIT {
                     image.write_bit(item.area, db, offset, bit, bytes[0] & 1 != 0)
                 } else {
                     image.write(item.area, db, offset, bytes)
                 };
-                if written { RC_SUCCESS } else { RC_OBJECT_DOES_NOT_EXIST }
+                if written {
+                    if let Some(area) = S7Area::from_code(item.area) {
+                        image.record_client_write(ClientWrite {
+                            area,
+                            db_number: db,
+                            start: offset,
+                            len,
+                            bit: (item.ts == TS_BIT).then_some(bit),
+                        });
+                    }
+                    RC_SUCCESS
+                } else {
+                    RC_OBJECT_DOES_NOT_EXIST
+                }
             }
         };
         return_codes.push(code);
@@ -726,6 +872,119 @@ mod tests {
         a.disconnect().await.unwrap();
         b.disconnect().await.unwrap();
         server.stop().await;
+    }
+
+    fn tag(address: &str, data_type: S7DataType) -> S7Tag {
+        let mut tag = S7Tag::parse_address(address).unwrap();
+        tag.data_type = data_type;
+        tag
+    }
+
+    /// A client's write holds against the simulation: the next tick leaves that tag alone and
+    /// reports the write, and only the tags it overlaps.
+    #[tokio::test]
+    async fn client_writes_are_reported_and_not_overwritten() {
+        let speed = tag("DB1.DBD0", S7DataType::Real);
+        let running = tag("DB1.DBX4.0", S7DataType::Bool);
+        let fault = tag("DB1.DBX4.1", S7DataType::Bool);
+        let count = tag("DB1.DBW6", S7DataType::Word);
+        let seed = vec![
+            (speed.clone(), S7Value::Real(1.0)),
+            (running.clone(), S7Value::Bool(false)),
+            (fault.clone(), S7Value::Bool(false)),
+            (count.clone(), S7Value::Word(1)),
+        ];
+        let server = S7Server::start(0, seed).await.unwrap();
+        let client = S7Client::connect(cfg(server.port())).await.unwrap();
+        assert!(server.apply_unless_written(&[]).await.is_empty(), "the seed is not a client write");
+
+        client.write(&speed, S7Value::Real(77.5)).await.unwrap();
+        client.write(&running, S7Value::Bool(true)).await.unwrap();
+        let updates = vec![
+            (speed.clone(), S7Value::Real(2.0)),
+            (running.clone(), S7Value::Bool(false)),
+            (fault.clone(), S7Value::Bool(true)),
+            (count.clone(), S7Value::Word(2)),
+        ];
+        let writes = server.apply_unless_written(&updates).await;
+        assert_eq!(writes.len(), 2);
+        assert!(writes[0].touches(&speed) && !writes[0].touches(&count));
+        assert!(writes[1].touches(&running) && !writes[1].touches(&fault), "a bit write is that bit");
+        let values = server.read_values(&[speed.clone(), running.clone(), fault.clone(), count.clone()]).await;
+        assert_eq!(
+            values,
+            [S7Value::Real(77.5), S7Value::Bool(true), S7Value::Bool(true), S7Value::Word(2)]
+        );
+        // Taken once: the next tick moves every tag again.
+        assert!(server.apply_unless_written(&updates).await.is_empty());
+        assert_eq!(server.read_values(&[speed]).await, [S7Value::Real(2.0)]);
+        assert!(server.requests_served() >= 2);
+        client.disconnect().await.unwrap();
+        server.stop().await;
+    }
+
+    /// The PDU size the client asks for is what a roomier simulator agrees to, and both sides
+    /// describe the frames they exchange.
+    #[tokio::test]
+    async fn pdu_size_option_and_traffic() {
+        let word = tag("MW10", S7DataType::Word);
+        let (sim_tx, mut sim_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server = S7Server::start_with_options(
+            0,
+            vec![(word.clone(), S7Value::Word(5))],
+            S7ServerOptions { pdu_size: 960, traffic: Some(sim_tx) },
+        )
+        .await
+        .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let options = crate::S7ConnectOptions { pdu_size: 240, traffic: Some(tx), ..Default::default() };
+        let client = S7Client::connect_with_options(cfg(server.port()), options).await.unwrap();
+        assert_eq!(client.pdu_size().await, Some(240));
+        assert_eq!(client.read(&[word]).await.unwrap(), [S7Value::Word(5)]);
+
+        let mut frames = Vec::new();
+        while let Ok(frame) = rx.try_recv() {
+            frames.push(frame);
+        }
+        let lines: Vec<(bool, &str, &str)> =
+            frames.iter().map(|f| (f.sent, f.summary.as_str(), f.detail.as_str())).collect();
+        assert_eq!(
+            lines,
+            [
+                (true, "COTP Connect", "rack 0, slot 0"),
+                (false, "COTP Confirm", "TPDU 1024 bytes"),
+                (true, "Setup Communication", "PDU 240 bytes"),
+                (false, "Setup Communication", "PDU 240 bytes"),
+                (true, "Read Var", "MW10"),
+                (false, "Read Var", "1 OK"),
+            ]
+        );
+        // Every S7 PDU frame counts its TPKT and COTP headers.
+        assert!(frames[2..].iter().all(|f| f.bytes > 17));
+
+        client.disconnect().await.unwrap();
+        server.stop().await;
+        let mut served = Vec::new();
+        while let Ok(frame) = sim_rx.try_recv() {
+            served.push((frame.sent, frame.summary));
+        }
+        assert!(served.contains(&(false, "Read Var".to_owned())), "{served:?}");
+        assert!(served.contains(&(true, "Read Var".to_owned())), "{served:?}");
+    }
+
+    /// Stopping releases the port at once and drops connected clients.
+    #[tokio::test]
+    async fn stop_releases_the_port_and_drops_clients() {
+        let word = tag("MW0", S7DataType::Word);
+        let server = S7Server::start(0, vec![(word.clone(), S7Value::Word(1))]).await.unwrap();
+        let port = server.port();
+        let client = S7Client::connect_with_timeout(cfg(port), std::time::Duration::from_millis(500))
+            .await
+            .unwrap();
+        server.stop().await;
+        assert!(client.read(&[word]).await.is_err(), "the connection is gone");
+        let again = S7Server::start(port, Vec::new()).await.expect("the port is free again");
+        again.stop().await;
     }
 
     /// Timers and counters read back through the real client and server as BCD words.

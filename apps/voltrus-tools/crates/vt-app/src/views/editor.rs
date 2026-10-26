@@ -20,6 +20,7 @@ mod ble;
 mod dnp3;
 mod enip;
 mod mqtt;
+mod s7;
 mod serial;
 
 /// A click handler that changes the open editor.
@@ -67,6 +68,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::SerialMonitor, true) => "Edit serial connection",
         (EditorKind::SerialDevice, false) => "New serial device simulator",
         (EditorKind::SerialDevice, true) => "Edit serial device simulator",
+        (EditorKind::S7Client, false) => "New Siemens S7 connection",
+        (EditorKind::S7Client, true) => "Edit Siemens S7 connection",
+        (EditorKind::S7Server, false) => "New S7 PLC simulator",
+        (EditorKind::S7Server, true) => "Edit S7 PLC simulator",
         (EditorKind::BleClient, false) => "New Bluetooth LE connection",
         (EditorKind::BleClient, true) => "Edit Bluetooth LE connection",
     };
@@ -103,6 +108,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::SerialDevice => {
             "Play an instrument on a virtual serial port that prints its values and takes commands."
         }
+        EditorKind::S7Client => {
+            "Poll a CPU's DB, I, Q, M, timer and counter tags over ISO-on-TCP, write them, and read its diagnostics."
+        }
+        EditorKind::S7Server => {
+            "Play an S7 CPU on this computer for any S7 client to read, write and diagnose."
+        }
         EditorKind::BleClient => {
             "Scan for a peripheral, then browse its GATT services: read, write and subscribe to every characteristic."
         }
@@ -120,6 +131,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::EnipAdapter => enip::adapter(editor, cx),
         EditorKind::SerialMonitor => serial::monitor(editor, cx),
         EditorKind::SerialDevice => serial::device(editor, cx),
+        EditorKind::S7Client => s7::client(editor, cx),
+        EditorKind::S7Server => s7::server(editor, cx),
         EditorKind::BleClient => ble::client(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
@@ -136,6 +149,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::EnipAdapter, false) => "Start simulator",
         (EditorKind::SerialMonitor, false) => "Save and connect",
         (EditorKind::SerialDevice, false) => "Start simulator",
+        (EditorKind::S7Client, false) => "Save and connect",
+        (EditorKind::S7Server, false) => "Start simulator",
         (EditorKind::BleClient, false) => "Save and connect",
     };
     let confirm_delete = editor.confirm_delete;

@@ -103,6 +103,9 @@ impl Emitter {
     pub(crate) fn serial_logging(&self, result: Result<Option<String>, String>) {
         self.emit(EventKind::SerialLogging(result));
     }
+    pub(crate) fn emit_s7_plc(&self, report: Result<vt_protocol::S7PlcReport, String>) {
+        self.emit(EventKind::S7Plc(report));
+    }
 
     pub(crate) fn ble_gatt(&self, characteristics: Vec<vt_protocol::BleCharacteristicInfo>) {
         self.emit(EventKind::BleGatt(characteristics));

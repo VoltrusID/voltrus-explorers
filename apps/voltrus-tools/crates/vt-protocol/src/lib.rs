@@ -12,6 +12,7 @@ mod enip;
 mod message;
 mod modbus;
 mod mqtt;
+mod s7;
 mod serial;
 mod value;
 
@@ -42,6 +43,10 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use s7::{
+    S7_DEFAULT_PDU, S7_MAX_PDU, S7_MIN_PDU, S7_PORT, S7Address, S7Area, S7Block, S7ClientSpec,
+    S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec, S7TagSpec, S7Type, S7Width,
 };
 pub use serial::{
     FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
@@ -81,6 +86,10 @@ pub enum SessionSpec {
     SerialMonitor(SerialMonitorSpec),
     /// Play an instrument on a virtual serial port.
     SerialDevice(SerialDeviceSpec),
+    /// Read and write a Siemens S7 CPU's tags, and read its diagnostics.
+    S7Client(S7ClientSpec),
+    /// Play an S7 CPU with a template's simulated memory.
+    S7Server(S7ServerSpec),
     /// Connect to a Bluetooth Low Energy peripheral and read, write and
     /// subscribe to its characteristics.
     BleClient(BleClientSpec),
@@ -95,6 +104,7 @@ impl SessionSpec {
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
             Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
+            Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
             Self::BleClient(_) => Protocol::Ble,
         }
     }
@@ -110,6 +120,8 @@ impl SessionSpec {
             Self::EnipAdapter(_) => Role::Simulator,
             Self::SerialMonitor(_) => Role::Client,
             Self::SerialDevice(_) => Role::Simulator,
+            Self::S7Client(_) => Role::Client,
+            Self::S7Server(_) => Role::Simulator,
         }
     }
 
@@ -166,6 +178,13 @@ impl SessionSpec {
                 spec.link.stop_bits
             ),
             Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
+            Self::S7Client(spec) => format!(
+                "{} · rack {} slot {}",
+                host_port(&spec.host, spec.port),
+                spec.rack,
+                spec.slot
+            ),
+            Self::S7Server(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
             Self::BleClient(spec) => format!("{} · {}", spec.adapter.name(), ble_label(spec)),
         }
     }
@@ -185,6 +204,8 @@ impl SessionSpec {
             Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
             Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
             Self::SerialDevice(spec) => spec.alias.clone(),
+            Self::S7Client(spec) => host_port(&spec.host, spec.port),
+            Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
             Self::BleClient(spec) => ble_label(spec),
         }
     }
@@ -218,6 +239,7 @@ pub enum Protocol {
     Dnp3,
     Enip,
     Serial,
+    S7,
     Ble,
 }
 
@@ -229,6 +251,7 @@ impl Protocol {
         Protocol::Dnp3,
         Protocol::Enip,
         Protocol::Serial,
+        Protocol::S7,
         Protocol::Ble,
     ];
 
@@ -240,6 +263,7 @@ impl Protocol {
             Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
             Self::Serial => "Serial",
+            Self::S7 => "Siemens S7",
             Self::Ble => "Bluetooth LE",
         }
     }
@@ -253,6 +277,7 @@ impl Protocol {
             Self::Dnp3 => "DN",
             Self::Enip => "EI",
             Self::Serial => "SE",
+            Self::S7 => "S7",
             Self::Ble => "BL",
         }
     }
@@ -274,6 +299,9 @@ impl Protocol {
             }
             Self::Serial => {
                 "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
+            }
+            Self::S7 => {
+                "DB, I, Q, M, timer and counter tags, writes, CPU diagnostics, blocks, and a PLC simulator"
             }
             Self::Ble => {
                 "Scan with signal and advertisements, browse GATT, read, write and notify with SIG decoders"
