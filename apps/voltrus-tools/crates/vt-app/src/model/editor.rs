@@ -23,6 +23,9 @@ mod enip;
 
 pub use enip::{EnipDiscovery, EnipFields};
 pub use serial::SerialFields;
+mod s7;
+
+pub use s7::{CPU_PRESETS, NEW_S7_CLIENT_NAME, NEW_S7_SERVER_NAME, S7Fields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -40,6 +43,8 @@ pub enum EditorKind {
     EnipAdapter,
     SerialMonitor,
     SerialDevice,
+    S7Client,
+    S7Server,
 }
 
 impl EditorKind {
@@ -61,6 +66,8 @@ impl EditorKind {
             (Protocol::Enip, Role::Simulator) => Self::EnipAdapter,
             (Protocol::Serial, Role::Client) => Self::SerialMonitor,
             (Protocol::Serial, Role::Simulator) => Self::SerialDevice,
+            (Protocol::S7, Role::Client) => Self::S7Client,
+            (Protocol::S7, Role::Simulator) => Self::S7Server,
         })
     }
 
@@ -81,6 +88,8 @@ impl EditorKind {
             SessionSpec::EnipAdapter(_) => Self::EnipAdapter,
             SessionSpec::SerialMonitor(_) => Self::SerialMonitor,
             SessionSpec::SerialDevice(_) => Self::SerialDevice,
+            SessionSpec::S7Client(_) => Self::S7Client,
+            SessionSpec::S7Server(_) => Self::S7Server,
         }
     }
 }
@@ -126,6 +135,7 @@ pub struct Editor {
     pub dnp3: Dnp3Fields,
     pub enip: EnipFields,
     pub serial: SerialFields,
+    pub s7: S7Fields,
 }
 
 fn input(
@@ -158,6 +168,7 @@ impl Editor {
         let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let enip = EnipFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let serial = SerialFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let s7 = S7Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -208,6 +219,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::S7Client(_) | SessionSpec::S7Server(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -224,6 +240,8 @@ impl Editor {
                     EditorKind::EnipAdapter => super::enip::NEW_ADAPTER_NAME.to_owned(),
                     EditorKind::SerialMonitor => super::serial::NEW_MONITOR_NAME.to_owned(),
                     EditorKind::SerialDevice => super::serial::NEW_SIMULATOR_NAME.to_owned(),
+                    EditorKind::S7Client => NEW_S7_CLIENT_NAME.to_owned(),
+                    EditorKind::S7Server => NEW_S7_SERVER_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -291,6 +309,7 @@ impl Editor {
             dnp3,
             enip,
             serial,
+            s7,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -327,6 +346,10 @@ impl Editor {
         for field in editor.serial.inputs() {
             editor.watch(&field, window, cx);
         }
+        for field in editor.s7.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        editor.watch_s7_addresses(window, cx);
         editor.name.update(cx, |name, _| name.focus(window));
         editor
     }
@@ -496,6 +519,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::SerialDevice(spec))),
+            EditorKind::S7Client => self
+                .s7
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::S7Client(spec))),
+            EditorKind::S7Server => self
+                .s7
+                .server_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::S7Server(spec))),
         }
     }
 }

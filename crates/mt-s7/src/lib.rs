@@ -53,11 +53,13 @@ mod szl;
 #[cfg(test)]
 mod sys_tests;
 pub mod types;
+pub mod traffic;
 mod vars;
 
 // Re-export the primary public API at the crate root.
-pub use client::{S7Client, parse_area_string, read_tags, write_tag};
-pub use server::S7Server;
+pub use client::{S7Client, S7ConnectOptions, parse_area_string, read_tags, write_tag};
+pub use server::{ClientWrite, S7Server, S7ServerOptions};
+pub use traffic::{S7Frame, TrafficSender, describe_pdu};
 pub use types::{
     BlockInfo, BlockListEntry, BlockType, CpuInfo, DiagBuffer, DiagEntry, PlcMode,
     S7Area, S7Config, S7DataType, S7Tag, S7Value, DEFAULT_PDU_SIZE, MAX_PDU_SIZE,

@@ -16,6 +16,7 @@ on:
       - crates/mt-dnp3/**
       - crates/mt-enip/**
       - crates/mt-serial/**
+      - crates/mt-s7/**
       - .github/workflows/voltrus-tools.yml
   pull_request:
     paths:
@@ -28,6 +29,7 @@ on:
       - crates/mt-dnp3/**
       - crates/mt-enip/**
       - crates/mt-serial/**
+      - crates/mt-s7/**
       - .github/workflows/voltrus-tools.yml
   workflow_dispatch:
 
@@ -86,7 +88,7 @@ jobs:
       # in the repository's workspace (the root CI runs them only on main).
       - name: Test shared protocol crates
         working-directory: .
-        run: cargo test --locked -p mt-dnp3 -p mt-enip -p mt-serial -p mt-opcua
+        run: cargo test --locked -p mt-dnp3 -p mt-enip -p mt-serial -p mt-s7 -p mt-opcua
 
       - name: Build release
         run: cargo build --locked --release -p vt-app

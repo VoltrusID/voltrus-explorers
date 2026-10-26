@@ -2,6 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::S7PlcReport;
 use crate::{
     BacnetDeviceInfo, BacnetDiscoverSpec, CipRequest, CipResponse, Dnp3Action, Dnp3Iin,
     EnipDeviceInfo, EnipDiscoverSpec, MqttQos, PointInfo, SerialChunk, SerialPortInfo, SessionSpec,
@@ -95,6 +96,9 @@ pub enum Command {
     /// List the system's serial ports; the answer comes back as
     /// [`EventKind::SerialPorts`] under `session`, which names the request.
     ListSerialPorts { session: SessionId },
+    /// S7 clients: read the CPU's identity, mode, diagnostic buffer and
+    /// blocks over the session's connection. Answered by [`EventKind::S7Plc`].
+    ReadS7Plc { session: SessionId },
     /// OPC UA clients: browse, describe, monitor, write and call (answered by
     /// [`EventKind::Opcua`] and the usual point events). An
     /// [`OpcuaRequest::Endpoints`] needs no session: its answer comes back
@@ -170,6 +174,9 @@ pub enum EventKind {
     SerialLogging(Result<Option<String>, String>),
     /// Answer to [`Command::ListSerialPorts`].
     SerialPorts(Result<Vec<SerialPortInfo>, String>),
+    /// What an S7 CPU says about itself, after connecting and after each
+    /// [`Command::ReadS7Plc`]; `Err` when it could not be asked.
+    S7Plc(Result<S7PlcReport, String>),
     /// Answers to [`Command::Opcua`].
     Opcua(crate::OpcuaEvent),
 }
@@ -760,6 +767,85 @@ mod tests {
         assert_eq!(spec.parser, LineParser::KeyValue);
         assert_eq!(spec.line_ending, LineEnding::Lf);
         assert!(spec.macros.is_empty());
+    }
+
+    #[test]
+    fn s7_messages_round_trip_through_json() {
+        use crate::{S7Block, S7ClientSpec, S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec};
+
+        let mut client = S7ClientSpec {
+            host: "fe80::1".into(),
+            rack: 0,
+            slot: 2,
+            pdu_size: 240,
+            ..S7ClientSpec::default()
+        };
+        for (name, address, data_type) in [
+            ("Run", "Q0.1", crate::S7Type::Bool),
+            ("Setpoint", "DB10.DBW4", crate::S7Type::Int),
+            ("Batch", "DB10.DBB20", crate::S7Type::String),
+            ("Delay", "T3", crate::S7Type::Timer),
+        ] {
+            client.tags.push(crate::S7TagSpec {
+                name: name.into(),
+                address: address.parse().unwrap(),
+                data_type,
+                unit: String::new(),
+            });
+        }
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::S7Client(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::S7Server(S7ServerSpec::default()),
+            },
+            Command::ReadS7Plc {
+                session: SessionId(1),
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let report = S7PlcReport {
+            pdu_size: 240,
+            cpu: Ok(S7CpuInfo {
+                module_type: "CPU 315-2 PN/DP".into(),
+                order_code: "6ES7 315-2EH14-0AB0".into(),
+                firmware: "V3.2.6".into(),
+                ..S7CpuInfo::default()
+            }),
+            mode: Ok("RUN".into()),
+            diagnostics: Ok(vec![S7DiagEntry {
+                timestamp: "2026-10-26 08:00:00.000".into(),
+                event_id: 0x4302,
+                text: "Mode transition from STARTUP to RUN".into(),
+            }]),
+            // Each part fails on its own.
+            blocks: Err("function not available in this PLC (0x8104)".into()),
+        };
+        for answer in [Ok(report.clone()), Err("Not connected".into())] {
+            let event = Event {
+                session: SessionId(1),
+                kind: EventKind::S7Plc(answer),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+        let blocks = S7PlcReport {
+            blocks: Ok(vec![S7Block {
+                kind: "DB".into(),
+                number: 1,
+                language: "DB".into(),
+            }]),
+            ..report
+        };
+        let text = serde_json::to_string(&blocks).unwrap();
+        assert_eq!(serde_json::from_str::<S7PlcReport>(&text).unwrap(), blocks);
     }
 
     #[test]

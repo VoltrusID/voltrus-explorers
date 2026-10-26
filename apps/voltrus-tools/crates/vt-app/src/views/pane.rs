@@ -115,10 +115,13 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
 
     let segments = PaneView::ALL
         .into_iter()
+        .chain(super::device::available(&connection.spec).then_some(PaneView::Device))
         .map(|option| {
             Segment::new(
                 if serial && option == PaneView::Traffic {
                     "Terminal"
+                } else if option == PaneView::Device {
+                    super::device::label(&connection.spec)
                 } else {
                     option.name()
                 },
@@ -131,8 +134,10 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 PaneView::Traffic if serial => Icon::Terminal,
                 PaneView::Traffic => Icon::ArrowUpDown,
                 PaneView::Log => Icon::ScrollText,
+                PaneView::Device => Icon::Cpu,
             })
-            .icon_only(compact)
+            // A fifth view needs the room of a wide pane to keep its labels.
+            .icon_only(compact || (super::device::available(&connection.spec) && width < 1000.0))
         })
         .collect();
 
@@ -249,6 +254,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::Dnp3Outstation(_) => true,
         SessionSpec::EnipAdapter(_) => true,
         SessionSpec::SerialDevice(_) => true,
+        SessionSpec::S7Server(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
@@ -275,6 +281,9 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                     traffic::render(connection_id, live, width, scroll.traffic, cx)
                 }
                 PaneView::Log => log::render(connection_id, live, width, scroll.log, cx),
+                PaneView::Device => {
+                    super::device::render(connection_id, &connection.spec, live, cx)
+                }
             }
         }
         _ => empty_state(
@@ -316,6 +325,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::SerialMonitor(_), _) => {
                     "Connect to open the port. Its bytes appear in the terminal; lines with values become points to trend."
+                }
+                (SessionSpec::S7Server(_), _) => {
+                    "Start it to play the CPU on this computer. Any S7 client can read, write and diagnose it, including this app."
+                }
+                (SessionSpec::S7Client(_), _) => {
+                    "Connect to poll the CPU's tags and read its identity, mode, diagnostic buffer and blocks."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

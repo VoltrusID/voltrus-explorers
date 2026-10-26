@@ -12,6 +12,7 @@ mod enip;
 mod modbus;
 mod mqtt;
 pub mod opcua;
+mod s7;
 mod serial;
 pub mod templates;
 
@@ -102,6 +103,8 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::SerialDevice(_) => {
             u64::try_from(serial::device::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::S7Client(client) => client.poll_ms,
+        SessionSpec::S7Server(_) => u64::try_from(s7::server::TICK.as_millis()).unwrap_or(u64::MAX),
     }
 }
 
@@ -142,6 +145,8 @@ pub(crate) enum Control {
     SerialLog {
         path: Option<String>,
     },
+    /// S7 clients: read the CPU's identity, mode, diagnostics and blocks.
+    ReadS7Plc,
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -212,6 +217,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::EnipClient(_) => None,
                     // A virtual serial device's port is a fresh pty each run.
                     SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_) => None,
+                    SessionSpec::S7Server(server) => Some(server.port),
+                    SessionSpec::S7Client(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -332,6 +339,19 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
             Command::CipRequest { session, request } => {
                 forward(&sessions, session, Control::CipRequest(request));
             }
+            Command::ReadS7Plc { session } => match sessions.get(&session) {
+                Some(running) => {
+                    let _ = running.control.send(Control::ReadS7Plc);
+                }
+                None => {
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::S7Plc(Err("Not connected".into())),
+                        })
+                        .await;
+                }
+            },
         }
     }
     for running in sessions.into_values() {
@@ -361,5 +381,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::EnipAdapter(spec) => enip::adapter::run(spec, control, &out).await,
         SessionSpec::SerialMonitor(spec) => serial::monitor::run(spec, control, &out).await,
         SessionSpec::SerialDevice(spec) => serial::device::run(spec, control, &out).await,
+        SessionSpec::S7Client(spec) => s7::client::run(spec, control, &out).await,
+        SessionSpec::S7Server(spec) => s7::server::run(spec, control, &out).await,
     }
 }

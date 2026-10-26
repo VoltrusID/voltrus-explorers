@@ -1,0 +1,65 @@
+[
+  {
+    "id": "motor",
+    "name": "Motor drive",
+    "cpu": "S7-1500",
+    "slot": 1,
+    "description": "VFD motor control: speed, current, temperature, torque, power and status flags in DB1",
+    "points": [
+      { "label": "Speed", "address": "DB1.DBD0", "data_type": "real", "unit": "rpm", "base": 1450, "variance": 12, "noise": 3, "period_s": 15, "min": 1400, "max": 1500 },
+      { "label": "Current", "address": "DB1.DBD4", "data_type": "real", "unit": "A", "base": 12.4, "variance": 0.8, "noise": 0.2, "period_s": 12, "min": 8, "max": 18 },
+      { "label": "Winding temperature", "address": "DB1.DBD8", "data_type": "real", "unit": "°C", "base": 67.2, "variance": 1.5, "noise": 0.3, "period_s": 60, "min": 50, "max": 90 },
+      { "label": "Torque", "address": "DB1.DBD12", "data_type": "real", "unit": "Nm", "base": 45.8, "variance": 2.5, "noise": 0.8, "period_s": 14, "min": 30, "max": 60 },
+      { "label": "Power", "address": "DB1.DBD16", "data_type": "real", "unit": "kW", "base": 7.5, "variance": 0.4, "noise": 0.1, "period_s": 13, "min": 5, "max": 10 },
+      { "label": "Running", "address": "DB1.DBX20.0", "data_type": "bool", "base": 1 },
+      { "label": "Fault", "address": "DB1.DBX20.1", "data_type": "bool", "base": 0 },
+      { "label": "Run hours", "address": "DB1.DBW22", "data_type": "word", "unit": "h", "base": 15234, "step": 0.01, "max": 65535 },
+      { "label": "Frequency", "address": "DB1.DBD24", "data_type": "real", "unit": "Hz", "base": 50, "variance": 0.02, "noise": 0.01, "period_s": 10, "min": 49.9, "max": 50.1 },
+      { "label": "Speed setpoint", "address": "DB1.DBD28", "data_type": "real", "unit": "rpm", "base": 1450 },
+      { "label": "Drive name", "address": "DB2.DBB0", "data_type": "string", "text": "M-101 conveyor drive" },
+      { "label": "Contactor", "address": "Q0.0", "data_type": "bool", "base": 1 },
+      { "label": "Start button", "address": "I0.0", "data_type": "bool", "base": 0, "toggle_s": 20 }
+    ]
+  },
+  {
+    "id": "process",
+    "name": "Reactor",
+    "cpu": "S7-300",
+    "slot": 2,
+    "description": "Chemical reactor: temperature, pressure, level, feed, pH, agitator and valves in DB1",
+    "points": [
+      { "label": "Reactor temperature", "address": "DB1.DBD0", "data_type": "real", "unit": "°C", "base": 185.4, "variance": 1.2, "noise": 0.3, "period_s": 25, "min": 175, "max": 195 },
+      { "label": "Reactor pressure", "address": "DB1.DBD4", "data_type": "real", "unit": "bar", "base": 4.21, "variance": 0.08, "noise": 0.02, "period_s": 20, "min": 3.5, "max": 5 },
+      { "label": "Level", "address": "DB1.DBD8", "data_type": "real", "unit": "%", "base": 72.5, "variance": 1.5, "noise": 0.5, "period_s": 30, "min": 50, "max": 90 },
+      { "label": "Feed flow", "address": "DB1.DBD12", "data_type": "real", "unit": "m³/h", "base": 12.4, "variance": 0.3, "noise": 0.1, "period_s": 18, "min": 10, "max": 15 },
+      { "label": "pH", "address": "DB1.DBD16", "data_type": "real", "base": 7.12, "variance": 0.05, "noise": 0.02, "period_s": 15, "min": 6.5, "max": 7.8 },
+      { "label": "Agitator", "address": "DB1.DBX20.0", "data_type": "bool", "base": 1 },
+      { "label": "Inlet valve", "address": "DB1.DBX20.1", "data_type": "bool", "base": 1 },
+      { "label": "Outlet valve", "address": "DB1.DBX20.2", "data_type": "bool", "base": 0, "toggle_s": 30 },
+      { "label": "Batch cycle", "address": "DB1.DBW24", "data_type": "int", "base": 1247, "step": 0.05, "max": 32767 },
+      { "label": "Temperature setpoint", "address": "DB1.DBD26", "data_type": "real", "unit": "°C", "base": 185 },
+      { "label": "Heating delay", "address": "T1", "data_type": "timer", "unit": "ms", "base": 4000, "step": -100, "min": 0, "max": 4000 },
+      { "label": "Alarm word", "address": "MW10", "data_type": "word", "base": 0 }
+    ]
+  },
+  {
+    "id": "line",
+    "name": "Packaging line",
+    "cpu": "S7-1200",
+    "slot": 1,
+    "description": "Filling and capping line: inputs, outputs, markers, a timer, a counter and the batch in DB5",
+    "points": [
+      { "label": "Line running", "address": "I0.0", "data_type": "bool", "base": 1 },
+      { "label": "E-stop healthy", "address": "I0.1", "data_type": "bool", "base": 1 },
+      { "label": "Conveyor motor", "address": "Q0.0", "data_type": "bool", "base": 1 },
+      { "label": "Reject gate", "address": "Q0.1", "data_type": "bool", "base": 0, "toggle_s": 7 },
+      { "label": "Line speed", "address": "MW10", "data_type": "int", "unit": "ppm", "base": 120, "variance": 8, "noise": 2, "period_s": 40, "min": 90, "max": 140 },
+      { "label": "Good count", "address": "MD20", "data_type": "dint", "base": 18250, "step": 2, "max": 2147483647 },
+      { "label": "Rejects", "address": "C1", "data_type": "counter", "base": 12, "step": 0.1, "max": 999 },
+      { "label": "Capper dwell", "address": "T1", "data_type": "timer", "unit": "ms", "base": 2500, "variance": 400, "period_s": 10, "min": 1000, "max": 4000 },
+      { "label": "Batch", "address": "DB5.DBB0", "data_type": "string", "text": "LOT-2026-1026" },
+      { "label": "Batch size", "address": "DB5.DBW256", "data_type": "int", "base": 500 },
+      { "label": "Fill weight", "address": "DB5.DBD258", "data_type": "real", "unit": "g", "base": 500.2, "variance": 1.5, "noise": 0.4, "period_s": 20, "min": 495, "max": 505 }
+    ]
+  }
+]

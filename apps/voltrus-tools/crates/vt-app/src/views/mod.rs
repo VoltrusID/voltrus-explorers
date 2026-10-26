@@ -6,6 +6,7 @@
 
 pub mod cached;
 mod cip;
+mod device;
 mod dnp3;
 mod editor;
 pub mod inspector;
@@ -16,6 +17,7 @@ mod palette;
 pub mod pane;
 mod points;
 mod publish;
+mod s7;
 pub mod sidebar;
 mod splits;
 pub mod status_bar;
@@ -173,6 +175,8 @@ impl Render for AppModel {
                     model.focus_serial_send(connection, window, cx);
                 }
             }))
+            .on_action(cx.listener(|model, _: &ShowDevice, _, cx| model.show_device_view(cx)))
+            .on_action(cx.listener(|model, _: &RefreshDevice, _, cx| model.refresh_device(cx)))
             .on_mouse_move(cx.listener(|model, event: &MouseMoveEvent, _, cx| {
                 if model.drag.is_some() {
                     if event.pressed_button == Some(MouseButton::Left) {
