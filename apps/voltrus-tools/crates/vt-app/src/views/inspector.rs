@@ -92,12 +92,21 @@ fn point_detail(
         Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
         Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
         Some(SessionSpec::BacnetDevice(_)) => true,
+        // DNP3 outputs take a value as a command; only inputs are held.
+        Some(SessionSpec::Dnp3Outstation(_)) => {
+            !(info.address.starts_with("BO ") || info.address.starts_with("AO "))
+        }
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
     // BACnet clients command at a priority, and can give the command up.
     let priority = match spec {
         Some(SessionSpec::BacnetClient(client)) => Some(client.priority),
+        _ => None,
+    };
+    // DNP3 masters command outputs by select-before-operate or direct operate.
+    let dnp3_mode = match spec {
+        Some(SessionSpec::Dnp3Master(master)) => Some(master.control_mode),
         _ => None,
     };
     let running = live.session.is_some();
@@ -259,7 +268,14 @@ fn point_detail(
                 .flex()
                 .flex_col()
                 .gap(SPACE_4)
-                .child(section_label("Last message", cx))
+                .child(section_label(
+                    if dnp3_mode.is_some() || matches!(spec, Some(SessionSpec::Dnp3Outstation(_))) {
+                        "Point status"
+                    } else {
+                        "Last message"
+                    },
+                    cx,
+                ))
                 .child(
                     div()
                         .id("inspector-message")
@@ -333,6 +349,10 @@ fn point_detail(
                     match priority {
                         Some(priority) => format!("Command at priority {priority}"),
                         None if simulator => "Set value".to_owned(),
+                        None if dnp3_mode.is_some() => format!(
+                            "Command · {}",
+                            dnp3_mode.map_or("", vt_protocol::Dnp3ControlMode::name)
+                        ),
                         None if mqtt => "Publish a value to this topic".to_owned(),
                         None => "Write to device".to_owned(),
                     },
@@ -459,6 +479,9 @@ fn point_detail(
                 )
             }),
     );
+    if let Some(card) = super::dnp3::point_card(model, connection, live, info, reading, cx) {
+        content = content.child(divider(cx)).child(card);
+    }
     if spec.is_some_and(|spec| spec.protocol() == Protocol::Mqtt) {
         content = content
             .child(divider(cx))
@@ -546,6 +569,7 @@ fn session_summary(
         .when_some(live.filter(|_| mqtt), |this, live| {
             this.child(publish::card(live, &model.publish, cx))
         })
+        .children(super::dnp3::station_card(model, connection, cx))
         .child(
             div()
                 .text_size(FONT_SMALL)
