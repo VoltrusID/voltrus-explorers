@@ -23,7 +23,6 @@ use opcua::types::{
     ExtensionObject, LocalizedText, MessageSecurityMode, NodeId, NumericRange, ObjectId,
     ObjectTypeId, Range, StatusCode, TimestampsToReturn, UAString, VariableTypeId, Variant,
 };
-use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 use crate::opcua_client::{json_variant, variant_text};
@@ -100,6 +99,9 @@ pub struct PlantServer {
     namespace: u16,
     url: String,
     task: JoinHandle<Result<(), String>>,
+    /// The server's own runtime: its sessions never share worker threads with the caller's tasks
+    /// (a client of it in the same process keeps running whatever the server is doing).
+    runtime: Option<tokio::runtime::Runtime>,
 }
 
 /// Reads and sets the plant's variables. Cheap to clone. Its calls take the address space's lock,
@@ -270,24 +272,26 @@ impl Builder<'_> {
 
 /// Bind every interface: IPv6 and IPv4 where the system has both (macOS resolves `localhost` to
 /// `::1` first), IPv4 alone otherwise.
-async fn bind(port: u16) -> Result<TcpListener> {
-    match TcpListener::bind(("::", port)).await {
-        Ok(listener) => Ok(listener),
-        Err(v6) => TcpListener::bind(("0.0.0.0", port)).await.map_err(|v4| {
+fn bind(port: u16) -> Result<std::net::TcpListener> {
+    let listener = match std::net::TcpListener::bind(("::", port)) {
+        Ok(listener) => listener,
+        Err(v6) => std::net::TcpListener::bind(("0.0.0.0", port)).map_err(|v4| {
             if v4.kind() == std::io::ErrorKind::AddrInUse || v6.kind() == std::io::ErrorKind::AddrInUse {
                 anyhow!("TCP port {port} is in use by another program")
             } else {
                 anyhow!("Cannot listen on TCP port {port}: {v4}")
             }
-        }),
-    }
+        })?,
+    };
+    listener.set_nonblocking(true)?;
+    Ok(listener)
 }
 
 impl PlantServer {
     /// Build the address space and listen on `config.port` (every interface). Fails, without
     /// panicking, when the port is taken or the PKI folder cannot be written.
     pub async fn start(config: PlantServerConfig, nodes: &[PlantNode], on_call: MethodHandler) -> Result<Self> {
-        let listener = bind(config.port).await?;
+        let listener = bind(config.port)?;
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(config.port);
         // The server's own certificate, made here without resolving the host name.
         crate::pki::ensure_own_certificate(
@@ -372,13 +376,22 @@ impl PlantServer {
             });
         }
 
-        let task = tokio::spawn(server.run_with(listener));
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("opcua-plant")
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow!("Cannot start the server's threads: {e}"))?;
+        let task = runtime.spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(listener).map_err(|e| e.to_string())?;
+            server.run_with(listener).await
+        });
         let values = PlantValues {
             handle: handle.clone(),
             node_manager,
             namespace,
         };
-        Ok(Self { handle, values, namespace, url, task })
+        Ok(Self { handle, values, namespace, url, task, runtime: Some(runtime) })
     }
 
     /// `opc.tcp://localhost:<port>`.
@@ -401,9 +414,22 @@ impl PlantServer {
     }
 
     /// Stop serving and wait (briefly) for the port to be free again.
-    pub async fn stop(self) {
+    pub async fn stop(mut self) {
         self.handle.cancel();
-        let _ = tokio::time::timeout(STOP_WAIT, self.task).await;
+        let _ = tokio::time::timeout(STOP_WAIT, &mut self.task).await;
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
+impl Drop for PlantServer {
+    fn drop(&mut self) {
+        self.handle.cancel();
+        // A runtime may not be dropped from async code; let its threads go in the background.
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 
