@@ -71,7 +71,7 @@ impl Instrument {
                 id: u32::try_from(index).unwrap_or(u32::MAX),
                 name: register.name.clone(),
                 address: match self.format {
-                    SerialFormat::KeyValue => format!("{}=", register.name),
+                    SerialFormat::KeyValue => format!("key {}", index + 1),
                     SerialFormat::Csv => format!("col {}", index + 1),
                 },
                 data_type: "Number".into(),

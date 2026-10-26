@@ -178,13 +178,15 @@ impl Parser {
             Kind::None => {}
             Kind::KeyValue => {
                 for (key, value, unit) in key_values(line) {
+                    // Short, as the points table's address column is narrow.
+                    let address = format!("key {}", self.points.len() + 1);
                     let index = Self::point(
                         &mut self.points,
                         &mut self.by_name,
                         &mut self.values,
                         &mut parsed,
                         key,
-                        &format!("{key}="),
+                        &address,
                         unit,
                     );
                     self.values[index] = Some(value);

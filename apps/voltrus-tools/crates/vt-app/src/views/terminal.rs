@@ -9,7 +9,7 @@ use gpui::{
 use vt_app_core::ConnectionId;
 use vt_protocol::{Direction, LineEnding, SessionSpec};
 use vt_ui::Icon;
-use vt_ui::components::{Button, Segment, checkbox, empty_state, kbd, pill, segmented};
+use vt_ui::components::{Button, IconButton, Segment, checkbox, empty_state, kbd, pill, segmented};
 use vt_ui::theme::*;
 
 use super::{clock, follow_end};
@@ -138,43 +138,71 @@ pub fn render(
                     ),
             )
         })
-        .child(
-            Button::new(
-                id("terminal-log"),
-                if logging.is_some() {
-                    "Stop logging"
-                } else {
-                    "Log to file…"
-                },
-            )
-            .icon(if logging.is_some() {
+        .map(|this| {
+            let log_label = if logging.is_some() {
+                "Stop logging"
+            } else {
+                "Log to file…"
+            };
+            let log_icon = if logging.is_some() {
                 Icon::Square
             } else {
                 Icon::Download
-            })
-            .compact()
-            .disabled(!running && logging.is_none())
-            .tooltip("Write every byte, in and out, to a CSV file")
-            .on_click(cx.listener(move |model, _, _, cx| model.toggle_serial_log(connection, cx))),
-        )
-        .child(
-            Button::new(
-                id("terminal-pause"),
-                if paused { "Resume" } else { "Pause" },
-            )
-            .icon(if paused { Icon::Play } else { Icon::Pause })
-            .compact()
-            .on_click(
-                cx.listener(move |model, _, _, cx| model.toggle_terminal_pause(connection, cx)),
-            ),
-        )
-        .child(
-            Button::new(id("terminal-clear"), "Clear")
-                .icon(Icon::Trash)
-                .compact()
-                .ghost()
-                .on_click(cx.listener(move |model, _, _, cx| model.clear_terminal(connection, cx))),
-        );
+            };
+            let pause_label = if paused { "Resume" } else { "Pause" };
+            let pause_icon = if paused { Icon::Play } else { Icon::Pause };
+            let log = cx.listener(move |model, _, _, cx| model.toggle_serial_log(connection, cx));
+            let pause =
+                cx.listener(move |model, _, _, cx| model.toggle_terminal_pause(connection, cx));
+            let clear = cx.listener(move |model, _, _, cx| model.clear_terminal(connection, cx));
+            let can_log = running || logging.is_some();
+            // A narrow pane keeps the toolbar on one line with icons.
+            if compact {
+                this.child(
+                    IconButton::new(id("terminal-log"), log_icon)
+                        .size(CONTROL_MD)
+                        .active(logging.is_some())
+                        .disabled(!can_log)
+                        .tooltip(log_label)
+                        .on_click(log),
+                )
+                .child(
+                    IconButton::new(id("terminal-pause"), pause_icon)
+                        .size(CONTROL_MD)
+                        .active(paused)
+                        .tooltip(pause_label)
+                        .on_click(pause),
+                )
+                .child(
+                    IconButton::new(id("terminal-clear"), Icon::Trash)
+                        .size(CONTROL_MD)
+                        .tooltip("Clear")
+                        .on_click(clear),
+                )
+            } else {
+                this.child(
+                    Button::new(id("terminal-log"), log_label)
+                        .icon(log_icon)
+                        .compact()
+                        .disabled(!can_log)
+                        .tooltip("Write every byte, in and out, to a CSV file")
+                        .on_click(log),
+                )
+                .child(
+                    Button::new(id("terminal-pause"), pause_label)
+                        .icon(pause_icon)
+                        .compact()
+                        .on_click(pause),
+                )
+                .child(
+                    Button::new(id("terminal-clear"), "Clear")
+                        .icon(Icon::Trash)
+                        .compact()
+                        .ghost()
+                        .on_click(clear),
+                )
+            }
+        });
 
     let body: AnyElement = if count == 0 {
         empty_state(
@@ -242,17 +270,21 @@ pub fn render(
                                         if hex {
                                             this.child(
                                                 div()
-                                                    .w(px(HEX_COLUMN))
+                                                    .w(px(HEX_COLUMN.min(text_width)))
                                                     .flex_none()
+                                                    .truncate()
                                                     .text_color(theme.fg)
                                                     .child(text),
                                             )
-                                            .child(
-                                                div()
-                                                    .flex_none()
-                                                    .text_color(theme.fg_muted)
-                                                    .child(row.ascii.clone()),
-                                            )
+                                            // The ASCII column only where it fits.
+                                            .when(text_width > HEX_COLUMN + 60.0, |this| {
+                                                this.child(
+                                                    div()
+                                                        .flex_none()
+                                                        .text_color(theme.fg_muted)
+                                                        .child(row.ascii.clone()),
+                                                )
+                                            })
                                         } else {
                                             this.child(
                                                 div()

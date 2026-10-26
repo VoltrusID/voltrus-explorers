@@ -266,6 +266,7 @@ impl Monitor<'_> {
             if !parsed.added.is_empty() {
                 self.out.points_added(parsed.added);
             }
+            // A line without values (a prompt, a reply) is not an error.
             if parsed.values {
                 self.stats.polls += 1;
                 self.out.values(ValueFrame {
@@ -273,8 +274,6 @@ impl Monitor<'_> {
                     latency_us: 0,
                     readings: self.parser.readings(),
                 });
-            } else {
-                self.stats.errors += 1;
             }
         }
     }
