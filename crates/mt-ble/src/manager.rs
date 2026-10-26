@@ -449,3 +449,47 @@ fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use btleplug::api::PeripheralProperties;
+
+    #[test]
+    fn advertisements_carry_their_data_as_hex() {
+        let heart_rate = Uuid::from_u128(0x0000180d_0000_1000_8000_00805f9b34fb);
+        let eddystone = Uuid::from_u128(0x0000feaa_0000_1000_8000_00805f9b34fb);
+        let props = PeripheralProperties {
+            local_name: Some("HRM".into()),
+            tx_power_level: Some(-300),
+            manufacturer_data: HashMap::from([(0x0059, vec![0x01, 0xab])]),
+            service_data: HashMap::from([(eddystone, vec![0x00, 0xee])]),
+            services: vec![heart_rate],
+            ..PeripheralProperties::default()
+        };
+        let advertisement = advertisement_of(&props);
+        assert_eq!(advertisement.local_name.as_deref(), Some("HRM"));
+        assert_eq!(
+            advertisement.manufacturer_data,
+            Some(HashMap::from([(0x0059, "01ab".to_string())]))
+        );
+        assert_eq!(
+            advertisement.service_data.get(&eddystone.to_string()).map(String::as_str),
+            Some("00ee")
+        );
+        assert_eq!(advertisement.service_uuids, vec![heart_rate.to_string()]);
+        // Out of the i8 range: clamped, not wrapped.
+        assert_eq!(advertisement.tx_power_level, Some(i8::MIN));
+
+        let silent = advertisement_of(&PeripheralProperties::default());
+        assert_eq!(silent.manufacturer_data, None);
+        assert!(silent.service_data.is_empty() && silent.service_uuids.is_empty());
+    }
+
+    #[test]
+    fn devices_saved_before_advertisements_still_load() {
+        let saved = r#"{"id":"a","name":"","rssi":-60,"address":"a","connected":false}"#;
+        let device: BleDevice = serde_json::from_str(saved).unwrap();
+        assert!(device.advertisement.service_uuids.is_empty());
+    }
+}

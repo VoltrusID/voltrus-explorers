@@ -212,7 +212,7 @@ fn a_client_browses_reads_and_subscribes_with_standard_decoders() {
     let control = index(&points, "Heart Rate Control Point");
     let (rx, tx) = (index(&points, "UART RX"), index(&points, "UART TX"));
     let info = |point: u32| &points[usize::try_from(point).expect("an index")];
-    assert_eq!(info(heart_rate).address, "180D › 2A37");
+    assert_eq!(info(heart_rate).address, "2A37");
     assert_eq!(
         (
             info(heart_rate).unit.as_str(),

@@ -37,6 +37,8 @@ const LINK_CHECK_TICKS: u32 = 4;
 const MAX_BACKOFF: Duration = Duration::from_secs(10);
 /// Shown as the value of characteristics that can only be written.
 const WRITE_ONLY: &str = "write only";
+/// Shown as the value of characteristics that only push, until they do.
+const AWAITING: &str = "no notification yet";
 
 pub(crate) async fn run(
     spec: BleClientSpec,
@@ -349,6 +351,15 @@ impl Characteristic {
             gatt::short(&self.uuid)
         )
     }
+
+    /// What a characteristic that cannot be read shows before it has a value.
+    fn placeholder(&self) -> Option<&'static str> {
+        match (self.properties.read, self.properties.pushes()) {
+            (true, _) => None,
+            (false, true) => Some(AWAITING),
+            (false, false) => Some(WRITE_ONLY),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -408,30 +419,12 @@ impl State {
         self.readings = self
             .characteristics
             .iter()
-            .map(|characteristic| {
-                if characteristic.properties.read || characteristic.properties.pushes() {
-                    Reading::bad()
-                } else {
-                    Reading {
-                        value: f64::NAN,
-                        quality: Quality::Good,
-                        ..Reading::bad()
-                    }
-                }
+            .map(|characteristic| match characteristic.placeholder() {
+                Some(_) => good(f64::NAN),
+                None => Reading::bad(),
             })
             .collect();
-        self.payloads = self
-            .characteristics
-            .iter()
-            .zip(0u32..)
-            .filter(|(characteristic, _)| {
-                !characteristic.properties.read && !characteristic.properties.pushes()
-            })
-            .map(|(_, point)| PointText {
-                point,
-                text: WRITE_ONLY.into(),
-            })
-            .collect();
+        self.payloads = self.placeholders();
         self.dirty = true;
         true
     }
@@ -443,7 +436,7 @@ impl State {
             .map(|(characteristic, id)| PointInfo {
                 id,
                 name: characteristic.name.clone(),
-                address: characteristic.address(),
+                address: gatt::short(&characteristic.uuid),
                 data_type: decode::label(&characteristic.uuid, characteristic.decoder),
                 unit: decode::unit(&characteristic.uuid, characteristic.decoder).to_owned(),
                 writable: characteristic.properties.writable(),
@@ -701,27 +694,30 @@ impl State {
         // New points reset the app's values: send every one again.
         out.points(self.points());
         out.ble_gatt(self.info());
-        self.payloads.clear();
+        self.payloads = self.placeholders();
         for index in 0..self.characteristics.len() {
-            match self.characteristics[index].bytes.clone() {
-                Some(bytes) => self.update(index, bytes, out),
-                None => {
-                    let characteristic = &self.characteristics[index];
-                    if let Ok(point) = u32::try_from(index)
-                        && !characteristic.properties.read
-                        && !characteristic.properties.pushes()
-                    {
-                        self.payloads.push(PointText {
-                            point,
-                            text: WRITE_ONLY.into(),
-                        });
-                    }
-                }
+            if let Some(bytes) = self.characteristics[index].bytes.clone() {
+                self.update(index, bytes, out);
             }
         }
         self.dirty = true;
         self.flush(out);
         Some(uuid)
+    }
+
+    /// The placeholder text of every characteristic that has no value yet.
+    fn placeholders(&self) -> Vec<PointText> {
+        self.characteristics
+            .iter()
+            .zip(0u32..)
+            .filter(|(characteristic, _)| characteristic.bytes.is_none())
+            .filter_map(|(characteristic, point)| {
+                characteristic.placeholder().map(|text| PointText {
+                    point,
+                    text: text.into(),
+                })
+            })
+            .collect()
     }
 
     /// The link is gone: the values are no longer current.

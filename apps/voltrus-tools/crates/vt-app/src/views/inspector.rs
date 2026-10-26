@@ -210,6 +210,11 @@ fn point_detail(
                 ),
         );
 
+    // BLE: the characteristic, its notifications and decoder, right under its value.
+    if spec.is_some_and(|spec| spec.protocol() == Protocol::Ble) {
+        content = content.child(ble::card(live, point, &model.ble, cx));
+    }
+
     if !words.is_empty() && good {
         content = content.child(
             div()
@@ -464,11 +469,6 @@ fn point_detail(
         content = content
             .child(divider(cx))
             .child(publish::card(live, &model.publish, cx));
-    }
-    if spec.is_some_and(|spec| spec.protocol() == Protocol::Ble) {
-        content = content
-            .child(divider(cx))
-            .child(ble::card(live, point, &model.ble, cx));
     }
     content.into_any_element()
 }
