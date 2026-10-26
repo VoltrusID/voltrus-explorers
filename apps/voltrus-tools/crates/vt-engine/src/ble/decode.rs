@@ -344,7 +344,8 @@ fn elevation(bytes: &[u8]) -> Result<Value, String> {
 pub fn ieee11073_float(raw: u32) -> Option<f64> {
     let mantissa_bits = raw & 0x00FF_FFFF;
     match mantissa_bits {
-        0x007F_FFFF | 0x0080_0000 | 0x0080_0001 => return None,
+        // NaN, NRes and the reserved value.
+        0x007F_FFFF..=0x0080_0001 => return None,
         0x007F_FFFE => return Some(f64::INFINITY),
         0x0080_0002 => return Some(f64::NEG_INFINITY),
         _ => {}

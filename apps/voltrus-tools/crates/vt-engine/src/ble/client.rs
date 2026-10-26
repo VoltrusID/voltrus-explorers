@@ -120,7 +120,6 @@ pub(crate) async fn run_with<C: Central>(
         if state.lay_out(&services, &spec) {
             out.points(state.points());
         }
-        attempt = 0;
         out.state(SessionState::Connected);
         out.log(
             LogLevel::Info,
