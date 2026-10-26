@@ -12,6 +12,7 @@ mod emit;
 mod enip;
 mod modbus;
 mod mqtt;
+mod nats;
 mod s7;
 mod serial;
 pub mod templates;
@@ -99,6 +100,12 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         }
         SessionSpec::S7Client(client) => client.poll_ms,
         SessionSpec::S7Server(_) => u64::try_from(s7::server::TICK.as_millis()).unwrap_or(u64::MAX),
+        SessionSpec::NatsClient(_) => {
+            u64::try_from(nats::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::NatsServer(_) => {
+            u64::try_from(nats::server::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
         SessionSpec::BleClient(_) => {
             u64::try_from(ble::client::TICK.as_millis()).unwrap_or(u64::MAX)
         }
@@ -142,6 +149,8 @@ pub(crate) enum Control {
     },
     /// S7 clients: read the CPU's identity, mode, diagnostics and blocks.
     ReadS7Plc,
+    /// NATS: publish with headers, request/reply, JetStream browsing.
+    Nats(vt_protocol::NatsRequest),
     /// BLE clients: read, write, subscribe to or re-decode a characteristic.
     Ble(vt_protocol::BleRequest),
 }
@@ -203,6 +212,7 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::ModbusSlave(slave) => Some(slave.port),
                     SessionSpec::MqttBroker(broker) => Some(broker.port),
                     SessionSpec::BacnetDevice(device) => Some(device.port),
+                    SessionSpec::NatsServer(server) => Some(server.port),
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
                     | SessionSpec::BacnetClient(_) => None,
@@ -214,6 +224,7 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_) => None,
                     SessionSpec::S7Server(server) => Some(server.port),
                     SessionSpec::S7Client(_) => None,
+                    SessionSpec::NatsClient(_) => None,
                     SessionSpec::BleClient(_) => None,
                 };
                 if let Some(port) = port {
@@ -301,6 +312,14 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::Nats { session, request } => {
+                if sessions.contains_key(&session) {
+                    forward(&sessions, session, Control::Nats(request));
+                } else {
+                    let out = Emitter::new(session, events.clone());
+                    nats::client::refuse(request, "Not connected", &out);
+                }
+            }
             Command::ScanBle { session, spec } => {
                 let events = events.clone();
                 tokio::spawn(ble::scan(spec, move |found| {
@@ -374,6 +393,8 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::SerialDevice(spec) => serial::device::run(spec, control, &out).await,
         SessionSpec::S7Client(spec) => s7::client::run(spec, control, &out).await,
         SessionSpec::S7Server(spec) => s7::server::run(spec, control, &out).await,
+        SessionSpec::NatsClient(spec) => nats::client::run(spec, control, &out).await,
+        SessionSpec::NatsServer(spec) => nats::server::run(spec, control, &out).await,
         SessionSpec::BleClient(spec) => ble::client::run(spec, control, &out).await,
     }
 }

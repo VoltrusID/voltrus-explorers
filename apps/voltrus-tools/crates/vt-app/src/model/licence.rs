@@ -661,6 +661,8 @@ mod tests {
             (Protocol::Serial, Role::Simulator) => SessionSpec::SerialDevice(Default::default()),
             (Protocol::S7, Role::Client) => SessionSpec::S7Client(Default::default()),
             (Protocol::S7, Role::Simulator) => SessionSpec::S7Server(Default::default()),
+            (Protocol::Nats, Role::Client) => SessionSpec::NatsClient(Default::default()),
+            (Protocol::Nats, Role::Simulator) => SessionSpec::NatsServer(Default::default()),
             (Protocol::Ble, Role::Client) => SessionSpec::BleClient(Default::default()),
             // The BLE demo's peripherals are simulated behind its adapter.
             (Protocol::Ble, Role::Simulator) => return None,
@@ -724,6 +726,10 @@ mod tests {
             },
             EngineCommand::ReadS7Plc { session },
             EngineCommand::Relinquish { session, point: 0 },
+            EngineCommand::Nats {
+                session,
+                request: vt_protocol::NatsRequest::Streams,
+            },
             EngineCommand::ScanBle {
                 session,
                 spec: vt_protocol::BleScanSpec {

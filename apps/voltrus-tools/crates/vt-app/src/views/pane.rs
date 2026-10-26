@@ -254,6 +254,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::EnipAdapter(_) => true,
         SessionSpec::SerialDevice(_) => true,
         SessionSpec::S7Server(_) => true,
+        SessionSpec::NatsServer(spec) => spec.template.is_some(),
         _ => false,
     };
     let body: AnyElement = match live {
@@ -320,6 +321,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::S7Client(_), _) => {
                     "Connect to poll the CPU's tags and read its identity, mode, diagnostic buffer and blocks."
+                }
+                (SessionSpec::NatsServer(_), _) => {
+                    "Start it to run a NATS server with JetStream on this computer. Any NATS client can connect, including this app."
+                }
+                (SessionSpec::NatsClient(_), _) => {
+                    "Connect to subscribe. Subjects become points as their messages arrive; publish, request and browse JetStream from the inspector."
                 }
                 (SessionSpec::BleClient(_), _) => {
                     "Connect to find the peripheral and browse its GATT services. Every characteristic becomes a point: read, written or pushed by notifications."

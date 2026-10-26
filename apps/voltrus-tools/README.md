@@ -122,6 +122,24 @@ standalone Tauri apps in this repository.
   blocks, inputs, outputs, markers, timers, counters and strings, a CPU
   identity, diagnostic buffer and block list. A value set from the app or
   written by any client is held until released.
+- **NATS client** (on `mt-nats`, the official `async-nats` client): host and
+  port, TLS against the built-in web trust roots, and a token, user and
+  password, user NKey seed or `.creds` file (chosen in an open panel and kept
+  with the connection). Subscriptions take `*` and `>` wildcards and an
+  optional queue group; every concrete subject becomes a point (a number,
+  true/false, each numeric field of a JSON message or only the one at a JSON
+  path), with its unit when the message has a `Unit` header. The inspector
+  publishes any payload with headers, sends a request and shows the reply
+  with its round trip, and browses JetStream: streams with their subjects,
+  size and sequences, each stream's consumers and newest messages, and a
+  fetch (with acknowledgement) from a pull consumer. Writing a point
+  publishes to its subject. A dropped connection is retried and reported.
+- **NATS server simulator**: `mt-nats`'s embedded server (core protocol,
+  wildcards, queue groups, user/password login and an in-memory JetStream) on
+  any port, publishing a device template at `<prefix>.<value>` with a JSON
+  nameplate at `<prefix>.status`, all kept in a JetStream stream with a
+  durable consumer. A service on it answers requests: `<prefix>.get` with
+  every value, `<prefix>.<value>.set` takes a value and holds it.
 - **Bluetooth LE client** (on `mt-ble`): a scan that lists advertising
   peripherals with their signal (dBm and bars), advertised services,
   manufacturer and service data and transmit power. Connecting browses the
@@ -157,9 +175,9 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet, DNP3, EtherNet/IP, serial, S7 and Bluetooth LE are
-ported. The others in this repository (OPC UA, NATS) are being ported next;
-each plugs into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
+Modbus, MQTT, BACnet, DNP3, EtherNet/IP, serial, S7, NATS and Bluetooth LE
+are ported. OPC UA is being ported next; it plugs into the same engine and
+views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
@@ -185,8 +203,12 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # serial-points, serial-editor,
                                                  # serial-simulator, s7-points, s7-trend,
                                                  # s7-traffic, s7-plc, s7-write, s7-editor,
-                                                 # ble-points, ble-trend,
-                                                 # ble-scan, ble-inspector
+                                                 # nats-points,
+                                                 # nats-trend, nats-traffic,
+                                                 # nats-inspector, nats-jetstream,
+                                                 # nats-editor, ble-points,
+                                                 # ble-trend, ble-scan,
+                                                 # ble-inspector
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the

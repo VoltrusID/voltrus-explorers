@@ -414,6 +414,21 @@ pub async fn start_server(
     state: NatsServerState,
     on_message: Option<OnMessage>,
 ) -> Result<(), String> {
+    start_server_on(
+        state,
+        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+        on_message,
+    )
+    .await
+}
+
+/// [`start_server`] on one local address, e.g. `127.0.0.1` to serve only
+/// this computer.
+pub async fn start_server_on(
+    state: NatsServerState,
+    bind: std::net::IpAddr,
+    on_message: Option<OnMessage>,
+) -> Result<(), String> {
     let status = state.current_status().await;
     if status == ServerStatus::Running || status == ServerStatus::Starting {
         return Err("Server is already running".to_string());
@@ -429,7 +444,7 @@ pub async fn start_server(
         *slot = Some(shutdown_tx);
     }
 
-    let listener = TcpListener::bind(("0.0.0.0", port)).await.map_err(|e| {
+    let listener = TcpListener::bind((bind, port)).await.map_err(|e| {
         let _ = state.status.send(ServerStatus::Error(e.to_string()));
         format!("Failed to bind port {}: {}", port, e)
     })?;

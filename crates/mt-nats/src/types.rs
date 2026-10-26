@@ -270,6 +270,12 @@ pub struct NatsStreamInfo {
     pub consumers: u64,
     #[serde(default)]
     pub created: Option<String>,
+    /// Sequence of the oldest stored message (0 when empty).
+    #[serde(default)]
+    pub first_seq: u64,
+    /// Sequence of the newest stored message (0 when empty).
+    #[serde(default)]
+    pub last_seq: u64,
 }
 
 /// A JetStream consumer (durable, pull) as shown in the UI.

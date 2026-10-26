@@ -100,6 +100,7 @@ fn point_detail(
         Some(SessionSpec::EnipAdapter(_)) => true,
         Some(SessionSpec::SerialDevice(_)) => true,
         Some(SessionSpec::S7Server(_)) => true,
+        Some(SessionSpec::NatsServer(server)) => server.template.is_some(),
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
@@ -524,6 +525,12 @@ fn point_detail(
             .child(divider(cx))
             .child(cip::card(live, &model.cip, cx));
     }
+    if spec.is_some_and(|spec| spec.protocol() == Protocol::Nats) {
+        let client = matches!(spec, Some(SessionSpec::NatsClient(_)));
+        content = content
+            .child(divider(cx))
+            .child(super::nats::card(model, connection, live, client, cx));
+    }
     content.into_any_element()
 }
 
@@ -628,6 +635,16 @@ fn session_summary(
         .children(super::dnp3::station_card(model, connection, cx))
         .when(serial, |this| {
             this.child(serial_card(connection, &saved.spec, live, cx))
+        })
+        // NATS: the JetStream browser (clients), then publish and request.
+        .when(saved.spec.protocol() == Protocol::Nats, |this| {
+            let client = matches!(saved.spec, SessionSpec::NatsClient(_));
+            let card = live.map(|live| super::nats::card(model, connection, live, client, cx));
+            this.when(client, |this| {
+                this.child(super::nats::jetstream(model, connection, cx))
+                    .child(divider(cx))
+            })
+            .children(card)
         })
         .child(
             div()

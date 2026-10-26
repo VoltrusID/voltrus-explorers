@@ -126,6 +126,17 @@ internal indications arrive as `EventKind::Dnp3Iin` whenever they change. A
 DNP3 master names its points up front (`Points`) and adds every other point
 the outstation reports with `PointsAdded`, like MQTT topics; point flags map to
 `Quality` and their names go in `Payloads` for the inspector.
+Work a running session does on request, with an answer that is not a value,
+is one command and one event per protocol: a NATS client takes
+`Command::Nats { session, request }` (publish with headers, request/reply,
+list streams, open a stream, fetch from a consumer) and answers with
+`EventKind::Nats` (publishes with `Published`). Each waiting request runs on
+its own task beside the subscriptions; a request to a session that is not
+running is answered "Not connected" at once. The app keeps the replies and
+the JetStream browser per connection (`vt-app/src/model/nats.rs`) and draws
+them in the inspector (`vt-app/src/views/nats.rs`). The NATS simulator runs
+`mt-nats`'s embedded server in the session task (it stops and rebinds
+in-process); its request service is an ordinary client of that server.
 
 The serial port picker works the same way: it sends `Command::ListSerialPorts`
 under a request id every two seconds while the editor is open (so a device

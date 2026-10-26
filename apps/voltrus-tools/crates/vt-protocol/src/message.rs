@@ -6,7 +6,8 @@ use crate::S7PlcReport;
 use crate::{
     BacnetDeviceInfo, BacnetDiscoverSpec, BleCharacteristicInfo, BleRequest, BleScan, BleScanSpec,
     CipRequest, CipResponse, Dnp3Action, Dnp3Iin, EnipDeviceInfo, EnipDiscoverSpec, MqttQos,
-    PointInfo, SerialChunk, SerialPortInfo, SessionSpec, TrafficFrame, ValueFrame,
+    NatsEvent, NatsRequest, PointInfo, SerialChunk, SerialPortInfo, SessionSpec, TrafficFrame,
+    ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -99,6 +100,12 @@ pub enum Command {
     /// S7 clients: read the CPU's identity, mode, diagnostic buffer and
     /// blocks over the session's connection. Answered by [`EventKind::S7Plc`].
     ReadS7Plc { session: SessionId },
+    /// NATS clients: publish with headers, request/reply and JetStream
+    /// browsing; answered by [`EventKind::Nats`] or [`EventKind::Published`].
+    Nats {
+        session: SessionId,
+        request: NatsRequest,
+    },
     /// Scan for BLE peripherals; what it sees comes back as
     /// [`EventKind::BleDevices`] under `session`, which names the scan (no
     /// session runs under it), until an answer that is `done`.
@@ -181,6 +188,8 @@ pub enum EventKind {
     /// What an S7 CPU says about itself, after connecting and after each
     /// [`Command::ReadS7Plc`]; `Err` when it could not be asked.
     S7Plc(Result<S7PlcReport, String>),
+    /// A NATS client's answer to a [`Command::Nats`].
+    Nats(NatsEvent),
     /// Answers to [`Command::ScanBle`]: the peripherals seen so far.
     BleDevices(Result<BleScan, String>),
     /// BLE sessions: each point's characteristic, its service and properties,
@@ -854,6 +863,164 @@ mod tests {
         };
         let text = serde_json::to_string(&blocks).unwrap();
         assert_eq!(serde_json::from_str::<S7PlcReport>(&text).unwrap(), blocks);
+    }
+
+    #[test]
+    fn nats_messages_round_trip_through_json() {
+        use crate::{
+            NatsAuth, NatsClientSpec, NatsConsumer, NatsHeader, NatsReply, NatsServerSpec,
+            NatsStoredMessage, NatsStream, NatsStreamDetail, NatsSubscription,
+        };
+
+        let client = NatsClientSpec {
+            host: "nats.example".into(),
+            port: 4443,
+            tls: true,
+            auth: NatsAuth::Credentials {
+                file: "plant.creds".into(),
+                creds: "-----BEGIN NATS USER JWT-----\neyJ0…\n------END NATS USER JWT------".into(),
+            },
+            name: "panel-7".into(),
+            subscriptions: vec![
+                NatsSubscription::new("plant.*.telemetry"),
+                NatsSubscription {
+                    subject: "site.meter".into(),
+                    queue: "workers".into(),
+                    json_path: "phases[2].v".into(),
+                },
+            ],
+        };
+        let headers = vec![NatsHeader {
+            name: "Nats-Msg-Id".into(),
+            value: "42".into(),
+        }];
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::NatsClient(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::NatsServer(NatsServerSpec {
+                    template: None,
+                    username: "u".into(),
+                    password: "p".into(),
+                    ..NatsServerSpec::default()
+                }),
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Publish {
+                    subject: "plant.limit".into(),
+                    payload: "{\"kw\": 42.5}".into(),
+                    headers: headers.clone(),
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Request {
+                    subject: "plant.inverter.get".into(),
+                    payload: String::new(),
+                    headers: Vec::new(),
+                    timeout_ms: 2000,
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Streams,
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Stream {
+                    name: "PLANT".into(),
+                    messages: 20,
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Fetch {
+                    stream: "PLANT".into(),
+                    consumer: "historian".into(),
+                    batch: 10,
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let stream = NatsStream {
+            name: "PLANT".into(),
+            subjects: vec!["plant.>".into()],
+            messages: 1200,
+            bytes: 9600,
+            consumers: 1,
+            first_seq: 801,
+            last_seq: 2000,
+            storage: "memory".into(),
+        };
+        let message = NatsStoredMessage {
+            sequence: 2000,
+            subject: "plant.inverter.ac_power".into(),
+            payload: "1234.5".into(),
+            at_ms: 1_790_000_000_000,
+        };
+        let events = [
+            NatsEvent::Reply {
+                subject: "plant.inverter.get".into(),
+                result: Ok(NatsReply {
+                    subject: "_INBOX.abc.1".into(),
+                    payload: "{\"ac_power\":1234.5}".into(),
+                    headers,
+                    bytes: 19,
+                    latency_us: 812,
+                }),
+            },
+            NatsEvent::Reply {
+                subject: "nobody.home".into(),
+                result: Err("No reply within 2000 ms".into()),
+            },
+            NatsEvent::Streams(Ok(vec![stream.clone()])),
+            NatsEvent::Streams(Err("JetStream is not enabled".into())),
+            NatsEvent::Stream {
+                name: "PLANT".into(),
+                result: Ok(NatsStreamDetail {
+                    stream,
+                    consumers: vec![NatsConsumer {
+                        name: "historian".into(),
+                        durable: true,
+                        kind: "pull".into(),
+                        pending: 1200,
+                        ack_pending: 0,
+                        redelivered: 0,
+                    }],
+                    messages: vec![message.clone()],
+                }),
+            },
+            NatsEvent::Fetched {
+                stream: "PLANT".into(),
+                consumer: "historian".into(),
+                result: Ok(vec![message]),
+            },
+        ];
+        for nats in events {
+            let event = Event {
+                session: SessionId(1),
+                kind: EventKind::Nats(nats),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // Optional fields may be missing from a saved workspace.
+        let saved = r#"{"kind":"nats_client","host":"h","port":4222,
+            "subscriptions":[{"subject":">"}]}"#;
+        let SessionSpec::NatsClient(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("a NATS client spec");
+        };
+        assert_eq!(spec.auth, NatsAuth::None);
+        assert!(!spec.tls && spec.subscriptions[0].queue.is_empty());
     }
 
     #[test]

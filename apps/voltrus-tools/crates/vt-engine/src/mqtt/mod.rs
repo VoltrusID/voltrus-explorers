@@ -5,7 +5,7 @@
 mod broker;
 pub(crate) mod client;
 pub(crate) mod simulator;
-mod values;
+pub(crate) mod values;
 
 use std::net::IpAddr;
 

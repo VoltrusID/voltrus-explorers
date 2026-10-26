@@ -32,6 +32,9 @@ pub use serial::{
 mod s7;
 
 pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
+mod nats;
+
+pub use nats::{NatsAuthKind, NatsClientForm, NatsServerForm, NatsSubjectField, NatsSubjectForm};
 
 mod ble;
 
@@ -97,6 +100,10 @@ pub enum Field {
     S7Pdu,
     S7Tag(usize, S7TagField),
     S7Tags,
+    /// NATS: a subscription row and which of its fields, and the token,
+    /// NKey seed or creds file of the chosen login.
+    NatsSubject(usize, NatsSubjectField),
+    Credential,
     /// BLE: the peripheral to connect to.
     Peripheral,
 }

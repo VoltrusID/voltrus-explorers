@@ -51,6 +51,13 @@ pub enum Command {
     S7Demo,
     /// Read an S7 client's CPU identity, mode, diagnostics and blocks again.
     ReadS7Plc(ConnectionId),
+    NewNatsClient,
+    NewNatsServer,
+    NatsDemo,
+    /// Send the inspector's NATS request from the focused client.
+    NatsRequest,
+    /// Show the focused NATS client's JetStream streams.
+    NatsJetStream,
     NewBleClient,
     BleDemo,
 }
@@ -351,6 +358,36 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "A water analyser on a virtual port and a monitor trending its lines",
             Icon::Zap,
             Command::SerialDemo,
+        ),
+        (
+            "New NATS connection…",
+            "Subscribe to subjects, publish, request and browse JetStream",
+            Icon::Plus,
+            Command::NewNatsClient,
+        ),
+        (
+            "New NATS server simulator…",
+            "A NATS server with JetStream on this computer publishing a device",
+            Icon::Server,
+            Command::NewNatsServer,
+        ),
+        (
+            "Start the NATS demo",
+            "An inverter on a simulated NATS server and a client subscribed to it",
+            Icon::Zap,
+            Command::NatsDemo,
+        ),
+        (
+            "Send NATS request",
+            "The inspector's subject and payload, from the focused connection",
+            Icon::Send,
+            Command::NatsRequest,
+        ),
+        (
+            "Browse JetStream",
+            "Streams, consumers and stored messages of the focused connection",
+            Icon::Database,
+            Command::NatsJetStream,
         ),
         (
             "New Bluetooth LE connection…",
