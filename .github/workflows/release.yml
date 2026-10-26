@@ -10,6 +10,8 @@
 #   windows   Modbus Poll only: unsigned NSIS installer and portable zip for x64 and ARM64 (scripts/build-windows.ps1), smoke-tested
 #             on Windows runners, published with SHA256SUMS.txt as GitHub Release modbus-poll-windows-v<version> when `github_release`.
 #             Needs no secrets, so these jobs do not use the `release` environment.
+#   voltrus-tools  app=voltrus-tools builds only the Mac App Store .pkg (`appstore`, `upload`) of the GPUI suite in
+#             apps/voltrus-tools (apps/voltrus-tools/scripts/build-mas.sh); `dmg`, `ios` and `windows` don't apply to it.
 name: Release
 
 on:
@@ -18,7 +20,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, voltrus-tools]
       appstore:
         description: Mac App Store .pkg
         type: boolean
@@ -58,7 +60,7 @@ env:
 
 jobs:
   macos:
-    if: inputs.appstore || inputs.dmg
+    if: (inputs.appstore || inputs.dmg) && inputs.app != 'voltrus-tools'
     runs-on: macos-15
     timeout-minutes: 90
     environment: release
@@ -136,7 +138,7 @@ jobs:
         run: scripts/ci-keychain.sh cleanup
 
   ios:
-    if: inputs.ios
+    if: inputs.ios && inputs.app != 'voltrus-tools'
     # App Store Connect requires the iOS 26 SDK (Xcode 26), which macos-15 images do not select by default.
     runs-on: macos-26
     timeout-minutes: 90
@@ -214,6 +216,64 @@ jobs:
         with:
           name: ${{ inputs.app }}-ios-${{ github.run_number }}
           path: apps/${{ inputs.app }}/src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove signing material
+        if: always()
+        run: scripts/ci-keychain.sh cleanup
+
+  # Voltrus Tools (apps/voltrus-tools, GPUI, its own Cargo workspace): universal store build, signed for the Mac App
+  # Store and validated, or uploaded with `upload`. Licensing and release steps: apps/voltrus-tools/docs/release.md.
+  voltrus-tools:
+    if: inputs.app == 'voltrus-tools' && inputs.appstore
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/voltrus-tools/target
+          key: voltrus-tools-store-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}
+          restore-keys: voltrus-tools-store-
+
+      - name: Toolchain
+        working-directory: apps/voltrus-tools
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Signing identities and App Store Connect key
+        env:
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+          APPLE_DIST_P12_BASE64: ${{ secrets.APPLE_DIST_P12_BASE64 }}
+          APPLE_DIST_P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+          MAC_INSTALLER_P12_BASE64: ${{ secrets.MAC_INSTALLER_P12_BASE64 }}
+          MAC_INSTALLER_P12_PASSWORD: ${{ secrets.MAC_INSTALLER_P12_PASSWORD }}
+        run: scripts/ci-keychain.sh setup APPLE_DIST MAC_INSTALLER
+
+      - name: Mac App Store build
+        run: |
+          apps/voltrus-tools/scripts/build-mas.sh bundle build/voltrus-tools/appstore
+          serial="$(security find-certificate -a -c 'Apple Distribution' -p "$RUNNER_TEMP/release.keychain-db" | openssl x509 -noout -serial | cut -d= -f2)"
+          python3 scripts/asc-profile.py MAC_APP_STORE com.joyodigitama.voltrus-tools "$serial" "$RUNNER_TEMP/mas.provisionprofile"
+          MAS_PROFILE="$RUNNER_TEMP/mas.provisionprofile" apps/voltrus-tools/scripts/build-mas.sh package \
+            "build/voltrus-tools/appstore/Voltrus Tools.app" build/voltrus-tools/appstore ${{ inputs.upload && '--upload' || '' }}
+
+      - name: Checksums
+        run: shasum -a 256 build/voltrus-tools/appstore/*.pkg | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: voltrus-tools-macos-${{ github.run_number }}
+          path: build/voltrus-tools/appstore/*.pkg
           if-no-files-found: error
           retention-days: 30
 

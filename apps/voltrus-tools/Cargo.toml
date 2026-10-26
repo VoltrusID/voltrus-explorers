@@ -10,6 +10,7 @@ members = [
     "crates/vt-app-core",
     "crates/vt-ui",
     "crates/vt-app",
+    "crates/vt-store",
 ]
 
 # Which workspace crates each crate may depend on. Structural changes update
@@ -19,7 +20,8 @@ vt-protocol = []
 vt-engine = ["vt-protocol"]
 vt-app-core = ["vt-protocol"]
 vt-ui = []
-vt-app = ["vt-protocol", "vt-engine", "vt-app-core", "vt-ui"]
+vt-app = ["vt-protocol", "vt-engine", "vt-app-core", "vt-ui", "vt-store"]
+vt-store = []
 
 [workspace.package]
 version = "0.1.0"

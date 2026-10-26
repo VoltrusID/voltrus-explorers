@@ -626,12 +626,18 @@ impl AppModel {
 
     /// Read the whole tree again.
     pub fn refresh_browser(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.opcua_connected(connection);
         cx.notify();
     }
 
     /// Open or close a node, reading its children the first time.
     pub fn toggle_node(&mut self, connection: ConnectionId, node: &str, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let session = self.opcua_session(connection);
         let browser = self.opcua.browsers.entry(connection).or_default();
         if !browser.expanded.remove(node) {
@@ -659,6 +665,9 @@ impl AppModel {
         node: String,
         cx: &mut Context<Self>,
     ) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let session = self.opcua_session(connection);
         if let Some(live) = self.live.get_mut(&connection) {
             // The inspector follows the tree now, not a point.
@@ -869,6 +878,9 @@ impl AppModel {
         node: &str,
         cx: &mut Context<Self>,
     ) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         if self.is_monitored(connection, node) {
             if let Some(browser) = self.opcua.browsers.get_mut(&connection) {
                 browser.notice = Some((false, "Already a point".into()));
@@ -943,6 +955,9 @@ impl AppModel {
 
     /// Write the inspector's text to the selected OPC UA point.
     pub fn opcua_write_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some(connection) = self.focused_connection() else {
             return;
         };
@@ -969,6 +984,9 @@ impl AppModel {
 
     /// Call the method selected in the focused pane's browser with the typed arguments.
     pub fn call_selected_method(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some(connection) = self.focused_connection() else {
             return;
         };
@@ -1013,6 +1031,9 @@ impl AppModel {
 
     /// The endpoint picker: GetEndpoints from the typed endpoint.
     pub fn discover_opcua(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.next_session += 1;
         let request = SessionId(self.next_session);
         let Some(editor) = self.editor_mut() else {
@@ -1144,6 +1165,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(port) = self.free_opcua_port() else {
             self.show_toast(
                 "No free TCP port between 4840 and 4939 for the server",

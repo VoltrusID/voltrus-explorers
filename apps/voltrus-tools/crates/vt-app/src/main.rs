@@ -35,15 +35,34 @@ fn main() -> ExitCode {
         },
         None => None,
     };
+    // Source builds only: a fixed licence to see the store's sheets. A store
+    // build's licence comes from the App Store alone.
+    let preview = match args.iter().position(|arg| arg == "--licence-preview") {
+        Some(index) if !vt_store::store_build() => match args
+            .get(index + 1)
+            .and_then(|name| model::licence::Preview::parse(name))
+        {
+            Some(preview) => Some(preview),
+            None => {
+                eprintln!(
+                    "voltrus-tools: --licence-preview takes one of {}",
+                    model::licence::Preview::NAMES.join(", ")
+                );
+                return ExitCode::FAILURE;
+            }
+        },
+        _ => None,
+    };
 
-    let boot = match demo {
-        // Demo runs never touch the user's saved workspace.
-        Some(_) => Boot {
+    // Demo and licence-preview runs never touch the user's saved workspace.
+    let boot = if demo.is_some() || preview.is_some() {
+        Boot {
             workspace: Workspace::default(),
             store: None,
             notice: None,
-        },
-        None => load_workspace(),
+        }
+    } else {
+        load_workspace()
     };
 
     Application::new()
@@ -54,7 +73,25 @@ fn main() -> ExitCode {
             vt_ui::init(initial, cx);
             cx.bind_keys(actions::key_bindings());
             cx.bind_keys(model::opcua::key_bindings());
-            cx.set_menus(actions::menus());
+            cx.bind_keys(model::licence::key_bindings());
+            // The app menu starts with About (and, in store builds, Unlock).
+            let mut menus = actions::menus();
+            if let Some(app_menu) = menus.first_mut() {
+                let mut items = vec![gpui::MenuItem::action(
+                    "About Voltrus Tools",
+                    model::licence::ShowAbout,
+                )];
+                if vt_store::store_build() {
+                    items.push(gpui::MenuItem::action(
+                        "Unlock Voltrus Tools…",
+                        model::licence::ShowUnlock,
+                    ));
+                }
+                items.push(gpui::MenuItem::separator());
+                items.append(&mut app_menu.items);
+                app_menu.items = items;
+            }
+            cx.set_menus(menus);
             // The model saves on the way out (`AppModel::new` hooks app quit).
             cx.on_action(|_: &actions::Quit, cx| cx.quit());
 
@@ -87,6 +124,9 @@ fn main() -> ExitCode {
                     if let Some(scenario) = demo {
                         demo::apply(&mut model, scenario, window, cx);
                     }
+                    if let Some(preview) = preview {
+                        model.preview_licence(preview, window, cx);
+                    }
                     model
                 });
                 // Closing the window ends the app: save and stop the sessions
@@ -97,6 +137,18 @@ fn main() -> ExitCode {
                     let _ = weak.update(cx, |model, _| model.shutdown());
                     cx.quit();
                     true
+                });
+                let about = model.downgrade();
+                cx.on_action(move |_: &model::licence::ShowAbout, cx| {
+                    let _ = about.update(cx, |model, cx| {
+                        model.open_licence_sheet(model::licence::Sheet::About, cx);
+                    });
+                });
+                let unlock = model.downgrade();
+                cx.on_action(move |_: &model::licence::ShowUnlock, cx| {
+                    let _ = unlock.update(cx, |model, cx| {
+                        model.open_licence_sheet(model::licence::Sheet::Unlock, cx);
+                    });
                 });
                 model
             });
