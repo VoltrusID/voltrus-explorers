@@ -6,6 +6,7 @@
 
 pub mod cached;
 mod cip;
+mod dnp3;
 mod editor;
 pub mod inspector;
 mod log;

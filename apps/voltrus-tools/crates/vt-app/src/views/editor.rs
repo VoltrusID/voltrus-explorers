@@ -16,6 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 mod bacnet;
+mod dnp3;
 mod enip;
 mod mqtt;
 
@@ -52,6 +53,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::Dnp3Master, false) => "New DNP3 connection",
+        (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
+        (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
+        (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
         (EditorKind::EnipClient, false) => "New EtherNet/IP connection",
         (EditorKind::EnipClient, true) => "Edit EtherNet/IP connection",
         (EditorKind::EnipAdapter, false) => "New EtherNet/IP adapter simulator",
@@ -72,6 +77,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::Dnp3Master => {
+            "Poll an outstation over TCP: integrity and event polls, flags, controls and time sync."
+        }
+        EditorKind::Dnp3Outstation => {
+            "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
+        }
         EditorKind::EnipClient => {
             "Find a device with ListIdentity, read and write its Logix tags and CIP attributes."
         }
@@ -86,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::Dnp3Master => dnp3::master(editor, cx),
+        EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
         EditorKind::EnipClient => enip::client(editor, cx),
         EditorKind::EnipAdapter => enip::adapter(editor, cx),
     };
@@ -97,6 +110,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::Dnp3Master, false) => "Save and connect",
+        (EditorKind::Dnp3Outstation, false) => "Start simulator",
         (EditorKind::EnipClient, false) => "Save and connect",
         (EditorKind::EnipAdapter, false) => "Start simulator",
     };

@@ -57,6 +57,8 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// DNP3: what the session last reported about its outstation.
+    pub dnp3: super::dnp3::Dnp3Live,
     /// EtherNet/IP: the answer to the inspector's last explicit message, and
     /// whether one is on its way.
     pub cip_reply: Option<Result<CipResponse, String>>,
@@ -87,6 +89,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            dnp3: super::dnp3::Dnp3Live::default(),
             cip_reply: None,
             cip_waiting: false,
             enip_addresses: Vec::new(),
@@ -105,6 +108,7 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.dnp3 = super::dnp3::Dnp3Live::default();
         self.cip_reply = None;
         self.cip_waiting = false;
         self.enip_addresses.clear();
@@ -218,6 +222,13 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            EventKind::Dnp3Iin(iin) => self.dnp3.iin = Some(iin),
+            EventKind::Dnp3Done { action, result } => {
+                if self.dnp3.busy == Some(action) {
+                    self.dnp3.busy = None;
+                }
+                self.dnp3.last = Some((action, result));
+            }
             // Likewise the EtherNet/IP picker's.
             EventKind::EnipDevices(_) => {}
             EventKind::CipReply(result) => {

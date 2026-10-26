@@ -48,11 +48,14 @@ pub mod transport;
 pub mod types;
 
 // Re-export the primary public API at the crate root.
-pub use client::{Dnp3Client, SequenceTracker, build_link_reset_frame, event_scan, read_points, write_point};
+pub use client::{
+    Dnp3Client, PollResponse, SequenceTracker, TrafficRecord, TrafficTap, build_link_reset_frame,
+    event_scan, read_points, write_point,
+};
 pub use control::{ControlEcho, ControlObject, ControlRequest, ControlStatus, Crob, crob_code};
 pub use datalink::{ControlByte, Dnp3Frame, crc16, describe_frame};
 pub use objects::{Dnp3PointValue, common_group_variations, group_variation_name, parse_points};
-pub use server::{OutstationState, start_outstation_server};
+pub use server::{OutstationState, start_outstation_server, start_outstation_server_with_tap};
 pub use simulation::{Dnp3Simulation, start_simulation, stop_simulation, tick_values};
 pub use transport::{MAX_SEGMENT_PAYLOAD, TransportHeader, TransportReassembler, TransportSegment, segment_asdu};
 pub use types::{Backoff, Dnp3Config, Dnp3Point, Dnp3Value, Dnp3WriteResult, OutstationConfig, OutstationEvent, OutstationLogEntry, SimDnp3PointDef};

@@ -6,6 +6,7 @@
 //! in muxy) without changing either side's model.
 
 mod bacnet;
+mod dnp3;
 mod enip;
 mod message;
 mod modbus;
@@ -14,6 +15,11 @@ mod value;
 
 pub use bacnet::{
     BACNET_PORT, BacnetClientSpec, BacnetDeviceInfo, BacnetDeviceSpec, BacnetDiscoverSpec,
+};
+pub use dnp3::{
+    DNP3_MAX_ADDRESS, DNP3_MAX_CONTROL_INDEX, DNP3_PORT, Dnp3Action, Dnp3ControlMode, Dnp3Crob,
+    Dnp3CrobCode, Dnp3Iin, Dnp3IinBit, Dnp3MasterSpec, Dnp3Operation, Dnp3OutstationSpec,
+    Dnp3PointKind, Dnp3PointName,
 };
 pub use enip::{
     CipRequest, CipResponse, CipType, ENIP_PORT, EnipAdapterSpec, EnipAddress, EnipClientSpec,
@@ -50,6 +56,10 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Poll a DNP3 outstation: integrity and class polls, controls, time sync.
+    Dnp3Master(Dnp3MasterSpec),
+    /// Play a DNP3 outstation with a plant's simulated points.
+    Dnp3Outstation(Dnp3OutstationSpec),
     /// Read and write a Logix controller's tags and CIP attributes over
     /// EtherNet/IP, and send it explicit messages.
     EnipClient(EnipClientSpec),
@@ -63,6 +73,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
         }
     }
@@ -71,6 +82,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::Dnp3Master(_) => Role::Client,
+            Self::Dnp3Outstation(_) => Role::Simulator,
             Self::EnipClient(_) => Role::Client,
             Self::EnipAdapter(_) => Role::Simulator,
         }
@@ -105,6 +118,16 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::Dnp3Master(spec) => format!(
+                "{} · outstation {}",
+                host_port(&spec.host, spec.port),
+                spec.outstation_address
+            ),
+            Self::Dnp3Outstation(spec) => format!(
+                "{} · outstation {}",
+                host_port(&spec.bind, spec.port),
+                spec.outstation_address
+            ),
             Self::EnipClient(spec) => match spec.route_path.trim() {
                 "" => host_port(&spec.host, spec.port),
                 route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
@@ -122,6 +145,8 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::Dnp3Master(spec) => host_port(&spec.host, spec.port),
+            Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
             Self::EnipClient(spec) => host_port(&spec.host, spec.port),
             Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
         }
@@ -144,6 +169,7 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Dnp3,
     Enip,
 }
 
@@ -152,6 +178,7 @@ impl Protocol {
         Protocol::Modbus,
         Protocol::Mqtt,
         Protocol::Bacnet,
+        Protocol::Dnp3,
         Protocol::Enip,
     ];
 
@@ -160,6 +187,7 @@ impl Protocol {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
         }
     }
@@ -170,6 +198,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Dnp3 => "DN",
             Self::Enip => "EI",
         }
     }
@@ -182,6 +211,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Dnp3 => {
+                "Integrity and class polls, flags and events, SBO controls, and an outstation simulator"
             }
             Self::Enip => {
                 "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"

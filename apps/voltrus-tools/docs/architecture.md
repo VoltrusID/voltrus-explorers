@@ -116,6 +116,15 @@ simulator is `mt-enip`'s target (`start_enip_server`) with the plant's values
 moved by the session task, plus `answer_list_identity` on the same UDP port
 so the picker finds it.
 
+Commands that belong to a protocol but to no point are messages of their own:
+a DNP3 master's station commands (integrity and class polls, time sync,
+counter freeze, restarts, and controls with an explicit CROB or mode) go as
+`Command::Dnp3` and come back as `EventKind::Dnp3Done`; the outstation's
+internal indications arrive as `EventKind::Dnp3Iin` whenever they change. A
+DNP3 master names its points up front (`Points`) and adds every other point
+the outstation reports with `PointsAdded`, like MQTT topics; point flags map to
+`Quality` and their names go in `Payloads` for the inspector.
+
 ## Design system
 
 `vt-ui::theme::Theme` derives every token (surfaces, borders, accent, status
