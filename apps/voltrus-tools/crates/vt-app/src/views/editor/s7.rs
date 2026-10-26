@@ -293,6 +293,11 @@ pub fn server(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             row()
                 .child(
                     div()
+                        .flex_1()
+                        .child(field("Listen on", fields.server_bind.clone(), cx)),
+                )
+                .child(
+                    div()
                         .w(px(120.0))
                         .child(field("TCP port", fields.server_port.clone(), cx)),
                 )
@@ -307,7 +312,7 @@ pub fn server(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                         .pb(SPACE_3)
                         .text_size(FONT_SMALL)
                         .text_color(theme.fg_dim)
-                        .child("Answers on every interface. S7 clients expect port 102."),
+                        .child("0.0.0.0 opens it to the network. S7 clients expect port 102."),
                 ),
         )
         .child(group("CPU", cx).children(cards))

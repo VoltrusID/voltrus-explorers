@@ -53,6 +53,31 @@ fn class_icon(node: &TreeNode) -> Icon {
     }
 }
 
+/// How a client's pane shares its width between the browser and the points table.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum BrowserLayout {
+    /// The browser, this wide, beside the table.
+    Beside(f32),
+    /// The browser across the whole pane in place of the table (its Hide button brings the
+    /// table back).
+    Full,
+    /// The browser hidden: a rail to show it beside the table.
+    Rail,
+}
+
+/// The layout of a pane `pane_width` wide whose browser is `open` or not.
+pub(crate) fn browser_layout(open: bool, pane_width: f32) -> BrowserLayout {
+    if !open {
+        BrowserLayout::Rail
+    } else if pane_width - BROWSER_NARROW < TABLE_MIN {
+        BrowserLayout::Full
+    } else if pane_width < NARROW_PANE {
+        BrowserLayout::Beside(BROWSER_NARROW)
+    } else {
+        BrowserLayout::Beside(BROWSER_WIDE)
+    }
+}
+
 /// An OPC UA client's points with its address-space browser on the left.
 pub fn points(
     model: &AppModel,
@@ -67,14 +92,17 @@ pub fn points(
         .opcua
         .browsers
         .get(&connection)
-        .is_none_or(|browser| browser.open)
-        && pane_width - BROWSER_NARROW >= TABLE_MIN;
-    let width = if !open {
-        RAIL
-    } else if pane_width < NARROW_PANE {
-        BROWSER_NARROW
-    } else {
-        BROWSER_WIDE
+        .is_none_or(|browser| browser.open);
+    let width = match browser_layout(open, pane_width) {
+        BrowserLayout::Full => {
+            return div()
+                .flex()
+                .size_full()
+                .child(browser(model, pane, connection, pane_width, cx))
+                .into_any_element();
+        }
+        BrowserLayout::Beside(width) => width,
+        BrowserLayout::Rail => RAIL,
     };
     div()
         .flex()
@@ -879,4 +907,39 @@ pub fn point_section(
             )
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_open_browser_always_shows() {
+        // Wide panes keep the table beside the browser.
+        assert_eq!(
+            browser_layout(true, 1200.0),
+            BrowserLayout::Beside(BROWSER_WIDE)
+        );
+        assert_eq!(
+            browser_layout(true, 700.0),
+            BrowserLayout::Beside(BROWSER_NARROW)
+        );
+        assert_eq!(
+            browser_layout(true, BROWSER_NARROW + TABLE_MIN),
+            BrowserLayout::Beside(BROWSER_NARROW)
+        );
+        // Too narrow for both: the browser takes the pane instead of folding to a rail.
+        assert_eq!(
+            browser_layout(true, BROWSER_NARROW + TABLE_MIN - 1.0),
+            BrowserLayout::Full
+        );
+        assert_eq!(browser_layout(true, 400.0), BrowserLayout::Full);
+    }
+
+    #[test]
+    fn only_a_hidden_browser_leaves_the_rail() {
+        for width in [300.0, 600.0, 1200.0] {
+            assert_eq!(browser_layout(false, width), BrowserLayout::Rail);
+        }
+    }
 }

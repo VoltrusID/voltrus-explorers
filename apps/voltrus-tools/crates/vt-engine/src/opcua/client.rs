@@ -114,6 +114,21 @@ pub(crate) async fn run(
     let mut wanted: Vec<OpcuaNode> = spec.nodes.clone();
     let mut stats = Stats::default();
     let mut attempt: u32 = 0;
+    // The client's certificate, made before the connect wait starts: a new key can take longer
+    // than the wait.
+    out.state(SessionState::Connecting);
+    let prepared = tokio::select! {
+        prepared = OpcUaProtocolClient::prepare_certificate() => prepared,
+        () = until_closed(&mut control, out) => {
+            out.state(SessionState::Closed { error: None });
+            return;
+        }
+    };
+    if let Err(error) = prepared {
+        out.log(LogLevel::Error, error.clone());
+        out.state(SessionState::Closed { error: Some(error) });
+        return;
+    }
 
     'session: loop {
         out.state(SessionState::Connecting);

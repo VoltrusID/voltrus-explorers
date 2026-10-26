@@ -15,6 +15,8 @@ use crate::types::*;
 #[derive(Clone)]
 pub struct NatsClient {
     client: async_nats::Client,
+    /// TLS PEM files async-nats re-reads on reconnect; deleted on last drop.
+    _tls_files: Option<std::sync::Arc<TlsFiles>>,
 }
 
 impl NatsClient {
@@ -80,33 +82,38 @@ impl NatsClient {
                 opts = opts.jwt(user_jwt, move |nonce: Vec<u8>| {
                     let seed = nkey_seed.clone();
                     async move {
-                        let kp = nkeys::KeyPair::from_seed(&seed)
-                            .map_err(async_nats::AuthError::new)?;
+                        let kp =
+                            nkeys::KeyPair::from_seed(&seed).map_err(async_nats::AuthError::new)?;
                         kp.sign(&nonce).map_err(async_nats::AuthError::new)
                     }
                 });
             }
         }
 
+        // Held by the client: async-nats reads these files on (re)connect.
+        let mut tls_files = None;
         if config.tls.enabled {
             opts = opts.require_tls(true);
             // async-nats 0.50 takes CA/cert/key from file paths. Write the
             // PEM bodies to a temp dir so self-signed / mTLS setups work.
-            let tls_files = TlsFiles::write(&config.tls)?;
-            opts = opts.add_root_certificates(tls_files.ca_path.clone());
-            if let (Some(cert), Some(key)) = (tls_files.cert_path.as_ref(), tls_files.key_path.as_ref())
-            {
+            let files = TlsFiles::write(&config.tls)?;
+            if let Some(ca) = files.ca_path.as_ref() {
+                opts = opts.add_root_certificates(ca.clone());
+            }
+            if let (Some(cert), Some(key)) = (files.cert_path.as_ref(), files.key_path.as_ref()) {
                 opts = opts.add_client_certificate(cert.clone(), key.clone());
             }
-            // Keep the temp dir alive for the connection's lifetime.
-            let _ = tls_files;
+            tls_files = Some(std::sync::Arc::new(files));
         }
 
         let client = opts
             .connect(&server_url)
             .await
             .map_err(|e| format!("Failed to connect: {}", e))?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            _tls_files: tls_files,
+        })
     }
 
     /// The raw async-nats client (for advanced use / JetStream context).
@@ -129,10 +136,7 @@ impl NatsClient {
         headers: &[(String, String)],
         payload: &[u8],
     ) -> Result<(), String> {
-        let mut h = async_nats::HeaderMap::default();
-        for (k, v) in headers {
-            h.append(k.as_str(), v.as_str());
-        }
+        let h = header_map(headers)?;
         self.client
             .publish_with_headers(subject.to_string(), h, payload.to_vec().into())
             .await
@@ -145,7 +149,8 @@ impl NatsClient {
         if msg.headers.is_empty() {
             self.publish(&msg.subject, &payload).await
         } else {
-            self.publish_with_headers(&msg.subject, &msg.headers, &payload).await
+            self.publish_with_headers(&msg.subject, &msg.headers, &payload)
+                .await
         }
     }
 
@@ -156,7 +161,9 @@ impl NatsClient {
         payload: &[u8],
         timeout_ms: u64,
     ) -> Result<NatsMessage, String> {
-        let fut = self.client.request(subject.to_string(), payload.to_vec().into());
+        let fut = self
+            .client
+            .request(subject.to_string(), payload.to_vec().into());
         let reply = tokio::time::timeout(Duration::from_millis(timeout_ms), fut)
             .await
             .map_err(|_| "Request timed out".to_string())?
@@ -182,11 +189,17 @@ impl NatsClient {
                 .await
                 .map_err(|e| format!("Subscribe failed: {}", e))?
         };
-        let sid = format!("{:x}", std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default());
-        Ok(NatsSubscription { sid, subscription: sub })
+        let sid = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        );
+        Ok(NatsSubscription {
+            sid,
+            subscription: sub,
+        })
     }
 }
 
@@ -532,7 +545,12 @@ impl NatsClient {
         Ok(out)
     }
 
-    pub async fn kv_create(&self, bucket: &str, history: i64, max_age_ns: i64) -> Result<(), String> {
+    pub async fn kv_create(
+        &self,
+        bucket: &str,
+        history: i64,
+        max_age_ns: i64,
+    ) -> Result<(), String> {
         let cfg = async_nats::jetstream::kv::Config {
             bucket: bucket.to_string(),
             history,
@@ -774,7 +792,10 @@ impl NatsClient {
     }
 }
 
-fn obj_info_from(bucket: &str, info: async_nats::jetstream::object_store::ObjectInfo) -> NatsObjectInfo {
+fn obj_info_from(
+    bucket: &str,
+    info: async_nats::jetstream::object_store::ObjectInfo,
+) -> NatsObjectInfo {
     NatsObjectInfo {
         bucket: bucket.to_string(),
         name: info.name,
@@ -814,7 +835,8 @@ fn msg_from_async(m: async_nats::Message) -> NatsMessage {
             h.iter()
                 .flat_map(|(k, vals)| {
                     let k = k.to_string();
-                    vals.iter().map(move |v| (k.clone(), v.as_str().to_string()))
+                    vals.iter()
+                        .map(move |v| (k.clone(), v.as_str().to_string()))
                 })
                 .collect()
         })
@@ -884,48 +906,115 @@ fn is_not_found(e: &async_nats::jetstream::Error) -> bool {
 // ---------------------------------------------------------------------------
 
 struct TlsFiles {
-    ca_path: std::path::PathBuf,
+    /// Owns the directory; dropping it deletes the PEM files.
+    _dir: tempfile::TempDir,
+    ca_path: Option<std::path::PathBuf>,
     cert_path: Option<std::path::PathBuf>,
     key_path: Option<std::path::PathBuf>,
+}
+
+/// The CA body to trust, or `None` when blank (use the system roots).
+fn ca_body(tls: &NatsClientTlsConfig) -> Option<&str> {
+    tls.ca_pem
+        .as_deref()
+        .map(str::trim)
+        .filter(|ca| !ca.is_empty())
+}
+
+/// Headers as `async_nats` takes them, rejecting invalid names/values
+/// instead of panicking.
+pub(crate) fn header_map(headers: &[(String, String)]) -> Result<async_nats::HeaderMap, String> {
+    use std::str::FromStr;
+    let mut map = async_nats::HeaderMap::new();
+    for (name, value) in headers {
+        let key = async_nats::HeaderName::from_str(name)
+            .map_err(|_| format!("\"{}\" is not a valid header name", name))?;
+        let val = async_nats::HeaderValue::from_str(value)
+            .map_err(|_| format!("Header \"{}\" has an invalid value", name))?;
+        map.append(key, val);
+    }
+    Ok(map)
 }
 
 impl TlsFiles {
     fn write(tls: &NatsClientTlsConfig) -> Result<Self, String> {
         use std::io::Write;
-        let dir = std::env::temp_dir().join(format!(
-            "mt-nats-tls-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create TLS temp dir: {}", e))?;
+        let dir = tempfile::Builder::new()
+            .prefix("mt-nats-tls-")
+            .tempdir()
+            .map_err(|e| format!("Failed to create TLS temp dir: {}", e))?;
 
-        let ca = tls.ca_pem.as_deref().unwrap_or("");
-        let ca_path = dir.join("ca.pem");
-        if !ca.trim().is_empty() {
-            let mut f = std::fs::File::create(&ca_path).map_err(|e| e.to_string())?;
-            f.write_all(ca.trim().as_bytes()).map_err(|e| e.to_string())?;
-        } else {
-            // Write an empty file so add_root_certificates doesn't error.
-            let _ = std::fs::File::create(&ca_path);
-        }
+        let ca_path = match ca_body(tls) {
+            Some(ca) => {
+                let path = dir.path().join("ca.pem");
+                let mut f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+                f.write_all(ca.as_bytes()).map_err(|e| e.to_string())?;
+                Some(path)
+            }
+            None => None,
+        };
 
-        let (cert_path, key_path) = match (tls.client_cert_pem.as_deref(), tls.client_key_pem.as_deref()) {
+        let (cert_path, key_path) = match (
+            tls.client_cert_pem.as_deref(),
+            tls.client_key_pem.as_deref(),
+        ) {
             (Some(c), Some(k)) if !c.trim().is_empty() && !k.trim().is_empty() => {
-                let cp = dir.join("client.crt");
-                let kp = dir.join("client.key");
+                let cp = dir.path().join("client.crt");
+                let kp = dir.path().join("client.key");
                 let mut f = std::fs::File::create(&cp).map_err(|e| e.to_string())?;
-                f.write_all(c.trim().as_bytes()).map_err(|e| e.to_string())?;
+                f.write_all(c.trim().as_bytes())
+                    .map_err(|e| e.to_string())?;
                 drop(f);
                 let mut f = std::fs::File::create(&kp).map_err(|e| e.to_string())?;
-                f.write_all(k.trim().as_bytes()).map_err(|e| e.to_string())?;
+                f.write_all(k.trim().as_bytes())
+                    .map_err(|e| e.to_string())?;
                 (Some(cp), Some(kp))
             }
             _ => (None, None),
         };
 
-        Ok(Self { ca_path, cert_path, key_path })
+        Ok(Self {
+            _dir: dir,
+            ca_path,
+            cert_path,
+            key_path,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tls(ca: Option<&str>) -> NatsClientTlsConfig {
+        NatsClientTlsConfig {
+            enabled: true,
+            ca_pem: ca.map(str::to_owned),
+            ..NatsClientTlsConfig::default()
+        }
+    }
+
+    #[test]
+    fn blank_ca_adds_no_root_certificate_file() {
+        for blank in [None, Some(""), Some("  \n ")] {
+            assert_eq!(ca_body(&tls(blank)), None);
+            let files = TlsFiles::write(&tls(blank)).unwrap();
+            assert!(files.ca_path.is_none());
+            assert!(files.cert_path.is_none());
+        }
+        let files = TlsFiles::write(&tls(Some(" PEM\n"))).unwrap();
+        let ca = files.ca_path.clone().unwrap();
+        assert_eq!(std::fs::read_to_string(&ca).unwrap(), "PEM");
+        drop(files);
+        assert!(!ca.exists(), "temp dir is removed with the files");
+    }
+
+    #[test]
+    fn invalid_headers_are_errors_not_panics() {
+        let pair = |n: &str, v: &str| vec![(n.to_owned(), v.to_owned())];
+        assert!(header_map(&pair("X-Unit", "kW")).is_ok());
+        assert!(header_map(&pair("Ünit", "kW")).is_err());
+        assert!(header_map(&pair("a:b", "kW")).is_err());
+        assert!(header_map(&pair("X-Unit", "k\r\nW")).is_err());
     }
 }

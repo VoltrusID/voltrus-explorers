@@ -412,15 +412,21 @@ pub fn adapter(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             row()
                 .child(
                     div()
+                        .flex_1()
+                        .child(field("Listen on", fields.adapter_bind.clone(), cx)),
+                )
+                .child(
+                    div()
                         .w(px(130.0))
                         .flex_none()
                         .child(field("Port", fields.adapter_port.clone(), cx)),
-                )
-                .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
-                    "TCP sessions and UDP ListIdentity on every interface. 44818 is the EtherNet/IP port.",
-                    cx,
-                ))),
+                ),
         )
+        .child(hint(
+            "TCP sessions and UDP ListIdentity. 127.0.0.1 keeps the adapter on this computer; \
+             0.0.0.0 opens it to the network. 44818 is the EtherNet/IP port.",
+            cx,
+        ))
         .child(group("Plant", cx).children(cards))
         .child(hint(
             "Serves its tags by name, the Identity object, input assembly 100 (every tag's value) and \

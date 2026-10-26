@@ -543,20 +543,23 @@ fn opcua(
         // A new client asking the server for its endpoints.
         Scenario::OpcuaEditor => {
             model.workspace.ui.inspector_open = false;
-            let port = match model
+            let (host, port) = match model
                 .workspace
                 .connection(simulator)
                 .map(|saved| &saved.spec)
             {
-                Some(vt_protocol::SessionSpec::OpcuaServer(server)) => server.port,
-                _ => vt_protocol::OPCUA_PORT,
+                Some(vt_protocol::SessionSpec::OpcuaServer(server)) => (server.host(), server.port),
+                _ => (
+                    vt_protocol::OpcuaServerSpec::default().host(),
+                    vt_protocol::OPCUA_PORT,
+                ),
             };
             model.open_editor(EditorKind::OpcuaClient, None, window, cx);
             if let Some(endpoint) = model
                 .editor_mut()
                 .map(|editor| editor.opcua.endpoint.clone())
             {
-                let url = format!("opc.tcp://localhost:{port}");
+                let url = format!("opc.tcp://{host}:{port}");
                 endpoint.update(cx, |input, cx| input.set_text(url, cx));
             }
             cx.spawn(async move |this, cx| {

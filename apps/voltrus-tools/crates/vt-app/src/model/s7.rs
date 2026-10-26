@@ -118,9 +118,14 @@ impl AppModel {
         let Some(template) = templates::find_s7(&server.template) else {
             return;
         };
+        let host = match server.bind.as_str() {
+            "0.0.0.0" => "127.0.0.1",
+            "::" => "::1",
+            bind => bind,
+        };
         let client = self.workspace.add_connection(
             format!("{name} client"),
-            SessionSpec::S7Client(templates::s7_client_for(template, "127.0.0.1", server.port)),
+            SessionSpec::S7Client(templates::s7_client_for(template, host, server.port)),
         );
         self.workspace
             .split(client, Axis::Horizontal, PaneView::Points);

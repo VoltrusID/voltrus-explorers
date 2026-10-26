@@ -151,6 +151,7 @@ fn a_client_polls_writes_and_diagnoses_a_simulated_cpu() {
         port,
         template: template.id.clone(),
         pdu_size: 480,
+        ..S7ServerSpec::default()
     };
 
     engine.send(Command::Open {
@@ -391,10 +392,37 @@ fn a_missing_data_block_fails_only_its_own_tag() {
 }
 
 #[test]
+fn the_default_simulator_listens_on_loopback() {
+    let (engine, receiver) = vt_engine::start().expect("the engine starts");
+    let mut events = Events::new(receiver);
+    let port = free_port();
+    engine.send(Command::Open {
+        session: SessionId(1),
+        spec: SessionSpec::S7Server(S7ServerSpec {
+            port,
+            ..S7ServerSpec::default()
+        }),
+    });
+    let reached = state(&mut events, SessionId(1), |state| {
+        matches!(
+            state,
+            SessionState::Listening { .. } | SessionState::Closed { .. }
+        )
+    });
+    assert_eq!(
+        reached,
+        SessionState::Listening {
+            address: format!("127.0.0.1:{port}"),
+        }
+    );
+    engine.send(Command::Shutdown);
+}
+
+#[test]
 fn a_simulator_on_a_taken_port_says_so() {
     let (engine, receiver) = vt_engine::start().expect("the engine starts");
     let mut events = Events::new(receiver);
-    let taken = std::net::TcpListener::bind("0.0.0.0:0").expect("a listener");
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
     let port = taken.local_addr().expect("its address").port();
     engine.send(Command::Open {
         session: SessionId(1),

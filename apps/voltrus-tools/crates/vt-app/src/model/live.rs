@@ -325,8 +325,10 @@ impl Live {
             .filter(|text| !text.is_empty())
     }
 
-    /// Move the selection by `step` rows; returns the newly selected row.
-    pub fn select_step(&mut self, step: isize) -> Option<usize> {
+    /// The row `step` rows from the selection, clamped to the table. Leaves
+    /// the selection alone: moving goes through `AppModel::select_point`, so
+    /// a step resets the inspector the same way a click does.
+    pub fn step_target(&self, step: isize) -> Option<usize> {
         let count = self.points.len();
         if count == 0 {
             return None;
@@ -339,9 +341,7 @@ impl Live {
                 (current + step).clamp(0, last)
             }
         };
-        let next = usize::try_from(next).unwrap_or(0);
-        self.selected = u32::try_from(next).ok();
-        Some(next)
+        Some(usize::try_from(next).unwrap_or(0))
     }
 }
 
@@ -385,13 +385,37 @@ mod tests {
     }
 
     #[test]
-    fn a_stopped_session_detaches_and_steps_stay_in_range() {
+    fn steps_stay_in_range() {
         let mut live = Live::default();
         live.restart(SessionId(7), 1000);
         live.apply(EventKind::Points((0..3).map(point).collect()));
-        assert_eq!(live.select_step(1), Some(0));
-        assert_eq!(live.select_step(5), Some(2));
-        assert_eq!(live.select_step(-9), Some(0));
+        assert_eq!(live.step_target(1), Some(0));
+        live.selected = Some(0);
+        assert_eq!(live.step_target(5), Some(2));
+        live.selected = Some(2);
+        assert_eq!(live.step_target(-9), Some(0));
+    }
+
+    /// ↑↓ used to move the selection itself, so `select_point` saw no change
+    /// and skipped the per-point resets (OPC UA write box, NATS subject, MQTT
+    /// topic, CIP target). Stepping must only name the next row.
+    #[test]
+    fn a_step_names_the_next_row_without_selecting_it() {
+        let mut live = Live::default();
+        live.restart(SessionId(7), 1000);
+        live.apply(EventKind::Points((0..3).map(point).collect()));
+        assert_eq!(live.step_target(1), Some(0));
+        assert_eq!(live.selected, None);
+        live.selected = Some(1);
+        assert_eq!(live.step_target(1), Some(2));
+        assert_eq!(live.selected, Some(1), "select_point moves the selection");
+        assert_eq!(Live::default().step_target(1), None);
+    }
+
+    #[test]
+    fn a_stopped_session_detaches() {
+        let mut live = Live::default();
+        live.restart(SessionId(7), 1000);
         live.apply(EventKind::State(SessionState::Closed { error: None }));
         assert_eq!(live.session, None);
     }

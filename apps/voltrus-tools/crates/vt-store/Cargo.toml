@@ -11,12 +11,16 @@ publish.workspace = true
 [features]
 # Mac App Store build: the 14-day trial and the unlock are bought through
 # StoreKit 2 (swift/StoreKitBridge.swift, compiled by build.rs). Without it
-# (source and GitHub builds) everything is unlocked and nothing is sold.
-store = []
+# (source and GitHub builds) everything is unlocked and nothing is sold. The
+# trial's clock floor and start are also kept in the Keychain.
+store = ["dep:security-framework"]
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", optional = true }
 
 [build-dependencies]
 serde_json.workspace = true

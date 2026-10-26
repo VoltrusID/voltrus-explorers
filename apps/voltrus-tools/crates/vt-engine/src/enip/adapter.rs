@@ -8,7 +8,7 @@
 //! app sees every held point as `Locked`.
 
 use std::f64::consts::TAU;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,26 +48,37 @@ pub(crate) async fn run(
         fail(out, format!("Unknown EtherNet/IP plant {}", spec.template));
         return;
     };
-    let (state, mut server_log, shutdown) = match listen(&spec, template, &mut control, out).await {
-        Ok(Some(server)) => server,
-        Ok(None) => {
-            out.state(SessionState::Closed { error: None });
-            return;
-        }
-        Err(error) => {
-            fail(out, error);
-            return;
-        }
+    let Some(bind) = crate::bacnet::parse_ip(&spec.bind) else {
+        fail(out, format!("Listen on an IP address, not {}", spec.bind));
+        return;
     };
+    let (state, mut server_log, shutdown) =
+        match listen(&spec, bind, template, &mut control, out).await {
+            Ok(Some(server)) => server,
+            Ok(None) => {
+                out.state(SessionState::Closed { error: None });
+                return;
+            }
+            Err(error) => {
+                fail(out, error);
+                return;
+            }
+        };
     let (frames_tx, mut frames) = mpsc::unbounded_channel::<TrafficFrame>();
     // Keeps the channel open when discovery has no socket, so `recv` waits
     // instead of returning `None` on every turn of the loop.
     let _frames_open = frames_tx.clone();
-    match bind_discovery(spec.port, &mut control).await {
+    match bind_discovery(bind, spec.port, &mut control).await {
         Some(Ok(socket)) => {
+            // ListIdentity names the endpoint to connect to: the bound IPv4
+            // address, or 0.0.0.0 for "the address you reached me on".
+            let advertised = match bind {
+                IpAddr::V4(ip) => ip.octets(),
+                IpAddr::V6(_) => [0, 0, 0, 0],
+            };
             tokio::spawn(mt_enip::answer_list_identity(
                 socket,
-                [0, 0, 0, 0],
+                advertised,
                 spec.port,
                 shutdown.subscribe(),
                 move |peer: SocketAddr, request: &[u8], reply: &[u8]| {
@@ -104,7 +115,7 @@ pub(crate) async fn run(
     let layout = assembly_layout(template);
     let assembly_size: usize = layout.iter().map(|(_, data_type)| data_type.size()).sum();
     out.state(SessionState::Listening {
-        address: format!("0.0.0.0:{}", spec.port),
+        address: SocketAddr::new(bind, spec.port).to_string(),
     });
     out.log(
         LogLevel::Info,
@@ -199,6 +210,7 @@ type Server = (
 /// the session meanwhile.
 async fn listen(
     spec: &EnipAdapterSpec,
+    bind: IpAddr,
     template: &EnipTemplate,
     control: &mut mpsc::UnboundedReceiver<Control>,
     out: &Emitter,
@@ -223,7 +235,11 @@ async fn listen(
     loop {
         let config = EnipServerConfig {
             port: spec.port,
-            bind_addr: "0.0.0.0".into(),
+            bind_addr: if bind.is_ipv6() {
+                format!("[{bind}]")
+            } else {
+                bind.to_string()
+            },
         };
         let error = match mt_enip::start_enip_server(config, tags.clone(), Vec::new()).await {
             Ok(server) => return Ok(Some(server)),
@@ -233,7 +249,10 @@ async fn listen(
             .downcast_ref::<std::io::Error>()
             .is_some_and(|error| error.kind() == std::io::ErrorKind::AddrInUse);
         if !in_use {
-            return Err(format!("Cannot listen on TCP port {}: {error}", spec.port));
+            return Err(format!(
+                "Cannot listen on {}: {error}",
+                SocketAddr::new(bind, spec.port)
+            ));
         }
         if Instant::now() >= deadline {
             return Err(format!(
@@ -248,16 +267,17 @@ async fn listen(
     }
 }
 
-/// The UDP socket ListIdentity requests arrive on: the session's port on
-/// every interface, retried while a closing adapter lets go of it. `None`
+/// The UDP socket ListIdentity requests arrive on: the session's address and
+/// port, retried while a closing adapter lets go of it. `None`
 /// when the app closed the session meanwhile.
 async fn bind_discovery(
+    bind: IpAddr,
     port: u16,
     control: &mut mpsc::UnboundedReceiver<Control>,
 ) -> Option<Result<UdpSocket, String>> {
     let deadline = Instant::now() + BIND_RETRY;
     loop {
-        let error = match UdpSocket::bind(("0.0.0.0", port)).await {
+        let error = match UdpSocket::bind((bind, port)).await {
             Ok(socket) => return Some(Ok(socket)),
             Err(error) => error,
         };

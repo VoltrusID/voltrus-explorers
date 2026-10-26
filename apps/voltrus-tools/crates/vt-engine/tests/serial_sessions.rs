@@ -438,16 +438,11 @@ fn the_port_list_answers_under_its_request() {
         .clone()
         .expect("an answer")
         .expect("the system lists its ports");
-    // On macOS each device has a call-in and a call-out node; only the
-    // call-out one (the one to open) is listed.
-    for port in &ports {
-        if let Some(name) = port.path.strip_prefix("/dev/tty.") {
-            assert!(
-                !ports
-                    .iter()
-                    .any(|other| other.path == format!("/dev/cu.{name}")),
-                "{name} listed twice"
-            );
-        }
-    }
+    // A runner may have no ports at all: which call-in twins are dropped is
+    // tested on a made-up list next to `without_call_in_twins`. Here: the
+    // list comes sorted, each port once.
+    assert!(
+        ports.windows(2).all(|pair| pair[0].path < pair[1].path),
+        "{ports:?}"
+    );
 }

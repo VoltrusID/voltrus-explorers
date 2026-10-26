@@ -7,6 +7,23 @@ use vt_protocol::{
 
 use super::{Field, FormError, error, name, number};
 
+/// A local address as typed, bare or in brackets (`[::]`), kept bare.
+fn bind_address(text: &str) -> Result<String, FormError> {
+    let text = text.trim();
+    let bare = text
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(text);
+    bare.parse::<std::net::IpAddr>()
+        .map(|ip| ip.to_string())
+        .map_err(|_| {
+            error(
+                Field::Bind,
+                "Listen on an IP address, e.g. 127.0.0.1, 0.0.0.0 or ::",
+            )
+        })
+}
+
 /// Most tags one connection polls.
 pub const MAX_S7_TAGS: usize = 1000;
 
@@ -206,6 +223,7 @@ pub fn next_s7_tag(tags: &[S7TagForm]) -> S7TagForm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S7ServerForm {
     pub name: String,
+    pub bind: String,
     pub port: String,
     pub template: String,
     pub pdu_size: String,
@@ -215,6 +233,7 @@ impl S7ServerForm {
     pub fn from_spec(name: &str, spec: &S7ServerSpec) -> Self {
         Self {
             name: name.to_owned(),
+            bind: spec.bind.clone(),
             port: spec.port.to_string(),
             template: spec.template.clone(),
             pdu_size: spec.pdu_size.to_string(),
@@ -226,6 +245,7 @@ impl S7ServerForm {
         Ok((
             name,
             S7ServerSpec {
+                bind: bind_address(&self.bind)?,
                 port: number(&self.port, Field::Port, "Port", 1, u16::MAX)?,
                 template: self.template.clone(),
                 pdu_size: number(
@@ -264,6 +284,15 @@ mod tests {
         assert_eq!(spec, S7ClientSpec::default());
         let server = S7ServerForm::from_spec("CPU", &S7ServerSpec::default());
         assert_eq!(server.build().unwrap().1, S7ServerSpec::default());
+    }
+
+    #[test]
+    fn servers_listen_on_an_ip_address() {
+        let mut server = S7ServerForm::from_spec("CPU", &S7ServerSpec::default());
+        server.bind = " [::] ".into();
+        assert_eq!(server.build().unwrap().1.bind, "::");
+        server.bind = "localhost".into();
+        assert_eq!(server.build().unwrap_err().field, Field::Bind);
     }
 
     #[test]

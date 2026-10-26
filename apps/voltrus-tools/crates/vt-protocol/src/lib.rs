@@ -188,7 +188,9 @@ impl SessionSpec {
                 [_] => format!("{} · 1 variable", spec.endpoint),
                 many => format!("{} · {} variables", spec.endpoint, many.len()),
             },
-            Self::OpcuaServer(spec) => format!("opc.tcp://0.0.0.0:{} · plant", spec.port),
+            Self::OpcuaServer(spec) => {
+                format!("opc.tcp://{} · plant", host_port(&spec.bind, spec.port))
+            }
             Self::Dnp3Master(spec) => format!(
                 "{} · outstation {}",
                 host_port(&spec.host, spec.port),
@@ -203,7 +205,9 @@ impl SessionSpec {
                 "" => host_port(&spec.host, spec.port),
                 route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
             },
-            Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::EnipAdapter(spec) => {
+                format!("{} · {}", host_port(&spec.bind, spec.port), spec.template)
+            }
             Self::SerialMonitor(spec) => format!(
                 "{} · {} {}{}{}",
                 short_port(&spec.link.port),
@@ -219,7 +223,9 @@ impl SessionSpec {
                 spec.rack,
                 spec.slot
             ),
-            Self::S7Server(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::S7Server(spec) => {
+                format!("{} · {}", host_port(&spec.bind, spec.port), spec.template)
+            }
             Self::NatsClient(spec) => format!(
                 "{}{} · {}",
                 if spec.tls { "tls://" } else { "nats://" },
@@ -250,15 +256,15 @@ impl SessionSpec {
             Self::OpcuaClient(spec) => opcua_host_port(&spec.endpoint)
                 .unwrap_or(&spec.endpoint)
                 .to_owned(),
-            Self::OpcuaServer(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::OpcuaServer(spec) => host_port(&spec.bind, spec.port),
             Self::Dnp3Master(spec) => host_port(&spec.host, spec.port),
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
             Self::EnipClient(spec) => host_port(&spec.host, spec.port),
-            Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::EnipAdapter(spec) => host_port(&spec.bind, spec.port),
             Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
             Self::SerialDevice(spec) => spec.alias.clone(),
             Self::S7Client(spec) => host_port(&spec.host, spec.port),
-            Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::S7Server(spec) => host_port(&spec.bind, spec.port),
             Self::NatsClient(spec) => host_port(&spec.host, spec.port),
             Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
             Self::BleClient(spec) => ble_label(spec),
@@ -385,4 +391,31 @@ impl Protocol {
 pub enum Role {
     Client,
     Simulator,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simulators_show_the_address_they_listen_on() {
+        let s7 = SessionSpec::S7Server(S7ServerSpec {
+            port: 1102,
+            ..S7ServerSpec::default()
+        });
+        assert_eq!(s7.address(), "127.0.0.1:1102");
+        let enip = SessionSpec::EnipAdapter(EnipAdapterSpec {
+            bind: "0.0.0.0".into(),
+            port: 44818,
+            ..EnipAdapterSpec::default()
+        });
+        assert_eq!(enip.address(), "0.0.0.0:44818");
+        let opcua = SessionSpec::OpcuaServer(OpcuaServerSpec {
+            bind: "::1".into(),
+            port: 4840,
+            ..OpcuaServerSpec::default()
+        });
+        assert_eq!(opcua.address(), "[::1]:4840");
+        assert!(opcua.endpoint().starts_with("opc.tcp://[::1]:4840"));
+    }
 }

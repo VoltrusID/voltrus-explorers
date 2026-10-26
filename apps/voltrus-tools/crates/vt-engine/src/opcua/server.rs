@@ -60,6 +60,14 @@ pub(crate) async fn run(
         }
     };
     let config = PlantServerConfig {
+        // The form only saves IP addresses; anything else stays on this computer.
+        bind: spec
+            .bind
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
         port: spec.port,
         application_name: "Voltrus plant".into(),
         anonymous: spec.anonymous,

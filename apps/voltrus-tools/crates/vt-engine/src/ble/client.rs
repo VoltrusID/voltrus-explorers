@@ -102,9 +102,18 @@ pub(crate) async fn run_with<C: Central>(
 
     'session: loop {
         out.state(SessionState::Connecting);
+        let mut found = None;
         let established = tokio::select! {
-            result = establish(central, &spec, &mut state.traffic) => result,
-            () = until_closed(&mut control, out) => break 'session,
+            result = establish(central, &spec, &mut state.traffic, &mut found) => result,
+            () = until_closed(&mut control, out) => {
+                // Closed mid-connect: dropping `establish` skips its own
+                // clean-up, so stop the scan and drop a half-made link here.
+                let _ = central.stop_scan().await;
+                if let Some(id) = found {
+                    let _ = central.disconnect(&id).await;
+                }
+                break 'session;
+            }
         };
         let (id, services) = match established {
             Ok(established) => established,
@@ -283,13 +292,17 @@ async fn find<C: Central>(central: &C, spec: &BleClientSpec) -> Result<String, S
     found
 }
 
-/// Find, connect and discover the services.
+/// Find, connect and discover the services. `found` holds the peripheral
+/// once the scan finds it, so a caller that drops this mid-connect can
+/// disconnect it.
 async fn establish<C: Central>(
     central: &C,
     spec: &BleClientSpec,
     traffic: &mut Vec<TrafficFrame>,
+    found: &mut Option<String>,
 ) -> Result<(String, Vec<BleService>), String> {
     let id = find(central, spec).await?;
+    *found = Some(id.clone());
     let label = label(spec);
     traffic.push(frame(
         Direction::Tx,
@@ -950,5 +963,38 @@ mod tests {
         };
         let ((), closed) = tokio::join!(session, driver);
         assert_eq!(closed, None);
+    }
+
+    #[tokio::test]
+    async fn closing_while_connecting_stops_the_scan() {
+        let (central, notifications) = SimCentral::new();
+        let (control, control_rx) = mpsc::unbounded_channel();
+        let (events_tx, events) = async_channel::unbounded();
+        let out = Emitter::new(SessionId(3), events_tx);
+        // Nothing advertises this: the session scans for it.
+        let spec = BleClientSpec {
+            adapter: BleAdapter::Simulated,
+            peripheral: "00000000-0000-4000-8000-000000000000".into(),
+            ..BleClientSpec::default()
+        };
+        let session = run_with(&central, notifications, spec, control_rx, &out);
+        let driver = async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !central.scanning() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the session scans");
+            control.send(Control::Close).expect("the session listens");
+            wait(&events, |kind| match state(kind) {
+                Some(SessionState::Closed { error }) => Some(error),
+                _ => None,
+            })
+            .await
+        };
+        let ((), closed) = tokio::join!(session, driver);
+        assert_eq!(closed, None);
+        assert!(!central.scanning(), "Close stopped the scan");
     }
 }

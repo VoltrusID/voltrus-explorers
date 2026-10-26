@@ -156,11 +156,19 @@ fn client_discovers_reads_writes_and_messages_a_simulated_adapter() {
         spec: SessionSpec::EnipAdapter(EnipAdapterSpec {
             port,
             template: "drive".into(),
+            ..EnipAdapterSpec::default()
         }),
     });
-    state(&mut events, adapter, |state| {
+    // The default adapter stays on this computer.
+    let listening = state(&mut events, adapter, |state| {
         matches!(state, SessionState::Listening { .. })
     });
+    assert_eq!(
+        listening,
+        SessionState::Listening {
+            address: format!("127.0.0.1:{port}"),
+        }
+    );
     let served = points(&mut events, adapter);
     assert_eq!(served.len(), template.points.len());
     assert_eq!(served[index_of("speed")].name, "Motor1.Speed");
@@ -417,6 +425,7 @@ fn a_client_without_points_reads_every_tag_the_controller_lists() {
         spec: SessionSpec::EnipAdapter(EnipAdapterSpec {
             port,
             template: "tank".into(),
+            ..EnipAdapterSpec::default()
         }),
     });
     state(&mut events, adapter, |state| {
@@ -468,7 +477,7 @@ fn a_client_without_points_reads_every_tag_the_controller_lists() {
 fn an_adapter_on_a_taken_port_fails_with_the_reason() {
     let (engine, receiver) = vt_engine::start().unwrap();
     let mut events = Events::new(receiver);
-    let taken = std::net::TcpListener::bind("0.0.0.0:0").expect("a listener");
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
     let port = taken.local_addr().expect("its address").port();
     let adapter = SessionId(1);
     engine.send(Command::Open {
@@ -476,6 +485,7 @@ fn an_adapter_on_a_taken_port_fails_with_the_reason() {
         spec: SessionSpec::EnipAdapter(EnipAdapterSpec {
             port,
             template: "drive".into(),
+            ..EnipAdapterSpec::default()
         }),
     });
     let closed = state(&mut events, adapter, |state| {

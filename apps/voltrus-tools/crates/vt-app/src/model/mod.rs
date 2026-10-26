@@ -136,6 +136,9 @@ pub struct AppModel {
     pub drag: Option<Drag>,
     pub split_bounds: SplitBounds,
     pub pane_widths: PaneWidths,
+    /// Each wide pane header's name column at the last layout: its address
+    /// line only truncates inside a known width.
+    pub header_text_widths: PaneWidths,
     pane_scrolls: RefCell<HashMap<PaneId, PaneScroll>>,
     pub chrome: Chrome,
     pub write_input: Entity<TextInput>,
@@ -228,6 +231,7 @@ impl AppModel {
             drag: None,
             split_bounds: Rc::default(),
             pane_widths: Rc::default(),
+            header_text_widths: Rc::default(),
             pane_scrolls: RefCell::default(),
             chrome: Chrome {
                 sidebar: CachedView::new(
@@ -434,6 +438,9 @@ impl AppModel {
             .borrow_mut()
             .retain(|pane, _| open.contains(pane));
         self.pane_widths
+            .borrow_mut()
+            .retain(|pane, _| open.contains(pane));
+        self.header_text_widths
             .borrow_mut()
             .retain(|pane, _| open.contains(pane));
         for pane in open {
@@ -734,8 +741,8 @@ impl AppModel {
         cx.notify();
     }
 
-    /// ↑↓ through the focused pane's points. The typed write value belongs to
-    /// the point it was typed for, so moving clears it.
+    /// ↑↓ through the focused pane's points. Moving goes through
+    /// `select_point`, so the inspector resets exactly as it does on a click.
     pub fn step_selection(&mut self, step: isize, cx: &mut Context<Self>) {
         let Some(pane) = self.focused_pane().map(|pane| pane.id) else {
             return;
@@ -743,22 +750,20 @@ impl AppModel {
         let Some(connection) = self.focused_connection() else {
             return;
         };
-        let Some(live) = self.live.get_mut(&connection) else {
+        let Some(next) = self
+            .live
+            .get(&connection)
+            .and_then(|live| live.step_target(step))
+        else {
             return;
         };
-        let Some(next) = live.select_step(step) else {
+        let Ok(point) = u32::try_from(next) else {
             return;
         };
-        live.write_result = None;
-        self.write_input
-            .update(cx, |input, cx| input.set_text("", cx));
         self.pane_scroll(pane)
             .points
             .scroll_to_item(next, gpui::ScrollStrategy::Center);
-        if let Ok(point) = u32::try_from(next) {
-            self.sync_ble_inspector(connection, point, cx);
-        }
-        cx.notify();
+        self.select_point(connection, point, cx);
     }
 
     pub fn toggle_trend(&mut self, connection: ConnectionId, point: u32, cx: &mut Context<Self>) {

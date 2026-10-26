@@ -270,16 +270,25 @@ impl CipType {
 /// tags a plant template drives, with its assemblies and ListIdentity answers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnipAdapterSpec {
-    /// TCP port of the encapsulation session, on every interface; the
-    /// adapter answers ListIdentity on the same UDP port.
+    /// Address to listen on: `0.0.0.0` for every interface. Files saved
+    /// before this field existed listen on loopback only.
+    #[serde(default = "default_bind")]
+    pub bind: String,
+    /// TCP port of the encapsulation session; the adapter answers
+    /// ListIdentity on the same UDP port.
     pub port: u16,
     /// Built-in plant template id.
     pub template: String,
 }
 
+fn default_bind() -> String {
+    "127.0.0.1".into()
+}
+
 impl Default for EnipAdapterSpec {
     fn default() -> Self {
         Self {
+            bind: default_bind(),
             port: ENIP_PORT,
             template: "drive".into(),
         }
@@ -341,6 +350,14 @@ pub struct CipResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapter_listens_on_loopback_unless_told_otherwise() {
+        assert_eq!(EnipAdapterSpec::default().bind, "127.0.0.1");
+        let old: EnipAdapterSpec =
+            serde_json::from_str(r#"{"port":44818,"template":"drive"}"#).unwrap();
+        assert_eq!(old.bind, "127.0.0.1");
+    }
 
     #[test]
     fn addresses_parse_and_print_back() {

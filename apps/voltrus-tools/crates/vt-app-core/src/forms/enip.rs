@@ -5,6 +5,23 @@ use vt_protocol::{CipRequest, EnipAdapterSpec, EnipAddress, EnipClientSpec, Enip
 
 use super::{Field, FormError, error, name, number};
 
+/// A local address as typed, bare or in brackets (`[::]`), kept bare.
+fn bind_address(text: &str) -> Result<String, FormError> {
+    let text = text.trim();
+    let bare = text
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(text);
+    bare.parse::<std::net::IpAddr>()
+        .map(|ip| ip.to_string())
+        .map_err(|_| {
+            error(
+                Field::Bind,
+                "Listen on an IP address, e.g. 127.0.0.1, 0.0.0.0 or ::",
+            )
+        })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnipPointField {
     Name,
@@ -134,6 +151,7 @@ pub fn valid_route_path(route: &str) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnipAdapterForm {
     pub name: String,
+    pub bind: String,
     pub port: String,
     pub template: String,
 }
@@ -142,6 +160,7 @@ impl EnipAdapterForm {
     pub fn from_spec(name: &str, spec: &EnipAdapterSpec) -> Self {
         Self {
             name: name.to_owned(),
+            bind: spec.bind.clone(),
             port: spec.port.to_string(),
             template: spec.template.clone(),
         }
@@ -149,10 +168,12 @@ impl EnipAdapterForm {
 
     pub fn build(&self) -> Result<(String, EnipAdapterSpec), FormError> {
         let name = name(&self.name)?;
+        let bind = bind_address(&self.bind)?;
         let port = number(&self.port, Field::Port, "Port", 1, u16::MAX)?;
         Ok((
             name,
             EnipAdapterSpec {
+                bind,
                 port,
                 template: self.template.clone(),
             },
@@ -389,6 +410,15 @@ mod tests {
         assert_eq!(adapter.build().unwrap().1, EnipAdapterSpec::default());
         adapter.port = "0".into();
         assert_eq!(adapter.build().unwrap_err().field, Field::Port);
+    }
+
+    #[test]
+    fn adapters_listen_on_an_ip_address() {
+        let mut adapter = EnipAdapterForm::from_spec("Sim", &EnipAdapterSpec::default());
+        adapter.bind = "0.0.0.0".into();
+        assert_eq!(adapter.build().unwrap().1.bind, "0.0.0.0");
+        adapter.bind = "plc.local".into();
+        assert_eq!(adapter.build().unwrap_err().field, Field::Bind);
     }
 
     #[test]

@@ -201,6 +201,11 @@ mod tests {
         let kept = without_call_in_twins(vec![
             port("/dev/tty.usbserial-1"),
             port("/dev/cu.usbserial-1"),
+            // The call-out port may come first.
+            port("/dev/cu.usbmodem-2"),
+            port("/dev/tty.usbmodem-2"),
+            // A call-in port with no call-out twin stays.
+            port("/dev/tty.usbmodem-3"),
             port("/dev/tty.Bluetooth-Incoming-Port"),
             port("/dev/ttyUSB0"),
             port("/dev/ttyUSB0"),
@@ -209,8 +214,10 @@ mod tests {
         assert_eq!(
             paths,
             [
+                "/dev/cu.usbmodem-2",
                 "/dev/cu.usbserial-1",
                 "/dev/tty.Bluetooth-Incoming-Port",
+                "/dev/tty.usbmodem-3",
                 "/dev/ttyUSB0"
             ]
         );

@@ -117,6 +117,7 @@ pub struct OpcuaFields {
     pub nodes: Vec<OpcuaNode>,
     pub discovery: Discovery,
     // Server simulator
+    pub server_bind: Entity<TextInput>,
     pub server_port: Entity<TextInput>,
     pub anonymous: bool,
     pub server_user: Entity<TextInput>,
@@ -177,6 +178,7 @@ impl OpcuaFields {
             sampling: input(client.sampling_ms, "250", unsigned, true, cx),
             nodes: client.nodes,
             discovery: Discovery::Idle,
+            server_bind: input(server.bind, "127.0.0.1", text, true, cx),
             server_port: input(server.port, "4840", unsigned, true, cx),
             anonymous: server.anonymous,
             server_user: input(server.username, "none", text, false, cx),
@@ -185,7 +187,7 @@ impl OpcuaFields {
     }
 
     /// Every text field, so the editor can watch them.
-    pub fn inputs(&self) -> [Entity<TextInput>; 10] {
+    pub fn inputs(&self) -> [Entity<TextInput>; 11] {
         [
             self.endpoint.clone(),
             self.username.clone(),
@@ -194,6 +196,7 @@ impl OpcuaFields {
             self.private_key.clone(),
             self.publishing.clone(),
             self.sampling.clone(),
+            self.server_bind.clone(),
             self.server_port.clone(),
             self.server_user.clone(),
             self.server_password.clone(),
@@ -224,6 +227,7 @@ impl OpcuaFields {
     pub fn server_form(&self, name: String, cx: &App) -> OpcuaServerForm {
         OpcuaServerForm {
             name,
+            bind: Self::text(&self.server_bind, cx),
             port: Self::text(&self.server_port, cx),
             anonymous: self.anonymous,
             username: Self::text(&self.server_user, cx),
@@ -1129,9 +1133,23 @@ impl AppModel {
             CertificateFile::Certificate => editor.opcua.certificate.clone(),
             CertificateFile::PrivateKey => editor.opcua.private_key.clone(),
         };
-        editor.error = None;
-        let text = path.display().to_string();
-        field.update(cx, |input, cx| input.set_text(text, cx));
+        // The open panel's permission lasts this run only: keep a private copy in the container.
+        match vt_engine::opcua::import_user_file(path) {
+            Ok(copy) => {
+                editor.error = None;
+                let text = copy.display().to_string();
+                field.update(cx, |input, cx| input.set_text(text, cx));
+            }
+            Err(error) => {
+                editor.error = Some(vt_app_core::forms::FormError {
+                    field: match which {
+                        CertificateFile::Certificate => vt_app_core::forms::Field::Certificate,
+                        CertificateFile::PrivateKey => vt_app_core::forms::Field::PrivateKey,
+                    },
+                    message: format!("Cannot copy {}: {error}", path.display()),
+                });
+            }
+        }
         cx.notify();
     }
 

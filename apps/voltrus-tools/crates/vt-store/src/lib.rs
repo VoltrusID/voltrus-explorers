@@ -12,7 +12,9 @@
 //! [`Licence::evaluate`] turns the verified entitlements and the time into the
 //! licence; [`Cache`] keeps the last verified entitlements on disk so the app
 //! knows its licence offline and at once on launch, and keeps the latest time
-//! the Mac has seen so turning the clock back never extends a trial.
+//! the Mac has seen so turning the clock back never extends a trial. The
+//! clock floor and the trial's start are also kept in a [`MarkStore`] (the
+//! Keychain in store builds), so deleting the cache file doesn't reset them.
 //! [`app_store`] talks to StoreKit 2 in store builds; elsewhere it sells
 //! nothing.
 
@@ -110,17 +112,47 @@ pub struct Cache {
 }
 
 impl Cache {
-    /// The saved cache; a missing or unreadable file is an empty one (the
-    /// next StoreKit answer fills it).
+    /// The saved cache, merged with the marks in the Keychain (store builds);
+    /// a missing or unreadable file is an empty one (the next StoreKit answer
+    /// fills it).
     pub fn load(path: &Path) -> Self {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+        Self::load_with(path, &SystemMarks)
     }
 
-    /// Atomic: write a sibling, then rename.
+    /// The saved cache, merged with `marks`: the later clock floor and the
+    /// earlier trial start win.
+    ///
+    /// A trial start StoreKit hasn't confirmed yet is never later than the
+    /// latest time already seen, so a start forged into the future can't
+    /// open a trial before StoreKit answers.
+    pub fn load_with(path: &Path, marks: &impl MarkStore) -> Self {
+        let mut cache: Self = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        if let Some(kept) = marks.read() {
+            cache.merge(kept);
+        }
+        cache.entitlements.trial_started = cache
+            .entitlements
+            .trial_started
+            .map(|started| started.min(cache.high_water));
+        cache
+    }
+
+    /// Atomic: write a sibling, then rename. The marks go to the Keychain
+    /// (store builds) too.
     pub fn save(&self, path: &Path) -> io::Result<()> {
+        self.save_with(path, &SystemMarks)
+    }
+
+    /// Like [`Cache::save`], keeping the marks in `marks`.
+    pub fn save_with(&self, path: &Path, marks: &impl MarkStore) -> io::Result<()> {
+        let mut kept = self.marks();
+        if let Some(earlier) = marks.read() {
+            kept.merge(earlier);
+        }
+        let marked = marks.write(kept);
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -128,7 +160,23 @@ impl Cache {
         let mut file = fs::File::create(&staging)?;
         file.write_all(&serde_json::to_vec_pretty(self).map_err(io::Error::other)?)?;
         file.sync_all()?;
-        fs::rename(&staging, path)
+        fs::rename(&staging, path)?;
+        marked
+    }
+
+    /// What must outlive the cache file.
+    pub fn marks(&self) -> Marks {
+        Marks {
+            high_water: self.high_water,
+            trial_started: self.entitlements.trial_started,
+        }
+    }
+
+    fn merge(&mut self, kept: Marks) {
+        let mut marks = self.marks();
+        marks.merge(kept);
+        self.high_water = marks.high_water;
+        self.entitlements.trial_started = marks.trial_started;
     }
 
     /// Record the clock's `now` and return the time to judge the licence by:
@@ -148,22 +196,25 @@ impl Cache {
     ///
     /// The unlock follows StoreKit exactly (a refund locks again). A trial,
     /// once started on this Mac, stays started from its earliest known date:
-    /// signing in with another Apple ID doesn't start it over.
+    /// signing in with another Apple ID doesn't start it over. A start StoreKit
+    /// doesn't confirm only ever means the trial was used, never a running
+    /// one: the cache file can be edited.
     pub fn update(&mut self, fresh: &Snapshot) {
+        if let Some(signed) = fresh.signed {
+            self.observe(signed);
+        }
         let trial_started = match (
             self.entitlements.trial_started,
             fresh.entitlements.trial_started,
         ) {
             (Some(cached), Some(fresh)) => Some(cached.min(fresh)),
-            (cached, fresh) => cached.or(fresh),
+            (None, fresh) => fresh,
+            (Some(cached), None) => Some(cached.min(self.high_water.saturating_sub(TRIAL_SECONDS))),
         };
         self.entitlements = Entitlements {
             unlocked: fresh.entitlements.unlocked,
             trial_started,
         };
-        if let Some(signed) = fresh.signed {
-            self.observe(signed);
-        }
     }
 
     /// A purchase StoreKit just verified.
@@ -177,6 +228,89 @@ impl Cache {
                     .map_or(original, |started| started.min(original)),
             );
         }
+    }
+}
+
+/// What must outlive the cache file: deleting it and turning the clock back
+/// must not reset the trial.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Marks {
+    /// The latest time this Mac has seen (Unix seconds).
+    pub high_water: i64,
+    /// The earliest trial start known on this Mac: the trial was used.
+    pub trial_started: Option<i64>,
+}
+
+impl Marks {
+    /// Keep the later clock floor and the earlier trial start.
+    pub fn merge(&mut self, other: Self) {
+        self.high_water = self.high_water.max(other.high_water);
+        self.trial_started = match (self.trial_started, other.trial_started) {
+            (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
+            (mine, theirs) => mine.or(theirs),
+        };
+    }
+}
+
+/// A second home for the [`Marks`], apart from the cache file.
+pub trait MarkStore {
+    /// The kept marks; `None` when there are none or they can't be read.
+    fn read(&self) -> Option<Marks>;
+    fn write(&self, marks: Marks) -> io::Result<()>;
+}
+
+/// The Keychain in store builds for macOS; elsewhere nothing is sold, so
+/// nothing is kept.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemMarks;
+
+impl MarkStore for SystemMarks {
+    fn read(&self) -> Option<Marks> {
+        #[cfg(all(feature = "store", target_os = "macos"))]
+        {
+            keychain::read()
+        }
+        #[cfg(not(all(feature = "store", target_os = "macos")))]
+        {
+            None
+        }
+    }
+
+    fn write(&self, marks: Marks) -> io::Result<()> {
+        #[cfg(all(feature = "store", target_os = "macos"))]
+        {
+            keychain::write(marks)
+        }
+        #[cfg(not(all(feature = "store", target_os = "macos")))]
+        {
+            let _ = marks;
+            Ok(())
+        }
+    }
+}
+
+/// One generic-password item in the app's own Keychain (sandbox-safe: no
+/// access group needed), holding the marks as JSON.
+#[cfg(all(feature = "store", target_os = "macos"))]
+mod keychain {
+    use std::io;
+
+    use security_framework::passwords::{get_generic_password, set_generic_password};
+
+    use crate::Marks;
+
+    const SERVICE: &str = "com.joyodigitama.voltrus-tools.licence";
+    const ACCOUNT: &str = "marks";
+
+    pub fn read() -> Option<Marks> {
+        get_generic_password(SERVICE, ACCOUNT)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    }
+
+    pub fn write(marks: Marks) -> io::Result<()> {
+        let bytes = serde_json::to_vec(&marks).map_err(io::Error::other)?;
+        set_generic_password(SERVICE, ACCOUNT, &bytes).map_err(io::Error::other)
     }
 }
 
@@ -316,6 +450,21 @@ mod tests {
         Entitlements {
             unlocked: false,
             trial_started: Some(started),
+        }
+    }
+
+    /// The Keychain, in memory.
+    #[derive(Default)]
+    struct MemoryMarks(std::cell::Cell<Option<Marks>>);
+
+    impl MarkStore for MemoryMarks {
+        fn read(&self) -> Option<Marks> {
+            self.0.get()
+        }
+
+        fn write(&self, marks: Marks) -> io::Result<()> {
+            self.0.set(Some(marks));
+            Ok(())
         }
     }
 
@@ -486,12 +635,81 @@ mod tests {
             entitlements: trial(T0),
             high_water: T0,
         };
-        // Signed in with an Apple ID that never started the trial.
+        // Signed in with an Apple ID that never started the trial: the start
+        // stays known, and as StoreKit doesn't confirm it, the trial is used.
         cache.update(&Snapshot::default());
-        assert_eq!(cache.entitlements.trial_started, Some(T0));
+        assert!(cache.entitlements.trial_started.is_some());
+        assert_eq!(cache.licence(T0), Licence::Expired);
         // ... and starting it again there counts from the first start.
         cache.purchased(TRIAL_PRODUCT, T0 + 20 * DAY);
         assert_eq!(cache.licence(T0 + 20 * DAY), Licence::Expired);
+    }
+
+    #[test]
+    fn a_trial_storekit_does_not_confirm_does_not_run() {
+        // licence.json edited to start the trial in 2100.
+        let forged = Cache {
+            entitlements: trial(4_102_444_800),
+            high_water: 0,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("licence.json");
+        fs::write(&path, serde_json::to_vec(&forged).unwrap()).unwrap();
+        // Before StoreKit answers, a start in the future is clamped to the
+        // latest time seen.
+        let mut cache = Cache::load_with(&path, &MemoryMarks::default());
+        assert_eq!(cache.licence(T0), Licence::Expired);
+        // A plausible forged start, then StoreKit answers with no trial.
+        let mut cache = Cache {
+            entitlements: trial(4_102_444_800),
+            high_water: T0,
+        };
+        cache.update(&Snapshot::default());
+        assert_eq!(cache.licence(T0), Licence::Expired);
+        let mut cache = Cache {
+            entitlements: trial(T0),
+            high_water: T0,
+        };
+        cache.update(&Snapshot::default());
+        assert_eq!(cache.licence(T0 + DAY), Licence::Expired);
+    }
+
+    #[test]
+    fn deleting_the_cache_and_turning_the_clock_back_does_not_extend_the_trial() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("licence.json");
+        let keychain = MemoryMarks::default();
+        let mut cache = Cache {
+            entitlements: trial(T0),
+            high_water: 0,
+        };
+        let four_days_left = Licence::Trial {
+            ends: T0 + TRIAL_SECONDS,
+            days_left: 4,
+        };
+        assert_eq!(cache.licence(T0 + 10 * DAY), four_days_left);
+        cache.save_with(&path, &keychain).unwrap();
+
+        fs::remove_file(&path).unwrap();
+        let mut reloaded = Cache::load_with(&path, &keychain);
+        assert_eq!(reloaded.licence(T0 + DAY), four_days_left);
+        // StoreKit's cached transaction, signed long ago, confirms the start.
+        reloaded.update(&Snapshot {
+            entitlements: trial(T0),
+            prices: Prices::default(),
+            signed: Some(T0),
+        });
+        assert_eq!(reloaded.licence(T0 + DAY), four_days_left);
+
+        // Nor does a rewritten file move the start or the clock floor.
+        let rewritten = Cache {
+            entitlements: trial(T0 + 30 * DAY),
+            high_water: T0 + 30 * DAY,
+        };
+        fs::write(&path, serde_json::to_vec(&rewritten).unwrap()).unwrap();
+        let mut reloaded = Cache::load_with(&path, &keychain);
+        assert_eq!(reloaded.entitlements.trial_started, Some(T0));
+        assert_eq!(reloaded.licence(T0 + DAY), Licence::Expired);
     }
 
     #[test]
@@ -511,15 +729,22 @@ mod tests {
     fn the_cache_survives_a_restart_and_tolerates_a_bad_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("licence.json");
-        assert_eq!(Cache::load(&path), Cache::default());
+        let keychain = MemoryMarks::default();
+        assert_eq!(Cache::load_with(&path, &keychain), Cache::default());
         let cache = Cache {
             entitlements: trial(T0),
             high_water: T0 + DAY,
         };
-        cache.save(&path).unwrap();
-        assert_eq!(Cache::load(&path), cache);
+        cache.save_with(&path, &keychain).unwrap();
+        assert_eq!(Cache::load_with(&path, &MemoryMarks::default()), cache);
+        assert_eq!(keychain.read(), Some(cache.marks()));
         fs::write(&path, "{ not json").unwrap();
-        assert_eq!(Cache::load(&path), Cache::default());
+        assert_eq!(
+            Cache::load_with(&path, &MemoryMarks::default()),
+            Cache::default()
+        );
+        // The Keychain still knows the trial was used.
+        assert_eq!(Cache::load_with(&path, &keychain), cache);
     }
 
     #[test]

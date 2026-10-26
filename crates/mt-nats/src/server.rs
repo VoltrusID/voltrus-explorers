@@ -24,10 +24,24 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{RwLock, watch, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
 
 use crate::server_js::JetStreamState;
 use crate::types::*;
+
+/// Largest PUB/HPUB block accepted (advertised as `max_payload` in INFO).
+const MAX_PAYLOAD: usize = 1_048_576;
+/// Longest control line accepted (the NATS server default).
+const MAX_CONTROL_LINE: usize = 4096;
+
+/// Counts one live connection; decrements when the connection task ends.
+struct LiveConn(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for LiveConn {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Routing primitives
@@ -102,11 +116,7 @@ impl Routed {
             let total = hdr_len + self.payload.len();
             let head = format!(
                 "HMSG {} {} {} {} {}\r\n",
-                self.subject,
-                self.sid,
-                reply,
-                hdr_len,
-                total
+                self.subject, self.sid, reply, hdr_len, total
             );
             out.extend_from_slice(head.as_bytes());
             out.extend_from_slice(hdr.as_bytes());
@@ -142,11 +152,19 @@ impl TrieNode {
         for tok in tokens {
             node = node.children.get_mut(tok)?;
         }
-        let idx = node.subs.iter().position(|(s, c)| *c == cid && s.sid == sid)?;
+        let idx = node
+            .subs
+            .iter()
+            .position(|(s, c)| *c == cid && s.sid == sid)?;
         Some(node.subs.remove(idx).0)
     }
 
-    fn collect<'a>(&'a self, tokens: &[String], idx: usize, out: &mut Vec<&'a (Subscription, u64)>) {
+    fn collect<'a>(
+        &'a self,
+        tokens: &[String],
+        idx: usize,
+        out: &mut Vec<&'a (Subscription, u64)>,
+    ) {
         if let Some(star) = self.children.get("*") {
             star.collect(tokens, idx + 1, out);
         }
@@ -270,7 +288,13 @@ impl NatsServerState {
         let mut all = headers;
         // The status line goes in the first header line, which our HMSG render
         // emits as `NATS/1.0` — extend it with the code/description.
-        all.insert(0, ("__status__".to_string(), format!("{} {}", code, description)));
+        all.insert(
+            0,
+            (
+                "__status__".to_string(),
+                format!("{} {}", code, description),
+            ),
+        );
         let routed = Routed {
             subject: reply.clone(),
             reply: None,
@@ -465,7 +489,7 @@ pub async fn start_server_on(
 
     let state2 = state.clone();
     tokio::spawn(async move {
-        let mut accept = 0usize;
+        let live = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         loop {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
@@ -474,16 +498,18 @@ pub async fn start_server_on(
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
-                            if accept >= max_conns {
+                            if live.load(std::sync::atomic::Ordering::SeqCst) >= max_conns {
                                 let _ = stream.writable().await;
                                 let _ = stream.try_write(b"-ERR 'maximum connections exceeded'\r\n");
                                 drop(stream);
                                 continue;
                             }
-                            accept += 1;
+                            live.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let guard = LiveConn(live.clone());
                             let cid = state2.next_cid.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             let st = state2.clone();
                             tokio::spawn(async move {
+                                let _guard = guard;
                                 handle_client(stream, cid, st).await;
                             });
                         }
@@ -550,7 +576,7 @@ async fn handle_client(stream: TcpStream, cid: u64, state: NatsServerState) {
         "go": "go1.22",
         "host": "0.0.0.0",
         "port": state.config.read().await.port,
-        "max_payload": 1_048_576,
+        "max_payload": MAX_PAYLOAD,
         "client_id": cid,
         "auth_required": auth_required(&state).await,
         "headers": true,
@@ -609,7 +635,12 @@ async fn handle_client(stream: TcpStream, cid: u64, state: NatsServerState) {
                             }
                         }
                     }
-                    Ok(None) | Err(_) => break,
+                    Ok(None) => break,
+                    Err(e) => {
+                        let _ = writer.write_all(format!("-ERR '{}'\r\n", e).as_bytes()).await;
+                        let _ = writer.flush().await;
+                        break;
+                    }
                 }
             }
             msg = out_rx.recv() => {
@@ -638,17 +669,43 @@ async fn handle_client(stream: TcpStream, cid: u64, state: NatsServerState) {
     }
 }
 
-/// Read one control line (terminated by `\n`, trimmed of `\r`).
+/// Read one control line (terminated by `\n`, trimmed of `\r`), refusing
+/// lines longer than [`MAX_CONTROL_LINE`] before buffering more of them.
 async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
 ) -> std::io::Result<Option<String>> {
     let mut buf = Vec::new();
-    let n = reader.read_until(b'\n', &mut buf).await?;
-    if n == 0 {
-        return Ok(None);
-    }
-    if buf.last() == Some(&b'\n') {
-        buf.pop();
+    loop {
+        let (used, done) = {
+            let available = reader.fill_buf().await?;
+            if available.is_empty() {
+                if buf.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            match available.iter().position(|&b| b == b'\n') {
+                Some(i) => {
+                    buf.extend_from_slice(&available[..i]);
+                    (i + 1, true)
+                }
+                None => {
+                    buf.extend_from_slice(available);
+                    (available.len(), false)
+                }
+            }
+        };
+        reader.consume(used);
+        // +1 leaves room for the `\r` of a maximal line.
+        if buf.len() > MAX_CONTROL_LINE + 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "maximum control line exceeded",
+            ));
+        }
+        if done {
+            break;
+        }
     }
     if buf.last() == Some(&b'\r') {
         buf.pop();
@@ -746,8 +803,16 @@ async fn handle_command(conn: &mut ClientConn, line: &str, state: &NatsServerSta
         } else {
             (Some(parts[2].to_string()), parts[3].to_string())
         };
-        let sub = Subscription { subject: subject.clone(), queue, sid: sid.clone() };
-        state.root.write().await.insert(&tokens_of(&subject), sub.clone(), conn.cid);
+        let sub = Subscription {
+            subject: subject.clone(),
+            queue,
+            sid: sid.clone(),
+        };
+        state
+            .root
+            .write()
+            .await
+            .insert(&tokens_of(&subject), sub.clone(), conn.cid);
         conn.subs.insert(sid.clone(), sub);
         if let Some(info) = state.conns.write().await.get_mut(&conn.cid) {
             info.subscription_count = conn.subs.len();
@@ -762,7 +827,11 @@ async fn handle_command(conn: &mut ClientConn, line: &str, state: &NatsServerSta
         }
         let sid = parts[1].to_string();
         if let Some(s) = conn.subs.get(&sid) {
-            state.root.write().await.remove(&tokens_of(&s.subject), conn.cid, &sid);
+            state
+                .root
+                .write()
+                .await
+                .remove(&tokens_of(&s.subject), conn.cid, &sid);
         }
         conn.subs.remove(&sid);
         if let Some(info) = state.conns.write().await.get_mut(&conn.cid) {
@@ -793,7 +862,11 @@ fn parse_pub_header(line: &str, is_h: bool, conn: &ClientConn) -> CmdOutcome {
             return CmdOutcome::Fatal("malformed HPUB".to_string());
         }
         let subject = parts[1].to_string();
-        let reply = if parts.len() == 5 { Some(parts[2].to_string()) } else { None };
+        let reply = if parts.len() == 5 {
+            Some(parts[2].to_string())
+        } else {
+            None
+        };
         let hdr_len: usize = match parts[parts.len() - 2].parse() {
             Ok(v) => v,
             Err(_) => return CmdOutcome::Fatal("bad HPUB hdr size".to_string()),
@@ -802,18 +875,41 @@ fn parse_pub_header(line: &str, is_h: bool, conn: &ClientConn) -> CmdOutcome {
             Ok(v) => v,
             Err(_) => return CmdOutcome::Fatal("bad HPUB size".to_string()),
         };
-        CmdOutcome::ReadPayload { subject, reply, total, hdr_len }
+        if total > MAX_PAYLOAD {
+            return CmdOutcome::Fatal("maximum payload exceeded".to_string());
+        }
+        if hdr_len > total {
+            return CmdOutcome::Fatal("bad HPUB hdr size".to_string());
+        }
+        CmdOutcome::ReadPayload {
+            subject,
+            reply,
+            total,
+            hdr_len,
+        }
     } else {
         if parts.len() < 3 || parts.len() > 4 {
             return CmdOutcome::Fatal("malformed PUB".to_string());
         }
         let subject = parts[1].to_string();
-        let reply = if parts.len() == 4 { Some(parts[2].to_string()) } else { None };
+        let reply = if parts.len() == 4 {
+            Some(parts[2].to_string())
+        } else {
+            None
+        };
         let total: usize = match parts[parts.len() - 1].parse() {
             Ok(v) => v,
             Err(_) => return CmdOutcome::Fatal("bad PUB size".to_string()),
         };
-        CmdOutcome::ReadPayload { subject, reply, total, hdr_len: 0 }
+        if total > MAX_PAYLOAD {
+            return CmdOutcome::Fatal("maximum payload exceeded".to_string());
+        }
+        CmdOutcome::ReadPayload {
+            subject,
+            reply,
+            total,
+            hdr_len: 0,
+        }
     }
 }
 
@@ -901,9 +997,65 @@ async fn authenticate(state: &NatsServerState, connect: &serde_json::Value) -> R
     }
     let user = connect.get("user").and_then(|v| v.as_str()).unwrap_or("");
     let pass = connect.get("pass").and_then(|v| v.as_str()).unwrap_or("");
-    if cfg.auth.users.iter().any(|u| u.username == user && u.password == pass) {
+    if cfg
+        .auth
+        .users
+        .iter()
+        .any(|u| u.username == user && u.password == pass)
+    {
         Ok(())
     } else {
         Err("authorization violation".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conn() -> ClientConn {
+        ClientConn {
+            cid: 1,
+            subs: HashMap::new(),
+            authenticated: true,
+            name: None,
+        }
+    }
+
+    fn fatal(outcome: CmdOutcome) -> Option<String> {
+        match outcome {
+            CmdOutcome::Fatal(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn oversize_publishes_are_refused_before_reading_the_payload() {
+        let c = conn();
+        let huge = format!("PUB a {}", usize::MAX);
+        assert_eq!(
+            fatal(parse_pub_header(&huge, false, &c)).as_deref(),
+            Some("maximum payload exceeded")
+        );
+        let over = format!("HPUB a 10 {}", MAX_PAYLOAD + 1);
+        assert_eq!(
+            fatal(parse_pub_header(&over, true, &c)).as_deref(),
+            Some("maximum payload exceeded")
+        );
+        assert!(fatal(parse_pub_header("HPUB a 20 10", true, &c)).is_some());
+        let max = format!("PUB a {}", MAX_PAYLOAD);
+        assert!(fatal(parse_pub_header(&max, false, &c)).is_none());
+    }
+
+    #[tokio::test]
+    async fn control_lines_are_capped() {
+        let mut ok: &[u8] = b"PING\r\nPONG";
+        assert_eq!(read_line(&mut ok).await.unwrap().as_deref(), Some("PING"));
+        assert_eq!(read_line(&mut ok).await.unwrap().as_deref(), Some("PONG"));
+        assert_eq!(read_line(&mut ok).await.unwrap(), None);
+        let long = vec![b'A'; MAX_CONTROL_LINE * 4];
+        let mut reader = tokio::io::BufReader::with_capacity(64, long.as_slice());
+        let err = read_line(&mut reader).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

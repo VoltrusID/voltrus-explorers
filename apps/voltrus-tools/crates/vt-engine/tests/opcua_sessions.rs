@@ -263,11 +263,12 @@ fn clients_discover_browse_monitor_write_and_call_the_plant_server() {
     assert!(engine.send(Command::Opcua {
         session: request,
         request: OpcuaRequest::Endpoints {
-            url: format!("opc.tcp://localhost:{port}"),
+            url: format!("opc.tcp://127.0.0.1:{port}"),
         },
     }));
-    let OpcuaEvent::Endpoints(Ok(endpoints)) = opcua(&mut events, request) else {
-        panic!("endpoints");
+    let endpoints = match opcua(&mut events, request) {
+        OpcuaEvent::Endpoints(Ok(endpoints)) => endpoints,
+        other => panic!("endpoints: {other:?}"),
     };
     assert!(
         endpoints
@@ -605,10 +606,9 @@ fn a_taken_port_is_a_clear_error() {
     pki_root();
     let (engine, receiver) = vt_engine::start().expect("the engine");
     let mut events = Events::new(receiver);
-    let taken = std::net::TcpListener::bind("0.0.0.0:0").expect("a port to hold");
+    // The server listens on loopback only by default: hold that address.
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("a port to hold");
     let port = taken.local_addr().expect("its address").port();
-    // Hold the IPv6 side too where the system has it.
-    let _v6 = std::net::TcpListener::bind(("::", port));
     let server = SessionId(1);
     assert!(engine.send(Command::Open {
         session: server,
@@ -631,6 +631,7 @@ fn a_taken_port_is_a_clear_error() {
             anonymous: false,
             username: String::new(),
             password: String::new(),
+            ..OpcuaServerSpec::default()
         }),
     }));
     // The user certificate still lets clients in, so this server starts.

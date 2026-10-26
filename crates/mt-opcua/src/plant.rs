@@ -79,6 +79,9 @@ pub struct PlantArgument {
 /// Who may sign in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlantServerConfig {
+    /// Address to listen on: `::` or `0.0.0.0` for every interface, `127.0.0.1` for this
+    /// computer only.
+    pub bind: std::net::IpAddr,
     pub port: u16,
     pub application_name: String,
     pub anonymous: bool,
@@ -270,28 +273,51 @@ impl Builder<'_> {
     }
 }
 
-/// Bind every interface: IPv6 and IPv4 where the system has both (macOS resolves `localhost` to
-/// `::1` first), IPv4 alone otherwise.
-fn bind(port: u16) -> Result<std::net::TcpListener> {
-    let listener = match std::net::TcpListener::bind(("::", port)) {
-        Ok(listener) => listener,
-        Err(v6) => std::net::TcpListener::bind(("0.0.0.0", port)).map_err(|v4| {
-            if v4.kind() == std::io::ErrorKind::AddrInUse || v6.kind() == std::io::ErrorKind::AddrInUse {
-                anyhow!("TCP port {port} is in use by another program")
-            } else {
-                anyhow!("Cannot listen on TCP port {port}: {v4}")
-            }
-        })?,
+fn in_use_or(error: std::io::Error, port: u16) -> anyhow::Error {
+    if error.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow!("TCP port {port} is in use by another program")
+    } else {
+        anyhow!("Cannot listen on TCP port {port}: {error}")
+    }
+}
+
+/// Listen on `address`. An unspecified address binds every interface: IPv6 and IPv4 where the
+/// system has both (macOS resolves `localhost` to `::1` first), IPv4 alone otherwise.
+fn bind(address: std::net::IpAddr, port: u16) -> Result<std::net::TcpListener> {
+    let listener = if address.is_unspecified() {
+        match std::net::TcpListener::bind(("::", port)) {
+            Ok(listener) => listener,
+            Err(v6) => std::net::TcpListener::bind(("0.0.0.0", port)).map_err(|v4| {
+                if v6.kind() == std::io::ErrorKind::AddrInUse {
+                    in_use_or(v6, port)
+                } else {
+                    in_use_or(v4, port)
+                }
+            })?,
+        }
+    } else {
+        std::net::TcpListener::bind((address, port)).map_err(|e| in_use_or(e, port))?
     };
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
 
+/// The host clients reach a server listening on `address` by: `localhost` when it listens on
+/// every interface, the address itself otherwise (the OPC UA client dials only the first address
+/// a name resolves to, so `localhost` would miss an IPv4-only loopback listener on macOS).
+pub fn advertised_host(address: std::net::IpAddr) -> String {
+    match address {
+        address if address.is_unspecified() => "localhost".to_owned(),
+        std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+        std::net::IpAddr::V4(v4) => v4.to_string(),
+    }
+}
+
 impl PlantServer {
-    /// Build the address space and listen on `config.port` (every interface). Fails, without
+    /// Build the address space and listen on `config.bind`:`config.port`. Fails, without
     /// panicking, when the port is taken or the PKI folder cannot be written.
     pub async fn start(config: PlantServerConfig, nodes: &[PlantNode], on_call: MethodHandler) -> Result<Self> {
-        let listener = bind(config.port)?;
+        let listener = bind(config.bind, config.port)?;
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(config.port);
         // The server's own certificate, made here without resolving the host name.
         crate::pki::ensure_own_certificate(
@@ -301,7 +327,8 @@ impl PlantServer {
         )
         .await
         .map_err(|e| anyhow!(e))?;
-        let url = format!("opc.tcp://localhost:{port}");
+        let host = advertised_host(config.bind);
+        let url = format!("opc.tcp://{host}:{port}");
 
         let mut tokens: Vec<&str> = Vec::new();
         if config.anonymous {
@@ -313,7 +340,7 @@ impl PlantServer {
             .product_uri("urn:voltrus:tools")
             .create_sample_keypair(true)
             .pki_dir(crate::pki::server_dir(port))
-            .host("localhost")
+            .host(host.as_str())
             .port(port)
             .trust_client_certs(true)
             .discovery_urls(vec![url.clone()]);
@@ -394,7 +421,7 @@ impl PlantServer {
         Ok(Self { handle, values, namespace, url, task, runtime: Some(runtime) })
     }
 
-    /// `opc.tcp://localhost:<port>`.
+    /// `opc.tcp://<advertised host>:<port>`.
     pub fn url(&self) -> &str {
         &self.url
     }
@@ -495,5 +522,25 @@ fn variant_json(value: &Variant) -> serde_json::Value {
             (Some(number), _) => serde_json::json!(number),
             (None, text) => serde_json::Value::String(text),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn a_loopback_bind_listens_on_loopback_only() {
+        let listener = bind(IpAddr::V4(Ipv4Addr::LOCALHOST), 0).expect("bind loopback");
+        assert_eq!(listener.local_addr().unwrap().ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn clients_reach_the_server_by_its_bind_address() {
+        assert_eq!(advertised_host(IpAddr::V4(Ipv4Addr::LOCALHOST)), "127.0.0.1");
+        assert_eq!(advertised_host(IpAddr::V6(Ipv6Addr::LOCALHOST)), "[::1]");
+        assert_eq!(advertised_host(IpAddr::V6(Ipv6Addr::UNSPECIFIED)), "localhost");
+        assert_eq!(advertised_host(IpAddr::V4(Ipv4Addr::UNSPECIFIED)), "localhost");
     }
 }
