@@ -64,6 +64,28 @@ standalone Tauri apps in this repository.
   operate, and inputs follow them (trip the breaker and its status opens, the
   currents fall to zero, the energy counter stops). A point can be taken
   offline (COMM_LOST); inputs set from the app are held until released.
+- **EtherNet/IP client** (on `mt-enip`): a device picker that sends
+  ListIdentity (broadcast, and directed at an address and at the simulators
+  on this computer) and lists each device once with its product, vendor,
+  device type, revision and serial number. Logix tags are read by name
+  (`Program:Main.Speed`, `Recipe[3]`, `Status.5`) in Multiple_Service_Packet
+  batches, with their type as the controller reports it; a tag the controller
+  refuses costs only its own point. Any CIP attribute is a point too, e.g.
+  `@0x04/100/3+4:REAL` for a REAL at byte 4 of input assembly 100. With no
+  points the client browses every controller and program tag (arrays by their
+  first elements, structures by their members). Writes go to tags by name and
+  to attributes with Set_Attribute_Single, range-checked against the type. An
+  optional route path (`1,0`) reaches a ControlLogix through its Ethernet
+  module. The points table shows each tag's program (or `Ctrl`) and the
+  inspector its whole address. The inspector sends any explicit message
+  (service, class, instance, attribute, data) and shows the reply as hex and
+  as the values it may hold.
+- **EtherNet/IP adapter simulator**: plays a motor drive, a tank farm or a
+  packaging line on any port, as a Logix-style target: tag browse, Read/Write
+  Tag, the Identity object, input assembly 100 (every tag's value) and output
+  assembly 150, Forward_Open and class 1 I/O, and ListIdentity on the same UDP
+  port. A value set from the app or written by any client is held until
+  released.
 - **Serial monitor** (on `mt-serial`): a port picker that lists USB, Bluetooth
   and built-in ports and updates as devices come and go (the same picker fills
   a Modbus RTU master's port), baud with presets, 5 to 8 data bits, parity,
@@ -90,15 +112,16 @@ standalone Tauri apps in this repository.
   Series of very different size (watts beside hertz) get stacked lanes, each
   with its own scale.
 - **Traffic and log**: a master's requests and responses with their payload
-  words, a BACnet client's requests, answers and COV notifications, the
-  requests a simulator receives, and every connect, failure and external
+  words, a BACnet client's requests, answers and COV notifications, an
+  EtherNet/IP client's frames by service and tag, the requests a simulator
+  receives, and every connect, failure and external
   write. Both follow new entries until you scroll back or pause.
 - **Tabs and splits**: watch a device and its simulator side by side, or two
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet, DNP3 and serial are ported. The others in this
-repository (OPC UA, S7, EtherNet/IP, NATS, BLE) are being ported next; each plugs
+Modbus, MQTT, BACnet, DNP3, EtherNet/IP and serial are ported. The others in
+this repository (OPC UA, S7, NATS, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
@@ -117,7 +140,10 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # bacnet-command, dnp3-points,
                                                  # dnp3-trend, dnp3-traffic,
                                                  # dnp3-control, dnp3-station,
-                                                 # dnp3-editor, serial-terminal,
+                                                 # dnp3-editor, enip-points,
+                                                 # enip-trend, enip-traffic,
+                                                 # enip-discover, enip-message,
+                                                 # serial-terminal,
                                                  # serial-hex, serial-trend,
                                                  # serial-points, serial-editor,
                                                  # serial-simulator

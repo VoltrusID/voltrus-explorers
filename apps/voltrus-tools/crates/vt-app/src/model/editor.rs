@@ -18,6 +18,9 @@ mod serial;
 
 pub use dnp3::{Dnp3Fields, NEW_MASTER_NAME, NEW_OUTSTATION_NAME};
 pub use mqtt::MqttFields;
+mod enip;
+
+pub use enip::{EnipDiscovery, EnipFields};
 pub use serial::SerialFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +33,8 @@ pub enum EditorKind {
     BacnetDevice,
     Dnp3Master,
     Dnp3Outstation,
+    EnipClient,
+    EnipAdapter,
     SerialMonitor,
     SerialDevice,
 }
@@ -47,6 +52,8 @@ impl EditorKind {
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
             (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
             (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
+            (Protocol::Enip, Role::Client) => Self::EnipClient,
+            (Protocol::Enip, Role::Simulator) => Self::EnipAdapter,
             (Protocol::Serial, Role::Client) => Self::SerialMonitor,
             (Protocol::Serial, Role::Simulator) => Self::SerialDevice,
         })
@@ -63,6 +70,8 @@ impl EditorKind {
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
             SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
             SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
+            SessionSpec::EnipClient(_) => Self::EnipClient,
+            SessionSpec::EnipAdapter(_) => Self::EnipAdapter,
             SessionSpec::SerialMonitor(_) => Self::SerialMonitor,
             SessionSpec::SerialDevice(_) => Self::SerialDevice,
         }
@@ -107,6 +116,7 @@ pub struct Editor {
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
     pub dnp3: Dnp3Fields,
+    pub enip: EnipFields,
     pub serial: SerialFields,
 }
 
@@ -137,6 +147,7 @@ impl Editor {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let enip = EnipFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let serial = SerialFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
@@ -173,6 +184,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::EnipClient(_) | SessionSpec::EnipAdapter(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             Some((_, name, SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_))) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -188,6 +204,8 @@ impl Editor {
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
                     EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
                     EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
+                    EditorKind::EnipClient => super::enip::NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::EnipAdapter => super::enip::NEW_ADAPTER_NAME.to_owned(),
                     EditorKind::SerialMonitor => super::serial::NEW_MONITOR_NAME.to_owned(),
                     EditorKind::SerialDevice => super::serial::NEW_SIMULATOR_NAME.to_owned(),
                 },
@@ -254,6 +272,7 @@ impl Editor {
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
             dnp3,
+            enip,
             serial,
         };
         for block in master.blocks {
@@ -280,6 +299,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.dnp3.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.enip.inputs() {
             editor.watch(&field, window, cx);
         }
         for field in editor.serial.inputs() {
@@ -424,6 +446,16 @@ impl Editor {
                 .outstation_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::Dnp3Outstation(spec))),
+            EditorKind::EnipClient => self
+                .enip
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::EnipClient(spec))),
+            EditorKind::EnipAdapter => self
+                .enip
+                .adapter_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::EnipAdapter(spec))),
             EditorKind::SerialMonitor => self
                 .serial
                 .monitor_form(Self::text(&self.name, cx), cx)

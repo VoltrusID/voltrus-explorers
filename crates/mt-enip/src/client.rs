@@ -938,54 +938,106 @@ pub async fn browse_tags(config: &EnipConfig) -> Result<Vec<CipTag>, ProtocolErr
 /// broadcast, like the BACnet scanner — a bare 255.255.255.255 only leaves
 /// through the default route on macOS) and collect responders within `timeout_ms`.
 pub async fn discover_devices(timeout_ms: u64) -> Vec<EnipDevice> {
-    let sock = match UdpSocket::bind("0.0.0.0:0").await {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
-    let _ = sock.set_broadcast(true);
+    let replies = list_identity(
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        Some(44818),
+        &[],
+        Duration::from_millis(timeout_ms),
+    )
+    .await
+    .unwrap_or_default();
+    let mut devices: Vec<EnipDevice> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, u16)> = std::collections::HashSet::new();
+    for reply in replies {
+        // Same device may answer on several interfaces; serial numbers
+        // are not unique across vendors, so key on the endpoint.
+        if seen.insert((reply.device.host.clone(), reply.device.port)) {
+            devices.push(reply.device);
+        }
+    }
+    devices
+}
+
+/// One answer to a ListIdentity request: the datagram's sender and the
+/// identity it carried (`device.host` is the sender's IP).
+#[derive(Debug, Clone)]
+pub struct ListIdentityReply {
+    pub from: SocketAddr,
+    pub device: EnipDevice,
+}
+
+/// Send ListIdentity over UDP from `bind`: broadcast to `broadcast_port` on
+/// every IPv4 interface (and 255.255.255.255) when set, and unicast to each of
+/// `directed` (devices on other ports, behind routers or on this computer),
+/// then collect every answer for `wait`. Fails only when the socket cannot be
+/// opened or no request could be sent at all.
+pub async fn list_identity(
+    bind: SocketAddr,
+    broadcast_port: Option<u16>,
+    directed: &[SocketAddr],
+    wait: Duration,
+) -> std::io::Result<Vec<ListIdentityReply>> {
+    let sock = UdpSocket::bind(bind).await?;
     let request = build_list_identity_request();
 
-    let mut targets: Vec<Ipv4Addr> = Vec::new();
-    if let Ok(ifaces) = if_addrs::get_if_addrs() {
-        for iface in ifaces {
-            if let if_addrs::IfAddr::V4(v4) = iface.addr {
-                if let Some(b) = v4.broadcast {
-                    if !targets.contains(&b) {
-                        targets.push(b);
+    let mut targets: Vec<SocketAddr> = Vec::new();
+    if let Some(port) = broadcast_port {
+        sock.set_broadcast(true)?;
+        let mut addresses: Vec<Ipv4Addr> = Vec::new();
+        if let Ok(ifaces) = if_addrs::get_if_addrs() {
+            for iface in ifaces {
+                if let if_addrs::IfAddr::V4(v4) = iface.addr {
+                    if let Some(b) = v4.broadcast {
+                        if !addresses.contains(&b) {
+                            addresses.push(b);
+                        }
                     }
                 }
             }
         }
+        if !addresses.contains(&Ipv4Addr::BROADCAST) {
+            addresses.push(Ipv4Addr::BROADCAST);
+        }
+        targets.extend(addresses.into_iter().map(|a| SocketAddr::from((a, port))));
     }
-    let limited = Ipv4Addr::new(255, 255, 255, 255);
-    if !targets.contains(&limited) {
-        targets.push(limited);
+    for target in directed {
+        if !targets.contains(target) {
+            targets.push(*target);
+        }
     }
-    for t in targets {
-        let _ = sock.send_to(&request, SocketAddr::from((t, 44818))).await;
+    let mut sent = 0usize;
+    let mut last_error = None;
+    for target in &targets {
+        match sock.send_to(&request, target).await {
+            Ok(_) => sent += 1,
+            Err(e) => last_error = Some(e),
+        }
+    }
+    if sent == 0 {
+        if let Some(e) = last_error {
+            return Err(e);
+        }
     }
 
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-    let mut devices: Vec<EnipDevice> = Vec::new();
-    let mut seen: std::collections::HashSet<(String, u16)> = std::collections::HashSet::new();
+    let deadline = tokio::time::Instant::now() + wait;
+    let mut replies = Vec::new();
     let mut buf = vec![0u8; 4096];
     loop {
         let Some(remain) = deadline.checked_duration_since(tokio::time::Instant::now()) else { break };
         match tokio::time::timeout(remain, sock.recv_from(&mut buf)).await {
-            Ok(Ok((n, peer))) => {
-                if let Some(mut dev) = parse_list_identity_response(&buf[..n]) {
-                    dev.host = peer.ip().to_string();
-                    // Same device may answer on several interfaces; serial numbers
-                    // are not unique across vendors, so key on the endpoint.
-                    if seen.insert((dev.host.clone(), dev.port)) {
-                        devices.push(dev);
-                    }
+            Ok(Ok((n, from))) => {
+                if let Some(mut device) = parse_list_identity_response(&buf[..n]) {
+                    device.host = from.ip().to_string();
+                    replies.push(ListIdentityReply { from, device });
                 }
             }
-            _ => break,
+            // An ICMP port-unreachable from a directed target surfaces as a
+            // receive error on some systems: keep listening for the others.
+            Ok(Err(_)) => continue,
+            Err(_) => break,
         }
     }
-    devices
+    Ok(replies)
 }
 
 // ── Public methods beyond ProtocolClient ──

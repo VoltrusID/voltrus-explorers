@@ -7,6 +7,7 @@
 pub mod bacnet;
 pub mod dnp3;
 pub mod editor;
+pub mod enip;
 pub mod live;
 pub mod palette;
 pub mod publish;
@@ -137,6 +138,8 @@ pub struct AppModel {
     pub serial_consoles: HashMap<ConnectionId, SerialConsole>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    /// The inspector's explicit message form (EtherNet/IP).
+    pub cip: enip::CipForm,
 }
 
 impl AppModel {
@@ -233,6 +236,7 @@ impl AppModel {
             serial_consoles: HashMap::new(),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
+            cip: enip::CipForm::new(window, cx),
         };
         window.focus(&model.focus);
         if let Some(notice) = boot.notice {
@@ -251,6 +255,13 @@ impl AppModel {
                 kind: vt_protocol::EventKind::BacnetDevices(found),
             } => {
                 self.bacnet_devices_found(session, found);
+                return;
+            }
+            Event {
+                session,
+                kind: vt_protocol::EventKind::EnipDevices(found),
+            } => {
+                self.enip_devices_found(session, found);
                 return;
             }
             // The port picker's list runs under a request id too.
@@ -549,6 +560,9 @@ impl AppModel {
             Protocol::Dnp3 => {
                 self.start_dnp3_demo(cx);
             }
+            Protocol::Enip => {
+                self.start_enip_demo(cx);
+            }
             Protocol::Serial => {
                 self.start_serial_demo(cx);
             }
@@ -599,6 +613,10 @@ impl AppModel {
     // ── Points ────────────────────────────────────────────────────────────
 
     pub fn select_point(&mut self, connection: ConnectionId, point: u32, cx: &mut Context<Self>) {
+        let changed = self
+            .live
+            .get(&connection)
+            .is_some_and(|live| live.selected != Some(point));
         if let Some(live) = self.live.get_mut(&connection) {
             if live.selected != Some(point) {
                 live.write_result = None;
@@ -612,6 +630,10 @@ impl AppModel {
                 }
             }
             live.selected = Some(point);
+        }
+        // Explicit messages from the inspector start at the point's attribute.
+        if changed {
+            self.aim_cip_at(connection, point, cx);
         }
         cx.notify();
     }
@@ -770,11 +792,15 @@ impl AppModel {
             .as_ref()
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
+        let discover_enip = kind == EditorKind::EnipClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
         self.prepare_serial_editor(cx);
         // A new BACnet client starts by looking for devices.
         if discover {
             self.discover_bacnet(cx);
+        }
+        if discover_enip {
+            self.discover_enip(cx);
         }
         cx.notify();
     }
@@ -856,6 +882,12 @@ impl AppModel {
             && let SessionSpec::Dnp3Outstation(outstation) = &spec
         {
             self.add_dnp3_master(&name, outstation, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::EnipAdapter(adapter) = &spec
+        {
+            self.add_enip_client(&name, adapter, cx);
         }
         if editing.is_none()
             && add_client
@@ -1043,6 +1075,11 @@ impl AppModel {
                 self.start_dnp3_demo(cx);
             }
             Command::Dnp3(connection, action) => self.dnp3_action(connection, action, cx),
+            Command::NewEnipClient => self.open_editor(EditorKind::EnipClient, None, window, cx),
+            Command::NewEnipAdapter => self.open_editor(EditorKind::EnipAdapter, None, window, cx),
+            Command::EnipDemo => {
+                self.start_enip_demo(cx);
+            }
             Command::NewSerialMonitor => {
                 self.open_editor(EditorKind::SerialMonitor, None, window, cx)
             }

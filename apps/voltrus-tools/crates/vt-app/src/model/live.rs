@@ -5,8 +5,8 @@ use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use vt_protocol::{
-    EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId, SessionState, Stats,
-    TrafficFrame,
+    CipResponse, EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId,
+    SessionState, Stats, TrafficFrame,
 };
 use vt_ui::chart::History;
 
@@ -61,6 +61,12 @@ pub struct Live {
     history_capacity: usize,
     /// DNP3: what the session last reported about its outstation.
     pub dnp3: super::dnp3::Dnp3Live,
+    /// EtherNet/IP: the answer to the inspector's last explicit message, and
+    /// whether one is on its way.
+    pub cip_reply: Option<Result<CipResponse, String>>,
+    pub cip_waiting: bool,
+    /// EtherNet/IP: each point's whole address (the table shows a short one).
+    pub enip_addresses: Vec<String>,
     /// Serial sessions: the bytes that crossed the port, sends and logging.
     pub terminal: Terminal,
 }
@@ -88,6 +94,9 @@ impl Default for Live {
             publish_result: None,
             history_capacity: HISTORY_MIN,
             dnp3: super::dnp3::Dnp3Live::default(),
+            cip_reply: None,
+            cip_waiting: false,
+            enip_addresses: Vec::new(),
             terminal: Terminal::new(),
         }
     }
@@ -108,6 +117,9 @@ impl Live {
         self.terminal.sent = None;
         self.locked.clear();
         self.dnp3 = super::dnp3::Dnp3Live::default();
+        self.cip_reply = None;
+        self.cip_waiting = false;
+        self.enip_addresses.clear();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -225,6 +237,13 @@ impl Live {
                 }
                 self.dnp3.last = Some((action, result));
             }
+            // Likewise the EtherNet/IP picker's.
+            EventKind::EnipDevices(_) => {}
+            EventKind::CipReply(result) => {
+                self.cip_waiting = false;
+                self.cip_reply = Some(result);
+            }
+            EventKind::EnipAddresses(addresses) => self.enip_addresses = addresses,
             EventKind::SerialData(chunks) => self.terminal.push(&chunks),
             EventKind::SerialSent(result) => self.terminal.sent = Some(result),
             EventKind::SerialLogging(result) => self.terminal.set_logging(result),
