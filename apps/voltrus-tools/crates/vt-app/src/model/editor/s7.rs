@@ -55,6 +55,7 @@ pub struct S7Fields {
     pub poll: Entity<TextInput>,
     pub timeout: Entity<TextInput>,
     pub tags: Vec<S7TagRow>,
+    pub server_bind: Entity<TextInput>,
     pub server_port: Entity<TextInput>,
     pub server_pdu: Entity<TextInput>,
     pub template: String,
@@ -87,6 +88,7 @@ impl S7Fields {
                 .into_iter()
                 .map(|form| S7TagRow::new(form, cx))
                 .collect(),
+            server_bind: input(server.bind, "127.0.0.1", InputKind::Text, true, cx),
             server_port: input(server.port, "102", unsigned, true, cx),
             server_pdu: input(server.pdu_size, "480", unsigned, true, cx),
             template: server.template,
@@ -103,6 +105,7 @@ impl S7Fields {
             self.pdu.clone(),
             self.poll.clone(),
             self.timeout.clone(),
+            self.server_bind.clone(),
             self.server_port.clone(),
             self.server_pdu.clone(),
         ];
@@ -134,6 +137,7 @@ impl S7Fields {
     pub fn server_form(&self, name: String, cx: &App) -> S7ServerForm {
         S7ServerForm {
             name,
+            bind: Self::text(&self.server_bind, cx),
             port: Self::text(&self.server_port, cx),
             template: self.template.clone(),
             pdu_size: Self::text(&self.server_pdu, cx),

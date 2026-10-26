@@ -279,6 +279,16 @@ pub struct OpcUaProtocolClient {
     subscription_id: Option<u32>,
 }
 
+/// A client dropped mid-connect or after a failed step stops its event loop, so the server's
+/// session does not outlive it.
+impl Drop for OpcUaProtocolClient {
+    fn drop(&mut self) {
+        if let Some(handle) = self._event_loop.take() {
+            handle.abort();
+        }
+    }
+}
+
 impl OpcUaProtocolClient {
     pub fn new() -> Self {
         Self {
@@ -1053,12 +1063,56 @@ impl OpcUaProtocolClient {
 
     pub fn disconnect(&mut self) -> Result<(), String> {
         self.session = None;
-        self._event_loop = None;
+        // A detached event loop would keep the session open on the server.
+        if let Some(handle) = self._event_loop.take() {
+            handle.abort();
+        }
         self.subscription_id = None;
         Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
         self.session.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stand-in event loop that reports, through `alive`, when it stops running.
+    fn event_loop() -> (tokio::task::JoinHandle<StatusCode>, tokio::sync::oneshot::Receiver<()>) {
+        let (alive, stopped) = tokio::sync::oneshot::channel::<()>();
+        let handle = tokio::spawn(async move {
+            let _alive = alive;
+            std::future::pending::<()>().await;
+            StatusCode::Good
+        });
+        (handle, stopped)
+    }
+
+    #[tokio::test]
+    async fn dropping_the_client_stops_its_event_loop() {
+        let (handle, stopped) = event_loop();
+        let mut client = OpcUaProtocolClient::new();
+        client._event_loop = Some(handle);
+        drop(client);
+        // The aborted task drops its future, and with it the sender.
+        tokio::time::timeout(std::time::Duration::from_secs(5), stopped)
+            .await
+            .expect("the event loop is aborted")
+            .expect_err("the event loop never finishes on its own");
+    }
+
+    #[tokio::test]
+    async fn disconnect_stops_the_event_loop() {
+        let (handle, stopped) = event_loop();
+        let mut client = OpcUaProtocolClient::new();
+        client._event_loop = Some(handle);
+        client.disconnect().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), stopped)
+            .await
+            .expect("the event loop is aborted")
+            .expect_err("the event loop never finishes on its own");
     }
 }

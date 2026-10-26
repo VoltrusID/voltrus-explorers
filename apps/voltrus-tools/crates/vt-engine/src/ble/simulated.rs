@@ -451,6 +451,12 @@ impl SimCentral {
             .subscribed
             .retain(|(peripheral, _), _| peripheral != id);
     }
+
+    /// Whether a scan is running.
+    #[cfg(test)]
+    pub(crate) fn scanning(&self) -> bool {
+        self.world().scanning
+    }
 }
 
 /// Notifications due now: pending echoes, and subscribed values whose period

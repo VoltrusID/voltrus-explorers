@@ -570,7 +570,7 @@ async fn request_reply(
         .payload(payload.into_bytes().into())
         .timeout(Some(timeout));
     if !headers.is_empty() {
-        request = request.headers(header_map(headers));
+        request = request.headers(header_map(headers)?);
     }
     let started = Instant::now();
     // The client's own timeout covers the reply; this one also covers a

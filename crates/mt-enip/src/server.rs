@@ -147,22 +147,33 @@ pub async fn start_enip_server(
 
     tokio::spawn(async move {
         let mut shutdown = shutdown_rx;
+        let mut failures = 0u32;
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
+                            failures = 0;
                             let state = state_clone.clone();
                             let log_tx = log_tx_clone.clone();
                             tokio::spawn(handle_connection(stream, addr, state, log_tx, shutdown.clone()));
                         }
                         Err(e) => {
-                            let _ = log_tx_clone.send(EnipServerLogEntry {
-                                timestamp: now_ms(),
-                                service: "accept".into(),
-                                tag_name: String::new(),
-                                message: format!("Accept error: {e}"),
-                            });
+                            // Out of file descriptors and the like: the error
+                            // repeats at once, so pause rather than spin.
+                            failures = failures.saturating_add(1);
+                            if failures == 1 {
+                                let _ = log_tx_clone.send(EnipServerLogEntry {
+                                    timestamp: now_ms(),
+                                    service: "accept".into(),
+                                    tag_name: String::new(),
+                                    message: format!("Accept error: {e}"),
+                                });
+                            }
+                            tokio::select! {
+                                () = tokio::time::sleep(accept_backoff(failures)) => {}
+                                _ = shutdown.changed() => break,
+                            }
                         }
                     }
                 }
@@ -187,6 +198,12 @@ pub async fn start_enip_server(
     });
 
     Ok((state, log_rx, shutdown_tx))
+}
+
+/// The pause after the `failures`th accept error in a row: 10 ms doubling to
+/// 640 ms.
+fn accept_backoff(failures: u32) -> Duration {
+    Duration::from_millis(10 << failures.saturating_sub(1).min(6))
 }
 
 fn log(log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>, service: &str, tag: &str, message: String) {
@@ -719,7 +736,22 @@ fn route_cip<'a>(
     state: &'a Arc<EnipServerState>,
     log_tx: &'a mpsc::UnboundedSender<EnipServerLogEntry>,
 ) -> BoxFut<'a> {
-    Box::pin(route_cip_inner(cip, state, log_tx))
+    route_nested(cip, state, log_tx, 0)
+}
+
+/// Most Unconnected_Send / Multiple_Service_Packet wrappers one request may
+/// nest; a real client nests two at most. Deeper requests get an error reply
+/// instead of a recursion a peer controls.
+const MAX_CIP_NESTING: usize = 8;
+
+/// [`route_cip`] for a request embedded `depth` wrappers deep.
+fn route_nested<'a>(
+    cip: &'a [u8],
+    state: &'a Arc<EnipServerState>,
+    log_tx: &'a mpsc::UnboundedSender<EnipServerLogEntry>,
+    depth: usize,
+) -> BoxFut<'a> {
+    Box::pin(route_cip_inner(cip, state, log_tx, depth))
 }
 
 /// Split a request path into leading symbolic segments (program scope) and the rest.
@@ -737,6 +769,7 @@ async fn route_cip_inner(
     cip: &[u8],
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    depth: usize,
 ) -> Vec<u8> {
     if cip.len() < 2 {
         // Too short to carry a service byte — reply with a generic error so the
@@ -754,11 +787,13 @@ async fn route_cip_inner(
 
     match class {
         Some(0x06) if instance == Some(1) => match service {
-            CIP_UNCONNECTED_SEND => handle_unconnected_send(cip, state, log_tx).await,
+            CIP_UNCONNECTED_SEND if depth >= MAX_CIP_NESTING => err_reply(service, 0x20, &[]),
+            CIP_UNCONNECTED_SEND => handle_unconnected_send(cip, state, log_tx, depth).await,
             _ => err_reply(service, 0x08, &[]),
         },
         Some(0x02) if instance == Some(1) => match service {
-            CIP_MULTIPLE_SERVICE_PACKET => handle_multiple_service(cip, pw, state, log_tx).await,
+            CIP_MULTIPLE_SERVICE_PACKET if depth >= MAX_CIP_NESTING => err_reply(service, 0x20, &[]),
+            CIP_MULTIPLE_SERVICE_PACKET => handle_multiple_service(cip, pw, state, log_tx, depth).await,
             _ => err_reply(service, 0x08, &[]),
         },
         Some(0x6C) => match service {
@@ -794,6 +829,7 @@ async fn handle_unconnected_send(
     cip: &[u8],
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    depth: usize,
 ) -> Vec<u8> {
     let (msg, route) = match parse_unconnected_send(cip) {
         Some(v) => v,
@@ -815,7 +851,7 @@ async fn handle_unconnected_send(
         }
         i += 2;
     }
-    route_cip(msg, state, log_tx).await
+    route_nested(msg, state, log_tx, depth + 1).await
 }
 
 /// Multiple_Service_Packet: run each embedded request and pack the replies.
@@ -826,6 +862,7 @@ async fn handle_multiple_service(
     path_words: usize,
     state: &Arc<EnipServerState>,
     log_tx: &mpsc::UnboundedSender<EnipServerLogEntry>,
+    depth: usize,
 ) -> Vec<u8> {
     let data = &cip[2 + path_words * 2..];
     let parts = match split_multiple_service_data(data) {
@@ -836,7 +873,7 @@ async fn handle_multiple_service(
     let mut replies = Vec::with_capacity(parts.len());
     let mut any_error = false;
     for p in &parts {
-        let r = route_cip(p, state, log_tx).await;
+        let r = route_nested(p, state, log_tx, depth + 1).await;
         if r.get(2).copied().unwrap_or(1) != 0 && r.get(2) != Some(&CIP_STATUS_PARTIAL) {
             any_error = true;
         }
@@ -2005,6 +2042,45 @@ mod tests {
         // all good → status 0
         let ok = fx.call(&build_multiple_service_packet(&[reqs[0].clone(), reqs[2].clone()])).await;
         assert_eq!(&ok[..4], &h("8a 00 00 00")[..]);
+    }
+
+    #[test]
+    fn accept_errors_back_off_up_to_a_cap() {
+        assert_eq!(accept_backoff(1), Duration::from_millis(10));
+        assert_eq!(accept_backoff(2), Duration::from_millis(20));
+        assert_eq!(accept_backoff(7), Duration::from_millis(640));
+        assert_eq!(accept_backoff(u32::MAX), Duration::from_millis(640));
+    }
+
+    #[tokio::test]
+    async fn nesting_beyond_the_limit_is_refused() {
+        let fx = Fx::new().await;
+        let read = build_read_tag_request("Counter", 1).unwrap();
+        let wrap = |depth: usize| {
+            let mut req = read.clone();
+            for _ in 0..depth {
+                req = build_multiple_service_packet(&[req]);
+            }
+            req
+        };
+        // Unwrap single-part replies down to the first one that is not a packet.
+        let innermost = |mut reply: Vec<u8>| {
+            let mut levels = 0;
+            while reply.first() == Some(&0x8a) && reply.len() > 4 {
+                reply = split_multiple_service_data(&reply[4..]).unwrap().remove(0);
+                levels += 1;
+            }
+            (levels, reply)
+        };
+        let (levels, reply) = innermost(fx.call(&wrap(MAX_CIP_NESTING)).await);
+        assert_eq!(levels, MAX_CIP_NESTING);
+        assert_eq!(reply, h("cc 00 00 00 c4 00 07 00 00 00"));
+        let (levels, reply) = innermost(fx.call(&wrap(MAX_CIP_NESTING + 1)).await);
+        assert_eq!(levels, MAX_CIP_NESTING);
+        assert_eq!(reply, h("8a 00 20 00"));
+        // A peer's deep nesting costs an error reply, not the stack.
+        let (_, reply) = innermost(fx.call(&wrap(1_000)).await);
+        assert_eq!(reply, h("8a 00 20 00"));
     }
 
     #[tokio::test]

@@ -61,10 +61,16 @@ day rounding, the expiry boundary, clock rollback, restore, refunds and Apple Ac
   container), so a buyer is unlocked at launch, offline included. When StoreKit can't answer, the cache stays.
 - **Clock.** The cache keeps the latest time the Mac has seen (its clock, and the App Store's signature times). Turning
   the clock back stops at that time: it neither extends the trial nor locks anyone out. A clock behind the purchase
-  counts as the moment of purchase (never more than 14 days).
+  counts as the moment of purchase (never more than 14 days). That time and the trial's earliest start are also kept
+  in the Keychain (`SystemMarks`), and the later time and earlier start win, so deleting `licence.json` and turning
+  the clock back doesn't reset the trial either.
+- **An edited cache.** A trial start StoreKit doesn't confirm only ever means the trial was used, never a running
+  trial: at launch a cached start is never later than the latest time seen, and when StoreKit answers without the
+  trial item, the cached start is moved at least 14 days back. Tests:
+  `a_trial_storekit_does_not_confirm_does_not_run` and
+  `deleting_the_cache_and_turning_the_clock_back_does_not_extend_the_trial`.
 - **Restore** (unlock sheet and About) runs `AppStore.sync()` and takes the answer. A refund removes the unlock at the
-  next StoreKit answer. A trial started on this Mac stays started from its earliest date, even under another Apple
-  Account.
+  next StoreKit answer. A trial started on this Mac stays used, even under another Apple Account.
 - **Updates.** `Transaction.updates` (Ask to Buy approvals, purchases on another Mac, refunds) refresh the licence; the
   trial is re-checked every minute.
 
@@ -170,7 +176,8 @@ Test purchases in TestFlight builds use the sandbox, so nothing is charged.
 - Age rating 4+. App Privacy: "Data Not Collected" (true: no account, analytics, telemetry or crash reporting;
   StoreKit is Apple's).
 - Listing (en-US): subtitle "Modbus, MQTT, OPC UA & BACnet"; promotional text "Poll, simulate and trend Modbus, MQTT,
-  BACnet, OPC UA, S7, EtherNet/IP and DNP3 devices from one Mac app. Every tool is free to try for 14 days."; keywords
+  NATS, BACnet, OPC UA, S7, EtherNet/IP, DNP3, serial and BLE devices from one Mac app. Every tool is free to try for
+  14 days."; keywords
   `plc,scada,s7,dnp3,ethernetip,sparkplug,nats,serial,rs485,ble,simulator,hmi,iot,automation,industrial`; the
   description covers each protocol, the views, the trial and unlock, and privacy. Re-read it against the protocols
   that actually ship before submitting. Marketing, support and privacy URLs: `https://voltrus.id/voltrus-tools/`,

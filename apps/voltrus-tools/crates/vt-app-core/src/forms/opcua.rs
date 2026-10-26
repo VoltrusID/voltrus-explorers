@@ -178,6 +178,7 @@ impl OpcuaClientForm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpcuaServerForm {
     pub name: String,
+    pub bind: String,
     pub port: String,
     pub anonymous: bool,
     pub username: String,
@@ -188,6 +189,7 @@ impl OpcuaServerForm {
     pub fn from_spec(name: &str, spec: &OpcuaServerSpec) -> Self {
         Self {
             name: name.to_owned(),
+            bind: spec.bind.clone(),
             port: spec.port.to_string(),
             anonymous: spec.anonymous,
             username: spec.username.clone(),
@@ -197,6 +199,17 @@ impl OpcuaServerForm {
 
     pub fn build(&self) -> Result<(String, OpcuaServerSpec), FormError> {
         let name = name(&self.name)?;
+        let bind = self.bind.trim();
+        let bare = bind
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(bind);
+        let Ok(ip) = bare.parse::<std::net::IpAddr>() else {
+            return Err(error(
+                Field::Bind,
+                "Listen on an IP address, e.g. 127.0.0.1, 0.0.0.0 or ::",
+            ));
+        };
         let port = number(&self.port, Field::Port, "Port", 1, u16::MAX)?;
         let username = self.username.trim();
         if !username.is_empty() && self.password.is_empty() {
@@ -205,6 +218,7 @@ impl OpcuaServerForm {
         Ok((
             name,
             OpcuaServerSpec {
+                bind: ip.to_string(),
                 port,
                 anonymous: self.anonymous,
                 username: username.to_owned(),
@@ -260,6 +274,16 @@ mod tests {
             form.build().unwrap().1.endpoint,
             "opc.tcp://[fe80::1]:4840/UA"
         );
+    }
+
+    #[test]
+    fn the_simulator_listens_on_an_ip_address() {
+        let mut server = OpcuaServerForm::from_spec("Sim", &OpcuaServerSpec::default());
+        assert_eq!(server.bind, "127.0.0.1");
+        server.bind = "localhost".into();
+        assert_eq!(server.build().unwrap_err().field, Field::Bind);
+        server.bind = " [::] ".into();
+        assert_eq!(server.build().unwrap().1.bind, "::");
     }
 
     #[test]

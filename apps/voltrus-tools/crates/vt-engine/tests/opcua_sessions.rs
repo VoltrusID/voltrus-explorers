@@ -263,7 +263,7 @@ fn clients_discover_browse_monitor_write_and_call_the_plant_server() {
     assert!(engine.send(Command::Opcua {
         session: request,
         request: OpcuaRequest::Endpoints {
-            url: format!("opc.tcp://localhost:{port}"),
+            url: format!("opc.tcp://127.0.0.1:{port}"),
         },
     }));
     let OpcuaEvent::Endpoints(Ok(endpoints)) = opcua(&mut events, request) else {

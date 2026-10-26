@@ -168,6 +168,8 @@ pub fn card(live: &Live, point: u32, state: &BleState, cx: &Context<AppModel>) -
         )
         .child(section_label("Decode as", cx))
         .child(div().flex().flex_wrap().gap(SPACE_2).children(chips))
+        // The fields keep their widths; the hint gets a row of its own so a
+        // narrow inspector does not squeeze them.
         .child(
             div()
                 .flex()
@@ -175,22 +177,22 @@ pub fn card(live: &Live, point: u32, state: &BleState, cx: &Context<AppModel>) -
                 .gap(SPACE_4)
                 .child(
                     div()
+                        .flex_none()
                         .w(px(80.0))
                         .child(field("Offset", state.offset.clone(), cx)),
                 )
                 .child(
                     div()
+                        .flex_none()
                         .w(px(100.0))
                         .child(field("Scale", state.scale.clone(), cx)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .pb(SPACE_2)
-                        .text_size(FONT_CAPTION)
-                        .text_color(theme.fg_dim)
-                        .child("For number formats. Enter applies."),
                 ),
+        )
+        .child(
+            div()
+                .text_size(FONT_CAPTION)
+                .text_color(theme.fg_dim)
+                .child("For number formats. Enter applies."),
         )
         .when_some(state.error.clone(), |this, error| {
             this.child(

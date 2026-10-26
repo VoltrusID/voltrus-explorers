@@ -171,7 +171,10 @@ pub fn opcua_host_port(url: &str) -> Option<&str> {
 /// variables with units and ranges, and methods.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpcuaServerSpec {
-    /// TCP port, on every interface.
+    /// Address to listen on: `127.0.0.1` for this computer only, `::` or `0.0.0.0` for every
+    /// interface. Specs saved before it existed listen on this computer only.
+    #[serde(default = "loopback")]
+    pub bind: String,
     pub port: u16,
     /// Clients may sign in without a user.
     pub anonymous: bool,
@@ -182,9 +185,14 @@ pub struct OpcuaServerSpec {
     pub password: String,
 }
 
+fn loopback() -> String {
+    "127.0.0.1".into()
+}
+
 impl Default for OpcuaServerSpec {
     fn default() -> Self {
         Self {
+            bind: loopback(),
             port: OPCUA_PORT,
             anonymous: true,
             username: "operator".into(),
@@ -194,10 +202,26 @@ impl Default for OpcuaServerSpec {
 }
 
 impl OpcuaServerSpec {
+    /// The host a client on this computer reaches the server by: the bind address itself, or
+    /// `localhost` when the server listens on every interface.
+    pub fn host(&self) -> String {
+        let bind = self.bind.trim();
+        let bare = bind
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(bind);
+        match bare.parse::<std::net::IpAddr>() {
+            Ok(ip) if ip.is_unspecified() => "localhost".into(),
+            Ok(std::net::IpAddr::V6(v6)) => format!("[{v6}]"),
+            Ok(std::net::IpAddr::V4(v4)) => v4.to_string(),
+            Err(_) => "localhost".into(),
+        }
+    }
+
     /// A client of this server on this computer, signed in the way the server allows first.
     pub fn client(&self, nodes: Vec<OpcuaNode>) -> OpcuaClientSpec {
         OpcuaClientSpec {
-            endpoint: format!("opc.tcp://localhost:{}", self.port),
+            endpoint: format!("opc.tcp://{}:{}", self.host(), self.port),
             auth: if self.anonymous || self.username.is_empty() {
                 OpcuaAuth::Anonymous
             } else {
@@ -573,6 +597,16 @@ mod tests {
     }
 
     #[test]
+    fn servers_listen_on_this_computer_unless_told_otherwise() {
+        assert_eq!(OpcuaServerSpec::default().bind, "127.0.0.1");
+        // A spec saved before the bind address existed stays on this computer.
+        let old: OpcuaServerSpec =
+            serde_json::from_str(r#"{"port":4840,"anonymous":true}"#).unwrap();
+        assert_eq!(old.bind, "127.0.0.1");
+        assert_eq!(old.port, 4840);
+    }
+
+    #[test]
     fn a_server_spec_makes_a_client_that_can_sign_in() {
         let open = OpcuaServerSpec::default();
         assert_eq!(open.client(Vec::new()).auth, OpcuaAuth::Anonymous);
@@ -582,7 +616,15 @@ mod tests {
             ..OpcuaServerSpec::default()
         };
         let client = locked.client(Vec::new());
-        assert_eq!(client.endpoint, "opc.tcp://localhost:4850");
+        assert_eq!(client.endpoint, "opc.tcp://127.0.0.1:4850");
+        let everywhere = OpcuaServerSpec {
+            bind: "::".into(),
+            ..OpcuaServerSpec::default()
+        };
+        assert_eq!(
+            everywhere.client(Vec::new()).endpoint,
+            format!("opc.tcp://localhost:{OPCUA_PORT}")
+        );
         assert!(
             matches!(client.auth, OpcuaAuth::UserName { ref username, .. } if username == "operator")
         );

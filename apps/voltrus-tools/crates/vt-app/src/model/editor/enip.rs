@@ -47,6 +47,7 @@ pub struct EnipFields {
     pub points: Vec<EnipPointRow>,
     pub discovery: EnipDiscovery,
     // Adapter simulator
+    pub adapter_bind: Entity<TextInput>,
     pub adapter_port: Entity<TextInput>,
     pub template: String,
 }
@@ -82,6 +83,7 @@ impl EnipFields {
                 .map(|form| EnipPointRow::new(form, cx))
                 .collect(),
             discovery: EnipDiscovery::Idle,
+            adapter_bind: input(adapter.bind, "127.0.0.1", InputKind::Text, true, cx),
             adapter_port: input(adapter.port, "44818", InputKind::Unsigned, true, cx),
             template: adapter.template,
         }
@@ -94,6 +96,7 @@ impl EnipFields {
             self.port.clone(),
             self.route.clone(),
             self.poll.clone(),
+            self.adapter_bind.clone(),
             self.adapter_port.clone(),
         ];
         for row in &self.points {
@@ -129,6 +132,7 @@ impl EnipFields {
     pub fn adapter_form(&self, name: String, cx: &App) -> EnipAdapterForm {
         EnipAdapterForm {
             name,
+            bind: Self::text(&self.adapter_bind, cx),
             port: Self::text(&self.adapter_port, cx),
             template: self.template.clone(),
         }

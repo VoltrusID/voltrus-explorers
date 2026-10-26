@@ -428,7 +428,11 @@ impl Default for S7ClientSpec {
 /// identity, diagnostic buffer and blocks for any S7 client.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct S7ServerSpec {
-    /// TCP port on every interface; S7 clients expect 102.
+    /// Address to listen on: `0.0.0.0` for every interface. Files saved
+    /// before this field existed listen on loopback only.
+    #[serde(default = "default_bind")]
+    pub bind: String,
+    /// TCP port; S7 clients expect 102.
     pub port: u16,
     /// Built-in template id.
     pub template: String,
@@ -436,9 +440,14 @@ pub struct S7ServerSpec {
     pub pdu_size: u16,
 }
 
+fn default_bind() -> String {
+    "127.0.0.1".into()
+}
+
 impl Default for S7ServerSpec {
     fn default() -> Self {
         Self {
+            bind: default_bind(),
             port: S7_PORT,
             template: "motor".into(),
             pdu_size: S7_DEFAULT_PDU,
@@ -492,6 +501,14 @@ pub struct S7Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_listens_on_loopback_unless_told_otherwise() {
+        assert_eq!(S7ServerSpec::default().bind, "127.0.0.1");
+        let old: S7ServerSpec =
+            serde_json::from_str(r#"{"port":102,"template":"motor","pdu_size":480}"#).unwrap();
+        assert_eq!(old.bind, "127.0.0.1");
+    }
 
     fn parse(text: &str) -> S7Address {
         text.parse()

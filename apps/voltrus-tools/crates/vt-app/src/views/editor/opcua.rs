@@ -471,15 +471,20 @@ pub fn server(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             row()
                 .child(
                     div()
+                        .flex_1()
+                        .child(field("Listen on", fields.server_bind.clone(), cx)),
+                )
+                .child(
+                    div()
                         .w(px(130.0))
                         .flex_none()
                         .child(field("TCP port", fields.server_port.clone(), cx)),
-                )
-                .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
-                    "Listens on every interface. 4840 is the OPC UA port. Endpoints: None, Basic256Sha256 (Sign, Sign & Encrypt) and Aes256 RsaPss.",
-                    cx,
-                ))),
+                ),
         )
+        .child(hint(
+            "127.0.0.1 keeps the simulator on this computer; 0.0.0.0 or :: opens it to the network. 4840 is the OPC UA port. Endpoints: None, Basic256Sha256 (Sign, Sign & Encrypt) and Aes256 RsaPss.",
+            cx,
+        ))
         .child(
             group("Sign in", cx)
                 .child(checkbox(

@@ -250,6 +250,11 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
+      # Builds every dependency's build.rs, so it runs before any signing
+      # identity or App Store Connect key is on the runner; it needs neither.
+      - name: "Mac App Store build: bundle"
+        run: apps/voltrus-tools/scripts/build-mas.sh bundle build/voltrus-tools/appstore
+
       - name: Signing identities and App Store Connect key
         env:
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
@@ -259,9 +264,8 @@ jobs:
           MAC_INSTALLER_P12_PASSWORD: ${{ secrets.MAC_INSTALLER_P12_PASSWORD }}
         run: scripts/ci-keychain.sh setup APPLE_DIST MAC_INSTALLER
 
-      - name: Mac App Store build
+      - name: "Mac App Store build: package"
         run: |
-          apps/voltrus-tools/scripts/build-mas.sh bundle build/voltrus-tools/appstore
           serial="$(security find-certificate -a -c 'Apple Distribution' -p "$RUNNER_TEMP/release.keychain-db" | openssl x509 -noout -serial | cut -d= -f2)"
           python3 scripts/asc-profile.py MAC_APP_STORE com.joyodigitama.voltrus-tools "$serial" "$RUNNER_TEMP/mas.provisionprofile"
           MAS_PROFILE="$RUNNER_TEMP/mas.provisionprofile" apps/voltrus-tools/scripts/build-mas.sh package \

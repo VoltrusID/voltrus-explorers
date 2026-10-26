@@ -25,7 +25,9 @@ fn server_config(port: u16) -> NatsServerConfig {
 async fn start_test_server() -> (NatsServerState, u16) {
     let port = free_port().await;
     let state = NatsServerState::new(server_config(port));
-    start_server(state.clone(), None).await.expect("start server");
+    start_server(state.clone(), None)
+        .await
+        .expect("start server");
     // Give the listener a beat to accept.
     tokio::time::sleep(Duration::from_millis(100)).await;
     (state, port)
@@ -93,7 +95,10 @@ async fn test_wildcard_subscription() {
 
     // `foo.>` matches everything under foo.
     let mut sub2 = client.subscribe("foo.>", None).await.expect("sub2");
-    client.publish("foo.a.b.c", b"deep").await.expect("pub deep");
+    client
+        .publish("foo.a.b.c", b"deep")
+        .await
+        .expect("pub deep");
     let deep = timeout(Duration::from_secs(2), sub2.next())
         .await
         .expect("t3")
@@ -150,7 +155,10 @@ async fn test_ping_keepalive() {
     }
     // Connection stays alive through PING/PONG keepalive.
     let mut sub = client.subscribe("ping.subject", None).await.expect("sub");
-    client.publish("ping.subject", b"still alive").await.expect("publish");
+    client
+        .publish("ping.subject", b"still alive")
+        .await
+        .expect("publish");
     let m = timeout(Duration::from_secs(2), sub.next())
         .await
         .expect("timeout")
@@ -196,7 +204,9 @@ async fn test_auth_rejected() {
         password: Some("secret".to_string()),
         ..Default::default()
     };
-    let client = NatsClient::connect(&good).await.expect("good creds connect");
+    let client = NatsClient::connect(&good)
+        .await
+        .expect("good creds connect");
     let mut sub = client.subscribe("auth.ok", None).await.expect("sub");
     client.publish("auth.ok", b"hi").await.expect("pub");
     let m = timeout(Duration::from_secs(2), sub.next())
@@ -238,7 +248,11 @@ async fn test_queue_groups_deliver_once() {
         (_, Ok(Some(m))) => Some(m.payload_bytes()),
         _ => None,
     };
-    assert_eq!(got, Some(b"single job".to_vec()), "one queue member gets the message");
+    assert_eq!(
+        got,
+        Some(b"single job".to_vec()),
+        "one queue member gets the message"
+    );
 
     // The other member must NOT receive the same message again.
     let extra1 = timeout(Duration::from_millis(300), s1.next()).await;
@@ -269,7 +283,10 @@ async fn test_request_reply() {
         while let Some(req) = sub.next().await {
             let reply = req.reply.clone().expect("request has reply");
             let payload = req.payload_bytes();
-            let a: i64 = String::from_utf8_lossy(&payload).trim().parse().unwrap_or(0);
+            let a: i64 = String::from_utf8_lossy(&payload)
+                .trim()
+                .parse()
+                .unwrap_or(0);
             server_client
                 .publish(&reply, format!("{}", a + 1).as_bytes())
                 .await
@@ -282,4 +299,63 @@ async fn test_request_reply() {
         .await
         .expect("request");
     assert_eq!(reply.payload_bytes(), b"42");
+}
+
+/// Connect raw, read INFO, prove the server serves us with PING/PONG.
+async fn raw_ping(port: u16) -> String {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    if !line.starts_with("INFO") {
+        return line;
+    }
+    reader
+        .get_mut()
+        .write_all(b"CONNECT {}\r\nPING\r\n")
+        .await
+        .unwrap();
+    line.clear();
+    reader.read_line(&mut line).await.unwrap();
+    line
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_connection_limit_counts_live_connections() {
+    let (_state, port) = start_test_server().await;
+    // max_connections is 10; closed connections must free their slot.
+    for round in 0..300 {
+        let reply = timeout(Duration::from_secs(2), raw_ping(port))
+            .await
+            .expect("timeout");
+        assert_eq!(reply, "PONG\r\n", "round {round}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_oversize_pub_is_rejected() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (_state, port) = start_test_server().await;
+    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    // A size this large would abort the process if it were allocated.
+    let pub_line = format!("CONNECT {{}}\r\nPUB a {}\r\n", usize::MAX);
+    reader
+        .get_mut()
+        .write_all(pub_line.as_bytes())
+        .await
+        .unwrap();
+    line.clear();
+    timeout(Duration::from_secs(2), reader.read_line(&mut line))
+        .await
+        .expect("timeout")
+        .unwrap();
+    assert_eq!(line, "-ERR 'maximum payload exceeded'\r\n");
 }

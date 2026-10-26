@@ -16,6 +16,7 @@
 //! address see the same data.
 
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -221,9 +222,17 @@ impl Image {
 
 type SharedImage = Arc<RwLock<Image>>;
 
+/// The pause after the `failures`th accept error in a row: 10 ms doubling to
+/// 640 ms.
+fn accept_backoff(failures: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(10 << failures.saturating_sub(1).min(6))
+}
+
 /// How [`S7Server::start_with_options`] serves.
 #[derive(Debug, Clone)]
 pub struct S7ServerOptions {
+    /// Local address to listen on; every interface by default.
+    pub bind: IpAddr,
     /// Most PDU bytes the simulated CPU offers in Setup Communication.
     pub pdu_size: u16,
     /// Receives a description of every frame received and answered (after the handshake).
@@ -232,7 +241,7 @@ pub struct S7ServerOptions {
 
 impl Default for S7ServerOptions {
     fn default() -> Self {
-        Self { pdu_size: DEFAULT_PDU_SIZE, traffic: None }
+        Self { bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED), pdu_size: DEFAULT_PDU_SIZE, traffic: None }
     }
 }
 
@@ -244,7 +253,7 @@ pub struct S7Server {
     /// The tasks serving connected clients, so stopping drops them too.
     connections: Arc<std::sync::Mutex<Vec<AbortHandle>>>,
     requests: Arc<AtomicU64>,
-    port: u16,
+    local_addr: SocketAddr,
 }
 
 impl S7Server {
@@ -261,7 +270,7 @@ impl S7Server {
         initial: Vec<(S7Tag, S7Value)>,
         pdu_size: u16,
     ) -> std::io::Result<Self> {
-        Self::start_with_options(port, initial, S7ServerOptions { pdu_size, traffic: None }).await
+        Self::start_with_options(port, initial, S7ServerOptions { pdu_size, ..S7ServerOptions::default() }).await
     }
 
     /// Like [`start`](Self::start), with a PDU size limit and a traffic channel.
@@ -270,8 +279,8 @@ impl S7Server {
         initial: Vec<(S7Tag, S7Value)>,
         options: S7ServerOptions,
     ) -> std::io::Result<Self> {
-        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-        let actual_port = listener.local_addr()?.port();
+        let listener = TcpListener::bind((options.bind, port)).await?;
+        let local_addr = listener.local_addr()?;
 
         let mut image = Image::default();
         for (tag, value) in &initial {
@@ -289,12 +298,14 @@ impl S7Server {
         let pdu_size = options.pdu_size;
         let traffic = options.traffic;
         let handle = tokio::spawn(async move {
+            let mut failures = 0u32;
             loop {
                 if !running_c.load(Ordering::Relaxed) {
                     break;
                 }
                 match listener.accept().await {
                     Ok((stream, _peer)) => {
+                        failures = 0;
                         let s = Arc::clone(&store_c);
                         let served = Arc::clone(&requests_c);
                         let traffic = traffic.clone();
@@ -306,7 +317,15 @@ impl S7Server {
                             open.push(task.abort_handle());
                         }
                     }
-                    Err(_) => break,
+                    // Out of file descriptors and the like: keep serving once
+                    // it clears, pausing rather than spinning meanwhile.
+                    Err(error) => {
+                        failures = failures.saturating_add(1);
+                        if failures == 1 {
+                            tracing::warn!("S7 simulator cannot accept a connection: {error}");
+                        }
+                        tokio::time::sleep(accept_backoff(failures)).await;
+                    }
                 }
             }
         });
@@ -317,13 +336,18 @@ impl S7Server {
             handle: Mutex::new(Some(handle)),
             connections,
             requests,
-            port: actual_port,
+            local_addr,
         })
     }
 
     /// The actually-bound port (useful when started on port 0).
     pub fn port(&self) -> u16 {
-        self.port
+        self.local_addr.port()
+    }
+
+    /// The address and port the server listens on.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 
     /// Requests answered so far, over every connection.
@@ -932,7 +956,7 @@ mod tests {
         let server = S7Server::start_with_options(
             0,
             vec![(word.clone(), S7Value::Word(5))],
-            S7ServerOptions { pdu_size: 960, traffic: Some(sim_tx) },
+            S7ServerOptions { pdu_size: 960, traffic: Some(sim_tx), ..S7ServerOptions::default() },
         )
         .await
         .unwrap();
@@ -973,6 +997,26 @@ mod tests {
     }
 
     /// Stopping releases the port at once and drops connected clients.
+    #[tokio::test]
+    async fn listens_on_the_bind_address_it_is_given() {
+        let options = S7ServerOptions { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), ..S7ServerOptions::default() };
+        let server = S7Server::start_with_options(0, vec![], options).await.unwrap();
+        assert!(server.local_addr().ip().is_loopback(), "{}", server.local_addr());
+        assert_eq!(server.local_addr().port(), server.port());
+        server.stop().await;
+        let every = S7Server::start(0, vec![]).await.unwrap();
+        assert!(every.local_addr().ip().is_unspecified());
+        every.stop().await;
+    }
+
+    #[test]
+    fn accept_errors_back_off_up_to_a_cap() {
+        assert_eq!(accept_backoff(1), std::time::Duration::from_millis(10));
+        assert_eq!(accept_backoff(2), std::time::Duration::from_millis(20));
+        assert_eq!(accept_backoff(7), std::time::Duration::from_millis(640));
+        assert_eq!(accept_backoff(u32::MAX), std::time::Duration::from_millis(640));
+    }
+
     #[tokio::test]
     async fn stop_releases_the_port_and_drops_clients() {
         let word = tag("MW0", S7DataType::Word);

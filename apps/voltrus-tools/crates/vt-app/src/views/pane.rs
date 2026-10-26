@@ -19,9 +19,11 @@ const COMPACT: f32 = 720.0;
 /// becomes an icon.
 const NARROW: f32 = 520.0;
 /// Width a narrow header spends on everything but the name: padding (32),
-/// monogram (28), four gaps (40), icon-only switcher (116), session icon (22),
-/// plus a little slack.
-const NARROW_CHROME: f32 = 246.0;
+/// monogram (28), four gaps (40), icon-only switcher (116 for four views, 28
+/// more for the Device view), session icon (22), plus a little slack.
+fn narrow_chrome(device_view: bool) -> f32 {
+    if device_view { 274.0 } else { 246.0 }
+}
 /// Assumed before the first layout measured the pane.
 const UNMEASURED: f32 = 1200.0;
 
@@ -106,7 +108,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
     // the address. Text only truncates inside a known width, so give it one:
     // what the header leaves after padding, monogram, gaps, the icon-only
     // view switcher and the session icon.
-    let narrow_text = (width - NARROW_CHROME).max(48.0);
+    let device_view = super::device::available(&connection.spec);
+    let narrow_text = (width - narrow_chrome(device_view)).max(48.0);
+    // Wide headers measure their name column instead: the switcher and the
+    // session button carry labels of no fixed width.
+    let text_widths = model.header_text_widths.clone();
+    let wide_text = text_widths.borrow().get(&pane_id).copied();
     let narrow_status = detail.clone().unwrap_or_else(|| state.label().to_string());
     let has_detail = detail.is_some();
     let subtitle = detail.unwrap_or_else(|| connection.spec.endpoint());
@@ -115,7 +122,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
 
     let segments = PaneView::ALL
         .into_iter()
-        .chain(super::device::available(&connection.spec).then_some(PaneView::Device))
+        .chain(device_view.then_some(PaneView::Device))
         .map(|option| {
             Segment::new(
                 if serial && option == PaneView::Traffic {
@@ -137,7 +144,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 PaneView::Device => Icon::Cpu,
             })
             // A fifth view needs the room of a wide pane to keep its labels.
-            .icon_only(compact || (super::device::available(&connection.spec) && width < 1000.0))
+            .icon_only(compact || (device_view && width < 1000.0))
         })
         .collect();
 
@@ -191,10 +198,28 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
             } else {
                 this.child(
                     div()
+                        .relative()
                         .flex()
                         .flex_col()
                         .flex_1()
                         .min_w_0()
+                        .overflow_hidden()
+                        // When the column's width changes, draw once more so
+                        // the address truncates to the new space.
+                        .child(
+                            canvas(
+                                move |area, window, _| {
+                                    let previous =
+                                        text_widths.borrow_mut().insert(pane_id, area.size.width);
+                                    if previous != Some(area.size.width) {
+                                        window.request_animation_frame();
+                                    }
+                                },
+                                |_, (), _, _| {},
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -214,6 +239,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                         .child(
                             div()
                                 .min_w_0()
+                                .when_some(wide_text, |this, wide_text| this.w(wide_text))
                                 .truncate()
                                 .font_family(MONO)
                                 .text_size(FONT_CAPTION)
@@ -401,4 +427,26 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         .child(header)
         .child(div().flex_1().min_h_0().child(body))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::narrow_chrome;
+
+    /// Padding (32), monogram (28), four gaps (40) and the session icon (22)
+    /// around an icon-only switcher of `views` segments: 26 px each, 2 px
+    /// apart, in a 6 px frame.
+    fn chrome_for(views: f32) -> f32 {
+        let switcher = views * 26.0 + (views - 1.0) * 2.0 + 6.0;
+        32.0 + 28.0 + 40.0 + switcher + 22.0
+    }
+
+    #[test]
+    fn a_narrow_name_leaves_room_for_every_view_button() {
+        assert!(narrow_chrome(false) >= chrome_for(4.0));
+        assert!(
+            narrow_chrome(true) >= chrome_for(5.0),
+            "an S7 client's Device view adds a fifth button"
+        );
+    }
 }

@@ -7,7 +7,7 @@ pub(crate) mod client;
 pub(crate) mod plant;
 pub(crate) mod server;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use mt_opcua::OpcUaProtocolClient;
@@ -24,6 +24,49 @@ const DISCOVERY_WAIT: Duration = Duration::from_secs(10);
 /// which the macOS sandbox places inside the app's container.
 pub fn set_pki_root(dir: PathBuf) {
     mt_opcua::pki::set_root(dir);
+}
+
+/// Copy a user certificate or private key the user picked into the PKI root's `users` folder,
+/// readable by this user only, and return the copy's path. The sandbox's permission to read a
+/// file chosen in the open panel ends with the run; the copy, inside the container, survives it.
+pub fn import_user_file(source: &Path) -> std::io::Result<PathBuf> {
+    init_pki();
+    import_user_file_into(&mt_opcua::pki::root(), source)
+}
+
+fn import_user_file_into(root: &Path, source: &Path) -> std::io::Result<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    use std::io::Write;
+
+    let bytes = std::fs::read(source)?;
+    let users = root.join("users");
+    std::fs::create_dir_all(&users)?;
+    // Same-named files from different folders keep their own copies.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("user");
+    let name = match source.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) => format!("{stem}-{:016x}.{ext}", hasher.finish()),
+        None => format!("{stem}-{:016x}", hasher.finish()),
+    };
+    let copy = users.join(name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o600);
+        let mut file = options.open(&copy)?;
+        // A copy made before keeps whatever mode it had; this one is private either way.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.write_all(&bytes)?;
+    }
+    #[cfg(not(unix))]
+    options.open(&copy)?.write_all(&bytes)?;
+    Ok(copy)
 }
 
 /// Settle where certificates live before the first OPC UA session touches them.
@@ -89,7 +132,39 @@ pub(crate) async fn endpoints(url: String) -> Result<Vec<OpcuaEndpoint>, String>
 
 #[cfg(test)]
 mod tests {
-    use super::clock;
+    use super::{clock, import_user_file_into};
+
+    #[test]
+    fn picked_user_files_are_copied_private_into_the_pki() {
+        let dir = std::env::temp_dir().join(format!(
+            "vt-opcua-import-{}-{}",
+            std::process::id(),
+            super::now_ms()
+        ));
+        let picked = dir.join("picked");
+        std::fs::create_dir_all(&picked).unwrap();
+        let source = picked.join("operator.pem");
+        std::fs::write(&source, b"-----BEGIN PRIVATE KEY-----").unwrap();
+        let root = dir.join("pki");
+
+        let copy = import_user_file_into(&root, &source).unwrap();
+        assert!(copy.starts_with(root.join("users")), "{}", copy.display());
+        assert_eq!(copy.extension().and_then(|e| e.to_str()), Some("pem"));
+        assert_eq!(
+            std::fs::read(&copy).unwrap(),
+            b"-----BEGIN PRIVATE KEY-----"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&copy).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // The copy outlives the picked file.
+        std::fs::remove_dir_all(&picked).unwrap();
+        assert!(copy.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn clocks_read_utc() {

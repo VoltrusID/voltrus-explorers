@@ -6,6 +6,7 @@
 //! held point as `Locked`.
 
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use mt_s7::{S7Frame, S7Server, S7ServerOptions, S7Tag, S7Value};
@@ -38,6 +39,10 @@ pub(crate) async fn run(
         fail(out, format!("Unknown S7 template {}", spec.template));
         return;
     };
+    let Some(bind) = crate::bacnet::parse_ip(&spec.bind) else {
+        fail(out, format!("Listen on an IP address, not {}", spec.bind));
+        return;
+    };
     let specs: Vec<S7TagSpec> = template
         .points
         .iter()
@@ -53,7 +58,7 @@ pub(crate) async fn run(
         .map(|spec| tag(&spec.name, spec.address, spec.data_type))
         .collect();
     let (frame_tx, mut frames) = mpsc::unbounded_channel::<S7Frame>();
-    let server = match start(&spec, template, &tags, &frame_tx, &mut control, out).await {
+    let server = match start(&spec, bind, template, &tags, &frame_tx, &mut control, out).await {
         Ok(Some(server)) => server,
         Ok(None) => {
             out.state(SessionState::Closed { error: None });
@@ -65,7 +70,7 @@ pub(crate) async fn run(
         }
     };
     out.state(SessionState::Listening {
-        address: format!("0.0.0.0:{}", spec.port),
+        address: server.local_addr().to_string(),
     });
     out.log(
         LogLevel::Info,
@@ -228,6 +233,7 @@ async fn report(server: &S7Server, tags: &[S7Tag], specs: &[S7TagSpec], out: &Em
 /// closed the session meanwhile.
 async fn start(
     spec: &S7ServerSpec,
+    bind: IpAddr,
     template: &S7Template,
     tags: &[S7Tag],
     frames: &mpsc::UnboundedSender<S7Frame>,
@@ -250,13 +256,14 @@ async fn start(
     let deadline = Instant::now() + BIND_RETRY;
     loop {
         let options = S7ServerOptions {
+            bind,
             pdu_size: spec.pdu_size,
             traffic: Some(frames.clone()),
         };
         match S7Server::start_with_options(spec.port, initial.clone(), options).await {
             Ok(server) => return Ok(Some(server)),
             Err(error) if error.kind() == ErrorKind::AddrInUse && Instant::now() < deadline => {}
-            Err(error) => return Err(bind_error(spec.port, &error)),
+            Err(error) => return Err(bind_error(bind, spec.port, &error)),
         }
         tokio::select! {
             () = tokio::time::sleep(BIND_RETRY_STEP) => {}
@@ -265,7 +272,7 @@ async fn start(
     }
 }
 
-fn bind_error(port: u16, error: &std::io::Error) -> String {
+fn bind_error(bind: IpAddr, port: u16, error: &std::io::Error) -> String {
     match error.kind() {
         ErrorKind::AddrInUse => format!(
             "TCP port {port} is in use by another program. Stop it, or give the simulator another port"
@@ -273,7 +280,11 @@ fn bind_error(port: u16, error: &std::io::Error) -> String {
         ErrorKind::PermissionDenied => format!(
             "This Mac does not let the app listen on TCP port {port}. Use a port above 1023, e.g. 1102"
         ),
-        _ => format!("Cannot listen on TCP port {port}: {error}"),
+        ErrorKind::AddrNotAvailable => format!("{bind} is not an address of this computer"),
+        _ => format!(
+            "Cannot listen on {}: {error}",
+            std::net::SocketAddr::new(bind, port)
+        ),
     }
 }
 
@@ -297,9 +308,12 @@ mod tests {
 
     #[test]
     fn bind_errors_say_what_to_do() {
+        let any = IpAddr::from([0, 0, 0, 0]);
         let busy = std::io::Error::from(ErrorKind::AddrInUse);
-        assert!(bind_error(102, &busy).contains("in use"));
+        assert!(bind_error(any, 102, &busy).contains("in use"));
         let denied = std::io::Error::from(ErrorKind::PermissionDenied);
-        assert!(bind_error(102, &denied).contains("above 1023"));
+        assert!(bind_error(any, 102, &denied).contains("above 1023"));
+        let elsewhere = std::io::Error::from(ErrorKind::AddrNotAvailable);
+        assert!(bind_error(IpAddr::from([10, 9, 9, 9]), 102, &elsewhere).contains("10.9.9.9"));
     }
 }

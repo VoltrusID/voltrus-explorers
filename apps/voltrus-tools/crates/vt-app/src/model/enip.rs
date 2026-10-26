@@ -307,13 +307,14 @@ impl AppModel {
         let Some(template) = templates::find_enip(&adapter.template) else {
             return;
         };
+        let host = match adapter.bind.as_str() {
+            "0.0.0.0" => "127.0.0.1",
+            "::" => "::1",
+            bind => bind,
+        };
         let client = self.workspace.add_connection(
             format!("{name} client"),
-            SessionSpec::EnipClient(templates::enip_client_for(
-                template,
-                "127.0.0.1",
-                adapter.port,
-            )),
+            SessionSpec::EnipClient(templates::enip_client_for(template, host, adapter.port)),
         );
         self.workspace
             .split(client, Axis::Horizontal, PaneView::Points);
@@ -345,6 +346,7 @@ impl AppModel {
             SessionSpec::EnipAdapter(EnipAdapterSpec {
                 port,
                 template: template.id.clone(),
+                ..EnipAdapterSpec::default()
             }),
         );
         let client = self.workspace.add_connection(

@@ -84,7 +84,7 @@ pub fn save(path: &Path, workspace: &Workspace) -> Result<(), StoreError> {
         }
         let text = serde_json::to_vec_pretty(workspace).map_err(io::Error::other)?;
         let staging = path.with_extension("json.saving");
-        let mut file = fs::File::create(&staging)?;
+        let mut file = create_private(&staging)?;
         file.write_all(&text)?;
         file.sync_all()?;
         fs::rename(&staging, path)
@@ -93,6 +93,27 @@ pub fn save(path: &Path, workspace: &Workspace) -> Result<(), StoreError> {
         path: path.into(),
         source,
     })
+}
+
+/// Create (or truncate) `path` readable by its owner only: the workspace holds
+/// passwords, NKey seeds and `.creds`.
+fn create_private(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+        options.mode(0o600);
+        let file = options.open(path)?;
+        // `mode` only applies to a new file; a staging file left by a crash
+        // keeps its own.
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        options.open(path)
+    }
 }
 
 fn kept_path(path: &Path) -> PathBuf {
@@ -120,6 +141,25 @@ mod tests {
         workspace.open(plc);
         save(&path, &workspace).unwrap();
         assert_eq!(load(&path).unwrap(), workspace);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_workspace_file_is_private_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        // A staging file left behind by a crash, readable by everyone.
+        fs::write(path.with_extension("json.saving"), "").unwrap();
+        fs::set_permissions(
+            path.with_extension("json.saving"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        save(&path, &Workspace::default()).unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

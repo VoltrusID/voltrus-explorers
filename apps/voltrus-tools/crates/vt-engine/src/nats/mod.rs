@@ -70,13 +70,19 @@ pub(crate) fn clip(text: &str) -> String {
     format!("{}…", &text[..end])
 }
 
-/// Headers as `async_nats` takes them.
-pub(crate) fn header_map(headers: &[NatsHeader]) -> async_nats::HeaderMap {
+/// Headers as `async_nats` takes them; an invalid name or value is an
+/// error rather than the panic `HeaderMap::append(&str, &str)` raises.
+pub(crate) fn header_map(headers: &[NatsHeader]) -> Result<async_nats::HeaderMap, String> {
+    use std::str::FromStr;
     let mut map = async_nats::HeaderMap::new();
     for header in headers {
-        map.append(header.name.as_str(), header.value.as_str());
+        let name = async_nats::HeaderName::from_str(&header.name)
+            .map_err(|_| format!("“{}” is not a header name", header.name))?;
+        let value = async_nats::HeaderValue::from_str(&header.value)
+            .map_err(|_| format!("header “{}” has a line break in its value", header.name))?;
+        map.append(name, value);
     }
-    map
+    Ok(map)
 }
 
 /// Headers of a received message, in a stable order.
@@ -141,9 +147,23 @@ mod tests {
                 value: "42".into(),
             },
         ];
-        let back = headers_of(Some(&header_map(&headers)));
+        let back = headers_of(Some(&header_map(&headers).unwrap()));
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].name, "Nats-Msg-Id");
         assert_eq!(header_lines(&back), "Nats-Msg-Id: 42\nX-Unit: kW");
+    }
+
+    #[test]
+    fn invalid_headers_are_refused_without_panicking() {
+        let header = |name: &str, value: &str| {
+            vec![NatsHeader {
+                name: name.into(),
+                value: value.into(),
+            }]
+        };
+        assert!(header_map(&header("Ünit", "kW")).is_err());
+        assert!(header_map(&header("a:b", "kW")).is_err());
+        assert!(header_map(&header("X-Unit", "k\rW")).is_err());
+        assert!(header_map(&header("X-Unit", "kW")).is_ok());
     }
 }

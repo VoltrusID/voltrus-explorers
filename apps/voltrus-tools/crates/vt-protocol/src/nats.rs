@@ -217,12 +217,17 @@ pub fn parse_headers(text: &str) -> Result<Vec<NatsHeader>, String> {
                 .split_once(':')
                 .ok_or_else(|| format!("“{line}”: write headers as Name: value"))?;
             let name = name.trim();
-            if name.is_empty() || name.contains(|c: char| c.is_whitespace() || c.is_control()) {
+            // NATS (and async-nats) take printable ASCII without ':' only.
+            if name.is_empty() || name.contains(|c: char| !c.is_ascii_graphic() || c == ':') {
                 return Err(format!("“{name}” is not a header name"));
+            }
+            let value = value.trim();
+            if value.contains(['\r', '\n']) {
+                return Err(format!("“{name}” has a line break in its value"));
             }
             Ok(NatsHeader {
                 name: name.to_owned(),
-                value: value.trim().to_owned(),
+                value: value.to_owned(),
             })
         })
         .collect()
@@ -397,6 +402,8 @@ mod tests {
         assert!(parse_headers("no colon").is_err());
         assert!(parse_headers(": v").is_err());
         assert!(parse_headers("Bad Name: v").is_err());
+        assert!(parse_headers("Ünit: kW").is_err());
+        assert!(parse_headers("X-Unit: k\rW").is_err());
     }
 
     #[test]
