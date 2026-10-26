@@ -9,6 +9,7 @@ mod bacnet;
 mod message;
 mod modbus;
 mod mqtt;
+mod nats;
 mod value;
 
 pub use bacnet::{
@@ -24,6 +25,11 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use nats::{
+    NATS_PORT, NatsAuth, NatsClientSpec, NatsConsumer, NatsEvent, NatsHeader, NatsReply,
+    NatsRequest, NatsServerSpec, NatsStoredMessage, NatsStream, NatsStreamDetail, NatsSubscription,
+    parse_headers, valid_subject, valid_subject_filter,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -45,6 +51,12 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Subscribe to a NATS server's subjects, publish, request and browse
+    /// JetStream.
+    NatsClient(NatsClientSpec),
+    /// Run a NATS server with JetStream, optionally publishing a simulated
+    /// device.
+    NatsServer(NatsServerSpec),
 }
 
 impl SessionSpec {
@@ -53,6 +65,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::NatsClient(_) | Self::NatsServer(_) => Protocol::Nats,
         }
     }
 
@@ -60,6 +73,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::NatsClient(_) => Role::Client,
+            Self::NatsServer(_) => Role::Simulator,
         }
     }
 
@@ -92,6 +107,20 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::NatsClient(spec) => format!(
+                "{}{} · {}",
+                if spec.tls { "tls://" } else { "nats://" },
+                host_port(&spec.host, spec.port),
+                match spec.subscriptions.as_slice() {
+                    [] => "no subscriptions".to_owned(),
+                    [only] => only.subject.clone(),
+                    many => format!("{} subscriptions", many.len()),
+                }
+            ),
+            Self::NatsServer(spec) => match &spec.template {
+                Some(_) => format!("{} · {}.>", host_port(&spec.bind, spec.port), spec.prefix),
+                None => host_port(&spec.bind, spec.port),
+            },
         }
     }
 
@@ -104,6 +133,8 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::NatsClient(spec) => host_port(&spec.host, spec.port),
+            Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
         }
     }
 }
@@ -124,16 +155,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Nats,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::Nats,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Nats => "NATS",
         }
     }
 
@@ -143,6 +181,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Nats => "NA",
         }
     }
 
@@ -154,6 +193,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Nats => {
+                "Wildcard subjects, JSON values, publish and request/reply, JetStream browsing, and a server simulator"
             }
         }
     }

@@ -74,6 +74,10 @@ impl Emitter {
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
     }
+
+    pub(crate) fn nats(&self, event: vt_protocol::NatsEvent) {
+        self.emit(EventKind::Nats(event));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

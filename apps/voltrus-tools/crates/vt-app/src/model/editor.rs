@@ -15,6 +15,9 @@ use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 mod mqtt;
 
 pub use mqtt::MqttFields;
+mod nats;
+
+pub use nats::NatsFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -24,6 +27,8 @@ pub enum EditorKind {
     MqttBroker,
     BacnetClient,
     BacnetDevice,
+    NatsClient,
+    NatsServer,
 }
 
 impl EditorKind {
@@ -37,6 +42,8 @@ impl EditorKind {
             (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+            (Protocol::Nats, Role::Client) => Self::NatsClient,
+            (Protocol::Nats, Role::Simulator) => Self::NatsServer,
         })
     }
 
@@ -49,6 +56,8 @@ impl EditorKind {
             SessionSpec::MqttBroker(_) => Self::MqttBroker,
             SessionSpec::BacnetClient(_) => Self::BacnetClient,
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+            SessionSpec::NatsClient(_) => Self::NatsClient,
+            SessionSpec::NatsServer(_) => Self::NatsServer,
         }
     }
 }
@@ -90,6 +99,7 @@ pub struct Editor {
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
+    pub nats: NatsFields,
 }
 
 fn input(
@@ -118,6 +128,14 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let nats_client = match editing.as_ref().map(|(_, _, spec)| spec) {
+            Some(SessionSpec::NatsClient(spec)) => spec.clone(),
+            _ => vt_protocol::NatsClientSpec::default(),
+        };
+        let nats_server = match editing.as_ref().map(|(_, _, spec)| spec) {
+            Some(SessionSpec::NatsServer(spec)) => spec.clone(),
+            _ => vt_protocol::NatsServerSpec::default(),
+        };
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -148,6 +166,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::NatsClient(_) | SessionSpec::NatsServer(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -156,6 +179,8 @@ impl Editor {
                     EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
+                    EditorKind::NatsClient => "NATS server".to_owned(),
+                    EditorKind::NatsServer => "NATS simulator".to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -219,6 +244,7 @@ impl Editor {
             error: None,
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
+            nats: NatsFields::new(&nats_client, &nats_server, cx),
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -241,6 +267,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.nats.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -372,6 +401,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
+            EditorKind::NatsClient => self
+                .nats
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::NatsClient(spec))),
+            EditorKind::NatsServer => self
+                .nats
+                .server_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::NatsServer(spec))),
         }
     }
 }

@@ -106,6 +106,18 @@ sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
 the app hands to the open editor instead of a session.
 
+Work a running session does on request, with an answer that is not a value,
+is one command and one event per protocol: a NATS client takes
+`Command::Nats { session, request }` (publish with headers, request/reply,
+list streams, open a stream, fetch from a consumer) and answers with
+`EventKind::Nats` (publishes with `Published`). Each waiting request runs on
+its own task beside the subscriptions; a request to a session that is not
+running is answered "Not connected" at once. The app keeps the replies and
+the JetStream browser per connection (`vt-app/src/model/nats.rs`) and draws
+them in the inspector (`vt-app/src/views/nats.rs`). The NATS simulator runs
+`mt-nats`'s embedded server in the session task (it stops and rebinds
+in-process); its request service is an ordinary client of that server.
+
 ## Design system
 
 `vt-ui::theme::Theme` derives every token (surfaces, borders, accent, status

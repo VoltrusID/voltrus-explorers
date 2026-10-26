@@ -206,6 +206,9 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            // NATS replies and JetStream answers: the inspector's panel
+            // takes them (`AppModel::nats_event`).
+            EventKind::Nats(_) => {}
         }
     }
 

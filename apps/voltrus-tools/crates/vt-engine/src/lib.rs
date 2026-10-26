@@ -9,6 +9,7 @@ mod bacnet;
 mod emit;
 mod modbus;
 mod mqtt;
+mod nats;
 pub mod templates;
 
 use std::collections::HashMap;
@@ -74,6 +75,12 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::MqttBroker(_) => {
             u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::NatsClient(_) => {
+            u64::try_from(nats::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::NatsServer(_) => {
+            u64::try_from(nats::server::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -100,6 +107,8 @@ pub(crate) enum Control {
         point: u32,
     },
     Close,
+    /// NATS: publish with headers, request/reply, JetStream browsing.
+    Nats(vt_protocol::NatsRequest),
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -159,9 +168,11 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::ModbusSlave(slave) => Some(slave.port),
                     SessionSpec::MqttBroker(broker) => Some(broker.port),
                     SessionSpec::BacnetDevice(device) => Some(device.port),
+                    SessionSpec::NatsServer(server) => Some(server.port),
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
-                    | SessionSpec::BacnetClient(_) => None,
+                    | SessionSpec::BacnetClient(_)
+                    | SessionSpec::NatsClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -230,6 +241,14 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::Nats { session, request } => {
+                if sessions.contains_key(&session) {
+                    forward(&sessions, session, Control::Nats(request));
+                } else {
+                    let out = Emitter::new(session, events.clone());
+                    nats::client::refuse(request, "Not connected", &out);
+                }
+            }
             Command::Shutdown => break,
         }
     }
@@ -252,5 +271,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
         SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
+        SessionSpec::NatsClient(spec) => nats::client::run(spec, control, &out).await,
+        SessionSpec::NatsServer(spec) => nats::server::run(spec, control, &out).await,
     }
 }

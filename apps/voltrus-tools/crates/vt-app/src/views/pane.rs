@@ -236,6 +236,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
+        SessionSpec::NatsServer(spec) => spec.template.is_some(),
         _ => false,
     };
     let body: AnyElement = match live {
@@ -262,6 +263,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
+                }
+                (SessionSpec::NatsServer(_), _) => {
+                    "Start it to run a NATS server with JetStream on this computer. Any NATS client can connect, including this app."
+                }
+                (SessionSpec::NatsClient(_), _) => {
+                    "Connect to subscribe. Subjects become points as their messages arrive; publish, request and browse JetStream from the inspector."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

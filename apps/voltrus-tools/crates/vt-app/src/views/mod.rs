@@ -8,6 +8,7 @@ pub mod cached;
 mod editor;
 pub mod inspector;
 mod log;
+mod nats;
 mod new_menu;
 mod palette;
 pub mod pane;

@@ -441,6 +441,69 @@ impl NatsClient {
         }
         Ok(out)
     }
+
+    /// Every stream with its info, in one paged `STREAM.LIST`.
+    pub async fn js_streams(&self) -> Result<Vec<NatsStreamInfo>, String> {
+        let ctx = self.jetstream();
+        let mut streams = ctx.streams();
+        let mut out = Vec::new();
+        while let Some(info) = streams.next().await {
+            out.push(stream_info_from(info.map_err(|e| e.to_string())?));
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    /// Every consumer of a stream, with its info (`CONSUMER.LIST`).
+    pub async fn js_stream_consumers(&self, stream: &str) -> Result<Vec<NatsConsumerInfo>, String> {
+        let ctx = self.jetstream();
+        let handle = ctx
+            .get_stream(stream)
+            .await
+            .map_err(|e| format!("Get stream failed: {}", e))?;
+        let mut consumers = handle.consumers();
+        let mut out = Vec::new();
+        while let Some(info) = consumers.next().await {
+            out.push(consumer_info_from(info.map_err(|e| e.to_string())?));
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    /// The newest `limit` stored messages of a stream, oldest first. Walks
+    /// back from the last sequence, so it works after limits or purges
+    /// dropped the first messages; deleted sequences are skipped.
+    pub async fn js_stream_tail(
+        &self,
+        stream: &str,
+        limit: u64,
+    ) -> Result<Vec<NatsStoredMessage>, String> {
+        let ctx = self.jetstream();
+        let handle = ctx
+            .get_stream(stream)
+            .await
+            .map_err(|e| format!("Get stream failed: {}", e))?;
+        let state = handle.cached_info().state.clone();
+        if state.messages == 0 || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let first = state.first_sequence.max(1);
+        let mut out = Vec::new();
+        let mut seq = state.last_sequence;
+        while seq >= first && (out.len() as u64) < limit {
+            if let Ok(m) = handle.get_raw_message(seq).await {
+                out.push(NatsStoredMessage {
+                    sequence: m.sequence,
+                    subject: m.subject.as_ref().to_string(),
+                    payload: encode_payload(&m.payload),
+                    timestamp_ms: unix_ms(m.time),
+                });
+            }
+            seq -= 1;
+        }
+        out.reverse();
+        Ok(out)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -774,6 +837,8 @@ fn stream_info_from(info: async_nats::jetstream::stream::Info) -> NatsStreamInfo
         storage: format!("{:?}", info.config.storage).to_lowercase(),
         consumers: info.state.consumer_count as u64,
         created: Some(unix_ms(info.created).to_string()),
+        first_seq: info.state.first_sequence,
+        last_seq: info.state.last_sequence,
     }
 }
 

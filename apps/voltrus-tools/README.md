@@ -45,6 +45,24 @@ standalone Tauri apps in this repository.
   on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
   with a 16-level priority array, and SubscribeCOV. A value set from the app
   or commanded by any client is held until released or relinquished.
+- **NATS client** (on `mt-nats`, the official `async-nats` client): host and
+  port, TLS against the built-in web trust roots, and a token, user and
+  password, user NKey seed or `.creds` file (chosen in an open panel and kept
+  with the connection). Subscriptions take `*` and `>` wildcards and an
+  optional queue group; every concrete subject becomes a point (a number,
+  true/false, each numeric field of a JSON message or only the one at a JSON
+  path), with its unit when the message has a `Unit` header. The inspector
+  publishes any payload with headers, sends a request and shows the reply
+  with its round trip, and browses JetStream: streams with their subjects,
+  size and sequences, each stream's consumers and newest messages, and a
+  fetch (with acknowledgement) from a pull consumer. Writing a point
+  publishes to its subject. A dropped connection is retried and reported.
+- **NATS server simulator**: `mt-nats`'s embedded server (core protocol,
+  wildcards, queue groups, user/password login and an in-memory JetStream) on
+  any port, publishing a device template at `<prefix>.<value>` with a JSON
+  nameplate at `<prefix>.status`, all kept in a JetStream stream with a
+  durable consumer. A service on it answers requests: `<prefix>.get` with
+  every value, `<prefix>.<value>.set` takes a value and holds it.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -59,8 +77,8 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT and BACnet are ported. The others in this repository (OPC UA,
-S7, EtherNet/IP, DNP3, NATS, serial, BLE) are being ported next; each plugs
+Modbus, MQTT, BACnet and NATS are ported. The others in this repository (OPC
+UA, S7, EtherNet/IP, DNP3, serial, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
@@ -76,7 +94,10 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # mqtt-inspector, mqtt-editor
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
-                                                 # bacnet-command
+                                                 # bacnet-command, nats-points,
+                                                 # nats-trend, nats-traffic,
+                                                 # nats-inspector, nats-jetstream,
+                                                 # nats-editor
 ```
 
 Demo scenarios use the dark house theme (`light` the light one) whatever the

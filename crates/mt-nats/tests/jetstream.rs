@@ -153,6 +153,47 @@ async fn test_js_pull_consumer_full_flow() {
     assert!(missing.is_none(), "stream should be gone after delete");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_js_consumer_list_and_tail_after_rollover() {
+    let (_state, port) = start_test_server().await;
+    let c = client(port).await;
+
+    // Room for 5: publishing 8 drops sequences 1..=3.
+    c.js_create_stream("meters", &["meters.>".to_string()], 5, 0)
+        .await
+        .expect("create stream");
+    for i in 1..=8 {
+        c.publish("meters.kwh", i.to_string().as_bytes())
+            .await
+            .expect("publish");
+    }
+    c.inner().flush().await.expect("flush");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let streams = c.js_streams().await.expect("list streams");
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].messages, 5);
+    assert_eq!((streams[0].first_seq, streams[0].last_seq), (4, 8));
+
+    let tail = c.js_stream_tail("meters", 3).await.expect("tail");
+    let seqs: Vec<u64> = tail.iter().map(|m| m.sequence).collect();
+    assert_eq!(seqs, vec![6, 7, 8]);
+    assert_eq!(payload_utf8(&tail[2]), "8");
+    // Asking for more than is stored returns what is left, oldest first.
+    let all = c.js_stream_tail("meters", 50).await.expect("tail all");
+    assert_eq!(all.first().map(|m| m.sequence), Some(4));
+    assert_eq!(all.len(), 5);
+
+    assert!(c.js_stream_consumers("meters").await.expect("none yet").is_empty());
+    c.js_create_consumer("meters", "historian").await.expect("create");
+    c.js_create_consumer("meters", "billing").await.expect("create");
+    let consumers = c.js_stream_consumers("meters").await.expect("list consumers");
+    let names: Vec<&str> = consumers.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, vec!["billing", "historian"]);
+    assert_eq!(consumers[0].stream, "meters");
+    assert!(c.js_stream_consumers("nope").await.is_err());
+}
+
 // Small helper: interpret a stored message payload as UTF-8.
 fn payload_utf8(m: &NatsStoredMessage) -> String {
     if let Some(hex_part) = m.payload.strip_prefix("0x") {

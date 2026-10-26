@@ -13,6 +13,9 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod nats;
+
+pub use nats::{NatsAuthKind, NatsClientForm, NatsServerForm, NatsSubjectField, NatsSubjectForm};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,10 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// NATS: a subscription row and which of its fields, and the token,
+    /// NKey seed or creds file of the chosen login.
+    NatsSubject(usize, NatsSubjectField),
+    Credential,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

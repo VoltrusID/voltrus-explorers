@@ -3,7 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, NatsEvent, NatsRequest, PointInfo, SessionSpec,
+    TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -62,6 +63,12 @@ pub enum Command {
         session: SessionId,
         spec: BacnetDiscoverSpec,
     },
+    /// NATS clients: publish with headers, request/reply and JetStream
+    /// browsing; answered by [`EventKind::Nats`] or [`EventKind::Published`].
+    Nats {
+        session: SessionId,
+        request: NatsRequest,
+    },
 }
 
 /// Engine → app.
@@ -105,6 +112,8 @@ pub enum EventKind {
     },
     /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
     BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
+    /// A NATS client's answer to a [`Command::Nats`].
+    Nats(NatsEvent),
 }
 
 /// The text behind one point's latest value.
@@ -369,5 +378,163 @@ mod tests {
             let text = serde_json::to_string(&event).unwrap();
             assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
         }
+    }
+
+    #[test]
+    fn nats_messages_round_trip_through_json() {
+        use crate::{
+            NatsAuth, NatsClientSpec, NatsConsumer, NatsHeader, NatsReply, NatsServerSpec,
+            NatsStoredMessage, NatsStream, NatsStreamDetail, NatsSubscription,
+        };
+
+        let client = NatsClientSpec {
+            host: "nats.example".into(),
+            port: 4443,
+            tls: true,
+            auth: NatsAuth::Credentials {
+                file: "plant.creds".into(),
+                creds: "-----BEGIN NATS USER JWT-----\neyJ0…\n------END NATS USER JWT------".into(),
+            },
+            name: "panel-7".into(),
+            subscriptions: vec![
+                NatsSubscription::new("plant.*.telemetry"),
+                NatsSubscription {
+                    subject: "site.meter".into(),
+                    queue: "workers".into(),
+                    json_path: "phases[2].v".into(),
+                },
+            ],
+        };
+        let headers = vec![NatsHeader {
+            name: "Nats-Msg-Id".into(),
+            value: "42".into(),
+        }];
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::NatsClient(client),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::NatsServer(NatsServerSpec {
+                    template: None,
+                    username: "u".into(),
+                    password: "p".into(),
+                    ..NatsServerSpec::default()
+                }),
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Publish {
+                    subject: "plant.limit".into(),
+                    payload: "{\"kw\": 42.5}".into(),
+                    headers: headers.clone(),
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Request {
+                    subject: "plant.inverter.get".into(),
+                    payload: String::new(),
+                    headers: Vec::new(),
+                    timeout_ms: 2000,
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Streams,
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Stream {
+                    name: "PLANT".into(),
+                    messages: 20,
+                },
+            },
+            Command::Nats {
+                session: SessionId(1),
+                request: NatsRequest::Fetch {
+                    stream: "PLANT".into(),
+                    consumer: "historian".into(),
+                    batch: 10,
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        let stream = NatsStream {
+            name: "PLANT".into(),
+            subjects: vec!["plant.>".into()],
+            messages: 1200,
+            bytes: 9600,
+            consumers: 1,
+            first_seq: 801,
+            last_seq: 2000,
+            storage: "memory".into(),
+        };
+        let message = NatsStoredMessage {
+            sequence: 2000,
+            subject: "plant.inverter.ac_power".into(),
+            payload: "1234.5".into(),
+            at_ms: 1_790_000_000_000,
+        };
+        let events = [
+            NatsEvent::Reply {
+                subject: "plant.inverter.get".into(),
+                result: Ok(NatsReply {
+                    subject: "_INBOX.abc.1".into(),
+                    payload: "{\"ac_power\":1234.5}".into(),
+                    headers,
+                    bytes: 19,
+                    latency_us: 812,
+                }),
+            },
+            NatsEvent::Reply {
+                subject: "nobody.home".into(),
+                result: Err("No reply within 2000 ms".into()),
+            },
+            NatsEvent::Streams(Ok(vec![stream.clone()])),
+            NatsEvent::Streams(Err("JetStream is not enabled".into())),
+            NatsEvent::Stream {
+                name: "PLANT".into(),
+                result: Ok(NatsStreamDetail {
+                    stream,
+                    consumers: vec![NatsConsumer {
+                        name: "historian".into(),
+                        durable: true,
+                        kind: "pull".into(),
+                        pending: 1200,
+                        ack_pending: 0,
+                        redelivered: 0,
+                    }],
+                    messages: vec![message.clone()],
+                }),
+            },
+            NatsEvent::Fetched {
+                stream: "PLANT".into(),
+                consumer: "historian".into(),
+                result: Ok(vec![message]),
+            },
+        ];
+        for nats in events {
+            let event = Event {
+                session: SessionId(1),
+                kind: EventKind::Nats(nats),
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // Optional fields may be missing from a saved workspace.
+        let saved = r#"{"kind":"nats_client","host":"h","port":4222,
+            "subscriptions":[{"subject":">"}]}"#;
+        let SessionSpec::NatsClient(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("a NATS client spec");
+        };
+        assert_eq!(spec.auth, NatsAuth::None);
+        assert!(!spec.tls && spec.subscriptions[0].queue.is_empty());
     }
 }

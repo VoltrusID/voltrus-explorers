@@ -7,6 +7,7 @@
 pub mod bacnet;
 pub mod editor;
 pub mod live;
+pub mod nats;
 pub mod palette;
 pub mod publish;
 
@@ -129,6 +130,8 @@ pub struct AppModel {
     pub write_input: Entity<TextInput>,
     /// The inspector's publish form (message protocols).
     pub publish: PublishForm,
+    /// The inspector's NATS publish/request form and JetStream browsers.
+    pub nats: nats::NatsPanel,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -224,6 +227,7 @@ impl AppModel {
             },
             write_input,
             publish: PublishForm::new(window, cx),
+            nats: nats::NatsPanel::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
         };
@@ -248,6 +252,17 @@ impl AppModel {
             }
             event => event,
         };
+        // A NATS client's replies and JetStream answers go to the inspector.
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::Nats(nats),
+            } => {
+                self.nats_event(session, nats);
+                return;
+            }
+            event => event,
+        };
         let Some(connection) = self.sessions.get(&event.session).copied() else {
             return;
         };
@@ -255,11 +270,18 @@ impl AppModel {
             &event.kind,
             vt_protocol::EventKind::State(state) if !state.is_running()
         );
+        let connected = matches!(
+            &event.kind,
+            vt_protocol::EventKind::State(vt_protocol::SessionState::Connected)
+        );
         if let Some(live) = self.live.get_mut(&connection) {
             live.apply_from(event.session, event.kind);
         }
         if closed {
             self.sessions.remove(&event.session);
+        }
+        if connected {
+            self.nats_connected(connection);
         }
     }
 
@@ -531,6 +553,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Nats => {
+                self.start_nats_demo(cx);
+            }
         }
     }
 
@@ -588,6 +613,11 @@ impl AppModel {
                     self.publish
                         .topic
                         .update(cx, |input, cx| input.set_text(topic, cx));
+                }
+                if let Some(subject) = nats::subject_of(&self.workspace, connection, live, point) {
+                    self.nats
+                        .subject
+                        .update(cx, |input, cx| input.set_text(subject, cx));
                 }
             }
             live.selected = Some(point);
@@ -829,6 +859,13 @@ impl AppModel {
         {
             self.add_bacnet_client(&name, device, cx);
         }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::NatsServer(server) = &spec
+            && server.template.is_some()
+        {
+            self.add_nats_client(&name, server, cx);
+        }
         self.workspace.focus(
             self.workspace
                 .panes
@@ -1001,6 +1038,24 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewNatsClient => self.open_editor(EditorKind::NatsClient, None, window, cx),
+            Command::NewNatsServer => self.open_editor(EditorKind::NatsServer, None, window, cx),
+            Command::NatsDemo => {
+                self.start_nats_demo(cx);
+            }
+            Command::NatsRequest => self.nats_request(window, cx),
+            Command::NatsJetStream => match self.focused_nats_client() {
+                Some(connection) => {
+                    self.workspace.ui.inspector_open = true;
+                    if let Some(live) = self.live.get_mut(&connection) {
+                        live.selected = None;
+                    }
+                    self.nats_refresh_streams(connection, cx);
+                }
+                None => {
+                    self.show_toast("Focus a NATS connection to browse its JetStream", true, cx)
+                }
+            },
         }
     }
 
