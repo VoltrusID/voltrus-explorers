@@ -48,6 +48,7 @@ impl Events {
     /// The first event of `session` (kept or new) that `accept` maps to a value; it and every
     /// earlier event of the session are consumed. Key generation in a debug build is slow, so
     /// the wait is generous.
+    #[track_caller]
     fn wait<T>(
         &mut self,
         session: SessionId,
@@ -97,6 +98,7 @@ impl Events {
     }
 }
 
+#[track_caller]
 fn state(events: &mut Events, session: SessionId) -> SessionState {
     events.wait(session, |kind| match kind {
         EventKind::State(
@@ -109,6 +111,7 @@ fn state(events: &mut Events, session: SessionId) -> SessionState {
     })
 }
 
+#[track_caller]
 fn opcua(events: &mut Events, session: SessionId) -> OpcuaEvent {
     events.wait(session, |kind| match kind {
         EventKind::Opcua(event) => Some(event.clone()),
@@ -116,6 +119,7 @@ fn opcua(events: &mut Events, session: SessionId) -> OpcuaEvent {
     })
 }
 
+#[track_caller]
 fn points(events: &mut Events, session: SessionId) -> Vec<PointInfo> {
     events.wait(session, |kind| match kind {
         EventKind::Points(points) => Some(points.clone()),
@@ -123,6 +127,7 @@ fn points(events: &mut Events, session: SessionId) -> Vec<PointInfo> {
     })
 }
 
+#[track_caller]
 fn browse(
     events: &mut Events,
     engine: &vt_engine::EngineHandle,
@@ -144,6 +149,7 @@ fn browse(
     }
 }
 
+#[track_caller]
 fn written(events: &mut Events, session: SessionId, point: u32) -> Result<(), String> {
     events.wait(session, |kind| match kind {
         EventKind::Written {
@@ -155,6 +161,7 @@ fn written(events: &mut Events, session: SessionId, point: u32) -> Result<(), St
 }
 
 /// Wait until point `point` of `session` reads `accept`.
+#[track_caller]
 fn reads(
     events: &mut Events,
     session: SessionId,
@@ -173,6 +180,7 @@ fn reads(
 }
 
 /// Wait until the payload (the text behind the value) of `point` starts with `prefix`.
+#[track_caller]
 fn says(events: &mut Events, session: SessionId, point: u32, prefix: &str) {
     events.wait(session, |kind| match kind {
         EventKind::Payloads(texts) => texts

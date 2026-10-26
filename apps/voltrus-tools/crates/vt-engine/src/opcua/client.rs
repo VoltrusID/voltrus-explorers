@@ -28,6 +28,9 @@ const FLUSH: Duration = Duration::from_millis(100);
 const HEALTH: Duration = Duration::from_secs(1);
 /// Longest a connection attempt (discovery, secure channel, session) may take.
 const CONNECT_WAIT: Duration = Duration::from_secs(15);
+/// Longest one request (browse, read, monitor, write, call) may take before it is answered with
+/// an error, so a stalled server never freezes the session.
+const REQUEST_WAIT: Duration = Duration::from_secs(10);
 const MAX_BACKOFF: Duration = Duration::from_secs(10);
 /// Fastest publishing interval the engine asks for.
 pub(crate) const MIN_PUBLISHING_MS: u32 = 50;
@@ -138,7 +141,23 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        let (points, results) = add(&mut link, &wanted, spec.sampling_ms, out).await;
+        let Ok((points, results)) =
+            tokio::time::timeout(REQUEST_WAIT, add(&mut link, &wanted, spec.sampling_ms, out))
+                .await
+        else {
+            let error = format!(
+                "{} did not describe the variables within 10 s",
+                spec.endpoint
+            );
+            stats.errors += 1;
+            out.log(LogLevel::Error, error.clone());
+            link.client.close().await;
+            attempt += 1;
+            if !retry(&mut control, attempt, &error, out).await {
+                break 'session;
+            }
+            continue 'session;
+        };
         // Variables the server no longer has stay saved, but are not points of this run.
         out.points(points);
         if results.iter().any(|(_, result)| result.is_err()) {
@@ -219,11 +238,27 @@ pub(crate) async fn run(
                             Some(found) if found.info.boolean => (value != 0.0).to_string(),
                             _ => value.to_string(),
                         };
-                        write(&link, point, &text, out, &mut stats).await;
+                        let wrote = tokio::time::timeout(REQUEST_WAIT, write(&link, point, &text, out, &mut stats)).await;
+                        if wrote.is_err() {
+                            stats.errors += 1;
+                            out.log(LogLevel::Warn, "The write got no answer within 10 s");
+                            out.written(point, Err("No answer within 10 s".into()));
+                        }
                         out.stats(stats);
                     }
                     Some(Control::Opcua(request)) => {
-                        let added = handle(&mut link, &spec, &mut wanted, request, out, &mut stats).await;
+                        let asked = request.clone();
+                        let handled = tokio::time::timeout(
+                            REQUEST_WAIT,
+                            handle(&mut link, &spec, &mut wanted, request, out, &mut stats),
+                        )
+                        .await;
+                        let added = handled.unwrap_or_else(|_| {
+                            stats.errors += 1;
+                            out.log(LogLevel::Warn, format!("No answer within 10 s to {asked:?}"));
+                            refuse(asked, "No answer within 10 s", out);
+                            0
+                        });
                         if added > 0 {
                             states.resize(link.points.len(), PointState::default());
                             dirty.resize(link.points.len(), false);
