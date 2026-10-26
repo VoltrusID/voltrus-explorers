@@ -7,9 +7,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::application::{
-    AsduHeader, FunctionCode, Iin, build_cold_restart_request, build_confirm,
-    build_event_scan_request, build_freeze_request, build_integrity_poll_request,
-    build_time_sync_request, build_warm_restart_request,
+    AsduHeader, FunctionCode, Iin, build_clear_restart_request, build_cold_restart_request,
+    build_confirm, build_event_scan_request, build_freeze_request, build_integrity_poll_request,
+    build_read_request, build_time_sync_request, build_warm_restart_request,
 };
 use crate::control::{
     ControlObject, ControlRequest, ControlStatus, Crob, build_control_request, parse_control_objects,
@@ -48,6 +48,33 @@ pub fn build_link_reset_frame(master_addr: u16, outstation_addr: u16) -> Dnp3Fra
     }
 }
 
+/// One frame of traffic a client sent or received, for a traffic monitor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrafficRecord {
+    /// Sent by this master; false for frames from the outstation.
+    pub sent: bool,
+    /// Link control of the frame (of the last frame of a reassembled fragment).
+    pub link: ControlByte,
+    /// The application fragment; empty for link-layer service frames (reset, ACK, status).
+    pub asdu: Vec<u8>,
+    /// Octets on the wire: link headers, transport headers and CRCs included.
+    pub octets: usize,
+}
+
+/// Where a client reports its [`TrafficRecord`]s.
+pub type TrafficTap = tokio::sync::mpsc::UnboundedSender<TrafficRecord>;
+
+/// What an outstation answered to a READ: the combined internal indications and every data
+/// point in the response, with flags and event time stamps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PollResponse {
+    pub iin: Iin,
+    /// Points in the order the outstation sent them (events and static values alike).
+    pub points: Vec<Dnp3PointValue>,
+    /// Why part of a fragment could not be decoded, one entry per fragment that stopped early.
+    pub issues: Vec<String>,
+}
+
 /// DNP3 master session connected to a single outstation.
 ///
 /// Wraps a raw TCP stream and the DNP3 protocol stack (data-link, transport, application,
@@ -64,6 +91,13 @@ struct Dnp3Inner {
     seq: SequenceTracker,
     response_timeout: Duration,
     reassembler: TransportReassembler,
+    tap: Option<TrafficTap>,
+    /// Size on the wire of the frame `receive_frame` read last.
+    last_frame_octets: usize,
+    /// Octets of the frames of the fragment being reassembled.
+    rx_octets: usize,
+    /// Internal indications of the last response.
+    last_iin: Iin,
 }
 
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -78,53 +112,7 @@ impl ProtocolClient for Dnp3Client {
     type Value = Dnp3Value;
 
     async fn connect(config: Self::Config) -> Result<Self, ProtocolError> {
-        let addr = format!("{}:{}", config.host, config.port);
-        let socket_addr: SocketAddr = addr
-            .parse()
-            .map_err(|e| ProtocolError::InvalidConfig(format!("Invalid address '{addr}': {e}")))?;
-
-        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(socket_addr))
-            .await
-            .map_err(|_| ProtocolError::Timeout("DNP3 connection timeout (5s)".into()))?
-            .map_err(|e| ProtocolError::ConnectionFailed(format!("DNP3 connection failed: {e}")))?;
-
-        let mut inner = Dnp3Inner {
-            stream,
-            master_addr: config.master_address,
-            outstation_addr: config.outstation_address,
-            seq: SequenceTracker::new(),
-            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
-            reassembler: TransportReassembler::new(),
-        };
-
-        // RESET LINK STATES. An ACK from the outstation is the normal answer. A frame that does
-        // not decode is a failed handshake; silence or a NACK just means the outstation does not
-        // use link-level resets, so the session goes on without it.
-        inner.send_link_reset().await?;
-        match tokio::time::timeout(LINK_RESET_WAIT, inner.receive_frame()).await {
-            Ok(Ok(ack)) => {
-                if ack.link_control.prm || ack.link_control.function != ControlByte::ACK {
-                    tracing::debug!(
-                        "Link reset answered with function {:#04x} (prm={}), continuing",
-                        ack.link_control.function,
-                        ack.link_control.prm
-                    );
-                } else if ack.destination != config.master_address
-                    || ack.source != config.outstation_address
-                {
-                    return Err(ProtocolError::ConnectionFailed(format!(
-                        "Link ACK addressed to {} from {}, expected {} from {}",
-                        ack.destination, ack.source, config.master_address, config.outstation_address
-                    )));
-                }
-            }
-            Ok(Err(e)) => return Err(e),
-            Err(_) => tracing::debug!("No answer to RESET LINK STATES, continuing"),
-        }
-
-        Ok(Self {
-            inner: tokio::sync::Mutex::new(inner),
-        })
+        Self::connect_with_tap(config, None).await
     }
 
     async fn read(&self, tags: &[Self::Tag]) -> Result<Vec<Self::Value>, ProtocolError> {
@@ -211,6 +199,19 @@ impl Response {
         all
     }
 
+    fn poll_response(&self) -> PollResponse {
+        let mut points = Vec::new();
+        let mut issues = Vec::new();
+        for fragment in &self.fragments {
+            let (found, issue) = parse_points(fragment);
+            if let Some(issue) = issue {
+                issues.push(issue.to_string());
+            }
+            points.extend(found);
+        }
+        PollResponse { iin: self.iin.clone(), points, issues }
+    }
+
     /// Object bytes of the first fragment (control responses are always one fragment).
     fn objects(&self) -> &[u8] {
         self.fragments.first().map(Vec::as_slice).unwrap_or(&[])
@@ -230,6 +231,118 @@ impl Response {
 }
 
 impl Dnp3Client {
+    /// Connect like [`ProtocolClient::connect`], reporting every frame sent and received on
+    /// `tap` from the link reset on.
+    pub async fn connect_with_tap(
+        config: Dnp3Config,
+        tap: Option<TrafficTap>,
+    ) -> Result<Self, ProtocolError> {
+        let addr = format!("{}:{}", config.host, config.port);
+        let socket_addr: SocketAddr = addr
+            .parse()
+            .map_err(|e| ProtocolError::InvalidConfig(format!("Invalid address '{addr}': {e}")))?;
+
+        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(socket_addr))
+            .await
+            .map_err(|_| ProtocolError::Timeout("DNP3 connection timeout (5s)".into()))?
+            .map_err(|e| ProtocolError::ConnectionFailed(format!("DNP3 connection failed: {e}")))?;
+
+        let mut inner = Dnp3Inner {
+            stream,
+            master_addr: config.master_address,
+            outstation_addr: config.outstation_address,
+            seq: SequenceTracker::new(),
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            reassembler: TransportReassembler::new(),
+            tap,
+            last_frame_octets: 0,
+            rx_octets: 0,
+            last_iin: Iin::default(),
+        };
+
+        // RESET LINK STATES. An ACK from the outstation is the normal answer. A frame that does
+        // not decode is a failed handshake; silence or a NACK just means the outstation does not
+        // use link-level resets, so the session goes on without it.
+        inner.send_link_reset().await?;
+        match tokio::time::timeout(LINK_RESET_WAIT, inner.receive_frame()).await {
+            Ok(Ok(ack)) => {
+                let octets = inner.last_frame_octets;
+                inner.record(false, ack.link_control, Vec::new(), octets);
+                if ack.link_control.prm || ack.link_control.function != ControlByte::ACK {
+                    tracing::debug!(
+                        "Link reset answered with function {:#04x} (prm={}), continuing",
+                        ack.link_control.function,
+                        ack.link_control.prm
+                    );
+                } else if ack.destination != config.master_address
+                    || ack.source != config.outstation_address
+                {
+                    return Err(ProtocolError::ConnectionFailed(format!(
+                        "Link ACK addressed to {} from {}, expected {} from {}",
+                        ack.destination, ack.source, config.master_address, config.outstation_address
+                    )));
+                }
+            }
+            Ok(Err(e)) => return Err(e),
+            Err(_) => tracing::debug!("No answer to RESET LINK STATES, continuing"),
+        }
+
+        Ok(Self {
+            inner: tokio::sync::Mutex::new(inner),
+        })
+    }
+
+    /// Integrity poll (class 1, 2, 3 events, then class 0 static data), returning every point
+    /// with its flags and the outstation's internal indications.
+    pub async fn integrity_poll(&self) -> Result<PollResponse, ProtocolError> {
+        self.poll(build_integrity_poll_request, "integrity poll").await
+    }
+
+    /// Event poll of the chosen classes in one READ (g60v2, g60v3, g60v4).
+    pub async fn poll_classes(
+        &self,
+        class1: bool,
+        class2: bool,
+        class3: bool,
+    ) -> Result<PollResponse, ProtocolError> {
+        let objects: Vec<(u8, u8)> = [(class1, 2u8), (class2, 3), (class3, 4)]
+            .into_iter()
+            .filter_map(|(wanted, variation)| wanted.then_some((60, variation)))
+            .collect();
+        if objects.is_empty() {
+            return Err(ProtocolError::InvalidConfig("Poll at least one event class".into()));
+        }
+        let names: Vec<String> = [(class1, 1), (class2, 2), (class3, 3)]
+            .into_iter()
+            .filter_map(|(wanted, class)| wanted.then(|| class.to_string()))
+            .collect();
+        let what = format!("class {} poll", names.join("/"));
+        let mut inner = self.inner.lock().await;
+        let seq = inner.seq.next();
+        let response = inner.exchange(build_read_request(seq, &objects), seq, &what).await?;
+        response.check_iin(false, &what, ProtocolError::ReadFailed)?;
+        Ok(response.poll_response())
+    }
+
+    async fn poll(&self, build: fn(u8) -> Vec<u8>, what: &str) -> Result<PollResponse, ProtocolError> {
+        let mut inner = self.inner.lock().await;
+        let seq = inner.seq.next();
+        let response = inner.exchange(build(seq), seq, what).await?;
+        response.check_iin(false, what, ProtocolError::ReadFailed)?;
+        Ok(response.poll_response())
+    }
+
+    /// Clear IIN1.7 DEVICE_RESTART by writing 0 to it (g80v1 index 7), as a master does once it
+    /// has seen the outstation restart.
+    pub async fn clear_restart(&self) -> Result<(), ProtocolError> {
+        self.simple_command(build_clear_restart_request, "restart IIN clear").await
+    }
+
+    /// Internal indications of the outstation's last response.
+    pub async fn last_iin(&self) -> Iin {
+        self.inner.lock().await.last_iin.clone()
+    }
+
     /// Perform a class-based event scan (Class 1/2/3) and return changed points.
     pub async fn scan_events(
         &self,
@@ -425,9 +538,17 @@ impl Dnp3Inner {
             iin.merge(&header.iin);
             fragments.push(objects.to_vec());
             if header.control.fin {
+                self.last_iin = iin.clone();
                 return Ok(Response { iin, fragments });
             }
             expected = (header.control.seq + 1) & 0x0F;
+        }
+    }
+
+    /// Report a frame to the traffic tap, if there is one.
+    fn record(&self, sent: bool, link: ControlByte, asdu: Vec<u8>, octets: usize) {
+        if let Some(tap) = &self.tap {
+            let _ = tap.send(TrafficRecord { sent, link, asdu, octets });
         }
     }
 
@@ -438,6 +559,7 @@ impl Dnp3Inner {
             .write_all(&bytes)
             .await
             .map_err(|e| ProtocolError::ConnectionFailed(format!("Send link reset failed: {e}")))?;
+        self.record(true, frame.link_control, Vec::new(), bytes.len());
         Ok(())
     }
 
@@ -449,13 +571,17 @@ impl Dnp3Inner {
             source: self.master_addr,
             data: vec![],
         };
+        let bytes = frame.encode();
         self.stream
-            .write_all(&frame.encode())
+            .write_all(&bytes)
             .await
-            .map_err(|e| ProtocolError::ReadFailed(format!("Send link frame failed: {e}")))
+            .map_err(|e| ProtocolError::ReadFailed(format!("Send link frame failed: {e}")))?;
+        self.record(true, frame.link_control, Vec::new(), bytes.len());
+        Ok(())
     }
 
     async fn send_asdu(&mut self, asdu: &[u8]) -> Result<(), ProtocolError> {
+        let mut octets = 0;
         for seg in segment_asdu(asdu) {
             let th = TransportHeader {
                 fir: seg.fir,
@@ -472,10 +598,14 @@ impl Dnp3Inner {
                 data,
             };
             let bytes = frame.encode();
+            octets += bytes.len();
             self.stream
                 .write_all(&bytes)
                 .await
                 .map_err(|e| ProtocolError::ReadFailed(format!("Send ASDU failed: {e}")))?;
+        }
+        if self.tap.is_some() {
+            self.record(true, ControlByte::master_data(), asdu.to_vec(), octets);
         }
         Ok(())
     }
@@ -497,6 +627,7 @@ impl Dnp3Inner {
         }
         let user_len = length - 5;
         let total_frame_size = 10 + user_len + 2 * user_len.div_ceil(16);
+        self.last_frame_octets = total_frame_size;
         let mut buf = vec![0u8; total_frame_size];
         buf[0..3].copy_from_slice(&header[0..3]);
         self.stream
@@ -517,6 +648,10 @@ impl Dnp3Inner {
             if frame.destination != self.master_addr || frame.source != self.outstation_addr {
                 continue;
             }
+            if !frame.link_control.prm || frame.data.is_empty() {
+                // ACK, NACK, LINK STATUS, or a link service request: no application data.
+                self.record(false, frame.link_control, Vec::new(), self.last_frame_octets);
+            }
             if !frame.link_control.prm {
                 continue; // ACK, NACK, LINK STATUS: nothing for the application
             }
@@ -535,6 +670,10 @@ impl Dnp3Inner {
             }
             let Some(&first) = frame.data.first() else { continue };
             let th = TransportHeader::from_byte(first);
+            if th.fir {
+                self.rx_octets = 0;
+            }
+            self.rx_octets += self.last_frame_octets;
             let seg = TransportSegment {
                 fir: th.fir,
                 fin: th.fin,
@@ -542,6 +681,10 @@ impl Dnp3Inner {
                 data: frame.data[1..].to_vec(),
             };
             if let Some(asdu) = self.reassembler.process(seg) {
+                if self.tap.is_some() {
+                    self.record(false, frame.link_control, asdu.clone(), self.rx_octets);
+                }
+                self.rx_octets = 0;
                 return Ok(asdu);
             }
         }
@@ -1186,5 +1329,65 @@ mod tests {
         let err = client.direct_operate(&latch_on(0)).await.unwrap_err();
         assert!(err.to_string().contains("LOCAL"), "{err}");
         assert_eq!(log.lock().asdus[0][1], 0x05);
+    }
+
+    #[tokio::test]
+    async fn polls_report_flags_times_iin_and_every_frame_to_the_tap() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            read_frame(&mut sock).await.unwrap(); // reset
+            write_frame(&mut sock, ControlByte::outstation_link(ControlByte::ACK), &[]).await;
+            while let Some(request) = read_frame(&mut sock).await {
+                let asdu = &request.data[1..];
+                // g30v1 index 2: COMM_LOST without ONLINE; g32v3 event index 4 at time 0x0102030405.
+                let mut objects = vec![30, 1, 0x00, 2, 2, 0x04];
+                objects.extend_from_slice(&(-5i32).to_le_bytes());
+                objects.extend_from_slice(&[32, 3, 0x17, 1, 4, 0x01]);
+                objects.extend_from_slice(&7i32.to_le_bytes());
+                objects.extend_from_slice(&[0x05, 0x04, 0x03, 0x02, 0x01, 0x00]);
+                // IIN1.4 NEED_TIME and IIN1.2 class 2 events pending.
+                write_asdu(&mut sock, &build_response(seq_of(asdu), &Iin::from_bytes(0x14, 0), &objects)).await;
+            }
+        });
+        let (tap, mut records) = tokio::sync::mpsc::unbounded_channel();
+        let config = Dnp3Config {
+            id: "t".into(),
+            host: "127.0.0.1".into(),
+            port,
+            master_address: 1,
+            outstation_address: 10,
+            poll_interval_ms: 1000,
+        };
+        let client = Dnp3Client::connect_with_tap(config, Some(tap)).await.unwrap();
+        let polled = client.integrity_poll().await.unwrap();
+        assert!(polled.iin.need_time && polled.iin.class_2_events);
+        assert!(polled.issues.is_empty());
+        let analog = polled.points.iter().find(|p| !p.event).unwrap();
+        assert_eq!((analog.index, analog.value, analog.flags), (2, -5.0, Some(0x04)));
+        let event = polled.points.iter().find(|p| p.event).unwrap();
+        assert_eq!((event.group, event.index, event.value), (30, 4, 7.0));
+        assert_eq!(event.time, Some(0x01_0203_0405));
+        assert!(client.last_iin().await.need_time);
+
+        let events = client.poll_classes(false, true, false).await.unwrap();
+        assert_eq!(events.points.len(), 2);
+        assert!(client.poll_classes(false, false, false).await.is_err(), "no class asked for");
+
+        let mut seen = Vec::new();
+        while let Ok(record) = records.try_recv() {
+            seen.push(record);
+        }
+        // Reset out, ACK in, then READ out and RESPONSE in twice.
+        assert_eq!(seen.len(), 6, "{seen:?}");
+        assert!(seen[0].sent && seen[0].asdu.is_empty() && seen[0].octets == 10);
+        assert!(!seen[1].sent && seen[1].asdu.is_empty());
+        assert!(seen[2].sent && seen[2].asdu[1] == 0x01);
+        assert!(!seen[3].sent && seen[3].asdu[1] == 0x81);
+        assert_eq!(seen[4].asdu, [0xC1, 0x01, 60, 3, 0x06]);
+        // The response travelled in one frame: header, data blocks with CRCs.
+        let user = 1 + seen[3].asdu.len();
+        assert_eq!(seen[3].octets, 10 + user + 2 * user.div_ceil(16));
     }
 }

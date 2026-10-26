@@ -3,7 +3,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BacnetDeviceInfo, BacnetDiscoverSpec, MqttQos, PointInfo, SessionSpec, TrafficFrame, ValueFrame,
+    BacnetDeviceInfo, BacnetDiscoverSpec, Dnp3Action, Dnp3Iin, MqttQos, PointInfo, SessionSpec,
+    TrafficFrame, ValueFrame,
 };
 
 /// Identifies a running session. Chosen by the app, unique per engine.
@@ -62,6 +63,12 @@ pub enum Command {
         session: SessionId,
         spec: BacnetDiscoverSpec,
     },
+    /// DNP3 sessions: a station command (poll, time sync, restart, control);
+    /// answered by [`EventKind::Dnp3Done`].
+    Dnp3 {
+        session: SessionId,
+        action: Dnp3Action,
+    },
 }
 
 /// Engine → app.
@@ -105,6 +112,13 @@ pub enum EventKind {
     },
     /// Answer to [`Command::DiscoverBacnet`]: the devices that sent an I-Am.
     BacnetDevices(Result<Vec<BacnetDeviceInfo>, String>),
+    /// DNP3 masters: the outstation's internal indications changed.
+    Dnp3Iin(Dnp3Iin),
+    /// Outcome of a [`Command::Dnp3`], with what the outstation answered.
+    Dnp3Done {
+        action: Dnp3Action,
+        result: Result<String, String>,
+    },
 }
 
 /// The text behind one point's latest value.
@@ -369,5 +383,106 @@ mod tests {
             let text = serde_json::to_string(&event).unwrap();
             assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
         }
+    }
+
+    #[test]
+    fn dnp3_messages_round_trip_through_json() {
+        use crate::{
+            Dnp3ControlMode, Dnp3Crob, Dnp3CrobCode, Dnp3MasterSpec, Dnp3Operation,
+            Dnp3OutstationSpec, Dnp3PointKind, Dnp3PointName,
+        };
+
+        let master = Dnp3MasterSpec {
+            host: "rtu-7.substation".into(),
+            outstation_address: 1024,
+            event_ms: 0,
+            control_mode: Dnp3ControlMode::DirectOperate,
+            time_sync: false,
+            points: vec![Dnp3PointName {
+                kind: Dnp3PointKind::AnalogInput,
+                index: 3,
+                name: "Feeder current A".into(),
+                unit: "A".into(),
+            }],
+            ..Dnp3MasterSpec::default()
+        };
+        let crob = Dnp3Crob {
+            code: Dnp3CrobCode::Trip,
+            count: 2,
+            on_ms: 250,
+            off_ms: 750,
+        };
+        let commands = [
+            Command::Open {
+                session: SessionId(1),
+                spec: SessionSpec::Dnp3Master(master),
+            },
+            Command::Open {
+                session: SessionId(2),
+                spec: SessionSpec::Dnp3Outstation(Dnp3OutstationSpec::default()),
+            },
+            Command::Dnp3 {
+                session: SessionId(1),
+                action: Dnp3Action::Operate {
+                    point: 12,
+                    operation: Dnp3Operation::Crob(crob),
+                    mode: Dnp3ControlMode::SelectBeforeOperate,
+                },
+            },
+            Command::Dnp3 {
+                session: SessionId(1),
+                action: Dnp3Action::Operate {
+                    point: 13,
+                    operation: Dnp3Operation::Analog { value: -12.25 },
+                    mode: Dnp3ControlMode::DirectOperate,
+                },
+            },
+            Command::Dnp3 {
+                session: SessionId(1),
+                action: Dnp3Action::ClassPoll { class: 2 },
+            },
+            Command::Dnp3 {
+                session: SessionId(2),
+                action: Dnp3Action::SetOnline {
+                    point: 4,
+                    online: false,
+                },
+            },
+        ];
+        for command in commands {
+            let text = serde_json::to_string(&command).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&text).unwrap(), command);
+        }
+
+        for kind in [
+            EventKind::Dnp3Iin(Dnp3Iin {
+                iin1: 0x90,
+                iin2: 0x02,
+            }),
+            EventKind::Dnp3Done {
+                action: Dnp3Action::TimeSync,
+                result: Ok("Time written".into()),
+            },
+            EventKind::Dnp3Done {
+                action: Dnp3Action::ColdRestart,
+                result: Err("function code not supported (IIN2.0)".into()),
+            },
+        ] {
+            let event = Event {
+                session: SessionId(1),
+                kind,
+            };
+            let text = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<Event>(&text).unwrap(), event);
+        }
+
+        // A saved master without point names reads back with none.
+        let saved = r#"{"kind":"dnp3_master","host":"h","port":20000,"master_address":1,
+            "outstation_address":10,"integrity_ms":60000,"event_ms":1000,"timeout_ms":2000,
+            "control_mode":"select_before_operate","time_sync":true}"#;
+        let SessionSpec::Dnp3Master(spec) = serde_json::from_str(saved).unwrap() else {
+            panic!("a DNP3 master spec");
+        };
+        assert!(spec.points.is_empty());
     }
 }
