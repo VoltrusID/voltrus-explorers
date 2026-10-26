@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
-    Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId, SessionState, Stats,
-    TrafficFrame, ValueFrame,
+    CipResponse, Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId,
+    SessionState, Stats, TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -73,6 +73,10 @@ impl Emitter {
 
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
+    }
+
+    pub(crate) fn cip_reply(&self, result: Result<CipResponse, String>) {
+        self.emit(EventKind::CipReply(result));
     }
 }
 

@@ -16,6 +16,7 @@ use crate::model::editor::{Editor, EditorKind};
 use crate::model::{AppModel, Overlay};
 
 mod bacnet;
+mod enip;
 mod mqtt;
 
 /// A click handler that changes the open editor.
@@ -51,6 +52,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::EnipClient, false) => "New EtherNet/IP connection",
+        (EditorKind::EnipClient, true) => "Edit EtherNet/IP connection",
+        (EditorKind::EnipAdapter, false) => "New EtherNet/IP adapter simulator",
+        (EditorKind::EnipAdapter, true) => "Edit EtherNet/IP adapter simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -67,6 +72,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::EnipClient => {
+            "Find a device with ListIdentity, read and write its Logix tags and CIP attributes."
+        }
+        EditorKind::EnipAdapter => {
+            "Play an EtherNet/IP adapter on this computer for any client to browse, read and write."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -75,6 +86,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::EnipClient => enip::client(editor, cx),
+        EditorKind::EnipAdapter => enip::adapter(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -84,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::EnipClient, false) => "Save and connect",
+        (EditorKind::EnipAdapter, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

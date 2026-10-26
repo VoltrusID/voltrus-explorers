@@ -5,8 +5,8 @@ use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use vt_protocol::{
-    EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId, SessionState, Stats,
-    TrafficFrame,
+    CipResponse, EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId,
+    SessionState, Stats, TrafficFrame,
 };
 use vt_ui::chart::History;
 
@@ -57,6 +57,10 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// EtherNet/IP: the answer to the inspector's last explicit message, and
+    /// whether one is on its way.
+    pub cip_reply: Option<Result<CipResponse, String>>,
+    pub cip_waiting: bool,
 }
 
 impl Default for Live {
@@ -81,6 +85,8 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            cip_reply: None,
+            cip_waiting: false,
         }
     }
 }
@@ -96,6 +102,8 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.cip_reply = None;
+        self.cip_waiting = false;
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -206,6 +214,12 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            // Likewise the EtherNet/IP picker's.
+            EventKind::EnipDevices(_) => {}
+            EventKind::CipReply(result) => {
+                self.cip_waiting = false;
+                self.cip_reply = Some(result);
+            }
         }
     }
 

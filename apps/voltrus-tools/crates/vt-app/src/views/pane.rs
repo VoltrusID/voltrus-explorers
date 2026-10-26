@@ -236,6 +236,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
+        SessionSpec::EnipAdapter(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
@@ -262,6 +263,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
+                }
+                (SessionSpec::EnipAdapter(_), _) => {
+                    "Start it to play the adapter on this computer. Any EtherNet/IP client can browse, read and write its tags, including this app."
+                }
+                (SessionSpec::EnipClient(_), _) => {
+                    "Connect to read the controller's tags and attributes. The inspector sends explicit messages."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

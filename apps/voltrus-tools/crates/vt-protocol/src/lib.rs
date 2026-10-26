@@ -6,6 +6,7 @@
 //! in muxy) without changing either side's model.
 
 mod bacnet;
+mod enip;
 mod message;
 mod modbus;
 mod mqtt;
@@ -13,6 +14,10 @@ mod value;
 
 pub use bacnet::{
     BACNET_PORT, BacnetClientSpec, BacnetDeviceInfo, BacnetDeviceSpec, BacnetDiscoverSpec,
+};
+pub use enip::{
+    CipRequest, CipResponse, CipType, ENIP_PORT, EnipAdapterSpec, EnipAddress, EnipClientSpec,
+    EnipDeviceInfo, EnipDiscoverSpec, EnipPoint,
 };
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
@@ -45,6 +50,11 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Read and write a Logix controller's tags and CIP attributes over
+    /// EtherNet/IP, and send it explicit messages.
+    EnipClient(EnipClientSpec),
+    /// Play an EtherNet/IP adapter whose tags a plant template drives.
+    EnipAdapter(EnipAdapterSpec),
 }
 
 impl SessionSpec {
@@ -53,6 +63,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
         }
     }
 
@@ -60,6 +71,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::EnipClient(_) => Role::Client,
+            Self::EnipAdapter(_) => Role::Simulator,
         }
     }
 
@@ -92,6 +105,11 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::EnipClient(spec) => match spec.route_path.trim() {
+                "" => host_port(&spec.host, spec.port),
+                route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
+            },
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
         }
     }
 
@@ -104,6 +122,8 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::EnipClient(spec) => host_port(&spec.host, spec.port),
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
         }
     }
 }
@@ -124,16 +144,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Enip,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::Enip,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Enip => "EtherNet/IP",
         }
     }
 
@@ -143,6 +170,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Enip => "EI",
         }
     }
 
@@ -154,6 +182,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Enip => {
+                "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"
             }
         }
     }

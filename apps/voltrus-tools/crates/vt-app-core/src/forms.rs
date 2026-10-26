@@ -13,6 +13,12 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod enip;
+
+pub use enip::{
+    CipRequestForm, EnipAdapterForm, EnipClientForm, EnipPointField, EnipPointForm, hex_rows,
+    interpret_reply, parse_hex, valid_route_path,
+};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +54,9 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// EtherNet/IP: the CIP route to the controller, and a point row.
+    RoutePath,
+    EnipPoint(usize, EnipPointField),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

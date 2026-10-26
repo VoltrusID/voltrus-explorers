@@ -104,7 +104,17 @@ go next to them in `vt-app/src/views`.
 Work that belongs to no session is still a message: the BACnet device picker
 sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
-the app hands to the open editor instead of a session.
+the app hands to the open editor instead of a session. The EtherNet/IP picker
+does the same with `Command::DiscoverEnip` and `EventKind::EnipDevices`.
+
+Requests that belong to a running session but are no point write go through
+its control channel and come back under the session: MQTT's
+`Command::Publish` / `Published`, and EtherNet/IP's explicit message,
+`Command::CipRequest` / `EventKind::CipReply`, which the inspector's card
+(`vt-app/src/views/cip.rs`) sends and shows. The EtherNet/IP adapter
+simulator is `mt-enip`'s target (`start_enip_server`) with the plant's values
+moved by the session task, plus `answer_list_identity` on the same UDP port
+so the picker finds it.
 
 ## Design system
 

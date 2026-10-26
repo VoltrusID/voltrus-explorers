@@ -9,7 +9,7 @@ use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
 use vt_ui::theme::*;
 
-use super::{now_ms, publish, resize_handle, state_color};
+use super::{cip, now_ms, publish, resize_handle, state_color};
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Drag};
 
@@ -92,6 +92,7 @@ fn point_detail(
         Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
         Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
         Some(SessionSpec::BacnetDevice(_)) => true,
+        Some(SessionSpec::EnipAdapter(_)) => true,
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
@@ -464,6 +465,11 @@ fn point_detail(
             .child(divider(cx))
             .child(publish::card(live, &model.publish, cx));
     }
+    if matches!(spec, Some(SessionSpec::EnipClient(_))) {
+        content = content
+            .child(divider(cx))
+            .child(cip::card(live, &model.cip, cx));
+    }
     content.into_any_element()
 }
 
@@ -546,6 +552,10 @@ fn session_summary(
         .when_some(live.filter(|_| mqtt), |this, live| {
             this.child(publish::card(live, &model.publish, cx))
         })
+        .when_some(
+            live.filter(|_| matches!(saved.spec, SessionSpec::EnipClient(_))),
+            |this, live| this.child(cip::card(live, &model.cip, cx)),
+        )
         .child(
             div()
                 .text_size(FONT_SMALL)
