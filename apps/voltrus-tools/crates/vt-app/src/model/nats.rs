@@ -172,6 +172,9 @@ impl AppModel {
 
     /// Publish the form's message from the focused NATS session.
     pub fn nats_publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some(connection) = self.focused_connection() else {
             return;
         };
@@ -206,6 +209,9 @@ impl AppModel {
 
     /// [`Self::nats_request`] without moving the focus; whether it was sent.
     pub fn send_nats_request(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.licence_allows(cx) {
+            return false;
+        }
         let Some(connection) = self.focused_nats_client() else {
             self.show_toast(
                 "Requests go from a NATS connection: focus one first",
@@ -254,6 +260,9 @@ impl AppModel {
 
     /// List the focused (or given) client's JetStream streams again.
     pub fn nats_refresh_streams(&mut self, connection: ConnectionId, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.request_streams(connection);
         cx.notify();
     }
@@ -287,6 +296,9 @@ impl AppModel {
         name: String,
         cx: &mut Context<Self>,
     ) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some(session) = self.nats_session(connection) else {
             return;
         };
@@ -318,6 +330,9 @@ impl AppModel {
         consumer: String,
         cx: &mut Context<Self>,
     ) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some(session) = self.nats_session(connection) else {
             return;
         };
@@ -455,6 +470,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("sma-inverter") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
