@@ -425,7 +425,14 @@ impl NatsClient {
                         .info()
                         .map_err(|e| format!("Consumer message info failed: {}", e))?;
                     let seq = info.stream_sequence;
-                    let subject = m.subject.as_ref().to_string();
+                    // The embedded server delivers on the pull inbox and
+                    // names the stored subject in `Nats-Subject`.
+                    let subject = m
+                        .headers
+                        .as_ref()
+                        .and_then(|h| h.get("Nats-Subject"))
+                        .map(|v| v.as_str().to_string())
+                        .unwrap_or_else(|| m.subject.as_ref().to_string());
                     let ts = unix_ms(info.published);
                     let payload = m.payload.clone();
                     let _ = m.ack().await;

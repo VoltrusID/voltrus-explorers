@@ -127,6 +127,7 @@ async fn test_js_pull_consumer_full_flow() {
         .expect("fetch batch");
     assert_eq!(batch.len(), 3, "got {:?}", batch.iter().map(|m| m.sequence).collect::<Vec<_>>());
     assert_eq!(payload_utf8(&batch[0]), "order-0");
+    assert_eq!(batch[0].subject, "orders.new", "the stored subject, not the pull inbox");
 
     // Fetch the rest.
     let rest = c
