@@ -33,6 +33,11 @@ pub enum Command {
     NewBacnetClient,
     NewBacnetDevice,
     BacnetDemo,
+    NewS7Client,
+    NewS7Server,
+    S7Demo,
+    /// Read an S7 client's CPU identity, mode, diagnostics and blocks again.
+    ReadS7Plc(ConnectionId),
 }
 
 pub struct Entry {
@@ -289,5 +294,6 @@ fn commands(model: &AppModel) -> Vec<Entry> {
                 command,
             }),
     );
+    entries.extend(super::s7::palette_entries(model));
     entries
 }

@@ -92,6 +92,7 @@ fn point_detail(
         Some(SessionSpec::ModbusSlave(slave)) => slave.template.is_some(),
         Some(SessionSpec::MqttBroker(broker)) => broker.template.is_some(),
         Some(SessionSpec::BacnetDevice(_)) => true,
+        Some(SessionSpec::S7Server(_)) => true,
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
@@ -215,7 +216,14 @@ fn point_detail(
                 .flex()
                 .flex_col()
                 .gap(SPACE_4)
-                .child(section_label("Registers", cx))
+                .child(section_label(
+                    if spec.is_some_and(|spec| spec.protocol() == Protocol::S7) {
+                        "On the wire"
+                    } else {
+                        "Registers"
+                    },
+                    cx,
+                ))
                 .child(
                     div()
                         .flex()

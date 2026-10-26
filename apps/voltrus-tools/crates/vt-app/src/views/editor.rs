@@ -17,6 +17,7 @@ use crate::model::{AppModel, Overlay};
 
 mod bacnet;
 mod mqtt;
+mod s7;
 
 /// A click handler that changes the open editor.
 pub(super) fn on_edit(
@@ -51,6 +52,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::S7Client, false) => "New Siemens S7 connection",
+        (EditorKind::S7Client, true) => "Edit Siemens S7 connection",
+        (EditorKind::S7Server, false) => "New S7 PLC simulator",
+        (EditorKind::S7Server, true) => "Edit S7 PLC simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -67,6 +72,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::S7Client => {
+            "Poll a CPU's DB, I, Q, M, timer and counter tags over ISO-on-TCP, write them, and read its diagnostics."
+        }
+        EditorKind::S7Server => {
+            "Play an S7 CPU on this computer for any S7 client to read, write and diagnose."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -75,6 +86,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::S7Client => s7::client(editor, cx),
+        EditorKind::S7Server => s7::server(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -84,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::S7Client, false) => "Save and connect",
+        (EditorKind::S7Server, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

@@ -3911,6 +3911,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-s7"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7324,6 +7337,7 @@ dependencies = [
  "mt-modbus",
  "mt-mqtt",
  "mt-protocol",
+ "mt-s7",
  "prost",
  "rumqttc",
  "serde",

@@ -14,6 +14,8 @@ use vt_protocol::{
 const MODBUS: &str = include_str!("../templates/modbus.json");
 const BACNET: &str = include_str!("../templates/bacnet.json");
 
+pub use crate::s7::template::{S7SimPoint, S7Template, find_s7, s7, s7_client_for};
+
 static TEMPLATES: LazyLock<Vec<SimDeviceProfile>> =
     LazyLock::new(|| match serde_json::from_str(MODBUS) {
         Ok(templates) => templates,

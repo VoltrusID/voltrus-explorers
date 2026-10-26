@@ -9,6 +9,7 @@ mod bacnet;
 mod message;
 mod modbus;
 mod mqtt;
+mod s7;
 mod value;
 
 pub use bacnet::{
@@ -24,6 +25,10 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use s7::{
+    S7_DEFAULT_PDU, S7_MAX_PDU, S7_MIN_PDU, S7_PORT, S7Address, S7Area, S7Block, S7ClientSpec,
+    S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec, S7TagSpec, S7Type, S7Width,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -45,6 +50,10 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Read and write a Siemens S7 CPU's tags, and read its diagnostics.
+    S7Client(S7ClientSpec),
+    /// Play an S7 CPU with a template's simulated memory.
+    S7Server(S7ServerSpec),
 }
 
 impl SessionSpec {
@@ -53,6 +62,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
         }
     }
 
@@ -60,6 +70,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::S7Client(_) => Role::Client,
+            Self::S7Server(_) => Role::Simulator,
         }
     }
 
@@ -92,6 +104,13 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::S7Client(spec) => format!(
+                "{} · rack {} slot {}",
+                host_port(&spec.host, spec.port),
+                spec.rack,
+                spec.slot
+            ),
+            Self::S7Server(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
         }
     }
 
@@ -104,6 +123,8 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::S7Client(spec) => host_port(&spec.host, spec.port),
+            Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
         }
     }
 }
@@ -124,16 +145,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    S7,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::S7,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::S7 => "Siemens S7",
         }
     }
 
@@ -143,6 +171,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::S7 => "S7",
         }
     }
 
@@ -154,6 +183,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::S7 => {
+                "DB, I, Q, M, timer and counter tags, writes, CPU diagnostics, blocks, and a PLC simulator"
             }
         }
     }

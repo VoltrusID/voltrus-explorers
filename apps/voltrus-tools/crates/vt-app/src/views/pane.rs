@@ -111,9 +111,14 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
 
     let segments = PaneView::ALL
         .into_iter()
+        .chain(super::device::available(&connection.spec).then_some(PaneView::Device))
         .map(|option| {
             Segment::new(
-                option.name(),
+                if option == PaneView::Device {
+                    super::device::label(&connection.spec)
+                } else {
+                    option.name()
+                },
                 option == view,
                 cx.listener(move |model, _, _, cx| model.set_pane_view(pane_id, option, cx)),
             )
@@ -122,6 +127,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 PaneView::Trend => Icon::ChartLine,
                 PaneView::Traffic => Icon::ArrowUpDown,
                 PaneView::Log => Icon::ScrollText,
+                PaneView::Device => Icon::Cpu,
             })
             .icon_only(compact)
         })
@@ -236,6 +242,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
+        SessionSpec::S7Server(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
@@ -246,6 +253,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
             PaneView::Trend => trend::render(connection_id, live, width, cx),
             PaneView::Traffic => traffic::render(connection_id, live, width, scroll.traffic, cx),
             PaneView::Log => log::render(connection_id, live, width, scroll.log, cx),
+            PaneView::Device => super::device::render(connection_id, &connection.spec, live, cx),
         },
         _ => empty_state(
             if simulator { Icon::Server } else { Icon::Plug },
@@ -262,6 +270,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
+                }
+                (SessionSpec::S7Server(_), _) => {
+                    "Start it to play the CPU on this computer. Any S7 client can read, write and diagnose it, including this app."
+                }
+                (SessionSpec::S7Client(_), _) => {
+                    "Connect to poll the CPU's tags and read its identity, mode, diagnostic buffer and blocks."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

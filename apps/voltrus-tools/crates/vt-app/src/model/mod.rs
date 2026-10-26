@@ -9,6 +9,7 @@ pub mod editor;
 pub mod live;
 pub mod palette;
 pub mod publish;
+pub mod s7;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -531,6 +532,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::S7 => {
+                self.start_s7_demo(cx);
+            }
         }
     }
 
@@ -829,6 +833,12 @@ impl AppModel {
         {
             self.add_bacnet_client(&name, device, cx);
         }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::S7Server(server) = &spec
+        {
+            self.add_s7_client(&name, server, cx);
+        }
         self.workspace.focus(
             self.workspace
                 .panes
@@ -993,6 +1003,12 @@ impl AppModel {
             Command::BacnetDemo => {
                 self.start_bacnet_demo(cx);
             }
+            Command::NewS7Client => self.open_editor(EditorKind::S7Client, None, window, cx),
+            Command::NewS7Server => self.open_editor(EditorKind::S7Server, None, window, cx),
+            Command::S7Demo => {
+                self.start_s7_demo(cx);
+            }
+            Command::ReadS7Plc(connection) => self.read_s7_plc(connection, cx),
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),
             Command::ClosePane => self.close_pane(cx),

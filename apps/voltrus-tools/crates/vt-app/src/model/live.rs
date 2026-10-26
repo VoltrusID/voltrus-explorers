@@ -57,6 +57,10 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// S7 clients: what the CPU last said about itself.
+    pub s7_plc: Option<Result<vt_protocol::S7PlcReport, String>>,
+    /// S7 clients: a read of the CPU is on its way.
+    pub s7_plc_reading: bool,
 }
 
 impl Default for Live {
@@ -81,6 +85,8 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            s7_plc: None,
+            s7_plc_reading: false,
         }
     }
 }
@@ -96,6 +102,9 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.s7_plc = None;
+        // A connecting S7 client reads its CPU first.
+        self.s7_plc_reading = true;
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -206,6 +215,10 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            EventKind::S7Plc(report) => {
+                self.s7_plc = Some(report);
+                self.s7_plc_reading = false;
+            }
         }
     }
 

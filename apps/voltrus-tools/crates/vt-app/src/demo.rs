@@ -30,6 +30,12 @@ pub enum Scenario {
     BacnetTraffic,
     BacnetDiscover,
     BacnetCommand,
+    S7Points,
+    S7Trend,
+    S7Traffic,
+    S7Plc,
+    S7Write,
+    S7Editor,
 }
 
 impl Scenario {
@@ -52,6 +58,12 @@ impl Scenario {
         "bacnet-traffic",
         "bacnet-discover",
         "bacnet-command",
+        "s7-points",
+        "s7-trend",
+        "s7-traffic",
+        "s7-plc",
+        "s7-write",
+        "s7-editor",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -74,6 +86,12 @@ impl Scenario {
             "bacnet-traffic" => Self::BacnetTraffic,
             "bacnet-discover" => Self::BacnetDiscover,
             "bacnet-command" => Self::BacnetCommand,
+            "s7-points" => Self::S7Points,
+            "s7-trend" => Self::S7Trend,
+            "s7-traffic" => Self::S7Traffic,
+            "s7-plc" => Self::S7Plc,
+            "s7-write" => Self::S7Write,
+            "s7-editor" => Self::S7Editor,
             _ => return None,
         })
     }
@@ -120,6 +138,12 @@ pub fn apply(
         | Scenario::BacnetTraffic
         | Scenario::BacnetDiscover
         | Scenario::BacnetCommand => bacnet(model, scenario, window, cx),
+        Scenario::S7Points
+        | Scenario::S7Trend
+        | Scenario::S7Traffic
+        | Scenario::S7Plc
+        | Scenario::S7Write
+        | Scenario::S7Editor => s7(model, scenario, window, cx),
         Scenario::Palette => {
             model.start_demo_plant(cx);
             model.workspace.ui.inspector_open = false;
@@ -327,6 +351,64 @@ fn bacnet(
             if let Some(live) = model.live.get_mut(&client) {
                 live.selected = Some(BACNET_SETPOINT);
             }
+        }
+        _ => {}
+    }
+}
+
+/// Tags of the motor drive to trend: speed, current, winding temperature
+/// and power.
+const S7_TREND: [u32; 4] = [0, 1, 2, 4];
+/// The motor drive's speed setpoint, a writable Real in DB1.
+const S7_SETPOINT: u32 = 9;
+
+/// The S7 demo: a simulated S7-1500 motor drive and a client reading it.
+fn s7(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Context<AppModel>) {
+    let Some((client, simulator)) = model.start_s7_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend = S7_TREND.into_iter().collect();
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    let alone = |model: &mut AppModel, cx: &mut Context<AppModel>| {
+        if let Some(pane) = pane_of(model, simulator) {
+            model.workspace.close_pane(pane);
+        }
+        if let Some(pane) = pane_of(model, client) {
+            model.focus_pane(pane, cx);
+        }
+    };
+    match scenario {
+        Scenario::S7Points => model.workspace.ui.inspector_open = false,
+        Scenario::S7Trend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::S7Traffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.set_view(pane, PaneView::Traffic);
+            }
+        }
+        // The CPU's identity, mode, diagnostic buffer and blocks, full width.
+        Scenario::S7Plc => {
+            model.workspace.ui.inspector_open = false;
+            alone(model, cx);
+            model.set_view(PaneView::Device, cx);
+        }
+        // One client with its setpoint in the inspector, a value typed in.
+        Scenario::S7Write => {
+            alone(model, cx);
+            model.select_point(client, S7_SETPOINT, cx);
+            model
+                .write_input
+                .update(cx, |input, cx| input.set_text("1480", cx));
+        }
+        Scenario::S7Editor => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::S7Client, Some(client), window, cx);
         }
         _ => {}
     }

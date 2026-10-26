@@ -13,6 +13,9 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod s7;
+
+pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +51,12 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// S7: the CPU's rack, slot and PDU size, and a tag row and which of its fields.
+    S7Rack,
+    S7Slot,
+    S7Pdu,
+    S7Tag(usize, S7TagField),
+    S7Tags,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
