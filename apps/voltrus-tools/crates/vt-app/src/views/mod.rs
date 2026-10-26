@@ -5,6 +5,7 @@
 //! redraws itself and this thin shell, not the whole window.
 
 pub mod cached;
+mod dnp3;
 mod editor;
 pub mod inspector;
 mod licence;

@@ -3865,6 +3865,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-dnp3"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mt-modbus"
 version = "2.0.0"
 dependencies = [
@@ -7322,6 +7335,7 @@ dependencies = [
  "async-channel 2.5.0",
  "bytes",
  "mt-bacnet",
+ "mt-dnp3",
  "mt-modbus",
  "mt-mqtt",
  "mt-protocol",

@@ -13,6 +13,11 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod dnp3;
+
+pub use dnp3::{
+    Dnp3MasterForm, Dnp3OutstationForm, Dnp3PointField, Dnp3PointForm, next_dnp3_point,
+};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +53,13 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// DNP3: the master's own link address and the outstation's, the poll
+    /// periods, and a point-name row with which of its fields.
+    LinkAddress,
+    OutstationAddress,
+    IntegrityMs,
+    EventMs,
+    Dnp3Point(usize, Dnp3PointField),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

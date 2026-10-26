@@ -1,7 +1,7 @@
 //! DNP3 outstation simulator: serves a configurable set of binary, analog and counter points to
 //! a master over TCP, speaking the same wire format a field outstation does.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,8 +15,9 @@ use crate::application::{
 use crate::control::{
     ControlObject, ControlRequest, ControlStatus, build_control_response, parse_control_objects,
 };
+use crate::client::{TrafficRecord, TrafficTap};
 use crate::datalink::{ControlByte, Dnp3Frame};
-use crate::objects::parse_object_blocks;
+use crate::objects::{flag, parse_object_blocks};
 use crate::transport::{TransportHeader, TransportReassembler, TransportSegment, segment_asdu};
 use crate::types::{OutstationConfig, OutstationEvent, OutstationLogEntry};
 
@@ -54,6 +55,15 @@ pub struct OutstationState {
     pub device_restart: bool,
     /// How long a SELECT stays valid for the matching OPERATE.
     pub select_timeout: Duration,
+    /// Binary output status points (Group 10). Empty unless [`Self::configure_outputs`] adds
+    /// them; while empty, CROBs act on the binary inputs instead.
+    pub binary_outputs: Vec<bool>,
+    /// Analog output status points (Group 40). Empty unless [`Self::configure_outputs`] adds
+    /// them; while empty, analog output blocks act on the analog inputs instead.
+    pub analog_outputs: Vec<f64>,
+    /// Flags octet of points that are not plainly ONLINE, by (static group, index). The state
+    /// bit of binary points is never stored here.
+    point_flags: HashMap<(u8, u16), u8>,
 }
 
 impl OutstationState {
@@ -89,9 +99,10 @@ impl OutstationState {
         }
     }
 
-    /// Buffer a single event with a SOE timestamp.
+    /// Buffer a single event with a SOE timestamp. The event carries the point's current flags.
     pub fn push_event(&mut self, class: u8, group: u8, index: u16, value: f64, timestamp: u64) {
         self.event_seq = self.event_seq.wrapping_add(1);
+        let flags = self.flags(group, index);
         self.events.push_back(OutstationEvent {
             class,
             group,
@@ -99,11 +110,86 @@ impl OutstationState {
             value,
             timestamp,
             sequence: self.event_seq,
+            flags,
         });
         // Bound the buffer so it can't grow unbounded.
         while self.events.len() > 1024 {
             self.events.pop_front();
         }
+    }
+
+    /// Serve `binary` binary output status points (Group 10) and `analog` analog output status
+    /// points (Group 40), all off and zero. From then on CROBs act on the binary outputs and
+    /// analog output blocks on the analog outputs, as on a field outstation.
+    pub fn configure_outputs(&mut self, binary: usize, analog: usize) {
+        self.binary_outputs = vec![false; binary];
+        self.analog_outputs = vec![0.0; analog];
+    }
+
+    /// The flags octet of a point (static group 1, 10, 20, 30 or 40), ONLINE unless set.
+    pub fn flags(&self, group: u8, index: u16) -> u8 {
+        self.point_flags.get(&(group, index)).copied().unwrap_or(flag::ONLINE)
+    }
+
+    /// Set a point's flags octet (the binary state bit is ignored) and buffer an event for the
+    /// change, as an outstation reports a point going offline or being forced. Returns false for
+    /// a point that does not exist.
+    pub fn set_flags(&mut self, group: u8, index: u16, flags: u8) -> bool {
+        let flags = flags & !flag::STATE;
+        let i = index as usize;
+        let (class, value) = match group {
+            1 => match self.binary_values.get(i) {
+                Some(&on) => (3, f64::from(u8::from(on))),
+                None => return false,
+            },
+            10 => match self.binary_outputs.get(i) {
+                Some(&on) => (3, f64::from(u8::from(on))),
+                None => return false,
+            },
+            20 => match self.counter_values.get(i) {
+                Some(&v) => (2, v),
+                None => return false,
+            },
+            30 => match self.analog_values.get(i) {
+                Some(&v) => (1, v),
+                None => return false,
+            },
+            40 => match self.analog_outputs.get(i) {
+                Some(&v) => (1, v),
+                None => return false,
+            },
+            _ => return false,
+        };
+        if self.flags(group, index) == flags {
+            return true;
+        }
+        if flags == flag::ONLINE {
+            self.point_flags.remove(&(group, index));
+        } else {
+            self.point_flags.insert((group, index), flags);
+        }
+        self.push_event(class, group, index, value, now_ms());
+        true
+    }
+
+    /// Set a binary output and buffer an event if it changed.
+    pub fn set_binary_output(&mut self, index: usize, on: bool) -> bool {
+        let Some(slot) = self.binary_outputs.get_mut(index) else { return false };
+        if *slot != on {
+            *slot = on;
+            self.push_event(3, 10, index as u16, f64::from(u8::from(on)), now_ms());
+        }
+        true
+    }
+
+    /// Set an analog output and buffer an event if it changed.
+    pub fn set_analog_output(&mut self, index: usize, value: f64) -> bool {
+        let Some(slot) = self.analog_outputs.get_mut(index) else { return false };
+        if (*slot - value).abs() > 1e-9 {
+            *slot = value;
+            self.push_event(1, 40, index as u16, value, now_ms());
+        }
+        true
     }
 
     /// Take the buffered events for a given class (1/2/3), clearing them.
@@ -135,6 +221,22 @@ pub async fn start_outstation_server(
     tokio::sync::mpsc::UnboundedReceiver<OutstationLogEntry>,
     tokio::sync::watch::Sender<bool>,
 )> {
+    start_outstation_server_with_tap(config, None).await
+}
+
+/// Start the DNP3 outstation TCP server, reporting every frame it receives and sends on `tap`
+/// (`sent` is true for the outstation's frames).
+///
+/// Each master is served in its own task. Sending `true` on the returned watch sender closes
+/// the listener and every master connection; dropping the sender leaves the server running.
+pub async fn start_outstation_server_with_tap(
+    config: OutstationConfig,
+    tap: Option<TrafficTap>,
+) -> anyhow::Result<(
+    Arc<std::sync::Mutex<OutstationState>>,
+    tokio::sync::mpsc::UnboundedReceiver<OutstationLogEntry>,
+    tokio::sync::watch::Sender<bool>,
+)> {
     let addr = format!("{}:{}", config.bind_addr, config.port);
     let listener = TcpListener::bind(&addr).await?;
 
@@ -150,6 +252,9 @@ pub async fn start_outstation_server(
         prev_counter: vec![0.0; config.counter_count as usize],
         device_restart: false,
         select_timeout: DEFAULT_SELECT_TIMEOUT,
+        binary_outputs: Vec::new(),
+        analog_outputs: Vec::new(),
+        point_flags: HashMap::new(),
     }));
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -163,6 +268,7 @@ pub async fn start_outstation_server(
     tokio::spawn(async move {
         tracing::info!("DNP3 outstation listening on {addr}");
 
+        let mut watching = true;
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -173,21 +279,37 @@ pub async fn start_outstation_server(
                                 function_code: 0,
                                 message: format!("Master connected from {peer}"),
                             });
-                            handle_master_connection(
+                            let connection = handle_master_connection(
                                 stream,
                                 state_clone.clone(),
                                 log_tx_clone.clone(),
                                 outstation_addr,
                                 master_addr,
-                            ).await;
+                                tap.clone(),
+                            );
+                            let mut stop = shutdown_rx.clone();
+                            tokio::spawn(async move {
+                                let stopped = async move {
+                                    // A dropped sender never stops the server.
+                                    if stop.wait_for(|stopped| *stopped).await.is_err() {
+                                        std::future::pending::<()>().await;
+                                    }
+                                };
+                                tokio::select! {
+                                    () = connection => {}
+                                    () = stopped => {}
+                                }
+                            });
                         }
                         Err(e) => {
                             tracing::error!("Accept error: {e}");
                         }
                     }
                 }
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
+                changed = shutdown_rx.changed(), if watching => {
+                    if changed.is_err() {
+                        watching = false;
+                    } else if *shutdown_rx.borrow() {
                         tracing::info!("Outstation server shutting down");
                         let _ = log_tx_clone.send(OutstationLogEntry {
                             timestamp: now_ms(),
@@ -204,6 +326,11 @@ pub async fn start_outstation_server(
     Ok((state, log_rx, shutdown_tx))
 }
 
+/// Octets on the wire of a link frame carrying `user` octets of user data.
+fn frame_octets(user: usize) -> usize {
+    10 + user + 2 * user.div_ceil(16)
+}
+
 /// One master connection: link-layer services, transport reassembly and fragment sending.
 struct Session {
     stream: TcpStream,
@@ -212,6 +339,9 @@ struct Session {
     /// Link address of the master: where every reply is sent. Updated from each frame received.
     peer_addr: u16,
     log_tx: tokio::sync::mpsc::UnboundedSender<OutstationLogEntry>,
+    tap: Option<TrafficTap>,
+    /// Octets of the frames of the request being reassembled.
+    rx_octets: usize,
 }
 
 impl Session {
@@ -223,22 +353,39 @@ impl Session {
         });
     }
 
+    fn record(&self, sent: bool, link: ControlByte, asdu: Vec<u8>, octets: usize) {
+        if let Some(tap) = &self.tap {
+            let _ = tap.send(TrafficRecord { sent, link, asdu, octets });
+        }
+    }
+
     async fn send_link(&mut self, link_control: ControlByte, data: Vec<u8>) -> std::io::Result<()> {
+        let link_only = data.is_empty();
         let frame = Dnp3Frame {
             link_control,
             destination: self.peer_addr,
             source: self.outstation_addr,
             data,
         };
-        self.stream.write_all(&frame.encode()).await
+        let bytes = frame.encode();
+        self.stream.write_all(&bytes).await?;
+        if link_only {
+            self.record(true, link_control, Vec::new(), bytes.len());
+        }
+        Ok(())
     }
 
     async fn send_asdu(&mut self, asdu: &[u8]) -> std::io::Result<()> {
+        let mut octets = 0;
         for seg in segment_asdu(asdu) {
             let th = TransportHeader { fir: seg.fir, fin: seg.fin, sequence: seg.sequence };
             let mut data = vec![th.to_byte()];
             data.extend_from_slice(&seg.data);
+            octets += frame_octets(data.len());
             self.send_link(ControlByte::outstation_data(), data).await?;
+        }
+        if self.tap.is_some() {
+            self.record(true, ControlByte::outstation_data(), asdu.to_vec(), octets);
         }
         Ok(())
     }
@@ -249,6 +396,7 @@ impl Session {
     async fn next_asdu(&mut self) -> anyhow::Result<Vec<u8>> {
         loop {
             let frame = read_frame(&mut self.stream).await?;
+            let octets = frame_octets(frame.data.len());
             if frame.destination != self.outstation_addr && frame.destination < 0xFFFC {
                 self.log(
                     0,
@@ -258,6 +406,9 @@ impl Session {
                     ),
                 );
                 continue;
+            }
+            if frame.data.is_empty() || !frame.link_control.prm {
+                self.record(false, frame.link_control, Vec::new(), octets);
             }
             if !frame.link_control.prm {
                 continue; // secondary frame (ACK/NACK): nothing for us
@@ -284,6 +435,10 @@ impl Session {
                 continue; // link service request: carries no user data
             }
             let th = TransportHeader::from_byte(frame.data[0]);
+            if th.fir {
+                self.rx_octets = 0;
+            }
+            self.rx_octets += octets;
             let seg = TransportSegment {
                 fir: th.fir,
                 fin: th.fin,
@@ -291,6 +446,10 @@ impl Session {
                 data: frame.data[1..].to_vec(),
             };
             if let Some(asdu) = self.reassembler.process(seg) {
+                if self.tap.is_some() {
+                    self.record(false, frame.link_control, asdu.clone(), self.rx_octets);
+                }
+                self.rx_octets = 0;
                 return Ok(asdu);
             }
         }
@@ -330,6 +489,7 @@ async fn handle_master_connection(
     log_tx: tokio::sync::mpsc::UnboundedSender<OutstationLogEntry>,
     outstation_addr: u16,
     master_addr: u16,
+    tap: Option<TrafficTap>,
 ) {
     let mut session = Session {
         stream,
@@ -337,6 +497,8 @@ async fn handle_master_connection(
         outstation_addr,
         peer_addr: master_addr,
         log_tx,
+        tap,
+        rx_octets: 0,
     };
     let mut pending_select: Option<PendingSelect> = None;
     let mut interrupted: Option<Vec<u8>> = None;
@@ -522,11 +684,17 @@ fn handle_control(
         }
     };
 
+    // With output points configured, controls act on them; otherwise on the inputs.
+    let (binary_targets, analog_targets) = if st.binary_outputs.is_empty() && st.analog_outputs.is_empty() {
+        (st.binary_values.len(), st.analog_values.len())
+    } else {
+        (st.binary_outputs.len(), st.analog_outputs.len())
+    };
     let in_range = match request.object {
         ControlObject::Crob(c) => {
-            (request.index as usize) < st.binary_values.len() && matches!(c.code & 0x0F, 1..=4)
+            (request.index as usize) < binary_targets && matches!(c.code & 0x0F, 1..=4)
         }
-        ControlObject::AnalogOutput(_) => (request.index as usize) < st.analog_values.len(),
+        ControlObject::AnalogOutput(_) => (request.index as usize) < analog_targets,
     };
 
     let status = match function {
@@ -566,11 +734,19 @@ fn handle_control(
     build_control_response(request_seq, &current_iin(st), &request, status)
 }
 
-/// Apply a validated control object to the simulated point and buffer the resulting event.
+/// Apply a validated control object to the simulated point and buffer the resulting event:
+/// to the output points when there are any, else to the inputs.
 fn apply_control(st: &mut OutstationState, request: &ControlRequest) {
     let index = request.index as usize;
     let now = now_ms();
+    let outputs = !(st.binary_outputs.is_empty() && st.analog_outputs.is_empty());
     match request.object {
+        ControlObject::Crob(c) if outputs => {
+            st.set_binary_output(index, c.drives_on());
+        }
+        ControlObject::AnalogOutput(v) if outputs => {
+            st.set_analog_output(index, f64::from(v));
+        }
         ControlObject::Crob(c) => {
             let new_val = c.drives_on();
             if st.binary_values[index] != new_val {
@@ -630,7 +806,7 @@ struct Block {
 }
 
 /// READ: class 0 (g60v1) serves every static point, classes 1-3 (g60v2-4) drain that class's
-/// events, and g1, g20 and g30 serve their static points. Any other object is IIN2.1.
+/// events, and g1, g10, g20, g30 and g40 serve their static points. Any other object is IIN2.1.
 fn handle_read(
     st: &mut OutstationState,
     seq: u8,
@@ -639,15 +815,21 @@ fn handle_read(
 ) -> Vec<Vec<u8>> {
     let parsed = parse_object_blocks(objects, false);
     let (mut binary, mut counter, mut analog) = (false, false, false);
+    let (mut binary_out, mut analog_out) = (false, false);
     let mut classes = [false; 3];
     let mut unknown = false;
     for block in &parsed.blocks {
         match (block.group, block.variation) {
-            (60, 1) => (binary, counter, analog) = (true, true, true),
+            (60, 1) => {
+                (binary, counter, analog) = (true, true, true);
+                (binary_out, analog_out) = (true, true);
+            }
             (60, v @ 2..=4) => classes[v as usize - 2] = true,
             (1, _) => binary = true,
+            (10, _) => binary_out = true,
             (20, _) => counter = true,
             (30, _) => analog = true,
+            (40, _) => analog_out = true,
             _ => unknown = true,
         }
     }
@@ -662,13 +844,19 @@ fn handle_read(
         }
     }
     if binary {
-        blocks.extend(static_binary_blocks(&st.binary_values));
+        blocks.extend(static_binary_blocks(1, &st.binary_values, |i| st.flags(1, i)));
+    }
+    if binary_out {
+        blocks.extend(static_binary_blocks(10, &st.binary_outputs, |i| st.flags(10, i)));
     }
     if analog {
-        blocks.extend(static_analog_blocks(&st.analog_values));
+        blocks.extend(static_analog_blocks(30, &st.analog_values, |i| st.flags(30, i)));
+    }
+    if analog_out {
+        blocks.extend(static_analog_blocks(40, &st.analog_outputs, |i| st.flags(40, i)));
     }
     if counter {
-        blocks.extend(static_counter_blocks(&st.counter_values));
+        blocks.extend(static_counter_blocks(&st.counter_values, |i| st.flags(20, i)));
     }
 
     let mut iin = current_iin(st);
@@ -710,28 +898,30 @@ fn pack_fragments(seq: u8, iin: &Iin, blocks: Vec<Block>) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// Static binary inputs as g1v2 (flags: bit 0 ONLINE, bit 7 STATE), qualifier 0x01 (2-octet
-/// start-stop), in blocks of up to 200 points.
-fn static_binary_blocks(values: &[bool]) -> Vec<Block> {
+/// Static binary inputs (g1v2) or binary output status (g10v2): the point's flags with bit 7
+/// STATE, qualifier 0x01 (2-octet start-stop), in blocks of up to 200 points.
+fn static_binary_blocks(group: u8, values: &[bool], flags: impl Fn(u16) -> u8) -> Vec<Block> {
     ranged_blocks(values.len(), 200, |start, stop| {
-        let mut b = vec![1, 2, 0x01];
+        let mut b = vec![group, 2, 0x01];
         b.extend_from_slice(&(start as u16).to_le_bytes());
         b.extend_from_slice(&(stop as u16).to_le_bytes());
-        for &v in &values[start..=stop] {
-            b.push(0x01 | if v { 0x80 } else { 0 });
+        for (i, &v) in values[start..=stop].iter().enumerate() {
+            b.push(flags((start + i) as u16) | if v { 0x80 } else { 0 });
         }
         b
     })
 }
 
-/// Static analog inputs as g30v5 (flags + float32), qualifier 0x01, up to 100 points per block.
-fn static_analog_blocks(values: &[f64]) -> Vec<Block> {
+/// Static analog inputs (g30v5) or analog output status (g40v3): flags + float32, qualifier
+/// 0x01, up to 100 points per block.
+fn static_analog_blocks(group: u8, values: &[f64], flags: impl Fn(u16) -> u8) -> Vec<Block> {
+    let variation = if group == 40 { 3 } else { 5 };
     ranged_blocks(values.len(), 100, |start, stop| {
-        let mut b = vec![30, 5, 0x01];
+        let mut b = vec![group, variation, 0x01];
         b.extend_from_slice(&(start as u16).to_le_bytes());
         b.extend_from_slice(&(stop as u16).to_le_bytes());
-        for &v in &values[start..=stop] {
-            b.push(0x01);
+        for (i, &v) in values[start..=stop].iter().enumerate() {
+            b.push(flags((start + i) as u16));
             b.extend_from_slice(&(v as f32).to_le_bytes());
         }
         b
@@ -739,13 +929,13 @@ fn static_analog_blocks(values: &[f64]) -> Vec<Block> {
 }
 
 /// Static counters as g20v1 (flags + uint32), qualifier 0x01, up to 100 points per block.
-fn static_counter_blocks(values: &[f64]) -> Vec<Block> {
+fn static_counter_blocks(values: &[f64], flags: impl Fn(u16) -> u8) -> Vec<Block> {
     ranged_blocks(values.len(), 100, |start, stop| {
         let mut b = vec![20, 1, 0x01];
         b.extend_from_slice(&(start as u16).to_le_bytes());
         b.extend_from_slice(&(stop as u16).to_le_bytes());
-        for &v in &values[start..=stop] {
-            b.push(0x01);
+        for (i, &v) in values[start..=stop].iter().enumerate() {
+            b.push(flags((start + i) as u16));
             b.extend_from_slice(&(v as u32).to_le_bytes());
         }
         b
@@ -759,15 +949,20 @@ fn ranged_blocks(len: usize, chunk: usize, mut encode: impl FnMut(usize, usize) 
         .collect()
 }
 
-/// Buffered events as g2v2 (binary, flags + absolute time), g32v7 (analog, float32 with flags
-/// and time) and g22v5 (counter, uint32 with flags and time), qualifier 0x28 (2-octet count,
-/// 2-octet index before each object).
+/// Buffered events as g2v2 (binary input, flags + absolute time), g11v2 (binary output),
+/// g32v7 (analog input, float32 with flags and time), g42v7 (analog output) and g22v5 (counter,
+/// uint32 with flags and time), qualifier 0x28 (2-octet count, 2-octet index before each
+/// object). Each event carries the flags the point had when it happened.
 fn event_blocks(events: &[OutstationEvent]) -> Vec<Block> {
     let mut out = Vec::new();
     // (event point group, object group, object variation, octets per event, events per block)
-    for (group, object_group, object_variation, size, chunk) in
-        [(1u8, 2u8, 2u8, 9usize, 100usize), (30, 32, 7, 13, 60), (20, 22, 5, 13, 60)]
-    {
+    for (group, object_group, object_variation, size, chunk) in [
+        (1u8, 2u8, 2u8, 9usize, 100usize),
+        (10, 11, 2, 9, 100),
+        (30, 32, 7, 13, 60),
+        (40, 42, 7, 13, 60),
+        (20, 22, 5, 13, 60),
+    ] {
         let of_group: Vec<&OutstationEvent> = events.iter().filter(|e| e.group == group).collect();
         for part in of_group.chunks(chunk) {
             let mut b = Vec::with_capacity(5 + part.len() * size);
@@ -775,14 +970,15 @@ fn event_blocks(events: &[OutstationEvent]) -> Vec<Block> {
             b.extend_from_slice(&(part.len() as u16).to_le_bytes());
             for ev in part {
                 b.extend_from_slice(&ev.index.to_le_bytes());
+                let flags = ev.flags & !flag::STATE;
                 match group {
-                    1 => b.push(0x01 | if ev.value >= 0.5 { 0x80 } else { 0 }),
-                    30 => {
-                        b.push(0x01);
+                    1 | 10 => b.push(flags | if ev.value >= 0.5 { 0x80 } else { 0 }),
+                    30 | 40 => {
+                        b.push(flags);
                         b.extend_from_slice(&(ev.value as f32).to_le_bytes());
                     }
                     _ => {
-                        b.push(0x01);
+                        b.push(flags);
                         b.extend_from_slice(&(ev.value as u32).to_le_bytes());
                     }
                 }
@@ -831,7 +1027,59 @@ mod tests {
             prev_counter: vec![0.0; counter],
             device_restart: false,
             select_timeout: Duration::from_millis(100),
+            binary_outputs: Vec::new(),
+            analog_outputs: Vec::new(),
+            point_flags: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn configured_outputs_take_the_controls_and_report_events() {
+        let (mut st, mut pending, t0) = (state(), None, Instant::now());
+        st.configure_outputs(2, 1);
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 0, &latch(1, true), t0), ControlStatus::Success);
+        assert!(st.binary_outputs[1], "the CROB drives the binary output");
+        assert!(!st.binary_values[1], "and leaves the binary input alone");
+        // Index 2 is a binary input but no binary output.
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 1, &latch(2, true), t0), ControlStatus::NotSupported);
+        let setpoint = ControlRequest { index: 0, object: ControlObject::AnalogOutput(61.5) };
+        assert_eq!(run(&mut st, &mut pending, FunctionCode::DirectOperate, 2, &setpoint, t0), ControlStatus::Success);
+        assert_eq!(st.analog_outputs[0], 61.5);
+        // The events come back as g11v2 and g42v7.
+        let out = process(&mut st, &build_integrity_poll_request(3));
+        let (_, objects) = decode(&out.fragments[0]);
+        let (points, issue) = parse_points(objects);
+        assert_eq!(issue, None);
+        assert!(points.iter().any(|p| p.event && p.group == 10 && p.index == 1 && p.value == 1.0));
+        assert!(points.iter().any(|p| p.event && p.group == 40 && p.index == 0 && p.value == 61.5));
+        // Static output status is served in class 0 as g10v2 and g40v3.
+        assert!(points.iter().any(|p| !p.event && p.group == 10 && p.variation == 2 && p.index == 1 && p.value == 1.0));
+        assert!(points.iter().any(|p| !p.event && p.group == 40 && p.variation == 3 && p.value == 61.5));
+    }
+
+    #[test]
+    fn flags_are_served_and_their_change_is_an_event() {
+        let mut st = state();
+        st.binary_values[0] = true;
+        st.analog_values[1] = 12.5;
+        assert!(st.set_flags(30, 1, flag::COMM_LOST));
+        assert!(st.set_flags(1, 0, flag::ONLINE | flag::LOCAL_FORCED | flag::STATE));
+        assert!(!st.set_flags(30, 99, 0), "no such point");
+        let out = process(&mut st, &build_integrity_poll_request(1));
+        let (points, _) = parse_points(decode(&out.fragments[0]).1);
+        let analog_event = points.iter().find(|p| p.event && p.group == 30).unwrap();
+        assert_eq!((analog_event.index, analog_event.flags), (1, Some(flag::COMM_LOST)));
+        assert!(analog_event.time.is_some(), "g32v7 carries a time stamp");
+        let analog = points.iter().find(|p| !p.event && p.group == 30 && p.index == 1).unwrap();
+        assert_eq!(analog.flags, Some(flag::COMM_LOST));
+        // The state bit stays the point's value, whatever the flags say.
+        let binary = points.iter().find(|p| !p.event && p.group == 1 && p.index == 0).unwrap();
+        assert_eq!(binary.flags, Some(flag::ONLINE | flag::LOCAL_FORCED | flag::STATE));
+        assert_eq!(binary.value, 1.0);
+        // Back online: one more event, and the override is gone.
+        assert!(st.set_flags(30, 1, flag::ONLINE));
+        assert_eq!(st.flags(30, 1), flag::ONLINE);
+        assert!(st.has_events(1));
     }
 
     fn state() -> OutstationState {

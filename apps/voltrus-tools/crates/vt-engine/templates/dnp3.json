@@ -1,0 +1,70 @@
+[
+  {
+    "id": "feeder",
+    "name": "Feeder 52-1",
+    "description": "13.8 kV distribution feeder RTU: breaker, recloser, phase currents, power and energy",
+    "points": [
+      { "key": "v_ab", "label": "Voltage A-B", "kind": "analog_input", "index": 0, "base": 13.82, "variance": 0.05, "noise": 0.02, "period_ms": 20000, "unit": "kV" },
+      { "key": "v_bc", "label": "Voltage B-C", "kind": "analog_input", "index": 1, "base": 13.76, "variance": 0.05, "noise": 0.02, "period_ms": 22000, "unit": "kV" },
+      { "key": "v_ca", "label": "Voltage C-A", "kind": "analog_input", "index": 2, "base": 13.89, "variance": 0.04, "noise": 0.02, "period_ms": 21000, "unit": "kV" },
+      { "key": "i_a", "label": "Current A", "kind": "analog_input", "index": 3, "base": 142.3, "variance": 3.5, "noise": 1.2, "period_ms": 18000, "min": 100, "max": 200, "unit": "A", "gate": "breaker" },
+      { "key": "i_b", "label": "Current B", "kind": "analog_input", "index": 4, "base": 138.7, "variance": 3.2, "noise": 1.0, "period_ms": 19000, "min": 100, "max": 200, "unit": "A", "gate": "breaker" },
+      { "key": "i_c", "label": "Current C", "kind": "analog_input", "index": 5, "base": 145.1, "variance": 3.8, "noise": 1.3, "period_ms": 18000, "min": 100, "max": 200, "unit": "A", "gate": "breaker" },
+      { "key": "freq", "label": "Frequency", "kind": "analog_input", "index": 6, "base": 50.0, "variance": 0.02, "noise": 0.006, "period_ms": 10000, "min": 49.9, "max": 50.1, "unit": "Hz" },
+      { "key": "mw", "label": "Active power", "kind": "analog_input", "index": 7, "base": 3.42, "variance": 0.12, "noise": 0.03, "period_ms": 25000, "min": 2.5, "max": 4.5, "unit": "MW", "gate": "breaker" },
+      { "key": "mvar", "label": "Reactive power", "kind": "analog_input", "index": 8, "base": 0.85, "variance": 0.08, "noise": 0.02, "period_ms": 22000, "min": 0, "max": 1.5, "unit": "Mvar", "gate": "breaker" },
+      { "key": "pf", "label": "Power factor", "kind": "analog_input", "index": 9, "base": 0.97, "variance": 0.01, "noise": 0.003, "period_ms": 20000, "min": 0.9, "max": 1.0 },
+      { "key": "reg_voltage", "label": "Regulator voltage", "kind": "analog_input", "index": 10, "base": 13.8, "variance": 0.01, "noise": 0.01, "period_ms": 15000, "unit": "kV", "follows": "reg_setpoint" },
+      { "key": "breaker", "label": "Breaker 52-1 closed", "kind": "binary_input", "index": 0, "base": 1, "follows": "breaker_cmd" },
+      { "key": "recloser", "label": "Recloser enabled", "kind": "binary_input", "index": 1, "base": 1, "follows": "recloser_cmd" },
+      { "key": "ground_fault", "label": "Ground fault relay", "kind": "binary_input", "index": 2, "base": 0 },
+      { "key": "door", "label": "Cabinet door open", "kind": "binary_input", "index": 3, "base": 0 },
+      { "key": "kwh", "label": "Energy delivered", "kind": "counter", "index": 0, "base": 0, "variance": 6, "period_ms": 7000, "max": 999999999, "unit": "kWh", "gate": "breaker" },
+      { "key": "kvarh", "label": "Reactive energy", "kind": "counter", "index": 1, "base": 0, "variance": 2, "period_ms": 7000, "max": 999999999, "unit": "kvarh", "gate": "breaker" },
+      { "key": "breaker_cmd", "label": "Breaker 52-1 control", "kind": "binary_output", "index": 0, "base": 1 },
+      { "key": "recloser_cmd", "label": "Recloser enable", "kind": "binary_output", "index": 1, "base": 1 },
+      { "key": "reg_setpoint", "label": "Regulator setpoint", "kind": "analog_output", "index": 0, "base": 13.8, "unit": "kV" },
+      { "key": "mw_limit", "label": "Power limit", "kind": "analog_output", "index": 1, "base": 4.5, "unit": "MW" }
+    ]
+  },
+  {
+    "id": "transformer",
+    "name": "Transformer T1",
+    "description": "10 MVA 69/13.8 kV transformer bay: temperatures, tap changer, cooling fans and alarms",
+    "points": [
+      { "key": "oil_temp", "label": "Oil temperature", "kind": "analog_input", "index": 0, "base": 62.3, "variance": 1.5, "noise": 0.3, "period_ms": 60000, "min": 50, "max": 85, "unit": "°C" },
+      { "key": "winding_temp", "label": "Winding temperature", "kind": "analog_input", "index": 1, "base": 78.5, "variance": 2.0, "noise": 0.5, "period_ms": 45000, "min": 60, "max": 105, "unit": "°C" },
+      { "key": "tap", "label": "Tap position", "kind": "analog_input", "index": 2, "base": 5, "follows": "tap_setpoint" },
+      { "key": "load_i", "label": "Load current", "kind": "analog_input", "index": 3, "base": 425.7, "variance": 12, "noise": 3, "period_ms": 20000, "min": 300, "max": 550, "unit": "A" },
+      { "key": "load_mva", "label": "Load", "kind": "analog_input", "index": 4, "base": 10.2, "variance": 0.3, "noise": 0.1, "period_ms": 25000, "min": 7, "max": 12, "unit": "MVA" },
+      { "key": "v_hv", "label": "HV voltage", "kind": "analog_input", "index": 5, "base": 69.0, "variance": 0.2, "noise": 0.05, "period_ms": 20000, "unit": "kV" },
+      { "key": "v_lv", "label": "LV voltage", "kind": "analog_input", "index": 6, "base": 13.8, "variance": 0.05, "noise": 0.02, "period_ms": 20000, "unit": "kV" },
+      { "key": "fan1", "label": "Fan group 1 running", "kind": "binary_input", "index": 0, "base": 1, "follows": "fan1_cmd" },
+      { "key": "fan2", "label": "Fan group 2 running", "kind": "binary_input", "index": 1, "base": 0, "follows": "fan2_cmd" },
+      { "key": "buchholz", "label": "Buchholz alarm", "kind": "binary_input", "index": 2, "base": 0 },
+      { "key": "hot", "label": "Winding high temperature", "kind": "binary_input", "index": 3, "base": 0 },
+      { "key": "fan1_cmd", "label": "Fan group 1", "kind": "binary_output", "index": 0, "base": 1 },
+      { "key": "fan2_cmd", "label": "Fan group 2", "kind": "binary_output", "index": 1, "base": 0 },
+      { "key": "tap_setpoint", "label": "Tap setpoint", "kind": "analog_output", "index": 0, "base": 5 }
+    ]
+  },
+  {
+    "id": "solar",
+    "name": "PV plant 5 MW",
+    "description": "Solar farm interconnection: inverter run, irradiance, DC and AC power, curtailment",
+    "points": [
+      { "key": "irradiance", "label": "Irradiance", "kind": "analog_input", "index": 0, "base": 820, "variance": 40, "noise": 12, "period_ms": 90000, "min": 0, "max": 1100, "unit": "W/m²" },
+      { "key": "module_temp", "label": "Module temperature", "kind": "analog_input", "index": 1, "base": 41.5, "variance": 1.0, "noise": 0.2, "period_ms": 60000, "unit": "°C" },
+      { "key": "dc_v", "label": "DC voltage", "kind": "analog_input", "index": 2, "base": 1120, "variance": 8, "noise": 3, "period_ms": 30000, "unit": "V", "gate": "running" },
+      { "key": "dc_i", "label": "DC current", "kind": "analog_input", "index": 3, "base": 3650, "variance": 90, "noise": 25, "period_ms": 30000, "min": 0, "unit": "A", "gate": "running" },
+      { "key": "ac_mw", "label": "AC power", "kind": "analog_input", "index": 4, "base": 3.95, "variance": 0.2, "noise": 0.05, "period_ms": 40000, "min": 0, "max": 5, "unit": "MW", "gate": "running" },
+      { "key": "grid_hz", "label": "Grid frequency", "kind": "analog_input", "index": 5, "base": 50.0, "variance": 0.02, "noise": 0.005, "period_ms": 10000, "unit": "Hz" },
+      { "key": "limit_fb", "label": "Curtailment in force", "kind": "analog_input", "index": 6, "base": 100, "follows": "limit", "unit": "%" },
+      { "key": "running", "label": "Inverters running", "kind": "binary_input", "index": 0, "base": 1, "follows": "run_cmd" },
+      { "key": "grid_ok", "label": "Grid connected", "kind": "binary_input", "index": 1, "base": 1 },
+      { "key": "kwh", "label": "Energy exported", "kind": "counter", "index": 0, "base": 0, "variance": 8, "period_ms": 7000, "max": 999999999, "unit": "kWh", "gate": "running" },
+      { "key": "run_cmd", "label": "Inverter run", "kind": "binary_output", "index": 0, "base": 1 },
+      { "key": "limit", "label": "Active power limit", "kind": "analog_output", "index": 0, "base": 100, "unit": "%" }
+    ]
+  }
+]
