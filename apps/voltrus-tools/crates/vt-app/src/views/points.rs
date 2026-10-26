@@ -15,7 +15,12 @@ use super::clock;
 use crate::model::AppModel;
 use crate::model::live::Live;
 
+/// Narrowest the address column gets (Modicon addresses), and widest (long
+/// S7 addresses such as `DB100.DBX20.7`); in between it fits the longest.
 const ADDRESS: f32 = 64.0;
+const ADDRESS_MAX: f32 = 112.0;
+/// Advance of one character of the small mono face.
+const MONO_SMALL_CHAR: f32 = 7.0;
 const NAME_MIN: f32 = 120.0;
 const TYPE: f32 = 64.0;
 const VALUE: f32 = 120.0;
@@ -33,13 +38,15 @@ struct Columns {
     actions: bool,
     /// Width left for the name: text only truncates inside a known width.
     name: f32,
+    /// Width of the address column.
+    address: f32,
 }
 
 impl Columns {
-    fn fitting(pane_width: f32) -> Self {
+    fn fitting(pane_width: f32, address: f32) -> Self {
         let gap = f32::from(SPACE_5);
         let mut room =
-            pane_width - 2.0 * f32::from(SPACE_7) - ADDRESS - NAME_MIN - VALUE - 2.0 * gap;
+            pane_width - 2.0 * f32::from(SPACE_7) - address - NAME_MIN - VALUE - 2.0 * gap;
         let mut take = |width: f32| {
             let fits = room >= width + gap;
             if fits {
@@ -58,6 +65,7 @@ impl Columns {
             data_type,
             actions,
             name: NAME_MIN + room.max(0.0),
+            address,
         }
     }
 }
@@ -74,7 +82,15 @@ pub fn render(
     cx: &mut Context<AppModel>,
 ) -> AnyElement {
     let theme = theme(cx).clone();
-    let columns = Columns::fitting(pane_width);
+    let longest = live
+        .points
+        .iter()
+        .map(|point| point.address.chars().count())
+        .max()
+        .unwrap_or(0);
+    #[allow(clippy::cast_precision_loss)]
+    let address = (longest as f32 * MONO_SMALL_CHAR).clamp(ADDRESS, ADDRESS_MAX);
+    let columns = Columns::fitting(pane_width, address);
     let count = live.points.len();
     let bad = live
         .readings
@@ -137,7 +153,7 @@ pub fn render(
         .text_size(FONT_CAPTION)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme.fg_dim)
-        .child(heading(Some(ADDRESS), "ADDRESS"))
+        .child(heading(Some(columns.address), "ADDRESS"))
         .child(heading(None, "NAME"))
         .when(columns.data_type, |this| {
             this.child(heading(Some(TYPE), "TYPE"))
@@ -249,7 +265,7 @@ fn row(
         .on_click(cx.listener(move |model, _, _, cx| model.select_point(connection, point, cx)))
         .child(
             div()
-                .w(px(ADDRESS))
+                .w(px(columns.address))
                 .flex_none()
                 .whitespace_nowrap()
                 .font_family(MONO)

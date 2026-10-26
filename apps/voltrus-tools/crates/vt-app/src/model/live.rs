@@ -69,6 +69,10 @@ pub struct Live {
     pub enip_addresses: Vec<String>,
     /// Serial sessions: the bytes that crossed the port, sends and logging.
     pub terminal: Terminal,
+    /// S7 clients: what the CPU last said about itself.
+    pub s7_plc: Option<Result<vt_protocol::S7PlcReport, String>>,
+    /// S7 clients: a read of the CPU is on its way.
+    pub s7_plc_reading: bool,
 }
 
 impl Default for Live {
@@ -98,6 +102,8 @@ impl Default for Live {
             cip_waiting: false,
             enip_addresses: Vec::new(),
             terminal: Terminal::new(),
+            s7_plc: None,
+            s7_plc_reading: false,
         }
     }
 }
@@ -120,6 +126,9 @@ impl Live {
         self.cip_reply = None;
         self.cip_waiting = false;
         self.enip_addresses.clear();
+        self.s7_plc = None;
+        // A connecting S7 client reads its CPU first.
+        self.s7_plc_reading = true;
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -249,6 +258,10 @@ impl Live {
             EventKind::SerialLogging(result) => self.terminal.set_logging(result),
             // The port picker's answer: the editor takes it, not a session.
             EventKind::SerialPorts(_) => {}
+            EventKind::S7Plc(report) => {
+                self.s7_plc = Some(report);
+                self.s7_plc_reading = false;
+            }
         }
     }
 
