@@ -8,7 +8,8 @@ contract live in the `voltrus-console` repository (`/api/connect/*`, `src/lib/co
 
 - `crates/mt-connect`: sign-in (OAuth 2.0 authorization code + PKCE; on macOS and iOS in an
   `ASWebAuthenticationSession` sheet anchored to the main window (App Store guideline 4: never the default browser,
-  `src/web_auth.rs`), elsewhere in the system browser and back through the `voltrus-<slug>://connect` deep link), tokens in the macOS/iOS Keychain, token refresh, profile sync, teams, Remote
+  `src/web_auth.rs`; AuthenticationServices calls its completion handler on a background queue, so the result is sent to
+  the main queue before it is matched to the running session), elsewhere in the system browser and back through the `voltrus-<slug>://connect` deep link), tokens in the macOS/iOS Keychain, token refresh, profile sync, teams, Remote
   sites, and (feature `store`) the App Store subscription. Apps call `mt_connect::setup(builder, include_str!("../connect.json"))`
   after `mt_store::setup` and register the `connect_*` commands.
 - `packages/mt-ui/src/connect.tsx`: `ConnectProvider`, `ConnectButton` (toolbar), the Connect dialog, and
