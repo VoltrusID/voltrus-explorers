@@ -213,10 +213,7 @@ fn a_client_watches_requests_and_browses_the_simulated_server() {
         online.boolean && !online.writable,
         "JSON fields are read-only"
     );
-    assert_eq!(
-        online.address, "plant.inverter.>",
-        "the matching subscription"
-    );
+    assert_eq!(online.address, "sub 1", "the matching subscription");
     let power = engine
         .client
         .value("plant.inverter.ac_power")
@@ -381,7 +378,7 @@ fn a_client_watches_requests_and_browses_the_simulated_server() {
             .client
             .point("test.limit › kw")
             .map(|point| point.address.as_str()),
-        Some("test.* · panel")
+        Some("sub 2 · panel")
     );
     // The server reports its traffic on its own tick.
     engine.until("the server to see the publish", |engine| {

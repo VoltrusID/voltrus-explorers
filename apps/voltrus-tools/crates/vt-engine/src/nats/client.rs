@@ -194,7 +194,7 @@ pub(crate) async fn run(
                 message = messages.next(), if watching => match message {
                     Some((index, message)) => {
                         stats.frames += 1;
-                        subjects.receive(&message, filters.get(index), &mut traffic, out);
+                        subjects.receive(&message, index, filters.get(index), &mut traffic, out);
                     }
                     None => {
                         stats.errors += 1;
@@ -706,6 +706,7 @@ impl Subjects {
     fn receive(
         &mut self,
         message: &async_nats::Message,
+        index: usize,
         filter: Option<&Filter>,
         traffic: &mut Vec<TrafficFrame>,
         out: &Emitter,
@@ -733,13 +734,14 @@ impl Subjects {
             detail,
             message.payload.len(),
         ));
-        let address = filter.map_or_else(String::new, |filter| {
-            if filter.queue.is_empty() {
-                filter.subject.clone()
-            } else {
-                format!("{} · {}", filter.subject, filter.queue)
+        // The subscription it came through, short enough for the address
+        // column: `sub 2`, or `sub 2 · workers` in a queue group.
+        let address = match filter {
+            Some(filter) if !filter.queue.is_empty() => {
+                format!("sub {} · {}", index + 1, filter.queue)
             }
-        });
+            _ => format!("sub {}", index + 1),
+        };
         let path = filter.and_then(|filter| filter.path.as_deref());
         // A `Unit` header (as the simulator sends) names the value's unit.
         let unit = headers

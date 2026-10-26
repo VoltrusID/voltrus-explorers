@@ -122,7 +122,7 @@ pub fn subject_of(
         // JSON fields are named `<subject> › <field>`.
         SessionSpec::NatsClient(_) => info.name.split(" › ").next().map(str::to_owned),
         // A simulator's values take a new value at `<subject>.set`.
-        SessionSpec::NatsServer(_) => Some(info.address.clone()),
+        SessionSpec::NatsServer(_) => Some(format!("{}.set", info.name)),
         _ => None,
     }
 }

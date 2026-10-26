@@ -560,7 +560,9 @@ impl Device {
             .map(|(index, (subject, register))| PointInfo {
                 id: u32::try_from(index).unwrap_or(u32::MAX),
                 name: subject.clone(),
-                address: format!("{subject}.set"),
+                // Short for the address column; a new value goes to
+                // `<subject>.set`.
+                address: "PUB".into(),
                 data_type: "Number".into(),
                 unit: register.unit.clone(),
                 writable: true,
