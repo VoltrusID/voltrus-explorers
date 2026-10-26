@@ -28,5 +28,10 @@ tauri-plugin-iap = { version = "0.9.1", optional = true }
 security-framework = "3"
 objc2 = "0.6"
 block2 = "0.6"
+dispatch2 = "0.3"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSError"] }
 objc2-authentication-services = { version = "0.3", default-features = false, features = ["std", "block2", "ASFoundation", "ASWebAuthenticationSession"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
+# `NSError::new` builds the AuthenticationServices errors the web_auth tests classify.
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDictionary", "NSError", "NSString", "NSURL"] }
