@@ -33,6 +33,8 @@ const BROWSER_WIDE: f32 = 290.0;
 const BROWSER_NARROW: f32 = 230.0;
 /// Below this pane width the browser takes its narrow width.
 const NARROW_PANE: f32 = 900.0;
+/// The points table needs this much beside an open browser; narrower panes fold it to a rail.
+const TABLE_MIN: f32 = 380.0;
 /// Width of the rail a hidden browser leaves.
 const RAIL: f32 = 32.0;
 
@@ -65,7 +67,8 @@ pub fn points(
         .opcua
         .browsers
         .get(&connection)
-        .is_none_or(|browser| browser.open);
+        .is_none_or(|browser| browser.open)
+        && pane_width - BROWSER_NARROW >= TABLE_MIN;
     let width = if !open {
         RAIL
     } else if pane_width < NARROW_PANE {
@@ -570,7 +573,8 @@ pub fn node_detail(
             .border_1()
             .border_color(theme.border)
             .bg(theme.surface)
-            .children(attributes.iter().enumerate().map(|(index, attribute)| {
+            // Attributes a node class does not have (a method's Value) are left out.
+            .children(attributes.iter().filter(|attribute| !attribute.status.contains("BadAttributeIdInvalid")).enumerate().map(|(index, attribute)| {
                 let good = attribute.status == "Good";
                 div()
                     .flex()

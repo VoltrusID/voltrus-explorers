@@ -361,7 +361,18 @@ impl Browser {
     /// Take a browse answer: the children of `parent`.
     pub fn take_children(&mut self, parent: String, result: Result<Vec<OpcuaBrowseNode>, String>) {
         let loaded = match result {
-            Ok(children) => {
+            Ok(mut children) => {
+                // Servers list references in any order: objects, then variables, then methods,
+                // each by name, so the tree reads the same every time.
+                let rank = |class: OpcuaNodeClass| match class {
+                    OpcuaNodeClass::Object => 0,
+                    OpcuaNodeClass::Variable => 1,
+                    OpcuaNodeClass::Method => 2,
+                    _ => 3,
+                };
+                children.sort_by_cached_key(|child| {
+                    (rank(child.class), child.display_name.to_lowercase())
+                });
                 let mut ids = Vec::with_capacity(children.len());
                 for child in children {
                     // A node reached twice in one level (two references) is listed once.

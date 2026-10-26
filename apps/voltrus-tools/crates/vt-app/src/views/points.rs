@@ -267,7 +267,7 @@ fn row(
             div()
                 .w(px(columns.address))
                 .flex_none()
-                .whitespace_nowrap()
+                .truncate()
                 .font_family(MONO)
                 .text_size(FONT_SMALL)
                 .text_color(theme.fg_muted)

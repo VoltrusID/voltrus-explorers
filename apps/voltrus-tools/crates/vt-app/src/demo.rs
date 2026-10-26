@@ -495,9 +495,16 @@ fn opcua(
     }
     let plant = |key: &str| format!("ns={};s={key}", crate::model::opcua::PLANT_NAMESPACE_INDEX);
     match scenario {
-        // The browser open on the reactor, a variable picked, beside the server.
+        // The client alone: the browser open on the reactor with a variable picked, beside its
+        // points.
         Scenario::OpcuaPoints => {
             model.workspace.ui.inspector_open = false;
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
             let (parent, node) = (plant("Plant.Reactor"), plant("Plant.Reactor.AgitatorSpeed"));
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
@@ -511,6 +518,8 @@ fn opcua(
         }
         // One client, the StartBatch method in the inspector, called once.
         Scenario::OpcuaMethod => {
+            // The inspector beside the browser and points: the sidebar makes room.
+            model.workspace.ui.sidebar_open = false;
             if let Some(pane) = pane_of(model, simulator) {
                 model.workspace.close_pane(pane);
             }
