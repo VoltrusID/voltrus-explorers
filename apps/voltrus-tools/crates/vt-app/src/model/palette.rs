@@ -356,6 +356,8 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             "A water analyser on a virtual port and a monitor trending its lines",
             Icon::Zap,
             Command::SerialDemo,
+        ),
+        (
             "New NATS connection…",
             "Subscribe to subjects, publish, request and browse JetStream",
             Icon::Plus,
