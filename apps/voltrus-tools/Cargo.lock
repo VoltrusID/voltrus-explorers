@@ -3939,6 +3939,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-serial"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "mt-protocol",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-serial",
+ "tracing",
+]
 name = "mt-s7"
 version = "2.0.0"
 dependencies = [
@@ -7348,6 +7362,7 @@ name = "vt-app-core"
 version = "0.1.0"
 dependencies = [
  "dirs 6.0.0",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -7367,8 +7382,10 @@ dependencies = [
  "mt-modbus",
  "mt-mqtt",
  "mt-protocol",
+ "mt-serial",
  "mt-s7",
  "prost",
+ "regex",
  "rumqttc",
  "serde",
  "serde_json",

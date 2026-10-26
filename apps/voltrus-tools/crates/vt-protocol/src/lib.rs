@@ -12,6 +12,7 @@ mod message;
 mod modbus;
 mod mqtt;
 mod s7;
+mod serial;
 mod value;
 
 pub use bacnet::{
@@ -40,6 +41,11 @@ pub use mqtt::{
 pub use s7::{
     S7_DEFAULT_PDU, S7_MAX_PDU, S7_MIN_PDU, S7_PORT, S7Address, S7Area, S7Block, S7ClientSpec,
     S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec, S7TagSpec, S7Type, S7Width,
+};
+pub use serial::{
+    FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
+    SerialMonitorSpec, SerialPortInfo, encode_send, parse_hex, short_port, unescape,
+    virtual_port_path,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -70,6 +76,10 @@ pub enum SessionSpec {
     EnipClient(EnipClientSpec),
     /// Play an EtherNet/IP adapter whose tags a plant template drives.
     EnipAdapter(EnipAdapterSpec),
+    /// Watch and talk to a serial port; parse its lines into points.
+    SerialMonitor(SerialMonitorSpec),
+    /// Play an instrument on a virtual serial port.
+    SerialDevice(SerialDeviceSpec),
     /// Read and write a Siemens S7 CPU's tags, and read its diagnostics.
     S7Client(S7ClientSpec),
     /// Play an S7 CPU with a template's simulated memory.
@@ -84,6 +94,7 @@ impl SessionSpec {
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
+            Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
             Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
         }
     }
@@ -96,6 +107,8 @@ impl SessionSpec {
             Self::Dnp3Outstation(_) => Role::Simulator,
             Self::EnipClient(_) => Role::Client,
             Self::EnipAdapter(_) => Role::Simulator,
+            Self::SerialMonitor(_) => Role::Client,
+            Self::SerialDevice(_) => Role::Simulator,
             Self::S7Client(_) => Role::Client,
             Self::S7Server(_) => Role::Simulator,
         }
@@ -145,6 +158,15 @@ impl SessionSpec {
                 route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
             },
             Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
+            Self::SerialMonitor(spec) => format!(
+                "{} · {} {}{}{}",
+                short_port(&spec.link.port),
+                spec.link.baud,
+                spec.link.data_bits,
+                spec.link.parity.letter(),
+                spec.link.stop_bits
+            ),
+            Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
             Self::S7Client(spec) => format!(
                 "{} · rack {} slot {}",
                 host_port(&spec.host, spec.port),
@@ -168,6 +190,8 @@ impl SessionSpec {
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
             Self::EnipClient(spec) => host_port(&spec.host, spec.port),
             Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
+            Self::SerialDevice(spec) => spec.alias.clone(),
             Self::S7Client(spec) => host_port(&spec.host, spec.port),
             Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
         }
@@ -192,6 +216,7 @@ pub enum Protocol {
     Bacnet,
     Dnp3,
     Enip,
+    Serial,
     S7,
 }
 
@@ -202,6 +227,7 @@ impl Protocol {
         Protocol::Bacnet,
         Protocol::Dnp3,
         Protocol::Enip,
+        Protocol::Serial,
         Protocol::S7,
     ];
 
@@ -212,6 +238,7 @@ impl Protocol {
             Self::Bacnet => "BACnet",
             Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
+            Self::Serial => "Serial",
             Self::S7 => "Siemens S7",
         }
     }
@@ -224,6 +251,7 @@ impl Protocol {
             Self::Bacnet => "BA",
             Self::Dnp3 => "DN",
             Self::Enip => "EI",
+            Self::Serial => "SE",
             Self::S7 => "S7",
         }
     }
@@ -242,6 +270,9 @@ impl Protocol {
             }
             Self::Enip => {
                 "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"
+            }
+            Self::Serial => {
+                "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
             }
             Self::S7 => {
                 "DB, I, Q, M, timer and counter tags, writes, CPU diagnostics, blocks, and a PLC simulator"

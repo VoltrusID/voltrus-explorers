@@ -125,6 +125,17 @@ DNP3 master names its points up front (`Points`) and adds every other point
 the outstation reports with `PointsAdded`, like MQTT topics; point flags map to
 `Quality` and their names go in `Payloads` for the inspector.
 
+The serial port picker works the same way: it sends `Command::ListSerialPorts`
+under a request id every two seconds while the editor is open (so a device
+plugged in shows up), and `EventKind::SerialPorts` comes back to the editor.
+Serial sessions carry raw bytes as `SerialData` chunks; the app keeps them as
+ready-to-draw text and hex rows (`vt-app/src/model/terminal.rs`), and the
+terminal (`vt-app/src/views/terminal.rs`) replaces the traffic view for serial
+panes. Sends, macros and logging are `Command::SerialSend` and
+`Command::SerialLog`; the app encodes text or hex into bytes, so the engine
+writes exactly what it is given. The serial device simulator prints on a
+pseudo-terminal from `mt-serial` (`pty::VirtualPort`) and links it into the
+temporary folder under a stable name, which is what its monitors open.
 What a device says about itself, beyond its points, goes in the pane's
 **Device** view (`PaneView::Device`, `vt-app/src/views/device.rs`). It is not
 in `PaneView::ALL`: the switcher offers it, and ⌘5 opens it, only for

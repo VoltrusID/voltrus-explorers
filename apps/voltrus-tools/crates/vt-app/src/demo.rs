@@ -41,6 +41,12 @@ pub enum Scenario {
     EnipTraffic,
     EnipDiscover,
     EnipMessage,
+    SerialTerminal,
+    SerialHex,
+    SerialTrend,
+    SerialPoints,
+    SerialEditor,
+    SerialSimulator,
     S7Points,
     S7Trend,
     S7Traffic,
@@ -80,6 +86,12 @@ impl Scenario {
         "enip-traffic",
         "enip-discover",
         "enip-message",
+        "serial-terminal",
+        "serial-hex",
+        "serial-trend",
+        "serial-points",
+        "serial-editor",
+        "serial-simulator",
         "s7-points",
         "s7-trend",
         "s7-traffic",
@@ -119,6 +131,12 @@ impl Scenario {
             "enip-traffic" => Self::EnipTraffic,
             "enip-discover" => Self::EnipDiscover,
             "enip-message" => Self::EnipMessage,
+            "serial-terminal" => Self::SerialTerminal,
+            "serial-hex" => Self::SerialHex,
+            "serial-trend" => Self::SerialTrend,
+            "serial-points" => Self::SerialPoints,
+            "serial-editor" => Self::SerialEditor,
+            "serial-simulator" => Self::SerialSimulator,
             "s7-points" => Self::S7Points,
             "s7-trend" => Self::S7Trend,
             "s7-traffic" => Self::S7Traffic,
@@ -182,6 +200,12 @@ pub fn apply(
         | Scenario::EnipTraffic
         | Scenario::EnipDiscover
         | Scenario::EnipMessage => enip(model, scenario, window, cx),
+        Scenario::SerialTerminal
+        | Scenario::SerialHex
+        | Scenario::SerialTrend
+        | Scenario::SerialPoints
+        | Scenario::SerialEditor
+        | Scenario::SerialSimulator => serial(model, scenario, window, cx),
         Scenario::S7Points
         | Scenario::S7Trend
         | Scenario::S7Traffic
@@ -572,6 +596,91 @@ fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut 
         }
         _ => {}
     }
+}
+/// What the serial demo trends: the analyser's temperature, dissolved
+/// oxygen, pH and turbidity, named as its lines name them.
+const SERIAL_TREND: [&str; 4] = ["Temperature", "Dissolved_Oxygen", "pH", "Turbidity"];
+/// Lines become points as the device prints them: pick by name then.
+const SERIAL_SETTLE: Duration = Duration::from_millis(2500);
+
+/// The serial demo: an ABB water analyser printing on a virtual port and a
+/// monitor reading it, with commands typed at the device.
+fn serial(
+    model: &mut AppModel,
+    scenario: Scenario,
+    window: &mut Window,
+    cx: &mut Context<AppModel>,
+) {
+    let Some((client, simulator)) = model.start_serial_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::SerialTerminal | Scenario::SerialHex => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(live) = model.live.get_mut(&client) {
+                live.terminal.hex = scenario == Scenario::SerialHex;
+            }
+        }
+        Scenario::SerialTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        // The monitor's points with its line settings and macros beside.
+        Scenario::SerialPoints => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            model.set_view(PaneView::Points, cx);
+        }
+        // The port picker, listing the analyser's virtual port.
+        Scenario::SerialEditor => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::SerialMonitor, None, window, cx);
+        }
+        // The device's side: what it printed and the commands it took.
+        Scenario::SerialSimulator => {
+            if let Some(pane) = pane_of(model, client) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, simulator) {
+                model.focus_pane(pane, cx);
+            }
+            model.set_view(PaneView::Traffic, cx);
+        }
+        _ => {}
+    }
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(SERIAL_SETTLE).await;
+        let _ = this.update(cx, |model, cx| {
+            // Help, then hold the temperature: the device answers both.
+            model.run_serial_macro(client, 1, cx);
+            model.run_serial_macro(client, 2, cx);
+            if let Some(console) = model.serial_consoles.get(&client) {
+                console
+                    .input
+                    .update(cx, |input, cx| input.set_text("RATE 250", cx));
+            }
+            if let Some(live) = model.live.get_mut(&client) {
+                live.trend = SERIAL_TREND
+                    .iter()
+                    .filter_map(|name| {
+                        live.points
+                            .iter()
+                            .position(|point| point.name == *name)
+                            .and_then(|index| u32::try_from(index).ok())
+                    })
+                    .collect();
+            }
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 /// Tags of the motor drive to trend: speed, current, winding temperature

@@ -24,6 +24,11 @@ pub use enip::{
     CipRequestForm, EnipAdapterForm, EnipClientForm, EnipPointField, EnipPointForm, hex_rows,
     interpret_reply, parse_hex, valid_route_path,
 };
+mod serial;
+
+pub use serial::{
+    BAUD_PRESETS, MacroField, MacroForm, ParserKind, SerialDeviceForm, SerialMonitorForm,
+};
 mod s7;
 
 pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
@@ -72,6 +77,16 @@ pub enum Field {
     /// EtherNet/IP: the CIP route to the controller, and a point row.
     RoutePath,
     EnipPoint(usize, EnipPointField),
+    /// Serial: line settings, the line parser, a macro row and which of its
+    /// fields, and the virtual device's interval, link name and instrument.
+    DataBits,
+    StopBits,
+    Delimiter,
+    Pattern,
+    Macro(usize, MacroField),
+    IntervalMs,
+    Alias,
+    Template,
     /// S7: the CPU's rack, slot and PDU size, and a tag row and which of its fields.
     S7Rack,
     S7Slot,

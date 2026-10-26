@@ -12,6 +12,7 @@ mod enip;
 mod modbus;
 mod mqtt;
 mod s7;
+mod serial;
 pub mod templates;
 
 pub use enip::cip_service_name;
@@ -89,6 +90,12 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::EnipAdapter(_) => {
             u64::try_from(enip::adapter::TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::SerialMonitor(_) => {
+            u64::try_from(serial::monitor::SAMPLE.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::SerialDevice(_) => {
+            u64::try_from(serial::device::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
         SessionSpec::S7Client(client) => client.poll_ms,
         SessionSpec::S7Server(_) => u64::try_from(s7::server::TICK.as_millis()).unwrap_or(u64::MAX),
     }
@@ -121,6 +128,14 @@ pub(crate) enum Control {
     Dnp3(Dnp3Action),
     /// EtherNet/IP clients: send one explicit CIP message.
     CipRequest(vt_protocol::CipRequest),
+    /// Serial: write raw bytes to the port.
+    SerialSend {
+        bytes: Vec<u8>,
+    },
+    /// Serial: log every chunk to a file, or stop.
+    SerialLog {
+        path: Option<String>,
+    },
     /// S7 clients: read the CPU's identity, mode, diagnostics and blocks.
     ReadS7Plc,
 }
@@ -189,6 +204,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::Dnp3Master(_) => None,
                     SessionSpec::EnipAdapter(adapter) => Some(adapter.port),
                     SessionSpec::EnipClient(_) => None,
+                    // A virtual serial device's port is a fresh pty each run.
+                    SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_) => None,
                     SessionSpec::S7Server(server) => Some(server.port),
                     SessionSpec::S7Client(_) => None,
                 };
@@ -259,6 +276,24 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::SerialSend { session, bytes } => {
+                forward(&sessions, session, Control::SerialSend { bytes });
+            }
+            Command::SerialLog { session, path } => {
+                forward(&sessions, session, Control::SerialLog { path });
+            }
+            Command::ListSerialPorts { session } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = serial::list_ports().await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::SerialPorts(found),
+                        })
+                        .await;
+                });
+            }
             Command::Shutdown => break,
             Command::Dnp3 { session, action } => {
                 forward(&sessions, session, Control::Dnp3(action));
@@ -316,6 +351,8 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::Dnp3Outstation(spec) => dnp3::outstation::run(spec, control, &out).await,
         SessionSpec::EnipClient(spec) => enip::client::run(spec, control, &out).await,
         SessionSpec::EnipAdapter(spec) => enip::adapter::run(spec, control, &out).await,
+        SessionSpec::SerialMonitor(spec) => serial::monitor::run(spec, control, &out).await,
+        SessionSpec::SerialDevice(spec) => serial::device::run(spec, control, &out).await,
         SessionSpec::S7Client(spec) => s7::client::run(spec, control, &out).await,
         SessionSpec::S7Server(spec) => s7::server::run(spec, control, &out).await,
     }
