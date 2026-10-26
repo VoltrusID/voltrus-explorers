@@ -79,7 +79,7 @@ impl BleFields {
                 InputKind::Text,
                 cx,
             ),
-            picked: (!spec.peripheral.is_empty()).then(|| (spec.peripheral, spec.name)),
+            picked: (!spec.peripheral.is_empty()).then_some((spec.peripheral, spec.name)),
             poll: input(form.poll_ms, "0 = read once", InputKind::Unsigned, cx),
             notify: form.notify,
             decoders: form.decoders,
