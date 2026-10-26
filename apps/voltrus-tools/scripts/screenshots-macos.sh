@@ -40,4 +40,26 @@ for scenario in welcome points trend traffic simulator editor palette light \
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 done
+
+# The App Store licence sheets and the trial gate, previewed in this source
+# build (`--licence-preview`; store builds ignore the flag).
+for preview in not-started trial expired unlocked gate; do
+  "$binary" --licence-preview "$preview" &
+  pid=$!
+  id=""
+  for _ in $(seq 1 60); do
+    if id="$("$helper" "$pid" 2>/dev/null)"; then break; fi
+    sleep 0.5
+  done
+  if [ -z "$id" ]; then
+    echo "::warning::licence-$preview: no window appeared"
+    status=1
+  else
+    sleep 6
+    screencapture -o -x -l "$id" "$out/licence-$preview.png"
+    echo "captured licence-$preview"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+done
 exit "$status"

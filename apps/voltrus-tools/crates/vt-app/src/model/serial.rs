@@ -562,6 +562,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("abb-analyzer") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;

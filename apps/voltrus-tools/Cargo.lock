@@ -7356,6 +7356,7 @@ dependencies = [
  "vt-app-core",
  "vt-engine",
  "vt-protocol",
+ "vt-store",
  "vt-ui",
 ]
 
@@ -7402,6 +7403,15 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "vt-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

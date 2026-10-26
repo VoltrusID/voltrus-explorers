@@ -1,6 +1,7 @@
 # Voltrus Tools (the native GPUI suite in apps/voltrus-tools): formatting, lints,
-# tests, an unsigned macOS app bundle and screenshots of every demo scenario.
-# No secrets: safe for forks.
+# tests, an unsigned macOS app bundle and screenshots of every demo scenario
+# and licence sheet; and the Mac App Store variant (`store`) linted, tested and
+# bundled universal, unsigned. No secrets: safe for forks.
 name: Voltrus Tools
 
 on:
@@ -117,3 +118,59 @@ jobs:
         with:
           name: voltrus-tools-macos-arm64
           path: apps/voltrus-tools/dist/Voltrus-Tools-macos-arm64.zip
+
+  # The Mac App Store variant: `--features store` (StoreKit 2 trial and unlock
+  # through the Swift bridge in vt-store), universal like the release, so it
+  # can't rot. Unsigned: release.yml (app voltrus-tools) signs and uploads.
+  store:
+    runs-on: macos-15
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: apps/voltrus-tools
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/voltrus-tools/target
+          key: voltrus-tools-store-${{ hashFiles('apps/voltrus-tools/Cargo.lock') }}
+          restore-keys: |
+            voltrus-tools-store-
+
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Lint
+        run: cargo clippy --locked --keep-going --workspace --all-targets --features vt-app/store -- -D warnings
+
+      # Includes the gate: an expired trial refuses connecting and asks to
+      # unlock (vt-app model::licence), and the licence state machine (vt-store).
+      - name: Test
+        run: cargo test --locked --no-fail-fast --workspace --features vt-app/store
+
+      - name: Bundle (universal, unsigned)
+        run: scripts/build-mas.sh bundle dist-store
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/voltrus-tools/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: voltrus-tools-mas-unsigned
+          path: apps/voltrus-tools/dist-store/*-mas-unsigned.zip
+          if-no-files-found: error

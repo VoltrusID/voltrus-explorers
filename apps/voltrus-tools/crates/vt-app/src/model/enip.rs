@@ -215,6 +215,9 @@ impl AppModel {
     /// and directed at the Host field and at every EtherNet/IP simulator saved
     /// on this computer.
     pub fn discover_enip(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let simulators: Vec<u16> = self
             .workspace
             .connections
@@ -322,6 +325,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(template) = templates::find_enip(DEMO_PLANT) else {
             self.show_toast("The demo plant template is missing", true, cx);
             return None;

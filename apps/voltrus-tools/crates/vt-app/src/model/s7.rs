@@ -132,6 +132,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(template) = templates::find_s7("motor") else {
             self.show_toast("The demo CPU template is missing", true, cx);
             return None;
