@@ -12,6 +12,7 @@ mod editor;
 pub mod inspector;
 mod licence;
 mod log;
+mod nats;
 mod new_menu;
 mod palette;
 pub mod pane;

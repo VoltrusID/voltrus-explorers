@@ -29,6 +29,11 @@ regex = "1"
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
+mt-nats = { path = "../../../../crates/mt-nats" }
+# The client mt-nats wraps (same version): raw subscriptions, request
+# headers and connection state for the NATS session.
+async-nats = "0.50"
+futures-util = "0.3"
 tracing.workspace = true
 
 [lints]

@@ -24,6 +24,8 @@ pub mod types;
 pub use client::NatsClient;
 pub use decode::*;
 pub use schema::SchemaPool;
-pub use server::{start_server, stop_server, NatsServerState, OnMessage, TopicTracker};
+pub use server::{
+    start_server, start_server_on, stop_server, NatsServerState, OnMessage, TopicTracker,
+};
 pub use server_js::nats_subject_match;
 pub use types::*;
