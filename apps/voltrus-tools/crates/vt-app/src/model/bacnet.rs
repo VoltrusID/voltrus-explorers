@@ -172,6 +172,9 @@ impl AppModel {
     /// broadcast on the BACnet port in the Port field and directed at the
     /// Host field and at every BACnet simulator saved on this computer.
     pub fn discover_bacnet(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let simulators: Vec<u16> = self
             .workspace
             .connections
@@ -292,6 +295,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(template) = templates::find_bacnet("ahu") else {
             self.show_toast("The demo plant template is missing", true, cx);
             return None;
