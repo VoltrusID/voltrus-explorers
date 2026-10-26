@@ -631,6 +631,7 @@ fn a_taken_port_is_a_clear_error() {
             anonymous: false,
             username: String::new(),
             password: String::new(),
+            ..OpcuaServerSpec::default()
         }),
     }));
     // The user certificate still lets clients in, so this server starts.
