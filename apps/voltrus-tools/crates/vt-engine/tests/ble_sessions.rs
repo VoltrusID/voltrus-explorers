@@ -224,9 +224,10 @@ fn a_client_browses_reads_and_subscribes_with_standard_decoders() {
     assert_eq!(info(name).data_type, "UTF-8");
     assert!(info(alert).writable && !info(battery).writable);
 
-    // Notifications push the rate; reads fill the rest.
+    // Notifications push the rate; until the first, the point waits (a good
+    // reading with no number, shown as its placeholder text).
     let rate = reading(&mut events, session, heart_rate, |found| {
-        found.quality == Quality::Good
+        found.quality == Quality::Good && found.value.is_finite()
     });
     assert!((55.0..=95.0).contains(&rate.value), "{rate:?}");
     let text = payload(&mut events, session, name, |_| true);
@@ -353,7 +354,7 @@ fn chosen_decoders_read_and_write_vendor_values() {
 
     // Indications of an IEEE 11073 body temperature.
     let celsius = reading(&mut events, session, body, |found| {
-        found.quality == Quality::Good
+        found.quality == Quality::Good && found.value.is_finite()
     });
     assert!((36.0..=37.0).contains(&celsius.value), "{celsius:?}");
 
