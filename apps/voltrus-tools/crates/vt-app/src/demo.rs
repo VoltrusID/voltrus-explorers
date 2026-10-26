@@ -36,6 +36,11 @@ pub enum Scenario {
     Dnp3Control,
     Dnp3Station,
     Dnp3Editor,
+    EnipPoints,
+    EnipTrend,
+    EnipTraffic,
+    EnipDiscover,
+    EnipMessage,
     S7Points,
     S7Trend,
     S7Traffic,
@@ -70,6 +75,11 @@ impl Scenario {
         "dnp3-control",
         "dnp3-station",
         "dnp3-editor",
+        "enip-points",
+        "enip-trend",
+        "enip-traffic",
+        "enip-discover",
+        "enip-message",
         "s7-points",
         "s7-trend",
         "s7-traffic",
@@ -104,6 +114,11 @@ impl Scenario {
             "dnp3-control" => Self::Dnp3Control,
             "dnp3-station" => Self::Dnp3Station,
             "dnp3-editor" => Self::Dnp3Editor,
+            "enip-points" => Self::EnipPoints,
+            "enip-trend" => Self::EnipTrend,
+            "enip-traffic" => Self::EnipTraffic,
+            "enip-discover" => Self::EnipDiscover,
+            "enip-message" => Self::EnipMessage,
             "s7-points" => Self::S7Points,
             "s7-trend" => Self::S7Trend,
             "s7-traffic" => Self::S7Traffic,
@@ -162,6 +177,11 @@ pub fn apply(
         | Scenario::Dnp3Control
         | Scenario::Dnp3Station
         | Scenario::Dnp3Editor => dnp3(model, scenario, window, cx),
+        Scenario::EnipPoints
+        | Scenario::EnipTrend
+        | Scenario::EnipTraffic
+        | Scenario::EnipDiscover
+        | Scenario::EnipMessage => enip(model, scenario, window, cx),
         Scenario::S7Points
         | Scenario::S7Trend
         | Scenario::S7Traffic
@@ -479,6 +499,78 @@ fn dnp3(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut 
             let _ = this.update(cx, |model, cx| model.dnp3_action(target, action, cx));
         })
         .detach();
+    }
+}
+
+/// Points of the drive to trend: current, torque, temperature and frequency.
+const ENIP_TREND: [u32; 4] = [2, 3, 6, 1];
+/// The drive's speed reference, a setpoint the speed follows.
+const ENIP_SETPOINT: u32 = 11;
+
+/// The EtherNet/IP demo: a simulated motor drive and a client reading it.
+fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Context<AppModel>) {
+    let Some((client, simulator)) = model.start_enip_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend = ENIP_TREND.into_iter().collect();
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    match scenario {
+        Scenario::EnipPoints => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(live) = model.live.get_mut(&client) {
+                live.selected = Some(ENIP_SETPOINT);
+            }
+        }
+        Scenario::EnipTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        Scenario::EnipTraffic => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Traffic, cx);
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.set_view(pane, PaneView::Traffic);
+            }
+        }
+        // The device picker, with the adapter answering ListIdentity. The
+        // editor asks as it opens, maybe before the adapter listens: ask
+        // again once it does.
+        Scenario::EnipDiscover => {
+            model.workspace.ui.inspector_open = false;
+            model.open_editor(EditorKind::EnipClient, None, window, cx);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |model, cx| model.discover_enip(cx));
+            })
+            .detach();
+        }
+        // One client with an explicit message answered in the inspector:
+        // the adapter's input assembly, every tag's value as bytes.
+        Scenario::EnipMessage => {
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            let request = [
+                (model.cip.service.clone(), "0x0E"),
+                (model.cip.class.clone(), "0x04"),
+                (model.cip.instance.clone(), "100"),
+                (model.cip.attribute.clone(), "3"),
+            ];
+            for (input, text) in request {
+                input.update(cx, |input, cx| input.set_text(text, cx));
+            }
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |model, cx| model.dispatch_cip_request(cx));
+            })
+            .detach();
+        }
+        _ => {}
     }
 }
 

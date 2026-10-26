@@ -8,10 +8,13 @@
 mod bacnet;
 mod dnp3;
 mod emit;
+mod enip;
 mod modbus;
 mod mqtt;
 mod s7;
 pub mod templates;
+
+pub use enip::cip_service_name;
 
 use std::collections::HashMap;
 use std::thread;
@@ -82,6 +85,10 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::Dnp3Outstation(_) => {
             u64::try_from(dnp3::outstation::TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::EnipClient(client) => client.poll_ms,
+        SessionSpec::EnipAdapter(_) => {
+            u64::try_from(enip::adapter::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
         SessionSpec::S7Client(client) => client.poll_ms,
         SessionSpec::S7Server(_) => u64::try_from(s7::server::TICK.as_millis()).unwrap_or(u64::MAX),
     }
@@ -112,6 +119,8 @@ pub(crate) enum Control {
     Close,
     /// DNP3 sessions: a station command.
     Dnp3(Dnp3Action),
+    /// EtherNet/IP clients: send one explicit CIP message.
+    CipRequest(vt_protocol::CipRequest),
     /// S7 clients: read the CPU's identity, mode, diagnostics and blocks.
     ReadS7Plc,
 }
@@ -178,6 +187,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     | SessionSpec::BacnetClient(_) => None,
                     SessionSpec::Dnp3Outstation(outstation) => Some(outstation.port),
                     SessionSpec::Dnp3Master(_) => None,
+                    SessionSpec::EnipAdapter(adapter) => Some(adapter.port),
+                    SessionSpec::EnipClient(_) => None,
                     SessionSpec::S7Server(server) => Some(server.port),
                     SessionSpec::S7Client(_) => None,
                 };
@@ -252,6 +263,21 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
             Command::Dnp3 { session, action } => {
                 forward(&sessions, session, Control::Dnp3(action));
             }
+            Command::DiscoverEnip { session, spec } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = enip::discover(spec).await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::EnipDevices(found),
+                        })
+                        .await;
+                });
+            }
+            Command::CipRequest { session, request } => {
+                forward(&sessions, session, Control::CipRequest(request));
+            }
             Command::ReadS7Plc { session } => match sessions.get(&session) {
                 Some(running) => {
                     let _ = running.control.send(Control::ReadS7Plc);
@@ -288,6 +314,8 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
         SessionSpec::Dnp3Master(spec) => dnp3::master::run(spec, control, &out).await,
         SessionSpec::Dnp3Outstation(spec) => dnp3::outstation::run(spec, control, &out).await,
+        SessionSpec::EnipClient(spec) => enip::client::run(spec, control, &out).await,
+        SessionSpec::EnipAdapter(spec) => enip::adapter::run(spec, control, &out).await,
         SessionSpec::S7Client(spec) => s7::client::run(spec, control, &out).await,
         SessionSpec::S7Server(spec) => s7::server::run(spec, control, &out).await,
     }

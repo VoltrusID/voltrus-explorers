@@ -7,6 +7,7 @@
 
 mod bacnet;
 mod dnp3;
+mod enip;
 mod message;
 mod modbus;
 mod mqtt;
@@ -20,6 +21,10 @@ pub use dnp3::{
     DNP3_MAX_ADDRESS, DNP3_MAX_CONTROL_INDEX, DNP3_PORT, Dnp3Action, Dnp3ControlMode, Dnp3Crob,
     Dnp3CrobCode, Dnp3Iin, Dnp3IinBit, Dnp3MasterSpec, Dnp3Operation, Dnp3OutstationSpec,
     Dnp3PointKind, Dnp3PointName,
+};
+pub use enip::{
+    CipRequest, CipResponse, CipType, ENIP_PORT, EnipAdapterSpec, EnipAddress, EnipClientSpec,
+    EnipDeviceInfo, EnipDiscoverSpec, EnipPoint,
 };
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
@@ -60,6 +65,11 @@ pub enum SessionSpec {
     Dnp3Master(Dnp3MasterSpec),
     /// Play a DNP3 outstation with a plant's simulated points.
     Dnp3Outstation(Dnp3OutstationSpec),
+    /// Read and write a Logix controller's tags and CIP attributes over
+    /// EtherNet/IP, and send it explicit messages.
+    EnipClient(EnipClientSpec),
+    /// Play an EtherNet/IP adapter whose tags a plant template drives.
+    EnipAdapter(EnipAdapterSpec),
     /// Read and write a Siemens S7 CPU's tags, and read its diagnostics.
     S7Client(S7ClientSpec),
     /// Play an S7 CPU with a template's simulated memory.
@@ -73,6 +83,7 @@ impl SessionSpec {
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
+            Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
             Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
         }
     }
@@ -83,6 +94,8 @@ impl SessionSpec {
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
             Self::Dnp3Master(_) => Role::Client,
             Self::Dnp3Outstation(_) => Role::Simulator,
+            Self::EnipClient(_) => Role::Client,
+            Self::EnipAdapter(_) => Role::Simulator,
             Self::S7Client(_) => Role::Client,
             Self::S7Server(_) => Role::Simulator,
         }
@@ -127,6 +140,11 @@ impl SessionSpec {
                 host_port(&spec.bind, spec.port),
                 spec.outstation_address
             ),
+            Self::EnipClient(spec) => match spec.route_path.trim() {
+                "" => host_port(&spec.host, spec.port),
+                route => format!("{} · route {route}", host_port(&spec.host, spec.port)),
+            },
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{} · {}", spec.port, spec.template),
             Self::S7Client(spec) => format!(
                 "{} · rack {} slot {}",
                 host_port(&spec.host, spec.port),
@@ -148,6 +166,8 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
             Self::Dnp3Master(spec) => host_port(&spec.host, spec.port),
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
+            Self::EnipClient(spec) => host_port(&spec.host, spec.port),
+            Self::EnipAdapter(spec) => format!("0.0.0.0:{}", spec.port),
             Self::S7Client(spec) => host_port(&spec.host, spec.port),
             Self::S7Server(spec) => format!("0.0.0.0:{}", spec.port),
         }
@@ -171,6 +191,7 @@ pub enum Protocol {
     Mqtt,
     Bacnet,
     Dnp3,
+    Enip,
     S7,
 }
 
@@ -180,6 +201,7 @@ impl Protocol {
         Protocol::Mqtt,
         Protocol::Bacnet,
         Protocol::Dnp3,
+        Protocol::Enip,
         Protocol::S7,
     ];
 
@@ -189,6 +211,7 @@ impl Protocol {
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
             Self::Dnp3 => "DNP3",
+            Self::Enip => "EtherNet/IP",
             Self::S7 => "Siemens S7",
         }
     }
@@ -200,6 +223,7 @@ impl Protocol {
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
             Self::Dnp3 => "DN",
+            Self::Enip => "EI",
             Self::S7 => "S7",
         }
     }
@@ -215,6 +239,9 @@ impl Protocol {
             }
             Self::Dnp3 => {
                 "Integrity and class polls, flags and events, SBO controls, and an outstation simulator"
+            }
+            Self::Enip => {
+                "List Identity, Logix tags by name, assemblies, explicit CIP messages, and an adapter"
             }
             Self::S7 => {
                 "DB, I, Q, M, timer and counter tags, writes, CPU diagnostics, blocks, and a PLC simulator"

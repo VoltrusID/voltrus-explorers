@@ -5,6 +5,8 @@
 use std::sync::LazyLock;
 
 use mt_bacnet::SimPointDef;
+
+pub use crate::enip::plants::{EnipTemplate, assembly_layout, enip, enip_client_for, find_enip};
 use mt_modbus::SimDeviceProfile;
 use serde::Deserialize;
 use vt_protocol::{

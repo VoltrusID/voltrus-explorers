@@ -15,6 +15,7 @@ mt-protocol = { path = "../../../../crates/mt-protocol" }
 mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
 mt-dnp3 = { path = "../../../../crates/mt-dnp3" }
+mt-enip = { path = "../../../../crates/mt-enip" }
 mt-s7 = { path = "../../../../crates/mt-s7" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its

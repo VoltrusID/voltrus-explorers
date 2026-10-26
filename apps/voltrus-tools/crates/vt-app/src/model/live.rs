@@ -5,8 +5,8 @@ use std::collections::{BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use vt_protocol::{
-    EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId, SessionState, Stats,
-    TrafficFrame,
+    CipResponse, EventKind, LogEntry, PointInfo, PointText, Quality, Reading, SessionId,
+    SessionState, Stats, TrafficFrame,
 };
 use vt_ui::chart::History;
 
@@ -59,6 +59,12 @@ pub struct Live {
     history_capacity: usize,
     /// DNP3: what the session last reported about its outstation.
     pub dnp3: super::dnp3::Dnp3Live,
+    /// EtherNet/IP: the answer to the inspector's last explicit message, and
+    /// whether one is on its way.
+    pub cip_reply: Option<Result<CipResponse, String>>,
+    pub cip_waiting: bool,
+    /// EtherNet/IP: each point's whole address (the table shows a short one).
+    pub enip_addresses: Vec<String>,
     /// S7 clients: what the CPU last said about itself.
     pub s7_plc: Option<Result<vt_protocol::S7PlcReport, String>>,
     /// S7 clients: a read of the CPU is on its way.
@@ -88,6 +94,9 @@ impl Default for Live {
             publish_result: None,
             history_capacity: HISTORY_MIN,
             dnp3: super::dnp3::Dnp3Live::default(),
+            cip_reply: None,
+            cip_waiting: false,
+            enip_addresses: Vec::new(),
             s7_plc: None,
             s7_plc_reading: false,
         }
@@ -106,6 +115,9 @@ impl Live {
         self.publish_result = None;
         self.locked.clear();
         self.dnp3 = super::dnp3::Dnp3Live::default();
+        self.cip_reply = None;
+        self.cip_waiting = false;
+        self.enip_addresses.clear();
         self.s7_plc = None;
         // A connecting S7 client reads its CPU first.
         self.s7_plc_reading = true;
@@ -226,6 +238,13 @@ impl Live {
                 }
                 self.dnp3.last = Some((action, result));
             }
+            // Likewise the EtherNet/IP picker's.
+            EventKind::EnipDevices(_) => {}
+            EventKind::CipReply(result) => {
+                self.cip_waiting = false;
+                self.cip_reply = Some(result);
+            }
+            EventKind::EnipAddresses(addresses) => self.enip_addresses = addresses,
             EventKind::S7Plc(report) => {
                 self.s7_plc = Some(report);
                 self.s7_plc_reading = false;

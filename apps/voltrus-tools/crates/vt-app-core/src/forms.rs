@@ -18,6 +18,12 @@ mod dnp3;
 pub use dnp3::{
     Dnp3MasterForm, Dnp3OutstationForm, Dnp3PointField, Dnp3PointForm, next_dnp3_point,
 };
+mod enip;
+
+pub use enip::{
+    CipRequestForm, EnipAdapterForm, EnipClientForm, EnipPointField, EnipPointForm, hex_rows,
+    interpret_reply, parse_hex, valid_route_path,
+};
 mod s7;
 
 pub use s7::{MAX_S7_TAGS, S7ClientForm, S7ServerForm, S7TagField, S7TagForm, next_s7_tag};
@@ -63,6 +69,9 @@ pub enum Field {
     IntegrityMs,
     EventMs,
     Dnp3Point(usize, Dnp3PointField),
+    /// EtherNet/IP: the CIP route to the controller, and a point row.
+    RoutePath,
+    EnipPoint(usize, EnipPointField),
     /// S7: the CPU's rack, slot and PDU size, and a tag row and which of its fields.
     S7Rack,
     S7Slot,

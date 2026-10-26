@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
-    Dnp3Action, Dnp3Iin, Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId,
-    SessionState, Stats, TrafficFrame, ValueFrame,
+    CipResponse, Dnp3Action, Dnp3Iin, Event, EventKind, LogEntry, LogLevel, PointInfo, PointText,
+    SessionId, SessionState, Stats, TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -83,6 +83,13 @@ impl Emitter {
         self.emit(EventKind::Dnp3Done { action, result });
     }
 
+    pub(crate) fn cip_reply(&self, result: Result<CipResponse, String>) {
+        self.emit(EventKind::CipReply(result));
+    }
+
+    pub(crate) fn enip_addresses(&self, addresses: Vec<String>) {
+        self.emit(EventKind::EnipAddresses(addresses));
+    }
     pub(crate) fn emit_s7_plc(&self, report: Result<vt_protocol::S7PlcReport, String>) {
         self.emit(EventKind::S7Plc(report));
     }

@@ -9,7 +9,7 @@ use vt_ui::chart::format_value;
 use vt_ui::components::{Button, divider, pill, section_label};
 use vt_ui::theme::*;
 
-use super::{now_ms, publish, resize_handle, state_color};
+use super::{cip, now_ms, publish, resize_handle, state_color};
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Drag};
 
@@ -96,6 +96,7 @@ fn point_detail(
         Some(SessionSpec::Dnp3Outstation(_)) => {
             !(info.address.starts_with("BO ") || info.address.starts_with("AO "))
         }
+        Some(SessionSpec::EnipAdapter(_)) => true,
         Some(SessionSpec::S7Server(_)) => true,
         _ => false,
     };
@@ -161,6 +162,20 @@ fn point_detail(
                         .text_size(FONT_SMALL)
                         .text_color(theme.fg_dim)
                         .child(format!("{} · {}", info.address, info.data_type)),
+                )
+                .when_some(
+                    usize::try_from(point)
+                        .ok()
+                        .and_then(|index| live.enip_addresses.get(index)),
+                    |this, address| {
+                        this.child(
+                            div()
+                                .font_family(MONO)
+                                .text_size(FONT_SMALL)
+                                .text_color(theme.fg_muted)
+                                .child(address.clone()),
+                        )
+                    },
                 ),
         )
         .child(
@@ -497,6 +512,11 @@ fn point_detail(
             .child(divider(cx))
             .child(publish::card(live, &model.publish, cx));
     }
+    if matches!(spec, Some(SessionSpec::EnipClient(_))) {
+        content = content
+            .child(divider(cx))
+            .child(cip::card(live, &model.cip, cx));
+    }
     content.into_any_element()
 }
 
@@ -552,6 +572,10 @@ fn session_summary(
                     .child(pill(state.label(), state_color(&state, &theme))),
             )
         })
+        .when_some(
+            live.filter(|_| matches!(saved.spec, SessionSpec::EnipClient(_))),
+            |this, live| this.child(cip::card(live, &model.cip, cx)),
+        )
         .child(
             div()
                 .flex()

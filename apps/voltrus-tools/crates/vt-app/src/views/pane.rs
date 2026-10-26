@@ -244,6 +244,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
         SessionSpec::Dnp3Outstation(_) => true,
+        SessionSpec::EnipAdapter(_) => true,
         SessionSpec::S7Server(_) => true,
         _ => false,
     };
@@ -278,6 +279,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::Dnp3Master(_), _) => {
                     "Connect to poll the outstation. Every point it reports appears here, with its flags and events."
+                }
+                (SessionSpec::EnipAdapter(_), _) => {
+                    "Start it to play the adapter on this computer. Any EtherNet/IP client can browse, read and write its tags, including this app."
+                }
+                (SessionSpec::EnipClient(_), _) => {
+                    "Connect to read the controller's tags and attributes. The inspector sends explicit messages."
                 }
                 (SessionSpec::S7Server(_), _) => {
                     "Start it to play the CPU on this computer. Any S7 client can read, write and diagnose it, including this app."

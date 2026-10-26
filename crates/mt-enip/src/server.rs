@@ -38,6 +38,9 @@ pub struct EnipServerState {
     pub templates: Vec<CipTemplateDef>,
     /// Last O→T implicit I/O payload received over UDP (run/idle header + data).
     pub last_output: Mutex<Option<Vec<u8>>>,
+    /// Data of the output assembly ([`OUTPUT_ASSEMBLY`]) as an originator last
+    /// set it with Set_Attribute_Single.
+    pub output_assembly: Mutex<Vec<u8>>,
     /// Implicit I/O connections keyed by the O→T connection id the target assigned.
     io: Mutex<std::collections::HashMap<u32, IoConn>>,
     io_socket: Option<Arc<UdpSocket>>,
@@ -125,6 +128,7 @@ pub async fn start_enip_server(
         tags: Mutex::new(tag_map),
         templates,
         last_output: Mutex::new(None),
+        output_assembly: Mutex::new(Vec::new()),
         io: Mutex::new(std::collections::HashMap::new()),
         io_socket,
         next_conn_id: AtomicU32::new(0x2000_0001),
@@ -150,7 +154,7 @@ pub async fn start_enip_server(
                         Ok((stream, addr)) => {
                             let state = state_clone.clone();
                             let log_tx = log_tx_clone.clone();
-                            tokio::spawn(handle_connection(stream, addr, state, log_tx));
+                            tokio::spawn(handle_connection(stream, addr, state, log_tx, shutdown.clone()));
                         }
                         Err(e) => {
                             let _ = log_tx_clone.send(EnipServerLogEntry {
@@ -209,11 +213,14 @@ struct OpenConn {
     producer: Option<JoinHandle<()>>,
 }
 
+/// Serve one client's encapsulation session until it leaves or the server
+/// shuts down (a stopped adapter drops its clients, as a powered-off one does).
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     addr: SocketAddr,
     state: Arc<EnipServerState>,
     log_tx: mpsc::UnboundedSender<EnipServerLogEntry>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     log(&log_tx, "connect", "", format!("Client connected from {addr}"));
 
@@ -224,7 +231,11 @@ async fn handle_connection(
     let mut header_buf = [0u8; ENIP_HEADER_SIZE];
 
     loop {
-        if reader.read_exact(&mut header_buf).await.is_err() {
+        let received = tokio::select! {
+            read = reader.read_exact(&mut header_buf) => read.is_ok(),
+            _ = shutdown.changed() => false,
+        };
+        if !received {
             break;
         }
 
@@ -762,6 +773,10 @@ async fn route_cip_inner(
             _ => err_reply(service, 0x08, &[]),
         },
         Some(0x01) => handle_identity(service, instance, rest),
+        Some(ASSEMBLY_CLASS_ID) => {
+            let data = cip.get(2 + pw * 2..).unwrap_or(&[]);
+            handle_assembly(service, instance, rest, data, state).await
+        }
         Some(0x4F) | Some(0x4E) => handle_energy(service, class.unwrap(), instance, rest),
         Some(_) => err_reply(service, 0x05, &[]),
         None => match service {
@@ -1573,6 +1588,93 @@ async fn handle_template_read(
     reply
 }
 
+// ── Assembly object (class 0x04) ──
+
+/// Assembly object class id.
+pub const ASSEMBLY_CLASS_ID: u16 = 0x04;
+/// Input assembly instance: every tag's value image, in tag name order — the
+/// same bytes class 1 I/O produces (attribute 3, read-only).
+pub const INPUT_ASSEMBLY: u32 = 100;
+/// Output assembly instance: data an originator sets (attribute 3).
+pub const OUTPUT_ASSEMBLY: u32 = 150;
+
+/// Explicit access to the assemblies: Get_Attribute_Single of data (3) and
+/// size (4), Set_Attribute_Single of the output assembly's data.
+async fn handle_assembly(
+    service: u8,
+    instance: Option<u32>,
+    rest: &[u8],
+    data: &[u8],
+    state: &Arc<EnipServerState>,
+) -> Vec<u8> {
+    let (_, _, attr) = parse_logical_path(rest);
+    let input = match instance {
+        Some(INPUT_ASSEMBLY) => true,
+        Some(OUTPUT_ASSEMBLY) => false,
+        _ => return err_reply(service, 0x05, &[]),
+    };
+    match (service, attr) {
+        (CIP_GET_ATTRIBUTE_SINGLE, Some(3 | 4)) => {
+            let image = if input {
+                snapshot_input_assembly(state).await
+            } else {
+                state.output_assembly.lock().await.clone()
+            };
+            let mut reply = ok_reply(service);
+            if attr == Some(3) {
+                reply.extend_from_slice(&image);
+            } else {
+                reply.extend_from_slice(&u16::try_from(image.len()).unwrap_or(u16::MAX).to_le_bytes());
+            }
+            reply
+        }
+        (CIP_SET_ATTRIBUTE_SINGLE, Some(3)) if input => err_reply(service, 0x0E, &[]),
+        (CIP_SET_ATTRIBUTE_SINGLE, Some(3)) => {
+            *state.output_assembly.lock().await = data.to_vec();
+            ok_reply(service)
+        }
+        (CIP_SET_ATTRIBUTE_SINGLE, Some(4)) => err_reply(service, 0x0E, &[]),
+        (CIP_GET_ATTRIBUTE_SINGLE | CIP_SET_ATTRIBUTE_SINGLE, _) => err_reply(service, 0x14, &[]),
+        _ => err_reply(service, 0x08, &[]),
+    }
+}
+
+// ── UDP ListIdentity (discovery) ──
+
+/// Answer ListIdentity datagrams on `socket` (UDP discovery, normally port
+/// 44818) with this target's identity, advertising `ip:tcp_port` as its
+/// encapsulation endpoint, until `shutdown` turns true. `on_request` sees each
+/// request's sender and the reply sent to it.
+pub async fn answer_list_identity(
+    socket: UdpSocket,
+    ip: [u8; 4],
+    tcp_port: u16,
+    mut shutdown: watch::Receiver<bool>,
+    on_request: impl Fn(SocketAddr, &[u8], &[u8]) + Send,
+) {
+    let reply = build_list_identity_response(ip, tcp_port);
+    let mut buf = vec![0u8; 512];
+    loop {
+        tokio::select! {
+            received = socket.recv_from(&mut buf) => {
+                let Ok((n, peer)) = received else { continue };
+                if n >= ENIP_HEADER_SIZE && u16::from_le_bytes([buf[0], buf[1]]) == CMD_LIST_IDENTITY {
+                    // Echo the request's sender context, as the TCP path does.
+                    let mut answer = reply.clone();
+                    answer[12..20].copy_from_slice(&buf[12..20]);
+                    on_request(peer, &buf[..n], &answer);
+                    let _ = socket.send_to(&answer, peer).await;
+                }
+            }
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // ── Helpers ──
 
 fn rand_session_handle() -> u32 {
@@ -1931,6 +2033,29 @@ mod tests {
         assert_eq!(fx.call(&build_get_attribute_single_request(1, 1, 99)).await, h("8e 00 14 00"));
         assert_eq!(fx.call(&build_get_attribute_single_request(1, 9, 1)).await, h("8e 00 05 00"));
         assert_eq!(fx.call(&build_generic_cip_request(0x2A, 1, 1, None, &[])).await, h("aa 00 08 00"));
+    }
+
+    #[tokio::test]
+    async fn assemblies_serve_the_tag_image_and_keep_output_data() {
+        let fx = Fx::new().await;
+        let image = snapshot_input_assembly(&fx.state).await;
+        assert!(!image.is_empty());
+        let get = fx.call(&build_get_attribute_single_request(ASSEMBLY_CLASS_ID, INPUT_ASSEMBLY, 3)).await;
+        assert_eq!(&get[..4], &h("8e 00 00 00")[..]);
+        assert_eq!(&get[4..], &image[..]);
+        let size = fx.call(&build_get_attribute_single_request(ASSEMBLY_CLASS_ID, INPUT_ASSEMBLY, 4)).await;
+        assert_eq!(&size[4..], &(image.len() as u16).to_le_bytes()[..]);
+        // The input assembly is produced by the target: not settable.
+        let set = build_set_attribute_single_request(ASSEMBLY_CLASS_ID, INPUT_ASSEMBLY, 3, &[1, 2]);
+        assert_eq!(fx.call(&set).await, h("90 00 0e 00"));
+        // The output assembly keeps what the originator set.
+        let set = build_set_attribute_single_request(ASSEMBLY_CLASS_ID, OUTPUT_ASSEMBLY, 3, &[1, 2, 3, 4]);
+        assert_eq!(fx.call(&set).await, h("90 00 00 00"));
+        let get = fx.call(&build_get_attribute_single_request(ASSEMBLY_CLASS_ID, OUTPUT_ASSEMBLY, 3)).await;
+        assert_eq!(get, h("8e 00 00 00 01 02 03 04"));
+        // Unknown instance 0x05, unknown attribute 0x14.
+        assert_eq!(fx.call(&build_get_attribute_single_request(ASSEMBLY_CLASS_ID, 101, 3)).await, h("8e 00 05 00"));
+        assert_eq!(fx.call(&build_get_attribute_single_request(ASSEMBLY_CLASS_ID, INPUT_ASSEMBLY, 9)).await, h("8e 00 14 00"));
     }
 
     #[tokio::test]
