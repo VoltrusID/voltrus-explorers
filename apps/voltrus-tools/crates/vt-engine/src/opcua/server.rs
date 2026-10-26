@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use mt_opcua::{PlantServer, PlantServerConfig};
+use mt_opcua::{PlantServer, PlantServerConfig, PlantValues};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, MissedTickBehavior};
 use vt_protocol::{
@@ -121,6 +121,7 @@ pub(crate) async fn run(
     out.points(points(&server));
     out.payloads(vec![recipe_text(&Plant::new())]);
 
+    let values = server.values();
     let mut sim = Plant::new();
     let mut held = [false; VARIABLES.len()];
     let mut last = sim.json_values();
@@ -134,8 +135,14 @@ pub(crate) async fn run(
         tokio::select! {
             _ = ticker.tick() => {
                 // Writes from clients since the last tick: hold measured values, take settings.
-                for (index, variable) in VARIABLES.iter().enumerate() {
-                    let Some((number, text)) = server.value(variable.key) else { continue };
+                let read = values.clone();
+                let stored: Vec<Option<(Option<f64>, String)>> = tokio::task::spawn_blocking(move || {
+                    VARIABLES.iter().map(|variable| read.value(variable.key)).collect()
+                })
+                .await
+                .unwrap_or_default();
+                for ((index, variable), stored) in VARIABLES.iter().enumerate().zip(stored) {
+                    let Some((number, text)) = stored else { continue };
                     let now = current(variable.data_type, number, text);
                     if now == last[index] {
                         continue;
@@ -156,7 +163,7 @@ pub(crate) async fn run(
                 let elapsed = previous.elapsed().as_secs_f64();
                 previous = Instant::now();
                 sim.step(elapsed, &held, &shared);
-                publish(&server, &sim, &mut last, &mut stats, out);
+                publish(&values, &sim, &mut last, &mut stats, out).await;
                 out.traffic(std::mem::take(&mut frames));
                 out.stats(stats);
             }
@@ -173,21 +180,21 @@ pub(crate) async fn run(
                 out.log(LogLevel::Info, format!("{summary} {detail}"));
                 frames.push(traffic(Direction::Rx, summary, detail));
                 sim.apply(&effect);
-                publish(&server, &sim, &mut last, &mut stats, out);
+                publish(&values, &sim, &mut last, &mut stats, out).await;
             }
             command = control.recv() => match command {
                 None | Some(Control::Close) => break,
                 Some(Control::Write { point, value }) => {
                     let result = set(&mut sim, &mut held, point, None, Some(value), out);
                     if result.is_ok() {
-                        publish(&server, &sim, &mut last, &mut stats, out);
+                        publish(&values, &sim, &mut last, &mut stats, out).await;
                     }
                     out.written(point, result);
                 }
                 Some(Control::Opcua(OpcuaRequest::Write { point, text })) => {
                     let result = set(&mut sim, &mut held, point, Some(&text), None, out);
                     if result.is_ok() {
-                        publish(&server, &sim, &mut last, &mut stats, out);
+                        publish(&values, &sim, &mut last, &mut stats, out).await;
                     }
                     out.written(point, result);
                 }
@@ -349,15 +356,15 @@ fn recipe_text(sim: &Plant) -> PointText {
 }
 
 /// Write the simulation's values that changed into the address space and report them.
-fn publish(
-    server: &PlantServer,
+async fn publish(
+    server: &PlantValues,
     sim: &Plant,
     last: &mut [serde_json::Value],
     stats: &mut Stats,
     out: &Emitter,
 ) {
     let values = sim.json_values();
-    let changed: Vec<(&str, &str, serde_json::Value)> = VARIABLES
+    let changed: Vec<(&'static str, &'static str, serde_json::Value)> = VARIABLES
         .iter()
         .zip(&values)
         .zip(last.iter())
@@ -368,7 +375,16 @@ fn publish(
         out.payloads(vec![recipe_text(sim)]);
     }
     if !changed.is_empty() {
-        match server.set_values(&changed) {
+        // The address space's lock is taken off the async workers.
+        let target = server.clone();
+        let set = tokio::task::spawn_blocking(move || {
+            target
+                .set_values(&changed)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap_or_else(|error| Err(error.to_string()));
+        match set {
             Ok(()) => {
                 for (slot, value) in last.iter_mut().zip(&values) {
                     slot.clone_from(value);

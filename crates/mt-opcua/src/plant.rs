@@ -96,10 +96,19 @@ pub type MethodHandler =
 
 pub struct PlantServer {
     handle: ServerHandle,
-    node_manager: Arc<SimpleNodeManager>,
+    values: PlantValues,
     namespace: u16,
     url: String,
     task: JoinHandle<Result<(), String>>,
+}
+
+/// Reads and sets the plant's variables. Cheap to clone. Its calls take the address space's lock,
+/// so async callers run them on a blocking thread.
+#[derive(Clone)]
+pub struct PlantValues {
+    handle: ServerHandle,
+    node_manager: Arc<SimpleNodeManager>,
+    namespace: u16,
 }
 
 /// Make a user certificate and private key (PEM) at the given paths unless they exist: what a
@@ -364,7 +373,12 @@ impl PlantServer {
         }
 
         let task = tokio::spawn(server.run_with(listener));
-        Ok(Self { handle, node_manager, namespace, url, task })
+        let values = PlantValues {
+            handle: handle.clone(),
+            node_manager,
+            namespace,
+        };
+        Ok(Self { handle, values, namespace, url, task })
     }
 
     /// `opc.tcp://localhost:<port>`.
@@ -381,6 +395,19 @@ impl PlantServer {
         NodeId::new(self.namespace, key).to_string()
     }
 
+    /// A handle on the variables, for a blocking thread.
+    pub fn values(&self) -> PlantValues {
+        self.values.clone()
+    }
+
+    /// Stop serving and wait (briefly) for the port to be free again.
+    pub async fn stop(self) {
+        self.handle.cancel();
+        let _ = tokio::time::timeout(STOP_WAIT, self.task).await;
+    }
+}
+
+impl PlantValues {
     /// Set variables (key, JSON value converted to the given type) in one go; subscriptions are
     /// notified.
     pub fn set_values(&self, values: &[(&str, &str, serde_json::Value)]) -> Result<()> {
@@ -420,13 +447,6 @@ impl PlantServer {
             _ => None,
         };
         found
-    }
-
-
-    /// Stop serving and wait (briefly) for the port to be free again.
-    pub async fn stop(self) {
-        self.handle.cancel();
-        let _ = tokio::time::timeout(STOP_WAIT, self.task).await;
     }
 }
 

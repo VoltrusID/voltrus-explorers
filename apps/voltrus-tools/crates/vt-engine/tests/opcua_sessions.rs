@@ -76,14 +76,10 @@ impl Events {
                 let said: Vec<String> = self
                     .kept
                     .iter()
-                    .filter(|event| event.session == session)
                     .filter(|event| {
-                        !matches!(
-                            event.kind,
-                            EventKind::Values(_) | EventKind::Stats(_) | EventKind::Payloads(_)
-                        )
+                        !matches!(event.kind, EventKind::Values(_) | EventKind::Stats(_))
                     })
-                    .map(|event| format!("{:?}", event.kind))
+                    .map(|event| format!("{} {:?}", event.session, event.kind))
                     .collect();
                 panic!(
                     "timed out waiting for an event from {session}; it said:\n{}",

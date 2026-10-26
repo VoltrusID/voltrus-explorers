@@ -24,5 +24,5 @@ pub use opcua_client::{
 };
 pub use plant::{
     MethodHandler, PLANT_NAMESPACE, PlantArgument, PlantMethod, PlantNode, PlantServer,
-    PlantServerConfig, PlantVariable, create_user_certificate,
+    PlantServerConfig, PlantValues, PlantVariable, create_user_certificate,
 };
