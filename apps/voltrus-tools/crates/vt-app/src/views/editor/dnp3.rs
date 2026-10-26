@@ -187,18 +187,16 @@ pub fn master(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                 )),
         )
         .child(
-            group("Point names", cx)
+            div()
+                .flex()
+                .flex_col()
+                .gap(SPACE_5)
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .justify_between()
-                        .gap(SPACE_6)
-                        .child(hint(
-                            "Every point the outstation reports is listed. Names here replace \
-                             “Analog input 3”, and named points come first.",
-                            cx,
-                        ))
+                        .child(section_label("Point names", cx))
                         .child(
                             Button::new("add-dnp3-point", "Add name")
                                 .icon(Icon::Plus)
@@ -212,6 +210,11 @@ pub fn master(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                                 })),
                         ),
                 )
+                .child(hint(
+                    "Every point the outstation reports is listed. Names here replace \
+                     “Analog input 3”, and named points come first.",
+                    cx,
+                ))
                 .when(named, |this| {
                     this.child(
                         div()

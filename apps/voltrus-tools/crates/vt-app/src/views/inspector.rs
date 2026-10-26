@@ -334,7 +334,9 @@ fn point_detail(
 
     content = content.child(divider(cx));
 
-    if info.writable {
+    // A DNP3 master's binary outputs take CROBs from their own card instead.
+    let crob = dnp3_mode.is_some() && info.address.starts_with("BO ");
+    if info.writable && !crob {
         let result = live
             .write_result
             .as_ref()
@@ -447,6 +449,9 @@ fn point_detail(
                 }),
         );
     }
+    if let Some(card) = super::dnp3::point_card(model, connection, live, info, reading, cx) {
+        content = content.child(card);
+    }
 
     content = content.child(
         div()
@@ -479,9 +484,6 @@ fn point_detail(
                 )
             }),
     );
-    if let Some(card) = super::dnp3::point_card(model, connection, live, info, reading, cx) {
-        content = content.child(divider(cx)).child(card);
-    }
     if spec.is_some_and(|spec| spec.protocol() == Protocol::Mqtt) {
         content = content
             .child(divider(cx))

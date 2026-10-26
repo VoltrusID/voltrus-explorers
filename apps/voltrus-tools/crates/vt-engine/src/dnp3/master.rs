@@ -9,7 +9,6 @@ use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::time::Duration;
 
-use mt_dnp3::objects::group_variation_name;
 use mt_dnp3::{
     ControlObject, ControlRequest, Crob, Dnp3Client, Dnp3Config, PollResponse, TrafficRecord,
 };
@@ -90,22 +89,21 @@ impl Point {
         }
     }
 
-    /// What the inspector shows behind the value: object, flags, last event.
+    /// What the inspector shows behind the value: the object and flags, then
+    /// the last event's time stamp, e.g. `g30v5 · ONLINE`.
     fn status_text(&self) -> String {
-        let mut lines = Vec::with_capacity(3);
-        if self.variation != 0 {
-            let group = self.kind.group();
-            lines.push(format!(
-                "g{group}v{} · {}",
-                self.variation,
-                group_variation_name(group, self.variation)
-            ));
-        }
-        lines.push(format!("Flags: {}", flags_text(self.kind, self.flags)));
+        let group = self.kind.group();
+        let object = if self.variation == 0 {
+            format!("g{group}")
+        } else {
+            format!("g{group}v{}", self.variation)
+        };
+        let mut text = format!("{object} · {}", flags_text(self.kind, self.flags));
         if let Some(at) = self.event_at {
-            lines.push(format!("Last event: {}", utc(at)));
+            text.push_str("\nEvent ");
+            text.push_str(&utc(at));
         }
-        lines.join("\n")
+        text
     }
 
     fn label(&self) -> String {
@@ -1233,10 +1231,9 @@ mod tests {
         let reading = points.list[0].reading();
         assert_eq!((reading.value, reading.quality), (12.5, Quality::Bad));
         assert!(taken.statuses[0].text.contains("OFFLINE, COMM_LOST"));
-        assert!(
-            taken.statuses[0]
-                .text
-                .contains("Last event: 2023-11-14 22:13:20.000 UTC")
+        assert_eq!(
+            taken.statuses[0].text,
+            "g30v5 · OFFLINE, COMM_LOST\nEvent 2023-11-14 22:13:20.000 UTC"
         );
         // The static variation stays the one the static value came in.
         assert!(taken.statuses[0].text.starts_with("g30v5"));

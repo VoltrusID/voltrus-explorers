@@ -19,8 +19,16 @@ use crate::model::live::Live;
 
 /// The outcome of the last station command, as a line under the buttons.
 fn last_result(state: &Dnp3Live, cx: &Context<AppModel>) -> Option<AnyElement> {
+    result_line(state.last.as_ref(), cx)
+}
+
+/// A command's outcome: a check and its answer, or an alert and the error.
+fn result_line(
+    last: Option<&(Dnp3Action, Result<String, String>)>,
+    cx: &Context<AppModel>,
+) -> Option<AnyElement> {
     let theme = theme(cx);
-    let (action, result) = state.last.as_ref()?;
+    let (action, result) = last?;
     let (glyph, color, text): (Icon, gpui::Hsla, String) = match result {
         Ok(text) => (
             Icon::CircleCheck,
@@ -197,57 +205,76 @@ pub fn point_card(
                 return None;
             }
             let mode = master.control_mode;
-            let mut card = div()
-                .flex()
-                .flex_col()
-                .gap(SPACE_4)
-                .child(section_label(
-                    match kind {
-                        Dnp3PointKind::BinaryOutput => "CROB (g12v1)",
-                        _ => "Analog output block (g41v3)",
-                    },
-                    cx,
-                ))
-                .child(div().flex().child(mode_switch(connection, mode, cx)));
-            if kind == Dnp3PointKind::BinaryOutput {
-                let operations = Dnp3CrobCode::ALL.into_iter().enumerate().map(|(index, code)| {
-                    let busy = live.dnp3.busy.is_some_and(|busy| {
-                        matches!(busy, Dnp3Action::Operate { operation: Dnp3Operation::Crob(crob), .. } if crob.code == code)
-                    });
-                    Button::new(
-                        ElementId::NamedInteger("dnp3-crob".into(), index as u64),
-                        code.name(),
-                    )
-                    .icon(match code {
-                        Dnp3CrobCode::LatchOn | Dnp3CrobCode::Close => Icon::Play,
-                        Dnp3CrobCode::LatchOff | Dnp3CrobCode::Trip => Icon::Square,
-                        Dnp3CrobCode::PulseOn | Dnp3CrobCode::PulseOff => Icon::Activity,
-                    })
-                    .compact()
-                    .disabled(!running || busy)
-                    .tooltip(if code.is_pulse() {
-                        "One 1 s pulse"
-                    } else {
-                        "Hold the output until told otherwise"
-                    })
-                    .on_click(cx.listener(move |model, _, _, cx| {
-                        model.dnp3_operate_selected(Dnp3Operation::Crob(Dnp3Crob::new(code)), cx);
-                    }))
-                });
-                card =
-                    card.child(div().flex().flex_wrap().gap(SPACE_3).children(operations))
-                        .child(div().text_size(FONT_SMALL).text_color(theme.fg_dim).child(
-                            "The outstation reports the result as an event on the next poll.",
-                        ));
-            } else {
-                card = card.child(
+            if kind == Dnp3PointKind::AnalogOutput {
+                // The write field above sends the value; here only how.
+                return Some(
                     div()
-                        .text_size(FONT_SMALL)
-                        .text_color(theme.fg_dim)
-                        .child("Write a value above to send it as a float32 analog output block."),
+                        .flex()
+                        .flex_col()
+                        .gap(SPACE_4)
+                        .child(div().flex().child(mode_switch(connection, mode, cx)))
+                        .child(
+                            div()
+                                .text_size(FONT_SMALL)
+                                .text_color(theme.fg_dim)
+                                .child("Sent as a float32 analog output block (g41v3)."),
+                        )
+                        .into_any_element(),
                 );
             }
-            Some(card.into_any_element())
+            let operations = Dnp3CrobCode::ALL.into_iter().enumerate().map(|(index, code)| {
+                let busy = live.dnp3.busy.is_some_and(|busy| {
+                    matches!(busy, Dnp3Action::Operate { operation: Dnp3Operation::Crob(crob), .. } if crob.code == code)
+                });
+                Button::new(
+                    ElementId::NamedInteger("dnp3-crob".into(), index as u64),
+                    code.name(),
+                )
+                .icon(match code {
+                    Dnp3CrobCode::LatchOn | Dnp3CrobCode::Close => Icon::Play,
+                    Dnp3CrobCode::LatchOff | Dnp3CrobCode::Trip => Icon::Square,
+                    Dnp3CrobCode::PulseOn | Dnp3CrobCode::PulseOff => Icon::Activity,
+                })
+                .compact()
+                .disabled(!running || busy)
+                .tooltip(if code.is_pulse() {
+                    "One 1 s pulse"
+                } else {
+                    "Hold the output until told otherwise"
+                })
+                .on_click(cx.listener(move |model, _, _, cx| {
+                    model.dnp3_operate_selected(Dnp3Operation::Crob(Dnp3Crob::new(code)), cx);
+                }))
+            });
+            // The outcome of the last control of this point.
+            let outcome = live.dnp3.last.as_ref().filter(|(action, _)| {
+                matches!(action, Dnp3Action::Operate { point, .. } if *point == info.id)
+            });
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(SPACE_4)
+                    .child(section_label(format!("Command · {}", mode.name()), cx))
+                    .child(div().flex().child(mode_switch(connection, mode, cx)))
+                    .child(div().flex().flex_wrap().gap(SPACE_3).children(operations))
+                    .children(result_line(outcome, cx))
+                    .when(!running, |this| {
+                        this.child(
+                            div()
+                                .text_size(FONT_SMALL)
+                                .text_color(theme.fg_dim)
+                                .child("Connect to command."),
+                        )
+                    })
+                    .child(
+                        div()
+                            .text_size(FONT_SMALL)
+                            .text_color(theme.fg_dim)
+                            .child("CROB (g12v1). The new state comes back as an event."),
+                    )
+                    .into_any_element(),
+            )
         }
         SessionSpec::Dnp3Outstation(_) => {
             let offline = reading.quality == Quality::Bad && reading.value.is_finite();
