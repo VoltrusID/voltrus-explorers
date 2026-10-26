@@ -19,7 +19,7 @@ use vt_protocol::{
 };
 
 use super::plants::short_name;
-use super::{cip_type_of, decode, device_type_name, encode, traffic_frame};
+use super::{cip_type_of, decode, device_type_name, encode, table_address, traffic_frame};
 use crate::Control;
 use crate::emit::{Emitter, now_ms};
 
@@ -175,6 +175,7 @@ pub(crate) async fn run(
                             }
                             if plan.learn(&outcomes) {
                                 out.points(plan.points());
+                                out.enip_addresses(plan.addresses());
                             }
                             let texts = plan.texts(&outcomes);
                             out.values(frame(&outcomes, latency_us));
@@ -447,12 +448,12 @@ impl Plan {
                     name: if point.name.is_empty() {
                         match &point.address {
                             EnipAddress::Tag { tag } => short_name(tag).to_owned(),
-                            EnipAddress::Attribute { .. } => address.clone(),
+                            EnipAddress::Attribute { .. } => address,
                         }
                     } else {
                         point.name.clone()
                     },
-                    address,
+                    address: table_address(&point.address),
                     data_type: label.unwrap_or_else(|| "—".to_owned()),
                     unit: point.unit.clone(),
                     writable: self.numeric[index],
@@ -460,6 +461,13 @@ impl Plan {
                     states: Vec::new(),
                 }
             })
+            .collect()
+    }
+
+    fn addresses(&self) -> Vec<String> {
+        self.planned
+            .iter()
+            .map(|point| point.address.to_string())
             .collect()
     }
 }
@@ -910,7 +918,10 @@ mod tests {
         assert_eq!(plan.attributes, [(4, 100, 3)]);
         let points = plan.points();
         assert_eq!(points[2].name, "Run");
-        assert_eq!(points[2].address, "Program:Main.Run");
+        assert_eq!(points[2].address, "Main");
+        assert_eq!(points[1].name, "@0x04/100/3:REAL");
+        assert_eq!(points[1].address, "@4/100/3");
+        assert_eq!(plan.addresses()[2], "Program:Main.Run");
         // Tag types are unknown until read; attribute types are given.
         assert_eq!(points[0].data_type, "—");
         assert_eq!(points[3].data_type, "DINT");

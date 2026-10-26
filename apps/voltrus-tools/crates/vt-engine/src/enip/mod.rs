@@ -11,7 +11,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use mt_enip::{CipValue, ListIdentityReply, PacketDir, PacketRecord};
-use vt_protocol::{CipType, Direction, EnipDeviceInfo, EnipDiscoverSpec, TrafficFrame};
+use vt_protocol::{
+    CipType, Direction, EnipAddress, EnipDeviceInfo, EnipDiscoverSpec, TrafficFrame,
+};
 
 /// The name of a CIP service code, as the inspector shows an explicit
 /// message; `class` tells object-specific codes apart.
@@ -151,6 +153,37 @@ pub(crate) fn device_type_name(code: u16) -> String {
     }
 }
 
+/// Characters of the points table's address column.
+const TABLE_ADDRESS: usize = 9;
+
+/// The short address the points table shows: a tag's program (`Main`, or
+/// `Ctrl` for controller scope), or an attribute's class/instance/attribute.
+/// The whole address goes out as [`vt_protocol::EventKind::EnipAddresses`].
+pub(crate) fn table_address(address: &EnipAddress) -> String {
+    let text = match address {
+        EnipAddress::Tag { tag } => match tag.strip_prefix("Program:") {
+            Some(scoped) => scoped
+                .split_once('.')
+                .map_or(scoped, |(program, _)| program)
+                .to_owned(),
+            None => "Ctrl".to_owned(),
+        },
+        EnipAddress::Attribute {
+            class,
+            instance,
+            attribute,
+            ..
+        } => format!("@{class}/{instance}/{attribute}"),
+    };
+    if text.chars().count() > TABLE_ADDRESS {
+        let mut cut: String = text.chars().take(TABLE_ADDRESS - 1).collect();
+        cut.push('…');
+        cut
+    } else {
+        text
+    }
+}
+
 /// The CIP type of a value read from a tag, if it is a number or bit.
 pub(crate) fn cip_type_of(value: &CipValue) -> Option<CipType> {
     Some(match value {
@@ -273,6 +306,16 @@ pub(crate) fn traffic_frame(record: &PacketRecord) -> TrafficFrame {
 mod tests {
     use super::*;
     use mt_enip::EnipDevice;
+
+    #[test]
+    fn the_table_shows_the_scope_or_the_object() {
+        let short = |text: &str| table_address(&EnipAddress::parse(text).unwrap());
+        assert_eq!(short("Program:Main.Motor1.Speed"), "Main");
+        assert_eq!(short("Program:MainProgram.Tank1.Level"), "MainProg…");
+        assert_eq!(short("Line_Rate"), "Ctrl");
+        assert_eq!(short("@0x04/100/3+24:REAL"), "@4/100/3");
+        assert_eq!(short("@0x6C/0x1000/2"), "@108/409…");
+    }
 
     #[test]
     fn attribute_values_decode_little_endian_at_their_offset() {

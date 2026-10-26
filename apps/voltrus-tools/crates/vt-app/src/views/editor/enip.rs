@@ -269,8 +269,13 @@ pub fn client(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                 )
                 .child(
                     row()
-                        .child(div().w(px(220.0)).child(field("Route path", fields.route.clone(), cx)))
-                        .child(div().flex_1().pb(SPACE_3).child(hint(
+                        .child(
+                            div()
+                                .w(px(220.0))
+                                .flex_none()
+                                .child(field("Route path", fields.route.clone(), cx)),
+                        )
+                        .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
                             "1,0 reaches a ControlLogix in slot 0 through its Ethernet module; \
                              leave empty for CompactLogix, Micro800 and adapters.",
                             cx,
@@ -316,6 +321,7 @@ pub fn client(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w_0()
                                     .text_size(FONT_SMALL)
                                     .text_color(theme.fg_muted)
                                     .child(
@@ -404,8 +410,13 @@ pub fn adapter(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
         .child(field("Name", editor.name.clone(), cx))
         .child(
             row()
-                .child(div().w(px(130.0)).child(field("Port", fields.adapter_port.clone(), cx)))
-                .child(div().flex_1().pb(SPACE_3).child(hint(
+                .child(
+                    div()
+                        .w(px(130.0))
+                        .flex_none()
+                        .child(field("Port", fields.adapter_port.clone(), cx)),
+                )
+                .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
                     "TCP sessions and UDP ListIdentity on every interface. 44818 is the EtherNet/IP port.",
                     cx,
                 ))),

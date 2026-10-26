@@ -91,6 +91,13 @@ fn points(events: &mut Events, session: SessionId) -> Vec<PointInfo> {
     })
 }
 
+fn addresses(events: &mut Events, session: SessionId) -> Vec<String> {
+    events.wait(session, |kind| match kind {
+        EventKind::EnipAddresses(addresses) => Some(addresses.clone()),
+        _ => None,
+    })
+}
+
 fn written(events: &mut Events, session: SessionId, point: u32) -> Result<(), String> {
     events.wait(session, |kind| match kind {
         EventKind::Written {
@@ -157,6 +164,11 @@ fn client_discovers_reads_writes_and_messages_a_simulated_adapter() {
     let served = points(&mut events, adapter);
     assert_eq!(served.len(), template.points.len());
     assert_eq!(served[index_of("speed")].name, "Motor1.Speed");
+    assert_eq!(served[index_of("speed")].address, "Main");
+    assert_eq!(
+        addresses(&mut events, adapter)[index_of("speed")],
+        "Program:Main.Motor1.Speed"
+    );
     assert_eq!(served[index_of("running")].data_type, "BOOL");
 
     // ListIdentity, directed at the adapter on loopback, finds it once.
@@ -205,8 +217,12 @@ fn client_discovers_reads_writes_and_messages_a_simulated_adapter() {
     assert_eq!(read[index_of("speed")].unit, "RPM");
     assert_eq!(read[index_of("mode")].data_type, "DINT");
     assert!(read[index_of("running")].boolean);
-    assert_eq!(read[assembly].address, "@0x04/100/3+24:REAL");
+    assert_eq!(read[assembly].address, "@4/100/3");
     assert_eq!(read[assembly].name, "Motor1.Speed (assembly)");
+    let whole = addresses(&mut events, client);
+    assert_eq!(whole.len(), read.len());
+    assert_eq!(whole[assembly], "@0x04/100/3+24:REAL");
+    assert_eq!(whole[missing], "Program:Main.NoSuchTag");
 
     // One bad tag costs one point, not the poll.
     let first = events.wait(client, values);
@@ -418,7 +434,8 @@ fn a_client_without_points_reads_every_tag_the_controller_lists() {
         }),
     });
     let read = points(&mut events, client);
-    let mut browsed: Vec<&str> = read.iter().map(|point| point.address.as_str()).collect();
+    let whole = addresses(&mut events, client);
+    let mut browsed: Vec<&str> = whole.iter().map(String::as_str).collect();
     let mut expected: Vec<&str> = template
         .points
         .iter()
@@ -429,10 +446,11 @@ fn a_client_without_points_reads_every_tag_the_controller_lists() {
     assert_eq!(browsed, expected);
     // Program-scoped tags show without their scope.
     assert!(read.iter().any(|point| point.name == "Tank1.Level"));
-    let level = read
+    let level = whole
         .iter()
-        .position(|point| point.address == "Program:Main.Tank1.Level")
+        .position(|address| address == "Program:Main.Tank1.Level")
         .expect("the level");
+    assert_eq!(read[level].address, "Main");
     assert_eq!(read[level].data_type, "REAL");
     let first = events.wait(client, values);
     assert!(first.iter().all(|reading| reading.quality == Quality::Good));

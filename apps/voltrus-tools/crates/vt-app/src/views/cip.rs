@@ -2,10 +2,11 @@
 //! service to any object, with the reply as hex and the values it may hold.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Context, SharedString, div, px};
+use gpui::{AnyElement, Context, Entity, SharedString, div, px};
 use vt_app_core::forms::{hex_rows, interpret_reply};
 use vt_ui::Icon;
 use vt_ui::components::{Button, Segment, field, section_label, segmented};
+use vt_ui::text_input::TextInput;
 use vt_ui::theme::*;
 
 use crate::model::AppModel;
@@ -21,7 +22,12 @@ pub fn card(live: &Live, form: &CipForm, cx: &Context<AppModel>) -> AnyElement {
     let theme = theme(cx).clone();
     let running = live.session.is_some();
     let preset = form.preset(cx);
-    let narrow = |content: AnyElement| div().w(px(76.0)).child(content);
+    let half = |label: &'static str, input: &Entity<TextInput>| {
+        div()
+            .flex_1()
+            .min_w_0()
+            .child(field(label, input.clone(), cx))
+    };
 
     let mut card = div()
         .flex()
@@ -46,21 +52,15 @@ pub fn card(live: &Live, form: &CipForm, cx: &Context<AppModel>) -> AnyElement {
             div()
                 .flex()
                 .gap(SPACE_4)
-                .child(narrow(
-                    field("Service", form.service.clone(), cx).into_any_element(),
-                ))
-                .child(narrow(
-                    field("Class", form.class.clone(), cx).into_any_element(),
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(field("Instance", form.instance.clone(), cx)),
-                )
-                .child(narrow(
-                    field("Attribute", form.attribute.clone(), cx).into_any_element(),
-                )),
+                .child(half("Service", &form.service))
+                .child(half("Class", &form.class)),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(SPACE_4)
+                .child(half("Instance", &form.instance))
+                .child(half("Attribute", &form.attribute)),
         )
         .child(field("Data", form.data.clone(), cx))
         .child(

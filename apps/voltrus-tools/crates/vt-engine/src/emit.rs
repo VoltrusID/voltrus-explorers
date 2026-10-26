@@ -78,6 +78,10 @@ impl Emitter {
     pub(crate) fn cip_reply(&self, result: Result<CipResponse, String>) {
         self.emit(EventKind::CipReply(result));
     }
+
+    pub(crate) fn enip_addresses(&self, addresses: Vec<String>) {
+        self.emit(EventKind::EnipAddresses(addresses));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

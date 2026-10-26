@@ -356,8 +356,6 @@ fn bacnet(
 const ENIP_TREND: [u32; 4] = [2, 3, 6, 1];
 /// The drive's speed reference, a setpoint the speed follows.
 const ENIP_SETPOINT: u32 = 11;
-/// The demo client's last point: the speed read through input assembly 100.
-const ENIP_ASSEMBLY: u32 = 12;
 
 /// The EtherNet/IP demo: a simulated motor drive and a client reading it.
 fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Context<AppModel>) {
@@ -398,8 +396,8 @@ fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut 
             })
             .detach();
         }
-        // One client with the assembly point in the inspector, and the
-        // explicit message aimed at it answered.
+        // One client with an explicit message answered in the inspector:
+        // the adapter's input assembly, every tag's value as bytes.
         Scenario::EnipMessage => {
             if let Some(pane) = pane_of(model, simulator) {
                 model.workspace.close_pane(pane);
@@ -407,7 +405,15 @@ fn enip(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut 
             if let Some(pane) = pane_of(model, client) {
                 model.focus_pane(pane, cx);
             }
-            model.select_point(client, ENIP_ASSEMBLY, cx);
+            let request = [
+                (model.cip.service.clone(), "0x0E"),
+                (model.cip.class.clone(), "0x04"),
+                (model.cip.instance.clone(), "100"),
+                (model.cip.attribute.clone(), "3"),
+            ];
+            for (input, text) in request {
+                input.update(cx, |input, cx| input.set_text(text, cx));
+            }
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_secs(2)).await;
                 let _ = this.update(cx, |model, cx| model.dispatch_cip_request(cx));

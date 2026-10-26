@@ -152,6 +152,20 @@ fn point_detail(
                         .text_size(FONT_SMALL)
                         .text_color(theme.fg_dim)
                         .child(format!("{} · {}", info.address, info.data_type)),
+                )
+                .when_some(
+                    usize::try_from(point)
+                        .ok()
+                        .and_then(|index| live.enip_addresses.get(index)),
+                    |this, address| {
+                        this.child(
+                            div()
+                                .font_family(MONO)
+                                .text_size(FONT_SMALL)
+                                .text_color(theme.fg_muted)
+                                .child(address.clone()),
+                        )
+                    },
                 ),
         )
         .child(
@@ -525,6 +539,10 @@ fn session_summary(
                     .child(pill(state.label(), state_color(&state, &theme))),
             )
         })
+        .when_some(
+            live.filter(|_| matches!(saved.spec, SessionSpec::EnipClient(_))),
+            |this, live| this.child(cip::card(live, &model.cip, cx)),
+        )
         .child(
             div()
                 .flex()
@@ -552,10 +570,6 @@ fn session_summary(
         .when_some(live.filter(|_| mqtt), |this, live| {
             this.child(publish::card(live, &model.publish, cx))
         })
-        .when_some(
-            live.filter(|_| matches!(saved.spec, SessionSpec::EnipClient(_))),
-            |this, live| this.child(cip::card(live, &model.cip, cx)),
-        )
         .child(
             div()
                 .text_size(FONT_SMALL)

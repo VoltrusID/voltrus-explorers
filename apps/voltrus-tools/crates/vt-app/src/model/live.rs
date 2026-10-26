@@ -61,6 +61,8 @@ pub struct Live {
     /// whether one is on its way.
     pub cip_reply: Option<Result<CipResponse, String>>,
     pub cip_waiting: bool,
+    /// EtherNet/IP: each point's whole address (the table shows a short one).
+    pub enip_addresses: Vec<String>,
 }
 
 impl Default for Live {
@@ -87,6 +89,7 @@ impl Default for Live {
             history_capacity: HISTORY_MIN,
             cip_reply: None,
             cip_waiting: false,
+            enip_addresses: Vec::new(),
         }
     }
 }
@@ -104,6 +107,7 @@ impl Live {
         self.locked.clear();
         self.cip_reply = None;
         self.cip_waiting = false;
+        self.enip_addresses.clear();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -220,6 +224,7 @@ impl Live {
                 self.cip_waiting = false;
                 self.cip_reply = Some(result);
             }
+            EventKind::EnipAddresses(addresses) => self.enip_addresses = addresses,
         }
     }
 

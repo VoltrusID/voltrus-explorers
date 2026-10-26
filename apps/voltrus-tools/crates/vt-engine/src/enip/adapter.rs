@@ -24,8 +24,8 @@ use vt_protocol::{
     Stats, TrafficFrame, ValueFrame,
 };
 
-use super::encode;
 use super::plants::{self, EnipTemplate, assembly_layout, point_type, short_name};
+use super::{encode, table_address};
 use crate::Control;
 use crate::emit::{Emitter, now_ms};
 
@@ -117,6 +117,13 @@ pub(crate) async fn run(
         ),
     );
     out.points(points(template));
+    out.enip_addresses(
+        template
+            .points
+            .iter()
+            .map(|point| point.name.clone())
+            .collect(),
+    );
 
     let mut sim = Simulation::new(template);
     let mut stats = Stats::default();
@@ -316,7 +323,9 @@ fn points(template: &EnipTemplate) -> Vec<PointInfo> {
             PointInfo {
                 id: u32::try_from(id).unwrap_or(u32::MAX),
                 name: short_name(&point.name).to_owned(),
-                address: point.name.clone(),
+                address: table_address(&vt_protocol::EnipAddress::Tag {
+                    tag: point.name.clone(),
+                }),
                 data_type: data_type.name().into(),
                 unit: point.unit.clone().unwrap_or_default(),
                 // Setting a sensor is what a simulator is for.

@@ -123,6 +123,10 @@ pub enum EventKind {
     /// Outcome of a [`Command::CipRequest`]: the reply data, or the CIP
     /// status (or transport failure) as text.
     CipReply(Result<CipResponse, String>),
+    /// EtherNet/IP: each point's whole address (`Program:Main.Motor1.Speed`,
+    /// `@0x04/100/3+24:REAL`), aligned with the points, after `Points`: the
+    /// table shows a short one.
+    EnipAddresses(Vec<String>),
 }
 
 /// The text behind one point's latest value.
@@ -483,6 +487,10 @@ mod tests {
                 latency_us: 812,
             })),
             EventKind::CipReply(Err("CIP error 0x14: Attribute not supported".into())),
+            EventKind::EnipAddresses(vec![
+                "Program:Main.Motor1.Speed".into(),
+                "@0x04/100/3+24:REAL".into(),
+            ]),
         ];
         for kind in events {
             let event = Event {
