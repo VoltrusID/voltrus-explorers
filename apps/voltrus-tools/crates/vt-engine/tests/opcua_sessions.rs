@@ -502,9 +502,25 @@ fn clients_discover_browse_monitor_write_and_call_the_plant_server() {
         panic!("call answer");
     };
     assert_eq!(result, Ok(vec!["1002".to_owned()]));
-    // One flush reports the values, then the payloads: wait for them in that order.
-    reads(&mut events, anonymous, 3, |reading| reading.value == 1002.0);
-    says(&mut events, anonymous, 2, "Pale ale");
+    // The batch number and the recipe may change in one flush or two: wait for both.
+    let (mut batch, mut recipe) = (false, false);
+    events.wait(anonymous, |kind| {
+        match kind {
+            EventKind::Values(frame) => {
+                batch |= frame
+                    .readings
+                    .get(3)
+                    .is_some_and(|reading| reading.value == 1002.0);
+            }
+            EventKind::Payloads(texts) => {
+                recipe |= texts
+                    .iter()
+                    .any(|text| text.point == 2 && text.text.starts_with("Pale ale"));
+            }
+            _ => {}
+        }
+        (batch && recipe).then_some(())
+    });
     assert!(engine.send(call(["Pale ale", "3000"])));
     let OpcuaEvent::Called { result, .. } = opcua(&mut events, anonymous) else {
         panic!("call answer");
