@@ -17,7 +17,9 @@ use crate::model::{AppModel, Overlay};
 
 mod bacnet;
 mod dnp3;
+mod enip;
 mod mqtt;
+mod serial;
 
 /// A click handler that changes the open editor.
 pub(super) fn on_edit(
@@ -56,6 +58,14 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
         (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
         (EditorKind::Dnp3Outstation, true) => "Edit DNP3 outstation simulator",
+        (EditorKind::EnipClient, false) => "New EtherNet/IP connection",
+        (EditorKind::EnipClient, true) => "Edit EtherNet/IP connection",
+        (EditorKind::EnipAdapter, false) => "New EtherNet/IP adapter simulator",
+        (EditorKind::EnipAdapter, true) => "Edit EtherNet/IP adapter simulator",
+        (EditorKind::SerialMonitor, false) => "New serial connection",
+        (EditorKind::SerialMonitor, true) => "Edit serial connection",
+        (EditorKind::SerialDevice, false) => "New serial device simulator",
+        (EditorKind::SerialDevice, true) => "Edit serial device simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -78,6 +88,18 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::Dnp3Outstation => {
             "Play a DNP3 outstation on this computer: a plant's points, events and outputs for any master."
         }
+        EditorKind::EnipClient => {
+            "Find a device with ListIdentity, read and write its Logix tags and CIP attributes."
+        }
+        EditorKind::EnipAdapter => {
+            "Play an EtherNet/IP adapter on this computer for any client to browse, read and write."
+        }
+        EditorKind::SerialMonitor => {
+            "Open a port to watch and talk to it; lines with values become points to trend."
+        }
+        EditorKind::SerialDevice => {
+            "Play an instrument on a virtual serial port that prints its values and takes commands."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -88,6 +110,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
         EditorKind::Dnp3Master => dnp3::master(editor, cx),
         EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
+        EditorKind::EnipClient => enip::client(editor, cx),
+        EditorKind::EnipAdapter => enip::adapter(editor, cx),
+        EditorKind::SerialMonitor => serial::monitor(editor, cx),
+        EditorKind::SerialDevice => serial::device(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -99,6 +125,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         }
         (EditorKind::Dnp3Master, false) => "Save and connect",
         (EditorKind::Dnp3Outstation, false) => "Start simulator",
+        (EditorKind::EnipClient, false) => "Save and connect",
+        (EditorKind::EnipAdapter, false) => "Start simulator",
+        (EditorKind::SerialMonitor, false) => "Save and connect",
+        (EditorKind::SerialDevice, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 
@@ -296,6 +326,12 @@ fn master(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             .flex()
             .flex_col()
             .gap(SPACE_6)
+            // The port picker the serial monitor uses, listing ports as they come and go.
+            .child(serial::port_picker(
+                editor,
+                editor.serial_port.read(cx).value().to_owned(),
+                cx,
+            ))
             .child(
                 row()
                     .child(div().flex_1().child(field(

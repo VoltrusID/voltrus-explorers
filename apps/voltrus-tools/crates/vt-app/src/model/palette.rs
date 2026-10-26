@@ -38,6 +38,14 @@ pub enum Command {
     Dnp3Demo,
     /// A DNP3 station command for a connection's session.
     Dnp3(ConnectionId, vt_protocol::Dnp3Action),
+    NewEnipClient,
+    NewEnipAdapter,
+    EnipDemo,
+    NewSerialMonitor,
+    NewSerialDevice,
+    SerialDemo,
+    /// Send a serial connection's macro, by index.
+    SerialMacro(ConnectionId, usize),
 }
 
 pub struct Entry {
@@ -247,6 +255,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             Command::Dnp3Demo,
         ),
         (
+            "New EtherNet/IP connection…",
+            "Find a device with ListIdentity, read Logix tags and assemblies, send CIP messages",
+            Icon::Plus,
+            Command::NewEnipClient,
+        ),
+        (
+            "New EtherNet/IP adapter simulator…",
+            "Play a motor drive, tank farm or packaging line on this computer",
+            Icon::Server,
+            Command::NewEnipAdapter,
+        ),
+        (
+            "Start the EtherNet/IP demo",
+            "A simulated motor drive and a client reading its tags",
+            Icon::Zap,
+            Command::EnipDemo,
+        ),
+        (
             "Split right",
             "Show another connection beside this one",
             Icon::Columns,
@@ -301,6 +327,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             Icon::Palette,
             Command::ChooseTheme,
         ),
+        (
+            "New serial connection…",
+            "Open a port: terminal, sends, macros, logging, lines into trends",
+            Icon::Plus,
+            Command::NewSerialMonitor,
+        ),
+        (
+            "New serial device simulator…",
+            "An instrument printing its values on a virtual port",
+            Icon::Server,
+            Command::NewSerialDevice,
+        ),
+        (
+            "Start the serial demo",
+            "A water analyser on a virtual port and a monitor trending its lines",
+            Icon::Zap,
+            Command::SerialDemo,
+        ),
     ];
     entries.extend(
         fixed
@@ -313,5 +357,28 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             }),
     );
     entries.extend(super::dnp3::palette_entries(model));
+    // The focused serial connection's macros, so they are a ⌘K away.
+    if let Some(connection) = model.focused_connection()
+        && let Some(saved) = model.workspace.connection(connection)
+        && let vt_protocol::SessionSpec::SerialMonitor(monitor) = &saved.spec
+    {
+        entries.extend(monitor.macros.iter().enumerate().map(|(index, item)| {
+            Entry {
+                title: format!("Send {}", item.name).into(),
+                detail: format!(
+                    "{} · {}",
+                    saved.name,
+                    if item.hex {
+                        item.payload.clone()
+                    } else {
+                        format!("“{}”", item.payload)
+                    }
+                )
+                .into(),
+                icon: Icon::Send,
+                command: Command::SerialMacro(connection, index),
+            }
+        }));
+    }
     entries
 }

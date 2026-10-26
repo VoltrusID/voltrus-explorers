@@ -18,6 +18,17 @@ mod dnp3;
 pub use dnp3::{
     Dnp3MasterForm, Dnp3OutstationForm, Dnp3PointField, Dnp3PointForm, next_dnp3_point,
 };
+mod enip;
+
+pub use enip::{
+    CipRequestForm, EnipAdapterForm, EnipClientForm, EnipPointField, EnipPointForm, hex_rows,
+    interpret_reply, parse_hex, valid_route_path,
+};
+mod serial;
+
+pub use serial::{
+    BAUD_PRESETS, MacroField, MacroForm, ParserKind, SerialDeviceForm, SerialMonitorForm,
+};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +71,19 @@ pub enum Field {
     IntegrityMs,
     EventMs,
     Dnp3Point(usize, Dnp3PointField),
+    /// EtherNet/IP: the CIP route to the controller, and a point row.
+    RoutePath,
+    EnipPoint(usize, EnipPointField),
+    /// Serial: line settings, the line parser, a macro row and which of its
+    /// fields, and the virtual device's interval, link name and instrument.
+    DataBits,
+    StopBits,
+    Delimiter,
+    Pattern,
+    Macro(usize, MacroField),
+    IntervalMs,
+    Alias,
+    Template,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,7 +10,7 @@ use vt_ui::components::{
 };
 use vt_ui::theme::*;
 
-use super::{log, points, state_color, traffic, trend};
+use super::{log, points, state_color, terminal, traffic, trend};
 use crate::model::AppModel;
 
 /// Below this width the view switcher shows icons only and the latency hides.
@@ -71,6 +71,8 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
     let latency = live
         .filter(|live| live.state == SessionState::Connected && live.stats.polls > 0)
         .filter(|_| !compact)
+        // Serial lines arrive when the device prints them: no round trip.
+        .filter(|_| connection.spec.protocol() != vt_protocol::Protocol::Serial)
         .map(|live| format!("{:.1} ms", f64::from(live.stats.last_latency_us) / 1000.0));
     let session_label = match (running, simulator) {
         (true, true) => "Stop",
@@ -108,18 +110,25 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
     let narrow_status = detail.clone().unwrap_or_else(|| state.label().to_string());
     let has_detail = detail.is_some();
     let subtitle = detail.unwrap_or_else(|| connection.spec.endpoint());
+    // Serial sessions show their bytes in a terminal where others show traffic.
+    let serial = connection.spec.protocol() == vt_protocol::Protocol::Serial;
 
     let segments = PaneView::ALL
         .into_iter()
         .map(|option| {
             Segment::new(
-                option.name(),
+                if serial && option == PaneView::Traffic {
+                    "Terminal"
+                } else {
+                    option.name()
+                },
                 option == view,
                 cx.listener(move |model, _, _, cx| model.set_pane_view(pane_id, option, cx)),
             )
             .icon(match option {
                 PaneView::Points => Icon::Table,
                 PaneView::Trend => Icon::ChartLine,
+                PaneView::Traffic if serial => Icon::Terminal,
                 PaneView::Traffic => Icon::ArrowUpDown,
                 PaneView::Log => Icon::ScrollText,
             })
@@ -237,17 +246,32 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
         SessionSpec::Dnp3Outstation(_) => true,
+        SessionSpec::EnipAdapter(_) => true,
+        SessionSpec::SerialDevice(_) => true,
         _ => false,
     };
     let body: AnyElement = match live {
-        Some(live) if !live.points.is_empty() || running => match view {
-            PaneView::Points => {
-                points::render(pane_id, connection_id, live, holds, width, scroll.points, cx)
+        Some(live) if !live.points.is_empty() || running || !live.terminal.rows().is_empty() => {
+            match view {
+                PaneView::Points => {
+                    points::render(pane_id, connection_id, live, holds, width, scroll.points, cx)
+                }
+                PaneView::Trend => trend::render(connection_id, live, width, cx),
+                PaneView::Traffic if serial => terminal::render(
+                    connection_id,
+                    &connection.spec,
+                    live,
+                    model.serial_consoles.get(&connection_id),
+                    width,
+                    scroll.traffic,
+                    cx,
+                ),
+                PaneView::Traffic => {
+                    traffic::render(connection_id, live, width, scroll.traffic, cx)
+                }
+                PaneView::Log => log::render(connection_id, live, width, scroll.log, cx),
             }
-            PaneView::Trend => trend::render(connection_id, live, width, cx),
-            PaneView::Traffic => traffic::render(connection_id, live, width, scroll.traffic, cx),
-            PaneView::Log => log::render(connection_id, live, width, scroll.log, cx),
-        },
+        }
         _ => empty_state(
             if simulator { Icon::Server } else { Icon::Plug },
             if simulator { "Simulator stopped" } else { "Not connected" },
@@ -269,6 +293,18 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::Dnp3Master(_), _) => {
                     "Connect to poll the outstation. Every point it reports appears here, with its flags and events."
+                }
+                (SessionSpec::EnipAdapter(_), _) => {
+                    "Start it to play the adapter on this computer. Any EtherNet/IP client can browse, read and write its tags, including this app."
+                }
+                (SessionSpec::EnipClient(_), _) => {
+                    "Connect to read the controller's tags and attributes. The inspector sends explicit messages."
+                }
+                (SessionSpec::SerialDevice(_), _) => {
+                    "Start it to print an instrument's values on a virtual serial port. Any serial monitor can open it, including this app."
+                }
+                (SessionSpec::SerialMonitor(_), _) => {
+                    "Connect to open the port. Its bytes appear in the terminal; lines with values become points to trend."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
