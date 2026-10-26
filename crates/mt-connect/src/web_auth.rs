@@ -180,7 +180,7 @@ mod tests {
 
     use super::*;
 
-    fn ptr<T>(obj: &Retained<T>) -> *mut T {
+    fn ptr<T: objc2::Message>(obj: &Retained<T>) -> *mut T {
         Retained::as_ptr(obj) as *mut T
     }
 
