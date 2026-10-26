@@ -51,8 +51,11 @@ day rounding, the expiry boundary, clock rollback, restore, refunds and Apple Ac
   every other command (open a session, write, hold a value, publish, relinquish, discover, serial send or log, and any
   protocol command added later) is dropped and the unlock sheet opens. `connect`, every demo and BACnet and
   EtherNet/IP discovery check first, so nothing is half started. Tests:
-  `an_expired_trial_refuses_connecting_and_asks_to_unlock`, `the_gated_engine_drops_refused_commands`; the
-  `licence-gate` screenshot shows it in the app.
+  `an_expired_trial_refuses_connecting_and_asks_to_unlock`, `the_gated_engine_drops_refused_commands`,
+  `protocol_commands_are_refused_once_the_trial_ends` and `every_protocol_and_role_is_refused_once_the_trial_ends`,
+  which opens a session of every `Protocol::ALL` entry as client and simulator (its `spec_for` match has no wildcard,
+  so a new protocol doesn't compile until it is covered); the `licence-gate` screenshot shows it in the app. When a
+  protocol lands, start its demo and discovery with `if !self.licence_allows(cx) { return …; }` like the others.
 - **Verified, cached, offline.** StoreKit 2 checks each transaction's App Store signature on the device; only verified,
   unrevoked transactions count. The last answer is saved as `licence.json` beside `workspace.json` (inside the
   container), so a buyer is unlocked at launch, offline included. When StoreKit can't answer, the cache stays.

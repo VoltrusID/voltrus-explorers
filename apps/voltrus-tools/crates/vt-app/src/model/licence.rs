@@ -575,7 +575,9 @@ impl AppModel {
 
 #[cfg(test)]
 mod tests {
-    use vt_protocol::{ModbusMasterSpec, SessionId, SessionSpec};
+    use vt_protocol::{
+        Dnp3Action, EnipDiscoverSpec, ModbusMasterSpec, Protocol, Role, SessionId, SessionSpec,
+    };
 
     use super::*;
 
@@ -637,6 +639,89 @@ mod tests {
         gate.set_open(Licence::Unlocked.can_operate());
         assert!(gated.send(open()));
         assert!(gated.send(EngineCommand::Shutdown));
+    }
+
+    /// A session of `protocol` in `role`. No wildcard: a new protocol doesn't
+    /// compile here until it has its own arm, so the gate test below covers
+    /// it.
+    fn spec_for(protocol: Protocol, role: Role) -> SessionSpec {
+        match (protocol, role) {
+            (Protocol::Modbus, Role::Client) => SessionSpec::ModbusMaster(Default::default()),
+            (Protocol::Modbus, Role::Simulator) => SessionSpec::ModbusSlave(Default::default()),
+            (Protocol::Mqtt, Role::Client) => SessionSpec::MqttClient(Default::default()),
+            (Protocol::Mqtt, Role::Simulator) => SessionSpec::MqttBroker(Default::default()),
+            (Protocol::Bacnet, Role::Client) => SessionSpec::BacnetClient(Default::default()),
+            (Protocol::Bacnet, Role::Simulator) => SessionSpec::BacnetDevice(Default::default()),
+            (Protocol::Dnp3, Role::Client) => SessionSpec::Dnp3Master(Default::default()),
+            (Protocol::Dnp3, Role::Simulator) => SessionSpec::Dnp3Outstation(Default::default()),
+            (Protocol::Enip, Role::Client) => SessionSpec::EnipClient(Default::default()),
+            (Protocol::Enip, Role::Simulator) => SessionSpec::EnipAdapter(Default::default()),
+            (Protocol::Serial, Role::Client) => SessionSpec::SerialMonitor(Default::default()),
+            (Protocol::Serial, Role::Simulator) => SessionSpec::SerialDevice(Default::default()),
+            (Protocol::S7, Role::Client) => SessionSpec::S7Client(Default::default()),
+            (Protocol::S7, Role::Simulator) => SessionSpec::S7Server(Default::default()),
+        }
+    }
+
+    #[test]
+    fn every_protocol_and_role_is_refused_once_the_trial_ends() {
+        let expired = Gate::new(Licence::Expired.can_operate());
+        let unlocked = Gate::new(Licence::Unlocked.can_operate());
+        for &protocol in Protocol::ALL {
+            for role in [Role::Client, Role::Simulator] {
+                let spec = spec_for(protocol, role);
+                assert_eq!((spec.protocol(), spec.role()), (protocol, role));
+                let open = EngineCommand::Open {
+                    session: SessionId(1),
+                    spec,
+                };
+                assert!(
+                    !expired.admit(&open),
+                    "{protocol:?} {role:?} ran after the trial"
+                );
+                assert!(
+                    expired.take_refused(),
+                    "{protocol:?} {role:?} didn't ask to unlock"
+                );
+                assert!(
+                    unlocked.admit(&open),
+                    "{protocol:?} {role:?} refused when unlocked"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn protocol_commands_are_refused_once_the_trial_ends() {
+        let gate = Gate::new(Licence::Expired.can_operate());
+        let session = SessionId(1);
+        for command in [
+            EngineCommand::Dnp3 {
+                session,
+                action: Dnp3Action::IntegrityPoll,
+            },
+            EngineCommand::DiscoverEnip {
+                session,
+                spec: EnipDiscoverSpec {
+                    broadcast_port: None,
+                    directed: vec!["127.0.0.1:44818".into()],
+                    wait_ms: 100,
+                },
+            },
+            EngineCommand::SerialSend {
+                session,
+                bytes: b"AT\r\n".to_vec(),
+            },
+            EngineCommand::SerialLog {
+                session,
+                path: Some("/tmp/log.csv".into()),
+            },
+            EngineCommand::ReadS7Plc { session },
+            EngineCommand::Relinquish { session, point: 0 },
+        ] {
+            assert!(!gate.admit(&command), "{command:?} passed after the trial");
+            assert!(gate.take_refused());
+        }
     }
 
     #[test]
