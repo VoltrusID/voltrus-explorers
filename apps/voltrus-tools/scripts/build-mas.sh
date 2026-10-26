@@ -33,8 +33,6 @@ bundle)
   out="${2:?$usage}"
   mkdir -p "$out"
   out="$(cd "$out" && pwd)"
-  # Same floor as LSMinimumSystemVersion and the StoreKit bridge (vt-store/build.rs).
-  export MACOSX_DEPLOYMENT_TARGET=13.0
   targets=(aarch64-apple-darwin x86_64-apple-darwin)
   binaries=()
   for target in "${targets[@]}"; do

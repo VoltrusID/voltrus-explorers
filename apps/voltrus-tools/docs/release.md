@@ -68,7 +68,9 @@ day rounding, the expiry boundary, clock rollback, restore, refunds and Apple Ac
 GPUI isn't Tauri, so `mt-store`'s Tauri plugin doesn't fit. [`swift/StoreKitBridge.swift`](../crates/vt-store/swift/StoreKitBridge.swift)
 wraps StoreKit 2 in five C functions (snapshot, purchase, restore, listen, free) that answer JSON. With the `store`
 feature, [`vt-store/build.rs`](../crates/vt-store/build.rs) compiles it with `swiftc` into a static library per target
-architecture and links it against the Swift runtime in macOS (deployment target 13.0). Without the feature nothing
+architecture and links it against the Swift runtime in macOS (deployment target 13.0, set for every build in
+[`.cargo/config.toml`](../.cargo/config.toml): below 12.0 the Swift concurrency runtime would be linked by `@rpath`
+and the app wouldn't launch). Without the feature nothing
 Swift is built and every store call fails. Calls block, so the app makes them on their own thread.
 
 ### Screens

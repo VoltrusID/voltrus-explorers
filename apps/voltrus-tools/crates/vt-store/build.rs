@@ -58,11 +58,11 @@ fn main() -> io::Result<()> {
 
     // The bridge's objects ask the linker for the Swift runtime libraries
     // (-lswiftCore, -lswift_Concurrency, ...) and the static
-    // -lswiftCompatibilityPacks. The runtime must come from the SDK's stubs,
-    // whose install names are /usr/lib/swift/...: the toolchain folder also
-    // holds back-deployment dylibs named @rpath/..., which macOS can't find
-    // at launch. So link against the SDK only, plus copies of the toolchain's
-    // static helpers.
+    // -lswiftCompatibilityPacks. The runtime comes from the SDK's stubs (the
+    // dylibs built into macOS, /usr/lib/swift/...); of the toolchain only the
+    // static helpers are needed, copied here. With a deployment target below
+    // 12.0 the concurrency runtime would be linked by @rpath and fail to load:
+    // ../../.cargo/config.toml sets 13.0.
     let info = run(Command::new("xcrun").args([
         "--sdk",
         "macosx",

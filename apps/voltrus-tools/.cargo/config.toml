@@ -1,0 +1,6 @@
+[env]
+# The app's floor (LSMinimumSystemVersion in packaging/Info.plist). Below 12.0,
+# Rust's default of 11.0, the linker refers to the StoreKit bridge's Swift
+# concurrency runtime by @rpath (macOS has it built in only from 12) and the
+# store build can't launch.
+MACOSX_DEPLOYMENT_TARGET = "13.0"
