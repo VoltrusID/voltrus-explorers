@@ -70,14 +70,18 @@ impl Gate {
         self.open.set(open);
     }
 
-    /// Whether `command` may reach the engine. Stopping is always allowed;
-    /// anything else needs an open gate. A refusal is remembered until
-    /// [`Gate::take_refused`], which opens the unlock sheet.
+    /// Whether `command` may reach the engine. Stopping, and listing this
+    /// Mac's serial ports for the editor (read-only mode still edits saved
+    /// connections), are always allowed; anything else needs an open gate. A
+    /// refusal is remembered until [`Gate::take_refused`], which opens the
+    /// unlock sheet.
     pub fn admit(&self, command: &EngineCommand) -> bool {
         if self.open.get()
             || matches!(
                 command,
-                EngineCommand::Close { .. } | EngineCommand::Shutdown
+                EngineCommand::Close { .. }
+                    | EngineCommand::Shutdown
+                    | EngineCommand::ListSerialPorts { .. }
             )
         {
             return true;
@@ -601,6 +605,10 @@ mod tests {
             session: SessionId(1)
         }));
         assert!(gate.admit(&EngineCommand::Shutdown));
+        // Neither is listing serial ports for the editor.
+        assert!(gate.admit(&EngineCommand::ListSerialPorts {
+            session: SessionId(2)
+        }));
         assert!(!gate.take_refused());
     }
 
