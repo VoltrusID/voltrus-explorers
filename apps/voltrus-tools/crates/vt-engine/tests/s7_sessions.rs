@@ -59,7 +59,13 @@ impl Events {
             }
             assert!(
                 Instant::now() < deadline,
-                "timed out waiting for an event from {session}"
+                "timed out waiting for an event from {session}; it sent: {:#?}",
+                self.kept
+                    .iter()
+                    .filter(|event| event.session == session
+                        && !matches!(event.kind, EventKind::Traffic(_) | EventKind::Stats(_)))
+                    .map(|event| &event.kind)
+                    .collect::<Vec<_>>()
             );
             match self.receiver.try_recv() {
                 Ok(event) => self.kept.push(event),
