@@ -129,7 +129,8 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 PaneView::Log => Icon::ScrollText,
                 PaneView::Device => Icon::Cpu,
             })
-            .icon_only(compact)
+            // A fifth view needs the room of a wide pane to keep its labels.
+            .icon_only(compact || (super::device::available(&connection.spec) && width < 1000.0))
         })
         .collect();
 

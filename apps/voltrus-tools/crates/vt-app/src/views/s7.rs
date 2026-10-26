@@ -156,8 +156,7 @@ fn header(report: &S7PlcReport, refresh: Button, cx: &Context<AppModel>) -> impl
                 )
                 .child(
                     div()
-                        .min_w_0()
-                        .truncate()
+                        .whitespace_nowrap()
                         .font_family(MONO)
                         .text_size(FONT_SMALL)
                         .text_color(theme.fg_dim)
