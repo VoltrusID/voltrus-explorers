@@ -76,6 +76,10 @@ jobs:
       - name: Test
         run: cargo test --locked --no-fail-fast --workspace
 
+      - name: Test shared protocol crates
+        working-directory: .
+        run: cargo test --locked -p mt-nats
+
       - name: Build release
         run: cargo build --locked --release -p vt-app
 

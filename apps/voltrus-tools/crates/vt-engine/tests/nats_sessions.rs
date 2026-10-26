@@ -359,8 +359,13 @@ fn a_client_watches_requests_and_browses_the_simulated_server() {
             value: "kW".into(),
         }],
     });
+    // Values and the message text behind them arrive in the same tick.
     engine.until("the published message to come back", |engine| {
         engine.client.value("test.limit › kw") == Some(42.5)
+            && engine
+                .client
+                .payload("test.limit › kw")
+                .is_some_and(|text| !text.is_empty())
     });
     assert_eq!(engine.client.published, [("test.limit".to_owned(), Ok(()))]);
     assert!(
