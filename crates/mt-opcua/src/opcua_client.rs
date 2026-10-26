@@ -428,8 +428,10 @@ impl OpcUaProtocolClient {
     }
 
     /// The client's application instance certificate, made off the async workers and without
-    /// resolving the host name (the stack's own sample certificate does both).
-    async fn prepare_certificate() -> Result<(), String> {
+    /// resolving the host name (the stack's own sample certificate does both). Making its RSA key
+    /// can take seconds (far longer in a debug build), so a caller that bounds discovery or a
+    /// connection by a timeout calls this first: the wait is then for the server alone.
+    pub async fn prepare_certificate() -> Result<(), String> {
         crate::pki::ensure_own_certificate(
             crate::pki::client_dir(),
             "OPC UA Explorer Client",

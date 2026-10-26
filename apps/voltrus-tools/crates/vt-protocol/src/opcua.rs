@@ -149,7 +149,9 @@ pub struct OpcuaClientSpec {
 impl Default for OpcuaClientSpec {
     fn default() -> Self {
         Self {
-            endpoint: format!("opc.tcp://localhost:{OPCUA_PORT}"),
+            // The simulator listens on 127.0.0.1 unless told otherwise, and the OPC UA client
+            // dials only the first address a name resolves to (`::1` for `localhost` on macOS).
+            endpoint: format!("opc.tcp://127.0.0.1:{OPCUA_PORT}"),
             policy: OpcuaSecurityPolicy::None,
             mode: OpcuaSecurityMode::None,
             auth: OpcuaAuth::Anonymous,

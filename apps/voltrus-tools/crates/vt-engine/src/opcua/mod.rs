@@ -108,6 +108,8 @@ pub(crate) async fn endpoints(url: String) -> Result<Vec<OpcuaEndpoint>, String>
     if vt_protocol::opcua_host_port(&url).is_none() {
         return Err(format!("“{url}” is not an opc.tcp:// address"));
     }
+    // The client's certificate, made before the wait starts: a new key can take longer than it.
+    OpcUaProtocolClient::prepare_certificate().await?;
     let found = tokio::time::timeout(
         DISCOVERY_WAIT,
         OpcUaProtocolClient::get_endpoints(url.trim()),
