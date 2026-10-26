@@ -19,7 +19,7 @@ use opcua::server::node_manager::memory::{
 };
 use opcua::server::{ANONYMOUS_USER_TOKEN_ID, ServerBuilder, ServerHandle, ServerUserToken};
 use opcua::types::{
-    Argument, DataEncoding, DataTypeId, DataValue, DateTime, EUInformation,
+    Argument, AttributeId, DataEncoding, DataTypeId, DataValue, DateTime, EUInformation,
     ExtensionObject, LocalizedText, MessageSecurityMode, NodeId, NumericRange, ObjectId,
     ObjectTypeId, Range, StatusCode, TimestampsToReturn, UAString, VariableTypeId, Variant,
 };
@@ -408,8 +408,10 @@ impl PlantServer {
 }
 
 impl PlantValues {
-    /// Set variables (key, JSON value converted to the given type) in one go; subscriptions are
-    /// notified.
+    /// Set variables (key, JSON value converted to the given type) in one go, then notify
+    /// subscriptions. The address space's lock is let go before the subscriptions are told: the
+    /// stack's own `set_values` notifies while holding it, which can deadlock against a session
+    /// that holds its subscription state and reads the address space.
     pub fn set_values(&self, values: &[(&str, &str, serde_json::Value)]) -> Result<()> {
         let now = DateTime::now();
         let mut updates = Vec::with_capacity(values.len());
@@ -426,12 +428,20 @@ impl PlantValues {
                 },
             ));
         }
-        self.node_manager
-            .set_values(
-                self.handle.subscriptions(),
-                updates.iter().map(|(id, value)| (id, None, value.clone())),
-            )
-            .map_err(|e| anyhow!("Set failed: {e}"))
+        {
+            let address_space = self.node_manager.address_space().clone();
+            let mut space = address_space.write();
+            for (id, value) in &updates {
+                match space.find_mut(id) {
+                    Some(NodeType::Variable(variable)) => variable.set_data_value(value.clone()),
+                    _ => return Err(anyhow!("No variable {id}")),
+                }
+            }
+        }
+        self.handle.subscriptions().notify_data_change(
+            updates.iter().map(|(id, value)| (value.clone(), id, AttributeId::Value)),
+        );
+        Ok(())
     }
 
     /// A variable's current value as a number (if it is one) and as text.
