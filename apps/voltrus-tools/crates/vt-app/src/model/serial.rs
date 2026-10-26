@@ -143,10 +143,9 @@ impl AppModel {
         self.serial_consoles
             .retain(|connection, _| wanted.contains(connection));
         for connection in wanted {
-            if !self.serial_consoles.contains_key(&connection) {
-                let console = SerialConsole::new(connection, window, cx);
-                self.serial_consoles.insert(connection, console);
-            }
+            self.serial_consoles
+                .entry(connection)
+                .or_insert_with(|| SerialConsole::new(connection, window, cx));
         }
     }
 
