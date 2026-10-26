@@ -211,11 +211,11 @@ impl Monitor<'_> {
                         return Ended::Closed;
                     }
                     Some(Control::SerialSend { bytes }) => {
-                        let sent = tokio::time::timeout(SEND_WAIT, async {
-                            stream.write_all(&bytes).await?;
-                            stream.flush().await
-                        })
-                        .await;
+                        // No flush: on a tty it is tcdrain, which blocks the
+                        // runtime thread (beyond any timeout) until the far
+                        // end reads. Written bytes are in the driver's queue.
+                        let sent =
+                            tokio::time::timeout(SEND_WAIT, stream.write_all(&bytes)).await;
                         match sent {
                             Ok(Ok(())) => {
                                 self.chunk(Direction::Tx, bytes.clone());
