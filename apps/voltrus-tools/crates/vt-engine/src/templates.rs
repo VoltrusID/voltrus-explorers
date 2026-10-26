@@ -8,7 +8,8 @@ use mt_bacnet::SimPointDef;
 use mt_modbus::SimDeviceProfile;
 use serde::Deserialize;
 use vt_protocol::{
-    Area, BacnetClientSpec, DataType, ModbusLink, ModbusMasterSpec, RegisterBlock, WordOrder,
+    Area, BacnetClientSpec, DataType, Dnp3MasterSpec, Dnp3PointKind, Dnp3PointName, ModbusLink,
+    ModbusMasterSpec, RegisterBlock, WordOrder,
 };
 
 const MODBUS: &str = include_str!("../templates/modbus.json");
@@ -123,6 +124,97 @@ pub fn master_for(
     }
 }
 
+const DNP3: &str = include_str!("../templates/dnp3.json");
+
+/// One point of a DNP3 plant and how its value moves.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Dnp3PlantPoint {
+    pub key: String,
+    pub label: String,
+    pub kind: Dnp3PointKind,
+    pub index: u16,
+    /// Starting value (0 or 1 for binary points).
+    pub base: f64,
+    #[serde(default)]
+    pub variance: f64,
+    #[serde(default)]
+    pub noise: f64,
+    #[serde(default = "default_period")]
+    pub period_ms: u64,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub unit: String,
+    /// An input that reports an output: a binary input the state of a
+    /// binary output, an analog input an analog output's setpoint.
+    #[serde(default)]
+    pub follows: Option<String>,
+    /// A binary point that must be on for this value to flow: while it is
+    /// off, an analog input reads 0 and a counter stops.
+    #[serde(default)]
+    pub gate: Option<String>,
+}
+
+fn default_period() -> u64 {
+    60_000
+}
+
+/// A plant the DNP3 outstation simulator plays.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Dnp3Plant {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub points: Vec<Dnp3PlantPoint>,
+}
+
+static DNP3_PLANTS: LazyLock<Vec<Dnp3Plant>> = LazyLock::new(|| match serde_json::from_str(DNP3) {
+    Ok(plants) => plants,
+    Err(error) => {
+        tracing::error!("built-in DNP3 plants are invalid: {error}");
+        Vec::new()
+    }
+});
+
+/// Every built-in DNP3 plant.
+pub fn dnp3() -> &'static [Dnp3Plant] {
+    &DNP3_PLANTS
+}
+
+pub fn find_dnp3(id: &str) -> Option<&'static Dnp3Plant> {
+    dnp3().iter().find(|plant| plant.id == id)
+}
+
+/// A master of a simulated DNP3 plant on this computer, its points named
+/// and given units the way the plant defines them.
+pub fn dnp3_master_for(
+    plant: &Dnp3Plant,
+    host: &str,
+    port: u16,
+    outstation_address: u16,
+    master_address: u16,
+) -> Dnp3MasterSpec {
+    Dnp3MasterSpec {
+        host: host.into(),
+        port,
+        master_address,
+        outstation_address,
+        points: plant
+            .points
+            .iter()
+            .map(|point| Dnp3PointName {
+                kind: point.kind,
+                index: point.index,
+                name: point.label.clone(),
+                unit: point.unit.clone(),
+            })
+            .collect(),
+        ..Dnp3MasterSpec::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +273,64 @@ mod tests {
                 "{} has nothing to command",
                 template.id
             );
+        }
+    }
+
+    #[test]
+    fn every_dnp3_plant_is_one_the_outstation_serves() {
+        let plants = dnp3();
+        assert!(plants.len() >= 3, "plants: {}", plants.len());
+        for plant in plants {
+            let mut seen = std::collections::HashSet::new();
+            for point in &plant.points {
+                // The outstation serves single-bit inputs and outputs, counters and analogs.
+                assert!(
+                    !matches!(
+                        point.kind,
+                        Dnp3PointKind::DoubleBitInput | Dnp3PointKind::FrozenCounter
+                    ),
+                    "{} {}",
+                    plant.id,
+                    point.key
+                );
+                assert!(
+                    seen.insert((point.kind, point.index)),
+                    "{} {}",
+                    plant.id,
+                    point.key
+                );
+                let key_of = |key: &str| plant.points.iter().find(|other| other.key == key);
+                if let Some(follows) = &point.follows {
+                    let source = key_of(follows).expect("follows a point of the plant");
+                    assert!(source.kind.writable(), "{} follows an output", point.key);
+                    assert_eq!(
+                        source.kind.is_binary(),
+                        point.kind.is_binary(),
+                        "{}",
+                        point.key
+                    );
+                }
+                if let Some(gate) = &point.gate {
+                    assert!(key_of(gate).expect("gated by a point").kind.is_binary());
+                }
+            }
+            assert!(
+                plant
+                    .points
+                    .iter()
+                    .any(|point| point.kind == Dnp3PointKind::BinaryOutput),
+                "{} has nothing to command",
+                plant.id
+            );
+            // Controls address one-octet indices.
+            assert!(
+                plant
+                    .points
+                    .iter()
+                    .all(|point| point.index <= vt_protocol::DNP3_MAX_CONTROL_INDEX)
+            );
+            let master = dnp3_master_for(plant, "127.0.0.1", 20000, 10, 1);
+            assert_eq!(master.points.len(), plant.points.len());
         }
     }
 }

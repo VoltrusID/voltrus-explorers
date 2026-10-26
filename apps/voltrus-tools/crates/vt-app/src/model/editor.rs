@@ -12,9 +12,11 @@ use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 
+mod dnp3;
 mod mqtt;
 mod serial;
 
+pub use dnp3::{Dnp3Fields, NEW_MASTER_NAME, NEW_OUTSTATION_NAME};
 pub use mqtt::MqttFields;
 pub use serial::SerialFields;
 
@@ -26,6 +28,8 @@ pub enum EditorKind {
     MqttBroker,
     BacnetClient,
     BacnetDevice,
+    Dnp3Master,
+    Dnp3Outstation,
     SerialMonitor,
     SerialDevice,
 }
@@ -41,6 +45,8 @@ impl EditorKind {
             (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+            (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
+            (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
             (Protocol::Serial, Role::Client) => Self::SerialMonitor,
             (Protocol::Serial, Role::Simulator) => Self::SerialDevice,
         })
@@ -55,6 +61,8 @@ impl EditorKind {
             SessionSpec::MqttBroker(_) => Self::MqttBroker,
             SessionSpec::BacnetClient(_) => Self::BacnetClient,
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+            SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
+            SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
             SessionSpec::SerialMonitor(_) => Self::SerialMonitor,
             SessionSpec::SerialDevice(_) => Self::SerialDevice,
         }
@@ -98,6 +106,7 @@ pub struct Editor {
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
+    pub dnp3: Dnp3Fields,
     pub serial: SerialFields,
 }
 
@@ -127,6 +136,7 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let serial = SerialFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
@@ -158,6 +168,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::Dnp3Master(_) | SessionSpec::Dnp3Outstation(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             Some((_, name, SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_))) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -171,6 +186,8 @@ impl Editor {
                     EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
+                    EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
+                    EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
                     EditorKind::SerialMonitor => super::serial::NEW_MONITOR_NAME.to_owned(),
                     EditorKind::SerialDevice => super::serial::NEW_SIMULATOR_NAME.to_owned(),
                 },
@@ -236,6 +253,7 @@ impl Editor {
             error: None,
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
+            dnp3,
             serial,
         };
         for block in master.blocks {
@@ -259,6 +277,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.dnp3.inputs() {
             editor.watch(&field, window, cx);
         }
         for field in editor.serial.inputs() {
@@ -393,6 +414,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
+            EditorKind::Dnp3Master => self
+                .dnp3
+                .master_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Master(spec))),
+            EditorKind::Dnp3Outstation => self
+                .dnp3
+                .outstation_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::Dnp3Outstation(spec))),
             EditorKind::SerialMonitor => self
                 .serial
                 .monitor_form(Self::text(&self.name, cx), cx)

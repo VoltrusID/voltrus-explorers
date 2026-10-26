@@ -245,6 +245,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::ModbusSlave(spec) => spec.template.is_some(),
         SessionSpec::MqttBroker(spec) => spec.template.is_some(),
         SessionSpec::BacnetDevice(_) => true,
+        SessionSpec::Dnp3Outstation(_) => true,
         SessionSpec::SerialDevice(_) => true,
         _ => false,
     };
@@ -285,6 +286,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BacnetClient(_), _) => {
                     "Connect to read the device's objects. Values arrive as changes (COV) or polls."
+                }
+                (SessionSpec::Dnp3Outstation(_), _) => {
+                    "Start it to play the outstation on this computer. Any DNP3 master can poll and command it, including this app."
+                }
+                (SessionSpec::Dnp3Master(_), _) => {
+                    "Connect to poll the outstation. Every point it reports appears here, with its flags and events."
                 }
                 (SessionSpec::SerialDevice(_), _) => {
                     "Start it to print an instrument's values on a virtual serial port. Any serial monitor can open it, including this app."
