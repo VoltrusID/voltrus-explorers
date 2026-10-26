@@ -115,6 +115,13 @@ fn format_property_value(name: &str, value: Option<&Variant>) -> serde_json::Val
                     "namespace_uri": eu.namespace_uri.as_ref(),
                     "description": eu.description.text.as_ref(),
                 })
+            } else if let Some(argument) = ext.inner_as::<opcua::types::Argument>() {
+                // Input/OutputArguments: `Name: Type`.
+                serde_json::json!(format!(
+                    "{}: {}",
+                    argument.name.as_ref(),
+                    explore::type_name(&argument.data_type)
+                ))
             } else {
                 variant_to_json(v)
             }

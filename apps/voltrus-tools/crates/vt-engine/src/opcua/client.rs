@@ -915,6 +915,14 @@ fn attribute_text(name: &str, value: &serde_json::Value) -> String {
         }
         (_, serde_json::Value::Null) => String::new(),
         (_, serde_json::Value::String(text)) => text.clone(),
+        // Lists of text (a method's arguments) read as a list.
+        (_, serde_json::Value::Array(items)) if items.iter().all(serde_json::Value::is_string) => {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
         (_, other) => other.to_string(),
     }
 }
@@ -942,6 +950,13 @@ mod tests {
             "Level"
         );
         assert_eq!(attribute_text("Value", &serde_json::Value::Null), "");
+        assert_eq!(
+            attribute_text(
+                "InputArguments",
+                &serde_json::json!(["Recipe: String", "Quantity: Double"])
+            ),
+            "Recipe: String, Quantity: Double"
+        );
     }
 
     #[test]
