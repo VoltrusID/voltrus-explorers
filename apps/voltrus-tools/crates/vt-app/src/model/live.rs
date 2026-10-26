@@ -57,6 +57,8 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// DNP3: what the session last reported about its outstation.
+    pub dnp3: super::dnp3::Dnp3Live,
     /// BLE sessions: each point's characteristic (service, properties,
     /// notifications, decoder); empty for other protocols.
     pub ble: Vec<vt_protocol::BleCharacteristicInfo>,
@@ -84,6 +86,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            dnp3: super::dnp3::Dnp3Live::default(),
             ble: Vec::new(),
         }
     }
@@ -100,6 +103,7 @@ impl Live {
         self.write_result = None;
         self.publish_result = None;
         self.locked.clear();
+        self.dnp3 = super::dnp3::Dnp3Live::default();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
             for history in &self.histories {
@@ -210,6 +214,13 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            EventKind::Dnp3Iin(iin) => self.dnp3.iin = Some(iin),
+            EventKind::Dnp3Done { action, result } => {
+                if self.dnp3.busy == Some(action) {
+                    self.dnp3.busy = None;
+                }
+                self.dnp3.last = Some((action, result));
+            }
             // The BLE scan's answer goes to the editor too.
             EventKind::BleDevices(_) => {}
             EventKind::BleGatt(characteristics) => self.ble = characteristics,

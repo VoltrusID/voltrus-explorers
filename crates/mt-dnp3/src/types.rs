@@ -138,6 +138,14 @@ pub struct OutstationEvent {
     pub timestamp: u64,
     /// Monotonic event sequence number.
     pub sequence: u32,
+    /// The point's flags octet when the event happened (bit 0 ONLINE); the state of a binary
+    /// point is in `value`, not here.
+    #[serde(default = "default_event_flags")]
+    pub flags: u8,
+}
+
+fn default_event_flags() -> u8 {
+    0x01
 }
 
 /// A simulation point definition for DNP3.

@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
-    Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId, SessionState, Stats,
-    TrafficFrame, ValueFrame,
+    Dnp3Action, Dnp3Iin, Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId,
+    SessionState, Stats, TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -73,6 +73,14 @@ impl Emitter {
 
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
+    }
+
+    pub(crate) fn dnp3_iin(&self, iin: Dnp3Iin) {
+        self.emit(EventKind::Dnp3Iin(iin));
+    }
+
+    pub(crate) fn dnp3_done(&self, action: Dnp3Action, result: Result<String, String>) {
+        self.emit(EventKind::Dnp3Done { action, result });
     }
 
     pub(crate) fn ble_gatt(&self, characteristics: Vec<vt_protocol::BleCharacteristicInfo>) {

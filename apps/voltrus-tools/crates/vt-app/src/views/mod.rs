@@ -6,6 +6,7 @@
 
 mod ble;
 pub mod cached;
+mod dnp3;
 mod editor;
 pub mod inspector;
 mod log;
