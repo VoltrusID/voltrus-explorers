@@ -658,6 +658,24 @@ impl OpcUaProtocolClient {
             .collect())
     }
 
+    /// Read the current Value of each node, as data changes would report it.
+    pub async fn read_values(&self, node_ids: &[String]) -> Result<Vec<UaValue>, String> {
+        let session = self.session()?;
+        let ids = node_ids.iter().map(|id| node(id)).collect::<Result<Vec<_>, _>>()?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let reads: Vec<ReadValueId> = ids
+            .iter()
+            .map(|id| ReadValueId { node_id: id.clone(), attribute_id: AttributeId::Value as u32, ..Default::default() })
+            .collect();
+        let values = session
+            .read(&reads, TimestampsToReturn::Both, 0.0)
+            .await
+            .map_err(|e| format!("Read failed: {e}"))?;
+        Ok(ids.iter().zip(&values).map(|(id, value)| ua_value(id.to_string(), value)).collect())
+    }
+
     /// Write `value` (JSON, converted to `data_type`) to a variable's Value.
     pub async fn write_value(&self, node_id: &str, data_type: &str, value: &serde_json::Value) -> Result<(), String> {
         let session = self.session()?;

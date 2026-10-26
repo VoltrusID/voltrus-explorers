@@ -32,6 +32,8 @@ const CONNECT_WAIT: Duration = Duration::from_secs(15);
 /// an error, so a stalled server never freezes the session.
 const REQUEST_WAIT: Duration = Duration::from_secs(10);
 const MAX_BACKOFF: Duration = Duration::from_secs(10);
+/// A subscription silent this long is backed up by a direct read of the values.
+const QUIET: Duration = Duration::from_secs(3);
 /// Fastest publishing interval the engine asks for.
 pub(crate) const MIN_PUBLISHING_MS: u32 = 50;
 
@@ -174,10 +176,14 @@ pub(crate) async fn run(
         let mut health = tokio::time::interval(HEALTH);
         health.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut changed = false;
+        // When the subscription has been quiet, values are read directly now and then, so a
+        // change the subscription did not deliver still shows.
+        let mut last_heard = Instant::now();
         loop {
             tokio::select! {
                 Some(value) = value_rx.recv() => {
                     stats.frames += 1;
+                    last_heard = Instant::now();
                     if let Some(&index) = link.by_node.get(&value.node_id) {
                         states[index] = PointState {
                             number: value.number,
@@ -226,6 +232,28 @@ pub(crate) async fn run(
                             break 'session;
                         }
                         continue 'session;
+                    }
+                    if !link.points.is_empty() && last_heard.elapsed() >= QUIET {
+                        last_heard = Instant::now();
+                        let ids: Vec<String> = link.points.iter().map(|point| point.node_id.clone()).collect();
+                        if let Ok(Ok(read)) = tokio::time::timeout(REQUEST_WAIT, link.client.read_values(&ids)).await {
+                            for (index, value) in read.into_iter().enumerate() {
+                                let fresh = PointState {
+                                    number: value.number,
+                                    text: value.text,
+                                    quality: Some(value.quality),
+                                    status: value.status,
+                                    source_ms: value.source_ms,
+                                };
+                                if let Some(state) = states.get_mut(index)
+                                    && (state.number != fresh.number || state.text != fresh.text || state.quality != fresh.quality)
+                                {
+                                    *state = fresh;
+                                    dirty[index] = true;
+                                    changed = true;
+                                }
+                            }
+                        }
                     }
                 }
                 command = control.recv() => match command {
