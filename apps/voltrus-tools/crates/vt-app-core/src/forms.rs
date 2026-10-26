@@ -13,6 +13,11 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod serial;
+
+pub use serial::{
+    BAUD_PRESETS, MacroField, MacroForm, ParserKind, SerialDeviceForm, SerialMonitorForm,
+};
 
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +53,16 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// Serial: line settings, the line parser, a macro row and which of its
+    /// fields, and the virtual device's interval, link name and instrument.
+    DataBits,
+    StopBits,
+    Delimiter,
+    Pattern,
+    Macro(usize, MacroField),
+    IntervalMs,
+    Alias,
+    Template,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

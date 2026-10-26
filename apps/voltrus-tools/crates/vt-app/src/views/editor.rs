@@ -17,6 +17,7 @@ use crate::model::{AppModel, Overlay};
 
 mod bacnet;
 mod mqtt;
+mod serial;
 
 /// A click handler that changes the open editor.
 pub(super) fn on_edit(
@@ -51,6 +52,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::SerialMonitor, false) => "New serial connection",
+        (EditorKind::SerialMonitor, true) => "Edit serial connection",
+        (EditorKind::SerialDevice, false) => "New serial device simulator",
+        (EditorKind::SerialDevice, true) => "Edit serial device simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -67,6 +72,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
         }
+        EditorKind::SerialMonitor => {
+            "Open a port to watch and talk to it; lines with values become points to trend."
+        }
+        EditorKind::SerialDevice => {
+            "Play an instrument on a virtual serial port that prints its values and takes commands."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -75,6 +86,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::SerialMonitor => serial::monitor(editor, cx),
+        EditorKind::SerialDevice => serial::device(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -84,6 +97,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::SerialMonitor, false) => "Save and connect",
+        (EditorKind::SerialDevice, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 
@@ -281,6 +296,12 @@ fn master(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             .flex()
             .flex_col()
             .gap(SPACE_6)
+            // The port picker the serial monitor uses, listing ports as they come and go.
+            .child(serial::port_picker(
+                editor,
+                editor.serial_port.read(cx).value().to_owned(),
+                cx,
+            ))
             .child(
                 row()
                     .child(div().flex_1().child(field(

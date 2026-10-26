@@ -9,6 +9,7 @@ mod bacnet;
 mod emit;
 mod modbus;
 mod mqtt;
+mod serial;
 pub mod templates;
 
 use std::collections::HashMap;
@@ -74,6 +75,12 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::MqttBroker(_) => {
             u64::try_from(mqtt::simulator::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
         }
+        SessionSpec::SerialMonitor(_) => {
+            u64::try_from(serial::monitor::SAMPLE.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::SerialDevice(_) => {
+            u64::try_from(serial::device::REPORT_TICK.as_millis()).unwrap_or(u64::MAX)
+        }
     }
 }
 
@@ -100,6 +107,14 @@ pub(crate) enum Control {
         point: u32,
     },
     Close,
+    /// Serial: write raw bytes to the port.
+    SerialSend {
+        bytes: Vec<u8>,
+    },
+    /// Serial: log every chunk to a file, or stop.
+    SerialLog {
+        path: Option<String>,
+    },
 }
 
 /// Longest an Open waits for closing sessions to free its port.
@@ -162,6 +177,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::ModbusMaster(_)
                     | SessionSpec::MqttClient(_)
                     | SessionSpec::BacnetClient(_) => None,
+                    // A virtual serial device's port is a fresh pty each run.
+                    SessionSpec::SerialMonitor(_) | SessionSpec::SerialDevice(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -230,6 +247,24 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                         .await;
                 });
             }
+            Command::SerialSend { session, bytes } => {
+                forward(&sessions, session, Control::SerialSend { bytes });
+            }
+            Command::SerialLog { session, path } => {
+                forward(&sessions, session, Control::SerialLog { path });
+            }
+            Command::ListSerialPorts { session } => {
+                let events = events.clone();
+                tokio::spawn(async move {
+                    let found = serial::list_ports().await;
+                    let _ = events
+                        .send(Event {
+                            session,
+                            kind: EventKind::SerialPorts(found),
+                        })
+                        .await;
+                });
+            }
             Command::Shutdown => break,
         }
     }
@@ -252,5 +287,7 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MqttBroker(spec) => mqtt::simulator::run(spec, control, &out).await,
         SessionSpec::BacnetClient(spec) => bacnet::client::run(spec, control, &out).await,
         SessionSpec::BacnetDevice(spec) => bacnet::device::run(spec, control, &out).await,
+        SessionSpec::SerialMonitor(spec) => serial::monitor::run(spec, control, &out).await,
+        SessionSpec::SerialDevice(spec) => serial::device::run(spec, control, &out).await,
     }
 }

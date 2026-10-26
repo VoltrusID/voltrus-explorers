@@ -14,12 +14,15 @@ mt-modbus = { path = "../../../../crates/mt-modbus" }
 mt-protocol = { path = "../../../../crates/mt-protocol" }
 mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
+mt-serial = { path = "../../../../crates/mt-serial" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
 # Sparkplug B payloads. Same versions as mt-mqtt uses.
 bytes = "1"
 prost = "0.14"
 rumqttc = "0.24"
+# Serial monitors parse lines with a user's pattern.
+regex = "1"
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true

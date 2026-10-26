@@ -10,6 +10,8 @@ use vt_protocol::{
 };
 use vt_ui::chart::History;
 
+use super::terminal::Terminal;
+
 /// Trend history kept per point, in time: the longest trend window.
 const HISTORY_SPAN_MS: u64 = 15 * 60 * 1000;
 /// Samples kept per point at least (30 minutes at a 1 s poll) and at most
@@ -57,6 +59,8 @@ pub struct Live {
     pub publish_result: Option<(String, Result<(), String>)>,
     /// Samples each point's history keeps; see [`history_capacity`].
     history_capacity: usize,
+    /// Serial sessions: the bytes that crossed the port, sends and logging.
+    pub terminal: Terminal,
 }
 
 impl Default for Live {
@@ -81,6 +85,7 @@ impl Default for Live {
             payloads: Vec::new(),
             publish_result: None,
             history_capacity: HISTORY_MIN,
+            terminal: Terminal::new(),
         }
     }
 }
@@ -95,6 +100,9 @@ impl Live {
         self.stats = Stats::default();
         self.write_result = None;
         self.publish_result = None;
+        // A new run is not logging until asked to.
+        self.terminal.logging = None;
+        self.terminal.sent = None;
         self.locked.clear();
         let capacity = history_capacity(sample_ms);
         if capacity == self.history_capacity {
@@ -206,6 +214,11 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            EventKind::SerialData(chunks) => self.terminal.push(&chunks),
+            EventKind::SerialSent(result) => self.terminal.sent = Some(result),
+            EventKind::SerialLogging(result) => self.terminal.set_logging(result),
+            // The port picker's answer: the editor takes it, not a session.
+            EventKind::SerialPorts(_) => {}
         }
     }
 

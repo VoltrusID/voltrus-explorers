@@ -106,6 +106,18 @@ sends `Command::DiscoverBacnet` under a fresh id from the session counter, and
 the engine answers with one `EventKind::BacnetDevices` under that id, which
 the app hands to the open editor instead of a session.
 
+The serial port picker works the same way: it sends `Command::ListSerialPorts`
+under a request id every two seconds while the editor is open (so a device
+plugged in shows up), and `EventKind::SerialPorts` comes back to the editor.
+Serial sessions carry raw bytes as `SerialData` chunks; the app keeps them as
+ready-to-draw text and hex rows (`vt-app/src/model/terminal.rs`), and the
+terminal (`vt-app/src/views/terminal.rs`) replaces the traffic view for serial
+panes. Sends, macros and logging are `Command::SerialSend` and
+`Command::SerialLog`; the app encodes text or hex into bytes, so the engine
+writes exactly what it is given. The serial device simulator prints on a
+pseudo-terminal from `mt-serial` (`pty::VirtualPort`) and links it into the
+temporary folder under a stable name, which is what its monitors open.
+
 ## Design system
 
 `vt-ui::theme::Theme` derives every token (surfaces, borders, accent, status

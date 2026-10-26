@@ -137,8 +137,8 @@ pub(crate) async fn run(
                 Some(Control::Relinquish { point }) => {
                     out.written(point, Err("Simulators release a point with Release".into()));
                 }
-                // Publishing is for message protocols.
-                Some(Control::Publish { .. }) => {}
+                // Publishing and other protocols' controls don't apply to a device.
+                Some(_) => {}
             },
         }
     }

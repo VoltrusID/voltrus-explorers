@@ -9,6 +9,8 @@ pub mod editor;
 pub mod live;
 pub mod palette;
 pub mod publish;
+pub mod serial;
+pub mod terminal;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -36,6 +38,7 @@ use editor::{Editor, EditorKind};
 use live::Live;
 use palette::{Command, Mode, Palette};
 use publish::PublishForm;
+use serial::SerialConsole;
 
 use crate::views::{self, cached::CachedView};
 
@@ -129,6 +132,8 @@ pub struct AppModel {
     pub write_input: Entity<TextInput>,
     /// The inspector's publish form (message protocols).
     pub publish: PublishForm,
+    /// Each open serial pane's send bar.
+    pub serial_consoles: HashMap<ConnectionId, SerialConsole>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -224,6 +229,7 @@ impl AppModel {
             },
             write_input,
             publish: PublishForm::new(window, cx),
+            serial_consoles: HashMap::new(),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
         };
@@ -244,6 +250,14 @@ impl AppModel {
                 kind: vt_protocol::EventKind::BacnetDevices(found),
             } => {
                 self.bacnet_devices_found(session, found);
+                return;
+            }
+            // The port picker's list runs under a request id too.
+            Event {
+                session,
+                kind: vt_protocol::EventKind::SerialPorts(found),
+            } => {
+                self.serial_ports_found(session, found);
                 return;
             }
             event => event,
@@ -531,6 +545,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Serial => {
+                self.start_serial_demo(cx);
+            }
         }
     }
 
@@ -750,6 +767,7 @@ impl AppModel {
             .map_or(kind, |(_, _, spec)| EditorKind::for_spec(spec));
         let discover = kind == EditorKind::BacnetClient && existing.is_none();
         self.overlay = Overlay::Editor(Box::new(Editor::new(kind, existing, window, cx)));
+        self.prepare_serial_editor(cx);
         // A new BACnet client starts by looking for devices.
         if discover {
             self.discover_bacnet(cx);
@@ -828,6 +846,12 @@ impl AppModel {
             && let SessionSpec::BacnetDevice(device) = &spec
         {
             self.add_bacnet_client(&name, device, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::SerialDevice(device) = &spec
+        {
+            self.add_serial_monitor(&name, device, cx);
         }
         self.workspace.focus(
             self.workspace
@@ -1001,6 +1025,18 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewSerialMonitor => {
+                self.open_editor(EditorKind::SerialMonitor, None, window, cx)
+            }
+            Command::NewSerialDevice => {
+                self.open_editor(EditorKind::SerialDevice, None, window, cx)
+            }
+            Command::SerialDemo => {
+                self.start_serial_demo(cx);
+            }
+            Command::SerialMacro(connection, index) => {
+                self.run_serial_macro(connection, index, cx);
+            }
         }
     }
 

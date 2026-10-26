@@ -1,8 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use vt_protocol::{
-    Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SessionId, SessionState, Stats,
-    TrafficFrame, ValueFrame,
+    Event, EventKind, LogEntry, LogLevel, PointInfo, PointText, SerialChunk, SessionId,
+    SessionState, Stats, TrafficFrame, ValueFrame,
 };
 
 /// Reports one session's events to the app.
@@ -73,6 +73,20 @@ impl Emitter {
 
     pub(crate) fn published(&self, topic: String, result: Result<(), String>) {
         self.emit(EventKind::Published { topic, result });
+    }
+
+    pub(crate) fn serial_data(&self, chunks: Vec<SerialChunk>) {
+        if !chunks.is_empty() {
+            self.emit(EventKind::SerialData(chunks));
+        }
+    }
+
+    pub(crate) fn serial_sent(&self, result: Result<u32, String>) {
+        self.emit(EventKind::SerialSent(result));
+    }
+
+    pub(crate) fn serial_logging(&self, result: Result<Option<String>, String>) {
+        self.emit(EventKind::SerialLogging(result));
     }
 }
 

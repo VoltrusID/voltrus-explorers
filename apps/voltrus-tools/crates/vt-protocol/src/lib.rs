@@ -9,6 +9,7 @@ mod bacnet;
 mod message;
 mod modbus;
 mod mqtt;
+mod serial;
 mod value;
 
 pub use bacnet::{
@@ -24,6 +25,11 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use serial::{
+    FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
+    SerialMonitorSpec, SerialPortInfo, encode_send, parse_hex, short_port, unescape,
+    virtual_port_path,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
 
@@ -45,6 +51,10 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Watch and talk to a serial port; parse its lines into points.
+    SerialMonitor(SerialMonitorSpec),
+    /// Play an instrument on a virtual serial port.
+    SerialDevice(SerialDeviceSpec),
 }
 
 impl SessionSpec {
@@ -53,6 +63,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
         }
     }
 
@@ -60,6 +71,8 @@ impl SessionSpec {
         match self {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::SerialMonitor(_) => Role::Client,
+            Self::SerialDevice(_) => Role::Simulator,
         }
     }
 
@@ -92,6 +105,15 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::SerialMonitor(spec) => format!(
+                "{} · {} {}{}{}",
+                short_port(&spec.link.port),
+                spec.link.baud,
+                spec.link.data_bits,
+                spec.link.parity.letter(),
+                spec.link.stop_bits
+            ),
+            Self::SerialDevice(spec) => format!("{} · {}", spec.alias, spec.template),
         }
     }
 
@@ -104,6 +126,8 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::SerialMonitor(spec) => short_port(&spec.link.port).to_owned(),
+            Self::SerialDevice(spec) => spec.alias.clone(),
         }
     }
 }
@@ -124,16 +148,23 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Serial,
 }
 
 impl Protocol {
-    pub const ALL: &'static [Protocol] = &[Protocol::Modbus, Protocol::Mqtt, Protocol::Bacnet];
+    pub const ALL: &'static [Protocol] = &[
+        Protocol::Modbus,
+        Protocol::Mqtt,
+        Protocol::Bacnet,
+        Protocol::Serial,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Serial => "Serial",
         }
     }
 
@@ -143,6 +174,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Serial => "SE",
         }
     }
 
@@ -154,6 +186,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Serial => {
+                "Port picker, text and hex terminal, macros, logging, lines parsed into trends, and a virtual device"
             }
         }
     }
