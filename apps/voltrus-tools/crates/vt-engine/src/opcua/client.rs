@@ -182,6 +182,7 @@ pub(crate) async fn run(
         loop {
             tokio::select! {
                 Some(value) = value_rx.recv() => {
+                    tracing::trace!(node = %value.node_id, "data change");
                     stats.frames += 1;
                     last_heard = Instant::now();
                     if let Some(&index) = link.by_node.get(&value.node_id) {
@@ -216,6 +217,7 @@ pub(crate) async fn run(
                     out.stats(stats);
                 }
                 _ = health.tick() => {
+                    tracing::trace!("health tick");
                     if !link.client.is_alive() {
                         let error = format!("Lost the session with {}", spec.endpoint);
                         stats.errors += 1;
@@ -234,6 +236,7 @@ pub(crate) async fn run(
                         continue 'session;
                     }
                     if !link.points.is_empty() && last_heard.elapsed() >= QUIET {
+                        tracing::trace!("reading the values directly");
                         last_heard = Instant::now();
                         let ids: Vec<String> = link.points.iter().map(|point| point.node_id.clone()).collect();
                         let read = match tokio::time::timeout(REQUEST_WAIT, link.client.read_values(&ids)).await {
@@ -261,6 +264,7 @@ pub(crate) async fn run(
                                 continue 'session;
                             }
                         };
+                        tracing::trace!(count = read.len(), "read the values directly");
                         let before = changed;
                         {
                             for (index, value) in read.into_iter().enumerate() {
@@ -304,12 +308,14 @@ pub(crate) async fn run(
                         out.stats(stats);
                     }
                     Some(Control::Opcua(request)) => {
+                        tracing::trace!(?request, "request");
                         let asked = request.clone();
                         let handled = tokio::time::timeout(
                             REQUEST_WAIT,
                             handle(&mut link, &spec, &mut wanted, request, out, &mut stats),
                         )
                         .await;
+                        tracing::trace!(answered = handled.is_ok(), "request done");
                         let added = handled.unwrap_or_else(|_| {
                             stats.errors += 1;
                             out.log(LogLevel::Warn, format!("No answer within 10 s to {asked:?}"));

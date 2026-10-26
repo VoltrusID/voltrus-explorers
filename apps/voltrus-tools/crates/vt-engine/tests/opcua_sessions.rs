@@ -20,6 +20,14 @@ fn pki_root() -> PathBuf {
     PKI.call_once(|| {
         let _ = std::fs::remove_dir_all(&root);
         vt_engine::opcua::set_pki_root(root.clone());
+        // The stack's and the session's trace, shown only when a test fails.
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(
+                "opcua_client=debug,opcua_core=info,opcua_server=info,vt_engine=trace",
+            ))
+            .with_test_writer()
+            .with_thread_names(true)
+            .try_init();
     });
     root
 }

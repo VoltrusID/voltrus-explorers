@@ -40,5 +40,9 @@ tracing.workspace = true
 # Where the OPC UA certificates live: under the app's data directory.
 dirs = "6"
 
+[dev-dependencies]
+# The OPC UA session test prints the stack's trace when a step times out.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
 [lints]
 workspace = true
