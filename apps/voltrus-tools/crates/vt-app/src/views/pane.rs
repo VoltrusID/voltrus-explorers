@@ -339,6 +339,9 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 (SessionSpec::NatsClient(_), _) => {
                     "Connect to subscribe. Subjects become points as their messages arrive; publish, request and browse JetStream from the inspector."
                 }
+                (SessionSpec::BleClient(_), _) => {
+                    "Connect to find the peripheral and browse its GATT services. Every characteristic becomes a point: read, written or pushed by notifications."
+                }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
                 }

@@ -73,6 +73,9 @@ pub struct Live {
     pub s7_plc: Option<Result<vt_protocol::S7PlcReport, String>>,
     /// S7 clients: a read of the CPU is on its way.
     pub s7_plc_reading: bool,
+    /// BLE sessions: each point's characteristic (service, properties,
+    /// notifications, decoder); empty for other protocols.
+    pub ble: Vec<vt_protocol::BleCharacteristicInfo>,
 }
 
 impl Default for Live {
@@ -104,6 +107,7 @@ impl Default for Live {
             terminal: Terminal::new(),
             s7_plc: None,
             s7_plc_reading: false,
+            ble: Vec::new(),
         }
     }
 }
@@ -267,7 +271,17 @@ impl Live {
             // NATS replies and JetStream answers: the inspector's panel
             // takes them (`AppModel::nats_event`).
             EventKind::Nats(_) => {}
+            // The BLE scan's answer goes to the editor too.
+            EventKind::BleDevices(_) => {}
+            EventKind::BleGatt(characteristics) => self.ble = characteristics,
         }
+    }
+
+    /// The BLE characteristic behind `point`.
+    pub fn ble_characteristic(&self, point: u32) -> Option<&vt_protocol::BleCharacteristicInfo> {
+        self.ble
+            .iter()
+            .find(|characteristic| characteristic.point == point)
     }
 
     /// The points drawn on the trend.

@@ -11,6 +11,7 @@ use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
+use super::ble::BleFields;
 use super::opcua::OpcuaFields;
 
 mod dnp3;
@@ -50,6 +51,7 @@ pub enum EditorKind {
     S7Server,
     NatsClient,
     NatsServer,
+    BleClient,
 }
 
 impl EditorKind {
@@ -75,6 +77,9 @@ impl EditorKind {
             (Protocol::S7, Role::Simulator) => Self::S7Server,
             (Protocol::Nats, Role::Client) => Self::NatsClient,
             (Protocol::Nats, Role::Simulator) => Self::NatsServer,
+            (Protocol::Ble, Role::Client) => Self::BleClient,
+            // The demo's peripherals are simulated behind the adapter.
+            (Protocol::Ble, Role::Simulator) => return None,
         })
     }
 
@@ -99,6 +104,7 @@ impl EditorKind {
             SessionSpec::S7Server(_) => Self::S7Server,
             SessionSpec::NatsClient(_) => Self::NatsClient,
             SessionSpec::NatsServer(_) => Self::NatsServer,
+            SessionSpec::BleClient(_) => Self::BleClient,
         }
     }
 }
@@ -146,6 +152,7 @@ pub struct Editor {
     pub serial: SerialFields,
     pub s7: S7Fields,
     pub nats: NatsFields,
+    pub ble: BleFields,
 }
 
 fn input(
@@ -187,6 +194,7 @@ impl Editor {
             Some(SessionSpec::NatsServer(spec)) => spec.clone(),
             _ => vt_protocol::NatsServerSpec::default(),
         };
+        let ble = BleFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -247,6 +255,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::BleClient(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             None => (
                 match kind {
                     EditorKind::Master => "Modbus device".to_owned(),
@@ -267,6 +280,7 @@ impl Editor {
                     EditorKind::S7Server => NEW_S7_SERVER_NAME.to_owned(),
                     EditorKind::NatsClient => "NATS server".to_owned(),
                     EditorKind::NatsServer => "NATS simulator".to_owned(),
+                    EditorKind::BleClient => super::ble::NEW_CLIENT_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -336,6 +350,7 @@ impl Editor {
             serial,
             s7,
             nats: NatsFields::new(&nats_client, &nats_server, cx),
+            ble,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -377,6 +392,9 @@ impl Editor {
         }
         editor.watch_s7_addresses(window, cx);
         for field in editor.nats.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.ble.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -568,6 +586,11 @@ impl Editor {
                 .server_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::NatsServer(spec))),
+            EditorKind::BleClient => self
+                .ble
+                .form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::BleClient(spec))),
         }
     }
 }

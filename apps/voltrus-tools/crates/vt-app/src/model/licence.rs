@@ -641,11 +641,12 @@ mod tests {
         assert!(gated.send(EngineCommand::Shutdown));
     }
 
-    /// A session of `protocol` in `role`. No wildcard: a new protocol doesn't
+    /// A session of `protocol` in `role`, or `None` where the protocol has no
+    /// such role (BLE has no simulator). No wildcard: a new protocol doesn't
     /// compile here until it has its own arm, so the gate test below covers
     /// it.
-    fn spec_for(protocol: Protocol, role: Role) -> SessionSpec {
-        match (protocol, role) {
+    fn spec_for(protocol: Protocol, role: Role) -> Option<SessionSpec> {
+        Some(match (protocol, role) {
             (Protocol::Modbus, Role::Client) => SessionSpec::ModbusMaster(Default::default()),
             (Protocol::Modbus, Role::Simulator) => SessionSpec::ModbusSlave(Default::default()),
             (Protocol::Mqtt, Role::Client) => SessionSpec::MqttClient(Default::default()),
@@ -664,7 +665,10 @@ mod tests {
             (Protocol::Opcua, Role::Simulator) => SessionSpec::OpcuaServer(Default::default()),
             (Protocol::Nats, Role::Client) => SessionSpec::NatsClient(Default::default()),
             (Protocol::Nats, Role::Simulator) => SessionSpec::NatsServer(Default::default()),
-        }
+            (Protocol::Ble, Role::Client) => SessionSpec::BleClient(Default::default()),
+            // The BLE demo's peripherals are simulated behind its adapter.
+            (Protocol::Ble, Role::Simulator) => return None,
+        })
     }
 
     #[test]
@@ -673,7 +677,9 @@ mod tests {
         let unlocked = Gate::new(Licence::Unlocked.can_operate());
         for &protocol in Protocol::ALL {
             for role in [Role::Client, Role::Simulator] {
-                let spec = spec_for(protocol, role);
+                let Some(spec) = spec_for(protocol, role) else {
+                    continue;
+                };
                 assert_eq!((spec.protocol(), spec.role()), (protocol, role));
                 let open = EngineCommand::Open {
                     session: SessionId(1),
@@ -725,6 +731,29 @@ mod tests {
             EngineCommand::Nats {
                 session,
                 request: vt_protocol::NatsRequest::Streams,
+            },
+            EngineCommand::ScanBle {
+                session,
+                spec: vt_protocol::BleScanSpec {
+                    adapter: vt_protocol::BleAdapter::Simulated,
+                    duration_ms: 1000,
+                },
+            },
+            EngineCommand::Ble {
+                session,
+                request: vt_protocol::BleRequest::Read { point: 0 },
+            },
+            EngineCommand::Opcua {
+                session,
+                request: vt_protocol::OpcuaRequest::Browse {
+                    node_id: "Objects".into(),
+                },
+            },
+            EngineCommand::Opcua {
+                session,
+                request: vt_protocol::OpcuaRequest::Endpoints {
+                    url: "opc.tcp://localhost:4840".into(),
+                },
             },
         ] {
             assert!(!gate.admit(&command), "{command:?} passed after the trial");

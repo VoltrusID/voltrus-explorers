@@ -63,6 +63,10 @@ pub enum Scenario {
     NatsInspector,
     NatsJetstream,
     NatsEditor,
+    BlePoints,
+    BleTrend,
+    BleScan,
+    BleInspector,
 }
 
 impl Scenario {
@@ -118,6 +122,10 @@ impl Scenario {
         "nats-inspector",
         "nats-jetstream",
         "nats-editor",
+        "ble-points",
+        "ble-trend",
+        "ble-scan",
+        "ble-inspector",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -173,6 +181,10 @@ impl Scenario {
             "nats-inspector" => Self::NatsInspector,
             "nats-jetstream" => Self::NatsJetstream,
             "nats-editor" => Self::NatsEditor,
+            "ble-points" => Self::BlePoints,
+            "ble-trend" => Self::BleTrend,
+            "ble-scan" => Self::BleScan,
+            "ble-inspector" => Self::BleInspector,
             _ => return None,
         })
     }
@@ -252,6 +264,9 @@ pub fn apply(
         | Scenario::NatsTraffic
         | Scenario::NatsInspector
         | Scenario::NatsJetstream => nats(model, scenario, cx),
+        Scenario::BlePoints | Scenario::BleTrend | Scenario::BleScan | Scenario::BleInspector => {
+            ble(model, scenario, window, cx)
+        }
         Scenario::Palette => {
             model.start_demo_plant(cx);
             model.workspace.ui.inspector_open = false;
@@ -946,6 +961,95 @@ fn nats(model: &mut AppModel, scenario: Scenario, cx: &mut Context<AppModel>) {
                     );
                 }
                 _ => {}
+            }
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+/// What the BLE demo trends and selects, by point name.
+const BLE_MONITOR_TREND: [&str; 2] = ["Heart Rate Measurement", "Battery Level"];
+const BLE_SENSOR_TREND: [&str; 2] = ["Temperature", "Humidity"];
+const BLE_SELECTED: &str = "Setpoint";
+/// Points exist once the simulated peripherals are connected and browsed.
+const BLE_SETTLE: Duration = Duration::from_secs(2);
+
+/// The BLE demo: a simulated heart rate monitor and environment sensor, or
+/// the editor scanning the simulated adapter.
+fn ble(model: &mut AppModel, scenario: Scenario, window: &mut Window, cx: &mut Context<AppModel>) {
+    if scenario == Scenario::BleScan {
+        model.workspace.ui.inspector_open = false;
+        model.ble.adapter = vt_protocol::BleAdapter::Simulated;
+        model.open_editor(EditorKind::BleClient, None, window, cx);
+        return;
+    }
+    let Some((monitor, sensor)) = model.start_ble_demo(cx) else {
+        return;
+    };
+    for connection in [monitor, sensor] {
+        if let Some(live) = model.live.get_mut(&connection) {
+            live.trend_window_ms = TREND_WINDOW_MS;
+        }
+    }
+    match scenario {
+        Scenario::BleTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+            if let Some(pane) = pane_of(model, sensor) {
+                model.workspace.set_view(pane, PaneView::Trend);
+            }
+        }
+        // The sensor alone, its setpoint in the inspector.
+        Scenario::BleInspector => {
+            if let Some(pane) = pane_of(model, monitor) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, sensor) {
+                model.focus_pane(pane, cx);
+            }
+        }
+        _ => model.workspace.ui.inspector_open = false,
+    }
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(BLE_SETTLE).await;
+        let _ = this.update(cx, |model, cx| {
+            let find = |model: &AppModel, connection: ConnectionId, name: &str| {
+                model.live.get(&connection).and_then(|live| {
+                    live.points
+                        .iter()
+                        .position(|point| point.name == name)
+                        .and_then(|index| u32::try_from(index).ok())
+                })
+            };
+            let monitor_trend = BLE_MONITOR_TREND
+                .into_iter()
+                .filter_map(|name| find(model, monitor, name))
+                .collect();
+            let sensor_trend = BLE_SENSOR_TREND
+                .into_iter()
+                .filter_map(|name| find(model, sensor, name))
+                .collect();
+            let heart_rate = find(model, monitor, BLE_MONITOR_TREND[0]);
+            let setpoint = find(model, sensor, BLE_SELECTED);
+            if let Some(live) = model.live.get_mut(&monitor) {
+                live.trend = monitor_trend;
+                live.selected = heart_rate;
+            }
+            if let Some(live) = model.live.get_mut(&sensor) {
+                live.trend = sensor_trend;
+            }
+            if scenario == Scenario::BleInspector
+                && let Some(point) = setpoint
+            {
+                model.select_point(sensor, point, cx);
+                model
+                    .write_input
+                    .update(cx, |input, cx| input.set_text("23.5", cx));
+                model
+                    .ble
+                    .data
+                    .update(cx, |input, cx| input.set_text("00 00 BC 41", cx));
             }
             cx.notify();
         });

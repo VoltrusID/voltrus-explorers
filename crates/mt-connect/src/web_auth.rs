@@ -1,14 +1,17 @@
 //! Sign-in through `ASWebAuthenticationSession` (macOS and iOS).
 //!
 //! The session shows the Voltrus authorize page in the system's in-app browser sheet and hands back the
-//! redirect (`voltrus-<slug>://connect?...`) without ever opening the default browser. Everything here
-//! runs on the main thread: [`start`] must be called from there (tauri's `with_webview` closure is), and
-//! AuthenticationServices calls the completion handler there too.
+//! redirect (`voltrus-<slug>://connect?...`) without ever opening the default browser. [`start`] must be
+//! called on the main thread (tauri's `with_webview` closure is), where the running session is kept.
+//! AuthenticationServices calls the completion handler on a background queue, not the main thread
+//! (macOS 26, Safari and default-browser providers alike), so the result is sent back to the main
+//! queue before it is matched against the running session.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 
 use block2::{DynBlock, RcBlock};
+use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
@@ -19,7 +22,7 @@ use objc2_authentication_services::{
 use objc2_foundation::{NSError, NSObject, NSObjectProtocol, NSString, NSURL};
 use url::Url;
 
-/// How a session ended.
+/// How a session ended. `Send`: it crosses from AuthenticationServices' queue to the main thread.
 #[derive(Debug)]
 pub enum Outcome {
     /// The authorize page redirected to the app's callback scheme.
@@ -86,11 +89,21 @@ struct Active {
     id: u64,
     session: Retained<ASWebAuthenticationSession>,
     _provider: Retained<AnchorProvider>,
+    on_done: Box<dyn Fn(Outcome)>,
 }
 
+// Main-thread state: `start` and `finish` only ever run there.
 thread_local! {
     static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
+}
+
+/// Main thread: reports the end of session `id`, unless a newer session replaced it (then it is dropped).
+fn finish(id: u64, outcome: Outcome) {
+    let mine = ACTIVE.with(|a| a.borrow_mut().take_if(|s| s.id == id));
+    if let Some(active) = mine {
+        (active.on_done)(outcome);
+    }
 }
 
 fn classify(url: *mut NSURL, error: *mut NSError) -> Outcome {
@@ -131,16 +144,9 @@ pub fn start(window: *mut c_void, url: &Url, callback_scheme: &str, on_done: imp
     let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
 
     let completion = RcBlock::new(move |url: *mut NSURL, error: *mut NSError| {
+        // Runs on an AuthenticationServices queue, where `ACTIVE` (thread-local) is always empty.
         let outcome = classify(url, error);
-        // A session that was replaced by a newer one reports nothing.
-        let mine = ACTIVE.with(|a| {
-            let mut a = a.borrow_mut();
-            let mine = a.as_ref().is_some_and(|s| s.id == id);
-            mine.then(|| a.take()).flatten()
-        });
-        if mine.is_some() {
-            on_done(outcome);
-        }
+        DispatchQueue::main().exec_async(move || finish(id, outcome));
     });
 
     let provider = AnchorProvider::new(mtm, window);
@@ -160,10 +166,53 @@ pub fn start(window: *mut c_void, url: &Url, callback_scheme: &str, on_done: imp
         session.setPrefersEphemeralWebBrowserSession(false);
     }
     // Registered before `start` so a completion that fires straight away still finds its session.
-    ACTIVE.with(|a| *a.borrow_mut() = Some(Active { id, session: session.clone(), _provider: provider }));
+    ACTIVE.with(|a| *a.borrow_mut() = Some(Active { id, session: session.clone(), _provider: provider, on_done: Box::new(on_done) }));
     if !unsafe { session.start() } {
         ACTIVE.with(|a| a.borrow_mut().take());
         return Err("Could not open the sign-in window.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr::null_mut;
+
+    use super::*;
+
+    fn ptr<T: objc2::Message>(obj: &Retained<T>) -> *mut T {
+        Retained::as_ptr(obj) as *mut T
+    }
+
+    #[test]
+    fn outcome_crosses_to_the_main_queue() {
+        // The completion handler runs on an AuthenticationServices queue; `exec_async` needs `Send`.
+        fn send<T: Send + 'static>() {}
+        send::<Outcome>();
+    }
+
+    #[test]
+    fn completion_classifies_off_the_main_thread() {
+        // What AuthenticationServices does: call the handler from a background thread.
+        let outcome = std::thread::spawn(|| {
+            let url = NSURL::URLWithString(&NSString::from_str("voltrus-bacnet-explorer://connect?code=c1&state=s1")).unwrap();
+            classify(ptr(&url), null_mut())
+        })
+        .join()
+        .unwrap();
+        match outcome {
+            Outcome::Callback(url) => assert_eq!(url.as_str(), "voltrus-bacnet-explorer://connect?code=c1&state=s1"),
+            other => panic!("expected the callback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn closing_the_sheet_is_a_cancel_and_other_errors_fail() {
+        let domain = unsafe { ASWebAuthenticationSessionErrorDomain };
+        let cancelled = NSError::new(ASWebAuthenticationSessionErrorCode::CanceledLogin.0, domain);
+        assert!(matches!(classify(null_mut(), ptr(&cancelled)), Outcome::Cancelled));
+        let other = NSError::new(ASWebAuthenticationSessionErrorCode::PresentationContextInvalid.0, domain);
+        assert!(matches!(classify(null_mut(), ptr(&other)), Outcome::Failed(_)));
+        assert!(matches!(classify(null_mut(), null_mut()), Outcome::Failed(_)));
+    }
 }

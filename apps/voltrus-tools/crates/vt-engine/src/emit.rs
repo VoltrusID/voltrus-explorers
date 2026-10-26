@@ -114,6 +114,10 @@ impl Emitter {
     pub(crate) fn nats(&self, event: vt_protocol::NatsEvent) {
         self.emit(EventKind::Nats(event));
     }
+
+    pub(crate) fn ble_gatt(&self, characteristics: Vec<vt_protocol::BleCharacteristicInfo>) {
+        self.emit(EventKind::BleGatt(characteristics));
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {

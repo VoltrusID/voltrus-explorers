@@ -19,6 +19,7 @@ mt-dnp3 = { path = "../../../../crates/mt-dnp3" }
 mt-enip = { path = "../../../../crates/mt-enip" }
 mt-serial = { path = "../../../../crates/mt-serial" }
 mt-s7 = { path = "../../../../crates/mt-s7" }
+mt-ble = { path = "../../../../crates/mt-ble" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
 # Sparkplug B payloads. Same versions as mt-mqtt uses.

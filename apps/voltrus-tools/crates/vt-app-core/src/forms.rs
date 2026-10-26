@@ -39,6 +39,10 @@ mod nats;
 
 pub use nats::{NatsAuthKind, NatsClientForm, NatsServerForm, NatsSubjectField, NatsSubjectForm};
 
+mod ble;
+
+pub use ble::BleClientForm;
+
 /// The first problem found in a form, and the field it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormError {
@@ -111,6 +115,8 @@ pub enum Field {
     /// NKey seed or creds file of the chosen login.
     NatsSubject(usize, NatsSubjectField),
     Credential,
+    /// BLE: the peripheral to connect to.
+    Peripheral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

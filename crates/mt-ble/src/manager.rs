@@ -106,6 +106,7 @@ impl BleManager {
                 }
             };
 
+            let advertisement = advertisement_of(&props);
             let name = props.local_name.unwrap_or_default();
             let rssi = props.rssi.unwrap_or(-128);
             let address = format!("{}", peripheral.address());
@@ -121,6 +122,7 @@ impl BleManager {
                 rssi,
                 address,
                 connected: is_connected,
+                advertisement,
             });
 
             cache.insert(id, peripheral.clone());
@@ -173,6 +175,22 @@ impl BleManager {
         char_map.retain(|k, _| !k.starts_with(id));
 
         Ok(())
+    }
+
+    /// Whether the device is connected now. A device no scan has seen is an
+    /// error.
+    pub async fn is_connected(&self, id: &str) -> Result<bool, String> {
+        let peripheral = {
+            let peripherals = self.peripherals.lock().await;
+            peripherals
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Device not found: {}", id))?
+        };
+        peripheral
+            .is_connected()
+            .await
+            .map_err(|e| format!("Failed to query the connection: {}", e))
     }
 
     pub async fn discover_services(&self, id: &str) -> Result<Vec<BleService>, String> {
@@ -390,6 +408,32 @@ impl BleManager {
     }
 }
 
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn advertisement_of(props: &btleplug::api::PeripheralProperties) -> BleAdvertisement {
+    BleAdvertisement {
+        local_name: props.local_name.clone(),
+        manufacturer_data: (!props.manufacturer_data.is_empty()).then(|| {
+            props
+                .manufacturer_data
+                .iter()
+                .map(|(company, data)| (*company, to_hex(data)))
+                .collect()
+        }),
+        service_uuids: props.services.iter().map(|uuid| uuid.to_string()).collect(),
+        tx_power_level: props
+            .tx_power_level
+            .map(|level| level.clamp(i16::from(i8::MIN), i16::from(i8::MAX)) as i8),
+        service_data: props
+            .service_data
+            .iter()
+            .map(|(uuid, data)| (uuid.to_string(), to_hex(data)))
+            .collect(),
+    }
+}
+
 fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     let hex: String = hex.trim().replace("0x", "").replace(" ", "");
     if hex.is_empty() {
@@ -404,4 +448,48 @@ fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
             u8::from_str_radix(&hex[i..i + 2], 16).map_err(|e| e.to_string())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use btleplug::api::PeripheralProperties;
+
+    #[test]
+    fn advertisements_carry_their_data_as_hex() {
+        let heart_rate = Uuid::from_u128(0x0000180d_0000_1000_8000_00805f9b34fb);
+        let eddystone = Uuid::from_u128(0x0000feaa_0000_1000_8000_00805f9b34fb);
+        let props = PeripheralProperties {
+            local_name: Some("HRM".into()),
+            tx_power_level: Some(-300),
+            manufacturer_data: HashMap::from([(0x0059, vec![0x01, 0xab])]),
+            service_data: HashMap::from([(eddystone, vec![0x00, 0xee])]),
+            services: vec![heart_rate],
+            ..PeripheralProperties::default()
+        };
+        let advertisement = advertisement_of(&props);
+        assert_eq!(advertisement.local_name.as_deref(), Some("HRM"));
+        assert_eq!(
+            advertisement.manufacturer_data,
+            Some(HashMap::from([(0x0059, "01ab".to_string())]))
+        );
+        assert_eq!(
+            advertisement.service_data.get(&eddystone.to_string()).map(String::as_str),
+            Some("00ee")
+        );
+        assert_eq!(advertisement.service_uuids, vec![heart_rate.to_string()]);
+        // Out of the i8 range: clamped, not wrapped.
+        assert_eq!(advertisement.tx_power_level, Some(i8::MIN));
+
+        let silent = advertisement_of(&PeripheralProperties::default());
+        assert_eq!(silent.manufacturer_data, None);
+        assert!(silent.service_data.is_empty() && silent.service_uuids.is_empty());
+    }
+
+    #[test]
+    fn devices_saved_before_advertisements_still_load() {
+        let saved = r#"{"id":"a","name":"","rssi":-60,"address":"a","connected":false}"#;
+        let device: BleDevice = serde_json::from_str(saved).unwrap();
+        assert!(device.advertisement.service_uuids.is_empty());
+    }
 }
