@@ -473,7 +473,7 @@ mod tests {
             EventKind::SerialLogging(Ok(Some("/tmp/x.csv".into()))),
             EventKind::SerialLogging(Ok(None)),
             EventKind::SerialLogging(Err("Permission denied".into())),
-            EventKind::SerialPorts(Ok(vec![crate::SerialPortInfo {
+            EventKind::SerialPorts(Ok(vec![SerialPortInfo {
                 path: "/dev/cu.usbserial-0001".into(),
                 kind: "USB".into(),
                 description: "FTDI FT232R".into(),

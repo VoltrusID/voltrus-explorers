@@ -60,7 +60,7 @@ pub struct SerialFields {
     pub request: Option<SessionId>,
     /// Lists the ports every few seconds while the editor is open, so a
     /// device plugged in shows up; dropped with the editor.
-    pub refresh: Option<Task<()>>,
+    pub _refresh: Option<Task<()>>,
 }
 
 impl SerialFields {
@@ -117,7 +117,7 @@ impl SerialFields {
             alias: input(device.alias, "voltrus-serial-1", InputKind::Text, true, cx),
             ports: None,
             request: None,
-            refresh: None,
+            _refresh: None,
         }
     }
 

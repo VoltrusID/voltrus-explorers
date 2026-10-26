@@ -398,7 +398,7 @@ impl AppModel {
                         cx.background_executor().timer(PORT_REFRESH).await;
                     }
                 });
-                editor.serial.refresh = Some(task);
+                editor.serial._refresh = Some(task);
                 self.list_serial_ports(cx);
             }
             EditorKind::SerialDevice if editor.editing.is_none() => {
