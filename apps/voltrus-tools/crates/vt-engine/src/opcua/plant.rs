@@ -489,7 +489,7 @@ impl Plant {
         next[ENERGY] += next[POWER] * dt / 3600.0;
 
         for (index, variable) in VARIABLES.iter().enumerate() {
-            let keep = variable.kind == Kind::Setting || held.get(index).copied().unwrap_or(false);
+            let keep = variable.kind == Setting || held.get(index).copied().unwrap_or(false);
             // Settings change only from writes and method calls, but a finished batch stops the reactor.
             if !keep || (index == RUNNING && next[RUNNING] < 0.5) {
                 self.values[index] = next[index];

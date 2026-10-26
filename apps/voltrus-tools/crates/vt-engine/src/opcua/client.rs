@@ -138,7 +138,6 @@ pub(crate) async fn run(
                 continue 'session;
             }
         };
-        attempt = 0;
         let (points, results) = add(&mut link, &wanted, spec.sampling_ms, out).await;
         // Variables the server no longer has stay saved, but are not points of this run.
         out.points(points);
@@ -276,30 +275,30 @@ async fn until_closed(control: &mut mpsc::UnboundedReceiver<Control>, out: &Emit
 
 /// Answer a request that cannot be served now, so the app stops waiting for it.
 fn refuse(request: OpcuaRequest, reason: &str, out: &Emitter) {
-    let error = || Err(reason.to_owned());
+    let reason = reason.to_owned();
     match request {
         OpcuaRequest::Browse { node_id } => out.opcua(OpcuaEvent::Children {
             parent: node_id,
-            result: error(),
+            result: Err(reason),
         }),
         OpcuaRequest::Attributes { node_id } => out.opcua(OpcuaEvent::Attributes {
             node_id,
-            result: error(),
+            result: Err(reason),
         }),
         OpcuaRequest::Monitor { nodes } => out.opcua(OpcuaEvent::Monitored(
             nodes
                 .into_iter()
-                .map(|node| (node.node_id, error()))
+                .map(|node| (node.node_id, Err(reason.clone())))
                 .collect(),
         )),
-        OpcuaRequest::Write { point, .. } => out.written(point, error()),
+        OpcuaRequest::Write { point, .. } => out.written(point, Err(reason)),
         OpcuaRequest::Method { method_id } => out.opcua(OpcuaEvent::Method {
             method_id,
-            result: error(),
+            result: Err(reason),
         }),
         OpcuaRequest::Call { method_id, .. } => out.opcua(OpcuaEvent::Called {
             method_id,
-            result: error(),
+            result: Err(reason),
         }),
         OpcuaRequest::Endpoints { .. } => {}
     }
