@@ -72,6 +72,7 @@ fn main() -> ExitCode {
             let initial = catalog.resolve(&boot.workspace.ui.dark_theme, true);
             vt_ui::init(initial, cx);
             cx.bind_keys(actions::key_bindings());
+            cx.bind_keys(model::opcua::key_bindings());
             cx.bind_keys(model::licence::key_bindings());
             // The app menu starts with About (and, in store builds, Unlock).
             let mut menus = actions::menus();

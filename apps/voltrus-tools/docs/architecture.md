@@ -118,6 +118,16 @@ simulator is `mt-enip`'s target (`start_enip_server`) with the plant's values
 moved by the session task, plus `answer_list_identity` on the same UDP port
 so the picker finds it.
 
+OPC UA keeps its requests in one `Command::Opcua { session, request }` and its
+answers in one `EventKind::Opcua`: browse a level, read attributes, monitor
+more variables (they join as `PointsAdded`), typed text writes (answered by
+`Written`), method arguments and calls. `OpcuaRequest::Endpoints` is the
+session-less one, answered under its request id like the BACnet picker. The
+address-space browser is a column of the points view of OPC UA client panes
+(`vt-app/src/views/opcua.rs`, state in `model/opcua.rs`); the inspector shows
+the node picked in it. The plant server simulator is `mt-opcua`'s
+`PlantServer`, driven by `vt-engine/src/opcua/plant.rs`; certificates live in
+`<data dir>/Voltrus Tools/opcua-pki`.
 Commands that belong to a protocol but to no point are messages of their own:
 a DNP3 master's station commands (integrity and class polls, time sync,
 counter freeze, restarts, and controls with an explicit CROB or mode) go as

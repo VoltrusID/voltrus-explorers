@@ -13,6 +13,9 @@ pub use bacnet::{BacnetClientForm, BacnetDeviceForm};
 mod mqtt;
 
 pub use mqtt::{MqttBrokerForm, MqttClientForm, SubscriptionField, SubscriptionForm};
+mod opcua;
+
+pub use opcua::{OpcuaAuthKind, OpcuaClientForm, OpcuaServerForm};
 mod dnp3;
 
 pub use dnp3::{
@@ -74,6 +77,14 @@ pub enum Field {
     Username,
     Prefix,
     PublishMs,
+    /// OPC UA: the endpoint URL, its security, the sign-in and the subscription intervals.
+    Endpoint,
+    Security,
+    Password,
+    Certificate,
+    PrivateKey,
+    PublishingMs,
+    SamplingMs,
     /// DNP3: the master's own link address and the outstation's, the poll
     /// periods, and a point-name row with which of its fields.
     LinkAddress,

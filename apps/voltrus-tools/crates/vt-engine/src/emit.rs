@@ -75,6 +75,11 @@ impl Emitter {
         self.emit(EventKind::Published { topic, result });
     }
 
+    /// Answers of the OPC UA client.
+    pub(crate) fn opcua(&self, event: vt_protocol::OpcuaEvent) {
+        self.emit(EventKind::Opcua(event));
+    }
+
     pub(crate) fn dnp3_iin(&self, iin: Dnp3Iin) {
         self.emit(EventKind::Dnp3Iin(iin));
     }

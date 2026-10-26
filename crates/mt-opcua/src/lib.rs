@@ -17,3 +17,12 @@ pub use types::{
     SessionNotification, SubscriptionConfig,
 };
 pub use opcua_client::{NotificationSink, OpcUaProtocolClient};
+pub mod plant;
+
+pub use opcua_client::{
+    ArgumentInfo, BrowseNode, UaQuality, UaValue, UserIdentity, VariableInfo, canonical_node_id,
+};
+pub use plant::{
+    MethodHandler, PLANT_NAMESPACE, PlantArgument, PlantMethod, PlantNode, PlantServer,
+    PlantServerConfig, PlantValues, PlantVariable, create_user_certificate,
+};

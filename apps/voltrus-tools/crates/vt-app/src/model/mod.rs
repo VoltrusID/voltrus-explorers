@@ -12,6 +12,7 @@ pub mod enip;
 pub mod licence;
 pub mod live;
 pub mod nats;
+pub mod opcua;
 pub mod palette;
 pub mod publish;
 pub mod s7;
@@ -146,6 +147,8 @@ pub struct AppModel {
     pub nats: nats::NatsPanel,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    /// OPC UA browsers and the inspector's typed inputs.
+    pub opcua: opcua::OpcuaModel,
     /// The inspector's explicit message form (EtherNet/IP).
     pub cip: enip::CipForm,
     /// The App Store trial and unlock, and their sheets.
@@ -251,6 +254,7 @@ impl AppModel {
             nats: nats::NatsPanel::new(window, cx),
             _tasks: vec![pump],
             _subscriptions: subscriptions,
+            opcua: opcua::OpcuaModel::new(window, cx),
             cip: enip::CipForm::new(window, cx),
             licensing,
             ble: ble::BleState::new(window, cx),
@@ -288,6 +292,17 @@ impl AppModel {
                 kind: vt_protocol::EventKind::SerialPorts(found),
             } => {
                 self.serial_ports_found(session, found);
+                return;
+            }
+            event => event,
+        };
+        // OPC UA answers (and the endpoint picker's, under a request id).
+        let event = match event {
+            Event {
+                session,
+                kind: vt_protocol::EventKind::Opcua(answer),
+            } => {
+                self.opcua_answer(session, answer);
                 return;
             }
             event => event,
@@ -332,6 +347,7 @@ impl AppModel {
             self.sessions.remove(&event.session);
         }
         if connected {
+            self.opcua_connected(connection);
             self.nats_connected(connection);
         }
     }
@@ -616,6 +632,9 @@ impl AppModel {
             Protocol::Bacnet => {
                 self.start_bacnet_demo(cx);
             }
+            Protocol::Opcua => {
+                self.start_opcua_demo(cx);
+            }
             Protocol::Dnp3 => {
                 self.start_dnp3_demo(cx);
             }
@@ -689,6 +708,9 @@ impl AppModel {
             if live.selected != Some(point) {
                 live.write_result = None;
                 self.write_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                self.opcua
+                    .write_input
                     .update(cx, |input, cx| input.set_text("", cx));
                 // Publishing from the inspector starts at the point's topic.
                 if let Some(topic) = publish::topic_of(&self.workspace, connection, live, point) {
@@ -965,6 +987,12 @@ impl AppModel {
         }
         if editing.is_none()
             && add_client
+            && let SessionSpec::OpcuaServer(server) = &spec
+        {
+            self.add_opcua_client(&name, server, cx);
+        }
+        if editing.is_none()
+            && add_client
             && let SessionSpec::Dnp3Outstation(outstation) = &spec
         {
             self.add_dnp3_master(&name, outstation, cx);
@@ -1172,6 +1200,11 @@ impl AppModel {
             Command::View(view) => self.set_view(view, cx),
             Command::ChooseTheme => self.open_palette(Mode::Themes, window, cx),
             Command::Theme(name) => self.choose_theme(&name, window, cx),
+            Command::NewOpcuaClient => self.open_editor(EditorKind::OpcuaClient, None, window, cx),
+            Command::NewOpcuaServer => self.open_editor(EditorKind::OpcuaServer, None, window, cx),
+            Command::OpcuaDemo => {
+                self.start_opcua_demo(cx);
+            }
             Command::NewDnp3Master => self.open_editor(EditorKind::Dnp3Master, None, window, cx),
             Command::NewDnp3Outstation => {
                 self.open_editor(EditorKind::Dnp3Outstation, None, window, cx)

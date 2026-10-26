@@ -45,6 +45,22 @@ standalone Tauri apps in this repository.
   on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
   with a 16-level priority array, and SubscribeCOV. A value set from the app
   or commanded by any client is held until released or relinquished.
+- **OPC UA client**: GetEndpoints lists the security policies, modes and
+  sign-in a server offers; connect with None, Basic256Sha256 or the Aes
+  policies (Sign or Sign & Encrypt), anonymously, with a user name or with an
+  X.509 user certificate chosen in an open panel. An address-space browser
+  beside the points reads the tree a level at a time and walks it from the
+  keyboard (↑↓ move, →← open and close, Enter adds a variable, ⌘⇧B jumps in);
+  the inspector shows a picked node's attributes and calls methods with typed
+  arguments. Variables are monitored in one subscription with the publishing
+  and sampling intervals you set, keep their units, and take typed writes
+  (Boolean, integers, floats, text, times); OPC UA statuses and source times
+  ride with each value.
+- **OPC UA server simulator**: a process plant (batch reactor, steam boiler,
+  utilities) with units, ranges and the StartBatch and ResetAlarms methods,
+  on None, Basic256Sha256 and Aes256 RsaPss endpoints, for anonymous clients,
+  a user and a generated user certificate. Writes from any client hold a
+  measured value or change a setpoint.
 - **DNP3 master** (on `mt-dnp3`): TCP to an outstation with its link
   addresses; an integrity poll on connect and every integrity period, class
   1-3 event polls between them, and class polls, time sync, counter freeze
@@ -175,9 +191,9 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet, DNP3, EtherNet/IP, serial, S7, NATS and Bluetooth LE
-are ported. OPC UA is being ported next; it plugs into the same engine and
-views ([how](docs/architecture.md#adding-a-protocol)).
+Every protocol in this repository is ported: Modbus, MQTT, BACnet, DNP3,
+EtherNet/IP, serial, S7, NATS, Bluetooth LE and OPC UA, each plugged into the
+same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
 
@@ -192,6 +208,8 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # mqtt-inspector, mqtt-editor
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
+                                                 # opcua-points, opcua-trend,
+                                                 # opcua-method, opcua-editor,
                                                  # bacnet-command, dnp3-points,
                                                  # dnp3-trend, dnp3-traffic,
                                                  # dnp3-control, dnp3-station,

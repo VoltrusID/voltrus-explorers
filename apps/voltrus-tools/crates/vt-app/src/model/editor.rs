@@ -12,6 +12,7 @@ use vt_ui::text_input::{InputEvent, InputKind, TextInput};
 use super::AppModel;
 use super::bacnet::{BacnetFields, NEW_CLIENT_NAME, NEW_DEVICE_NAME};
 use super::ble::BleFields;
+use super::opcua::OpcuaFields;
 
 mod dnp3;
 mod mqtt;
@@ -38,6 +39,8 @@ pub enum EditorKind {
     MqttBroker,
     BacnetClient,
     BacnetDevice,
+    OpcuaClient,
+    OpcuaServer,
     Dnp3Master,
     Dnp3Outstation,
     EnipClient,
@@ -62,6 +65,8 @@ impl EditorKind {
             (Protocol::Mqtt, Role::Simulator) => Self::MqttBroker,
             (Protocol::Bacnet, Role::Client) => Self::BacnetClient,
             (Protocol::Bacnet, Role::Simulator) => Self::BacnetDevice,
+            (Protocol::Opcua, Role::Client) => Self::OpcuaClient,
+            (Protocol::Opcua, Role::Simulator) => Self::OpcuaServer,
             (Protocol::Dnp3, Role::Client) => Self::Dnp3Master,
             (Protocol::Dnp3, Role::Simulator) => Self::Dnp3Outstation,
             (Protocol::Enip, Role::Client) => Self::EnipClient,
@@ -87,6 +92,8 @@ impl EditorKind {
             SessionSpec::MqttBroker(_) => Self::MqttBroker,
             SessionSpec::BacnetClient(_) => Self::BacnetClient,
             SessionSpec::BacnetDevice(_) => Self::BacnetDevice,
+            SessionSpec::OpcuaClient(_) => Self::OpcuaClient,
+            SessionSpec::OpcuaServer(_) => Self::OpcuaServer,
             SessionSpec::Dnp3Master(_) => Self::Dnp3Master,
             SessionSpec::Dnp3Outstation(_) => Self::Dnp3Outstation,
             SessionSpec::EnipClient(_) => Self::EnipClient,
@@ -139,6 +146,7 @@ pub struct Editor {
     pub error: Option<FormError>,
     subscriptions: Vec<Subscription>,
     pub mqtt: MqttFields,
+    pub opcua: OpcuaFields,
     pub dnp3: Dnp3Fields,
     pub enip: EnipFields,
     pub serial: SerialFields,
@@ -173,6 +181,7 @@ impl Editor {
     ) -> Self {
         let id = editing.as_ref().map(|(id, _, _)| *id);
         let bacnet = BacnetFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let opcua = OpcuaFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let dnp3 = Dnp3Fields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let enip = EnipFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let serial = SerialFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
@@ -216,6 +225,11 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((_, name, SessionSpec::OpcuaClient(_) | SessionSpec::OpcuaServer(_))) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             Some((_, name, SessionSpec::Dnp3Master(_) | SessionSpec::Dnp3Outstation(_))) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -254,6 +268,8 @@ impl Editor {
                     EditorKind::MqttBroker => "MQTT simulator".to_owned(),
                     EditorKind::BacnetClient => NEW_CLIENT_NAME.to_owned(),
                     EditorKind::BacnetDevice => NEW_DEVICE_NAME.to_owned(),
+                    EditorKind::OpcuaClient => super::opcua::NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::OpcuaServer => super::opcua::NEW_SERVER_NAME.to_owned(),
                     EditorKind::Dnp3Master => NEW_MASTER_NAME.to_owned(),
                     EditorKind::Dnp3Outstation => NEW_OUTSTATION_NAME.to_owned(),
                     EditorKind::EnipClient => super::enip::NEW_CLIENT_NAME.to_owned(),
@@ -328,6 +344,7 @@ impl Editor {
             error: None,
             subscriptions: Vec::new(),
             mqtt: MqttFields::new(&mqtt_client, &mqtt_broker, cx),
+            opcua,
             dnp3,
             enip,
             serial,
@@ -356,6 +373,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.bacnet.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.opcua.inputs() {
             editor.watch(&field, window, cx);
         }
         for field in editor.dnp3.inputs() {
@@ -506,6 +526,16 @@ impl Editor {
                 .device_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BacnetDevice(spec))),
+            EditorKind::OpcuaClient => self
+                .opcua
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::OpcuaClient(spec))),
+            EditorKind::OpcuaServer => self
+                .opcua
+                .server_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::OpcuaServer(spec))),
             EditorKind::Dnp3Master => self
                 .dnp3
                 .master_form(Self::text(&self.name, cx), cx)

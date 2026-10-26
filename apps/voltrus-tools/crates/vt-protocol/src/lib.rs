@@ -60,6 +60,13 @@ pub use serial::{
     virtual_port_path,
 };
 pub use value::{Direction, PointInfo, Quality, Reading, TrafficFrame, ValueFrame};
+mod opcua;
+pub use opcua::{
+    OPCUA_PORT, OpcuaArgument, OpcuaAttribute, OpcuaAuth, OpcuaBrowseNode, OpcuaClientSpec,
+    OpcuaEndpoint, OpcuaEvent, OpcuaMethodInfo, OpcuaNode, OpcuaNodeClass, OpcuaRequest,
+    OpcuaScalar, OpcuaSecurityMode, OpcuaSecurityPolicy, OpcuaServerSpec, opcua_host_port,
+    opcua_writable_type, parse_opcua_value,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +86,10 @@ pub enum SessionSpec {
     BacnetClient(BacnetClientSpec),
     /// Play a BACnet/IP device with a plant's simulated objects.
     BacnetDevice(BacnetDeviceSpec),
+    /// Browse an OPC UA server's address space, monitor variables, write and call methods.
+    OpcuaClient(OpcuaClientSpec),
+    /// Run an OPC UA server with a simulated plant's address space.
+    OpcuaServer(OpcuaServerSpec),
     /// Poll a DNP3 outstation: integrity and class polls, controls, time sync.
     Dnp3Master(Dnp3MasterSpec),
     /// Play a DNP3 outstation with a plant's simulated points.
@@ -113,6 +124,7 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::ModbusSlave(_) => Protocol::Modbus,
             Self::MqttClient(_) | Self::MqttBroker(_) => Protocol::Mqtt,
             Self::BacnetClient(_) | Self::BacnetDevice(_) => Protocol::Bacnet,
+            Self::OpcuaClient(_) | Self::OpcuaServer(_) => Protocol::Opcua,
             Self::Dnp3Master(_) | Self::Dnp3Outstation(_) => Protocol::Dnp3,
             Self::EnipClient(_) | Self::EnipAdapter(_) => Protocol::Enip,
             Self::SerialMonitor(_) | Self::SerialDevice(_) => Protocol::Serial,
@@ -127,6 +139,8 @@ impl SessionSpec {
             Self::ModbusMaster(_) | Self::MqttClient(_) | Self::BacnetClient(_) => Role::Client,
             Self::BleClient(_) => Role::Client,
             Self::ModbusSlave(_) | Self::MqttBroker(_) | Self::BacnetDevice(_) => Role::Simulator,
+            Self::OpcuaClient(_) => Role::Client,
+            Self::OpcuaServer(_) => Role::Simulator,
             Self::Dnp3Master(_) => Role::Client,
             Self::Dnp3Outstation(_) => Role::Simulator,
             Self::EnipClient(_) => Role::Client,
@@ -169,6 +183,12 @@ impl SessionSpec {
             Self::BacnetDevice(spec) => {
                 format!("0.0.0.0:{} · device {}", spec.port, spec.device_instance)
             }
+            Self::OpcuaClient(spec) => match spec.nodes.as_slice() {
+                [] => spec.endpoint.clone(),
+                [_] => format!("{} · 1 variable", spec.endpoint),
+                many => format!("{} · {} variables", spec.endpoint, many.len()),
+            },
+            Self::OpcuaServer(spec) => format!("opc.tcp://0.0.0.0:{} · plant", spec.port),
             Self::Dnp3Master(spec) => format!(
                 "{} · outstation {}",
                 host_port(&spec.host, spec.port),
@@ -227,6 +247,10 @@ impl SessionSpec {
             Self::MqttBroker(spec) => host_port(&spec.bind, spec.port),
             Self::BacnetClient(spec) => host_port(&spec.host, spec.port),
             Self::BacnetDevice(spec) => format!("0.0.0.0:{}", spec.port),
+            Self::OpcuaClient(spec) => opcua_host_port(&spec.endpoint)
+                .unwrap_or(&spec.endpoint)
+                .to_owned(),
+            Self::OpcuaServer(spec) => format!("0.0.0.0:{}", spec.port),
             Self::Dnp3Master(spec) => host_port(&spec.host, spec.port),
             Self::Dnp3Outstation(spec) => host_port(&spec.bind, spec.port),
             Self::EnipClient(spec) => host_port(&spec.host, spec.port),
@@ -267,6 +291,7 @@ pub enum Protocol {
     Modbus,
     Mqtt,
     Bacnet,
+    Opcua,
     Dnp3,
     Enip,
     Serial,
@@ -280,6 +305,7 @@ impl Protocol {
         Protocol::Modbus,
         Protocol::Mqtt,
         Protocol::Bacnet,
+        Protocol::Opcua,
         Protocol::Dnp3,
         Protocol::Enip,
         Protocol::Serial,
@@ -293,6 +319,7 @@ impl Protocol {
             Self::Modbus => "Modbus",
             Self::Mqtt => "MQTT",
             Self::Bacnet => "BACnet",
+            Self::Opcua => "OPC UA",
             Self::Dnp3 => "DNP3",
             Self::Enip => "EtherNet/IP",
             Self::Serial => "Serial",
@@ -308,6 +335,7 @@ impl Protocol {
             Self::Modbus => "MB",
             Self::Mqtt => "MQ",
             Self::Bacnet => "BA",
+            Self::Opcua => "UA",
             Self::Dnp3 => "DN",
             Self::Enip => "EI",
             Self::Serial => "SE",
@@ -325,6 +353,9 @@ impl Protocol {
             }
             Self::Bacnet => {
                 "Who-Is discovery, object list, COV and priority writes, and a device simulator"
+            }
+            Self::Opcua => {
+                "Endpoint discovery, secure sign-in, address-space browser, subscriptions, writes and method calls, and a plant server"
             }
             Self::Dnp3 => {
                 "Integrity and class polls, flags and events, SBO controls, and an outstation simulator"

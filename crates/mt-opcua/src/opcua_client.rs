@@ -17,6 +17,28 @@ use crate::types::{
     OpcUaConfig, OpcUaNode, OpcUaValue, ReferenceInfo, ServerInfo, SubscriptionConfig,
 };
 
+mod explore;
+
+pub use explore::{
+    ArgumentInfo, BrowseNode, UaQuality, UaValue, UserIdentity, VariableInfo, canonical_node_id, json_variant,
+    type_name, variant_text,
+};
+
+/// The threads every client session's event loop runs on, made on first use.
+static EVENT_LOOP_RUNTIME: std::sync::LazyLock<Option<tokio::runtime::Runtime>> =
+    std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("opcua-client")
+            .enable_all()
+            .build()
+            .ok()
+    });
+
+fn event_loop_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    EVENT_LOOP_RUNTIME.as_ref()
+}
+
 /// Receives live subscription data-change notifications out of the OPC UA session
 /// thread. Implemented by the Tauri layer (which forwards to a webview event);
 /// the crate stays free of any Tauri dependency.
@@ -25,6 +47,10 @@ pub trait NotificationSink: Send + Sync {
 }
 
 fn parse_node_id(s: &str) -> Result<NodeId> {
+    // Every form the standard prints (`i=85`, `ns=2;s=Pump`, `ns=1;g=…`, `ns=1;b=…`).
+    if let Ok(id) = <NodeId as std::str::FromStr>::from_str(s.trim()) {
+        return Ok(id);
+    }
     let rest = s.strip_prefix("ns=").ok_or_else(|| anyhow!("missing ns="))?;
     let (ns_str, id_part) = rest.split_once(';').ok_or_else(|| anyhow!("missing ;"))?;
     let ns: u16 = ns_str.parse()?;
@@ -89,6 +115,13 @@ fn format_property_value(name: &str, value: Option<&Variant>) -> serde_json::Val
                     "namespace_uri": eu.namespace_uri.as_ref(),
                     "description": eu.description.text.as_ref(),
                 })
+            } else if let Some(argument) = ext.inner_as::<opcua::types::Argument>() {
+                // Input/OutputArguments: `Name: Type`.
+                serde_json::json!(format!(
+                    "{}: {}",
+                    argument.name.as_ref(),
+                    explore::type_name(&argument.data_type)
+                ))
             } else {
                 variant_to_json(v)
             }
@@ -282,8 +315,17 @@ impl OpcUaProtocolClient {
             }
             _ => IdentityToken::Anonymous,
         };
+        self.connect_with_token(config, identity_token).await
+    }
 
+    /// Connect with an explicit identity token (anonymous, user name or X.509).
+    async fn connect_with_token(
+        &mut self,
+        config: OpcUaConfig,
+        identity_token: IdentityToken,
+    ) -> Result<(), String> {
         let pki_dir = crate::pki::client_dir();
+        Self::prepare_certificate().await?;
         let endpoint_url = config.endpoint_url.clone();
         let policy_uri = policy_uri(&config.security_policy);
         let security_mode = parse_mode(&config.security_mode);
@@ -330,7 +372,12 @@ impl OpcUaProtocolClient {
 
         eprintln!("[OPCUA-CLIENT] Session built, spawning event loop...");
 
-        let _handle = event_loop.spawn();
+        // The session's I/O runs on threads of its own, so it never shares a worker with the
+        // caller's tasks.
+        let _handle = match event_loop_runtime() {
+            Some(runtime) => runtime.spawn(event_loop.run()),
+            None => event_loop.spawn(),
+        };
 
         eprintln!("[OPCUA-CLIENT] Event loop spawned, waiting for connection (10s timeout)...");
 
@@ -345,9 +392,15 @@ impl OpcUaProtocolClient {
             }
             Ok(false) => {
                 eprintln!("[OPCUA-CLIENT] wait_for_connection returned false");
-                return Err("Connection failed — session reported not connected".to_string());
+                // The event loop ends with the status that stopped it, e.g. a refused identity.
+                let reason = match tokio::time::timeout(std::time::Duration::from_secs(1), _handle).await {
+                    Ok(Ok(status)) if !status.is_good() => format!(" ({status})"),
+                    _ => String::new(),
+                };
+                return Err(format!("Connection failed — session reported not connected{reason}"));
             }
             Err(_) => {
+                _handle.abort();
                 eprintln!("[OPCUA-CLIENT] Connection timeout after 10s");
                 return Err(
                     "Connection timeout after 10s — ensure server is reachable and the \
@@ -364,7 +417,19 @@ impl OpcUaProtocolClient {
         Ok(())
     }
 
+    /// The client's application instance certificate, made off the async workers and without
+    /// resolving the host name (the stack's own sample certificate does both).
+    async fn prepare_certificate() -> Result<(), String> {
+        crate::pki::ensure_own_certificate(
+            crate::pki::client_dir(),
+            "OPC UA Explorer Client",
+            "urn:opcua-explorer-client",
+        )
+        .await
+    }
+
     pub async fn get_endpoints(url: &str) -> Result<Vec<EndpointInfo>, String> {
+        Self::prepare_certificate().await?;
         let client = Self::discovery_client()?;
         let endpoints = client
             .get_server_endpoints_from_url(url)
@@ -389,6 +454,7 @@ impl OpcUaProtocolClient {
     }
 
     pub async fn find_servers(url: &str) -> Result<Vec<ServerInfo>, String> {
+        Self::prepare_certificate().await?;
         let client = Self::discovery_client()?;
         let servers = client
             .find_servers(url, None, None)

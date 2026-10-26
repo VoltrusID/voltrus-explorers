@@ -243,6 +243,8 @@ impl Live {
             }
             // The device picker's answer: the editor takes it, not a session.
             EventKind::BacnetDevices(_) => {}
+            // The browser and the endpoint picker take OPC UA answers.
+            EventKind::Opcua(_) => {}
             EventKind::Dnp3Iin(iin) => self.dnp3.iin = Some(iin),
             EventKind::Dnp3Done { action, result } => {
                 if self.dnp3.busy == Some(action) {

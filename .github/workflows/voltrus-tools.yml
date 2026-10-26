@@ -13,6 +13,7 @@ on:
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
       - crates/mt-mqtt/**
+      - crates/mt-opcua/**
       - crates/mt-dnp3/**
       - crates/mt-enip/**
       - crates/mt-serial/**
@@ -27,6 +28,7 @@ on:
       - crates/mt-protocol/**
       - crates/mt-bacnet/**
       - crates/mt-mqtt/**
+      - crates/mt-opcua/**
       - crates/mt-dnp3/**
       - crates/mt-enip/**
       - crates/mt-serial/**
@@ -91,7 +93,7 @@ jobs:
       # in the repository's workspace (the root CI runs them only on main).
       - name: Test shared protocol crates
         working-directory: .
-        run: cargo test --locked -p mt-dnp3 -p mt-enip -p mt-serial -p mt-s7 -p mt-nats -p mt-ble
+        run: cargo test --locked -p mt-dnp3 -p mt-enip -p mt-serial -p mt-s7 -p mt-nats -p mt-ble -p mt-opcua
 
       - name: Build release
         run: cargo build --locked --release -p vt-app

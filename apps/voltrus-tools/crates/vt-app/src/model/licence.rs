@@ -661,6 +661,8 @@ mod tests {
             (Protocol::Serial, Role::Simulator) => SessionSpec::SerialDevice(Default::default()),
             (Protocol::S7, Role::Client) => SessionSpec::S7Client(Default::default()),
             (Protocol::S7, Role::Simulator) => SessionSpec::S7Server(Default::default()),
+            (Protocol::Opcua, Role::Client) => SessionSpec::OpcuaClient(Default::default()),
+            (Protocol::Opcua, Role::Simulator) => SessionSpec::OpcuaServer(Default::default()),
             (Protocol::Nats, Role::Client) => SessionSpec::NatsClient(Default::default()),
             (Protocol::Nats, Role::Simulator) => SessionSpec::NatsServer(Default::default()),
             (Protocol::Ble, Role::Client) => SessionSpec::BleClient(Default::default()),
@@ -740,6 +742,18 @@ mod tests {
             EngineCommand::Ble {
                 session,
                 request: vt_protocol::BleRequest::Read { point: 0 },
+            },
+            EngineCommand::Opcua {
+                session,
+                request: vt_protocol::OpcuaRequest::Browse {
+                    node_id: "Objects".into(),
+                },
+            },
+            EngineCommand::Opcua {
+                session,
+                request: vt_protocol::OpcuaRequest::Endpoints {
+                    url: "opc.tcp://localhost:4840".into(),
+                },
             },
         ] {
             assert!(!gate.admit(&command), "{command:?} passed after the trial");

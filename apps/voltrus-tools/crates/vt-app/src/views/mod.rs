@@ -15,6 +15,7 @@ mod licence;
 mod log;
 mod nats;
 mod new_menu;
+mod opcua;
 mod palette;
 pub mod pane;
 mod points;
@@ -168,6 +169,11 @@ impl Render for AppModel {
             .on_action(cx.listener(|model, _: &PaletteConfirm, window, cx| {
                 model.confirm_palette(window, cx)
             }))
+            .on_action(
+                cx.listener(|model, _: &crate::model::opcua::FocusBrowser, window, cx| {
+                    model.focus_browser(window, cx);
+                }),
+            )
             .on_action(cx.listener(|model, _: &FocusSend, window, cx| {
                 if let Some(connection) = model.focused_connection() {
                     model.focus_serial_send(connection, window, cx);

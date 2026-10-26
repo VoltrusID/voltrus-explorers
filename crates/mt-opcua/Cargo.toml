@@ -12,3 +12,5 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-opcua = { version = "0.18", features = ["client", "server", "generated-address-space"] }
+# The host name for certificates, without a name lookup (already in async-opcua's tree).
+gethostname = "0.5"

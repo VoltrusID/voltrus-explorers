@@ -21,6 +21,7 @@ mod dnp3;
 mod enip;
 mod mqtt;
 mod nats;
+mod opcua;
 mod s7;
 mod serial;
 
@@ -57,6 +58,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MqttClient, true) => "Edit MQTT connection",
         (EditorKind::MqttBroker, false) => "New MQTT broker simulator",
         (EditorKind::MqttBroker, true) => "Edit MQTT broker simulator",
+        (EditorKind::OpcuaClient, false) => "New OPC UA connection",
+        (EditorKind::OpcuaClient, true) => "Edit OPC UA connection",
+        (EditorKind::OpcuaServer, false) => "New OPC UA server simulator",
+        (EditorKind::OpcuaServer, true) => "Edit OPC UA server simulator",
         (EditorKind::Dnp3Master, false) => "New DNP3 connection",
         (EditorKind::Dnp3Master, true) => "Edit DNP3 connection",
         (EditorKind::Dnp3Outstation, false) => "New DNP3 outstation simulator",
@@ -94,6 +99,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         }
         EditorKind::MqttBroker => {
             "Run a broker on this computer that publishes a simulated device for any MQTT client."
+        }
+        EditorKind::OpcuaClient => {
+            "Sign in to a server, browse its address space, monitor variables, write them and call methods."
+        }
+        EditorKind::OpcuaServer => {
+            "Serve a process plant's address space on this computer for any OPC UA client."
         }
         EditorKind::Dnp3Master => {
             "Poll an outstation over TCP: integrity and event polls, flags, controls and time sync."
@@ -136,6 +147,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MqttBroker => mqtt::broker(editor, cx),
         EditorKind::BacnetClient => bacnet::client(editor, cx),
         EditorKind::BacnetDevice => bacnet::device(editor, cx),
+        EditorKind::OpcuaClient => opcua::client(editor, cx),
+        EditorKind::OpcuaServer => opcua::server(editor, cx),
         EditorKind::Dnp3Master => dnp3::master(editor, cx),
         EditorKind::Dnp3Outstation => dnp3::outstation(editor, cx),
         EditorKind::EnipClient => enip::client(editor, cx),
@@ -156,6 +169,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::Slave | EditorKind::MqttBroker | EditorKind::BacnetDevice, false) => {
             "Start simulator"
         }
+        (EditorKind::OpcuaClient, false) => "Save and connect",
+        (EditorKind::OpcuaServer, false) => "Start simulator",
         (EditorKind::Dnp3Master, false) => "Save and connect",
         (EditorKind::Dnp3Outstation, false) => "Start simulator",
         (EditorKind::EnipClient, false) => "Save and connect",

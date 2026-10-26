@@ -53,6 +53,66 @@ fn dirs_in(root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// The certificate's alternate names without resolving this computer's host name: `localhost`,
+/// the loopback addresses and the bare host name. The OPC UA stack's own sample certificates
+/// resolve the host name, which can stall for a long time where name lookup is slow.
+fn local_names(application_uri: &str) -> opcua::crypto::X509Data {
+    let mut addresses = vec!["127.0.0.1".to_owned(), "::1".to_owned()];
+    let name = gethostname::gethostname().to_string_lossy().into_owned();
+    if !name.is_empty() {
+        addresses.push(name);
+    }
+    let alt_host_names =
+        opcua::crypto::X509Data::alt_host_names(application_uri, Some(addresses), true, false, false);
+    opcua::crypto::X509Data {
+        key_size: 2048,
+        common_name: String::new(),
+        organization: String::new(),
+        organizational_unit: String::new(),
+        country: "ID".to_owned(),
+        state: String::new(),
+        alt_host_names,
+        certificate_duration_days: 3650,
+    }
+}
+
+/// Make a certificate and private key at `certificate` and `private_key` (PEM) unless both
+/// exist. Blocking: call it off the async workers.
+pub fn ensure_certificate(
+    certificate: &Path,
+    private_key: &Path,
+    common_name: &str,
+    application_uri: &str,
+) -> Result<(), String> {
+    if certificate.exists() && private_key.exists() {
+        return Ok(());
+    }
+    for path in [certificate, private_key] {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;
+        }
+    }
+    let mut data = local_names(application_uri);
+    data.common_name = common_name.to_owned();
+    data.organization = common_name.to_owned();
+    data.organizational_unit = common_name.to_owned();
+    opcua::crypto::CertificateStore::create_certificate_and_key(&data, true, certificate, private_key)
+        .map(|_| ())
+        .map_err(|e| format!("Cannot create the certificate: {e}"))
+}
+
+/// Make the application instance certificate of the PKI folder `pki` (the stack's own
+/// `own/cert.der` and `private/private.pem`) unless it exists, off the async workers.
+pub async fn ensure_own_certificate(pki: PathBuf, name: &str, application_uri: &str) -> Result<(), String> {
+    let (name, uri) = (name.to_owned(), application_uri.to_owned());
+    tokio::task::spawn_blocking(move || {
+        ensure_certificate(&pki.join("own").join("cert.der"), &pki.join("private").join("private.pem"), &name, &uri)
+    })
+    .await
+    .map_err(|e| format!("Certificate creation stopped: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

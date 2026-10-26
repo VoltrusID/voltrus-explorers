@@ -30,6 +30,10 @@ pub enum Scenario {
     BacnetTraffic,
     BacnetDiscover,
     BacnetCommand,
+    OpcuaPoints,
+    OpcuaTrend,
+    OpcuaMethod,
+    OpcuaEditor,
     Dnp3Points,
     Dnp3Trend,
     Dnp3Traffic,
@@ -85,6 +89,10 @@ impl Scenario {
         "bacnet-traffic",
         "bacnet-discover",
         "bacnet-command",
+        "opcua-points",
+        "opcua-trend",
+        "opcua-method",
+        "opcua-editor",
         "dnp3-points",
         "dnp3-trend",
         "dnp3-traffic",
@@ -140,6 +148,10 @@ impl Scenario {
             "bacnet-traffic" => Self::BacnetTraffic,
             "bacnet-discover" => Self::BacnetDiscover,
             "bacnet-command" => Self::BacnetCommand,
+            "opcua-points" => Self::OpcuaPoints,
+            "opcua-trend" => Self::OpcuaTrend,
+            "opcua-method" => Self::OpcuaMethod,
+            "opcua-editor" => Self::OpcuaEditor,
             "dnp3-points" => Self::Dnp3Points,
             "dnp3-trend" => Self::Dnp3Trend,
             "dnp3-traffic" => Self::Dnp3Traffic,
@@ -219,6 +231,10 @@ pub fn apply(
         | Scenario::BacnetTraffic
         | Scenario::BacnetDiscover
         | Scenario::BacnetCommand => bacnet(model, scenario, window, cx),
+        Scenario::OpcuaPoints
+        | Scenario::OpcuaTrend
+        | Scenario::OpcuaMethod
+        | Scenario::OpcuaEditor => opcua(model, scenario, window, cx),
         Scenario::Dnp3Points
         | Scenario::Dnp3Trend
         | Scenario::Dnp3Traffic
@@ -458,6 +474,96 @@ fn bacnet(
             if let Some(live) = model.live.get_mut(&client) {
                 live.selected = Some(BACNET_SETPOINT);
             }
+        }
+        _ => {}
+    }
+}
+
+/// The OPC UA demo: the plant server and a client browsing and monitoring it.
+fn opcua(
+    model: &mut AppModel,
+    scenario: Scenario,
+    window: &mut Window,
+    cx: &mut Context<AppModel>,
+) {
+    let Some((client, simulator)) = model.start_opcua_demo(cx) else {
+        return;
+    };
+    if let Some(live) = model.live.get_mut(&client) {
+        live.trend = (0..4).collect();
+        live.trend_window_ms = TREND_WINDOW_MS;
+    }
+    let plant = |key: &str| format!("ns={};s={key}", crate::model::opcua::PLANT_NAMESPACE_INDEX);
+    match scenario {
+        // The client alone: the browser open on the reactor with a variable picked, beside its
+        // points.
+        Scenario::OpcuaPoints => {
+            model.workspace.ui.inspector_open = false;
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            let (parent, node) = (plant("Plant.Reactor"), plant("Plant.Reactor.AgitatorSpeed"));
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let _ = this.update(cx, |model, cx| model.select_node(client, parent, node, cx));
+            })
+            .detach();
+        }
+        Scenario::OpcuaTrend => {
+            model.workspace.ui.inspector_open = false;
+            model.set_view(PaneView::Trend, cx);
+        }
+        // One client, the StartBatch method in the inspector, called once.
+        Scenario::OpcuaMethod => {
+            // The inspector beside the browser and points: the sidebar makes room.
+            model.workspace.ui.sidebar_open = false;
+            if let Some(pane) = pane_of(model, simulator) {
+                model.workspace.close_pane(pane);
+            }
+            if let Some(pane) = pane_of(model, client) {
+                model.focus_pane(pane, cx);
+            }
+            let (parent, node) = (plant("Plant.Reactor"), plant("Plant.Reactor.StartBatch"));
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let _ = this.update(cx, |model, cx| {
+                    model.select_node(client, parent, node, cx);
+                    for (input, text) in model.opcua.arguments.iter().zip(["Pale ale", "500"]) {
+                        input.update(cx, |input, cx| input.set_text(text, cx));
+                    }
+                });
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let _ = this.update(cx, |model, cx| model.call_selected_method(cx));
+            })
+            .detach();
+        }
+        // A new client asking the server for its endpoints.
+        Scenario::OpcuaEditor => {
+            model.workspace.ui.inspector_open = false;
+            let port = match model
+                .workspace
+                .connection(simulator)
+                .map(|saved| &saved.spec)
+            {
+                Some(vt_protocol::SessionSpec::OpcuaServer(server)) => server.port,
+                _ => vt_protocol::OPCUA_PORT,
+            };
+            model.open_editor(EditorKind::OpcuaClient, None, window, cx);
+            if let Some(endpoint) = model
+                .editor_mut()
+                .map(|editor| editor.opcua.endpoint.clone())
+            {
+                let url = format!("opc.tcp://localhost:{port}");
+                endpoint.update(cx, |input, cx| input.set_text(url, cx));
+            }
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = this.update(cx, |model, cx| model.discover_opcua(cx));
+            })
+            .detach();
         }
         _ => {}
     }
