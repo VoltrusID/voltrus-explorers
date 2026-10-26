@@ -98,6 +98,7 @@ fn point_detail(
             !(info.address.starts_with("BO ") || info.address.starts_with("AO "))
         }
         Some(SessionSpec::EnipAdapter(_)) => true,
+        Some(SessionSpec::SerialDevice(_)) => true,
         _ => false,
     };
     let mqtt = matches!(spec, Some(SessionSpec::MqttClient(_)));
@@ -531,6 +532,7 @@ fn session_summary(
     let state = live.map(|live| live.state.clone());
     let stats = live.map(|live| live.stats).unwrap_or_default();
     let mqtt = saved.spec.protocol() == Protocol::Mqtt;
+    let serial = saved.spec.protocol() == Protocol::Serial;
     let row = |label: &'static str, value: String| {
         div()
             .flex()
@@ -585,23 +587,40 @@ fn session_summary(
                 .border_1()
                 .border_color(theme.border)
                 .child(row(
-                    if mqtt { "Updates" } else { "Polls" },
+                    if mqtt {
+                        "Updates"
+                    } else if serial {
+                        "Lines"
+                    } else {
+                        "Polls"
+                    },
                     stats.polls.to_string(),
                 ))
                 .child(row("Errors", stats.errors.to_string()))
                 .child(row(
-                    if mqtt { "Messages" } else { "Frames" },
+                    if mqtt {
+                        "Messages"
+                    } else if serial {
+                        "Bytes"
+                    } else {
+                        "Frames"
+                    },
                     stats.frames.to_string(),
                 ))
-                .child(row(
-                    if mqtt { "Ping" } else { "Latency" },
-                    format!("{:.1} ms", f64::from(stats.last_latency_us) / 1000.0),
-                )),
+                .when(!serial, |this| {
+                    this.child(row(
+                        if mqtt { "Ping" } else { "Latency" },
+                        format!("{:.1} ms", f64::from(stats.last_latency_us) / 1000.0),
+                    ))
+                }),
         )
         .when_some(live.filter(|_| mqtt), |this, live| {
             this.child(publish::card(live, &model.publish, cx))
         })
         .children(super::dnp3::station_card(model, connection, cx))
+        .when(serial, |this| {
+            this.child(serial_card(connection, &saved.spec, live, cx))
+        })
         .child(
             div()
                 .text_size(FONT_SMALL)
@@ -617,6 +636,82 @@ fn session_summary(
                         model.open_editor(EditorKind::Master, Some(connection), window, cx);
                     })),
             ),
+        )
+        .into_any_element()
+}
+
+/// A serial session's line settings, parser and macros.
+fn serial_card(
+    connection: vt_app_core::ConnectionId,
+    spec: &SessionSpec,
+    live: Option<&crate::model::live::Live>,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
+    let theme = theme(cx).clone();
+    let running = live.is_some_and(|live| live.session.is_some());
+    let logging = live.and_then(|live| live.terminal.logging.clone());
+    let row = |label: &'static str, value: String| {
+        div()
+            .flex()
+            .justify_between()
+            .gap(SPACE_4)
+            .text_size(FONT_SMALL)
+            .child(div().flex_none().text_color(theme.fg_muted).child(label))
+            .child(div().min_w_0().truncate().font_family(MONO).child(value))
+    };
+    let mut card = div()
+        .flex()
+        .flex_col()
+        .gap(SPACE_4)
+        .child(section_label("Serial", cx));
+    match spec {
+        SessionSpec::SerialMonitor(monitor) => {
+            card = card
+                .child(row("Flow control", monitor.flow.name().to_owned()))
+                .child(row("Sends end with", monitor.line_ending.name().to_owned()))
+                .child(row("Lines into points", monitor.parser.name().to_owned()));
+            if !monitor.macros.is_empty() {
+                card = card.child(div().flex().flex_wrap().gap(SPACE_3).children(
+                    monitor.macros.iter().enumerate().map(|(index, item)| {
+                        Button::new(
+                            gpui::ElementId::NamedInteger(
+                                format!("inspector-macro-{index}").into(),
+                                connection.0,
+                            ),
+                            item.name.clone(),
+                        )
+                        .icon(Icon::Send)
+                        .compact()
+                        .disabled(!running)
+                        .tooltip(if index < crate::model::serial::MACRO_KEYS {
+                            format!("{}  ⌃{}", item.payload, index + 1)
+                        } else {
+                            item.payload.clone()
+                        })
+                        .on_click(cx.listener(move |model, _, _, cx| {
+                            model.run_serial_macro(connection, index, cx);
+                        }))
+                    }),
+                ));
+            }
+        }
+        SessionSpec::SerialDevice(device) => {
+            card = card
+                .child(row("Port link", device.path()))
+                .child(row("Prints", device.format.name().to_owned()))
+                .child(row("Every", format!("{} ms", device.interval_ms)))
+                .child(div().text_size(FONT_SMALL).text_color(theme.fg_dim).child(
+                    "It answers HELP, READ, SET <name> <value>, RELEASE <name|ALL> and RATE <ms>.",
+                ));
+        }
+        _ => {}
+    }
+    card.when_some(logging, |this, path| this.child(row("Logging to", path)))
+        .child(
+            div()
+                .text_size(FONT_SMALL)
+                .text_color(theme.fg_dim)
+                .child("⌘L types in the send bar; ↑↓ walk what was sent."),
         )
         .into_any_element()
 }

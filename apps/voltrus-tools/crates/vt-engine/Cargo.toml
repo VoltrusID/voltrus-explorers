@@ -16,6 +16,7 @@ mt-bacnet = { path = "../../../../crates/mt-bacnet" }
 mt-mqtt = { path = "../../../../crates/mt-mqtt" }
 mt-dnp3 = { path = "../../../../crates/mt-dnp3" }
 mt-enip = { path = "../../../../crates/mt-enip" }
+mt-serial = { path = "../../../../crates/mt-serial" }
 mt-ble = { path = "../../../../crates/mt-ble" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its
@@ -23,6 +24,8 @@ async-channel.workspace = true
 bytes = "1"
 prost = "0.14"
 rumqttc = "0.24"
+# Serial monitors parse lines with a user's pattern.
+regex = "1"
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true

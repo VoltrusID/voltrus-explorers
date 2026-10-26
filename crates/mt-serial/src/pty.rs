@@ -80,6 +80,51 @@ pub fn close_fd(fd: c_int) {
     unsafe { libc::close(fd) };
 }
 
+/// A virtual serial port: the master end of a raw pty pair as an async stream. Other programs
+/// (or a monitor in this one) open [`VirtualPort::path`] as if it were a serial device.
+///
+/// The slave stays open for the port's life, so the master never sees a hang-up while nobody has
+/// the port open; it is closed on drop, which removes the port.
+#[derive(Debug)]
+pub struct VirtualPort {
+    pub stream: tokio_serial::SerialStream,
+    pub path: String,
+    slave_fd: c_int,
+}
+
+impl VirtualPort {
+    /// Open a new pair. Call inside a tokio runtime: the stream registers with its reactor.
+    pub fn open() -> io::Result<Self> {
+        use std::os::unix::io::FromRawFd;
+
+        let pair = open_pair()?;
+        if let Err(error) = pair.make_raw() {
+            close_fd(pair.master_fd);
+            close_fd(pair.slave_fd);
+            return Err(error);
+        }
+        // The TTYPort owns the master from here on, also when the conversion fails.
+        let master = unsafe { serialport::TTYPort::from_raw_fd(pair.master_fd) };
+        match tokio_serial::SerialStream::try_from(master) {
+            Ok(stream) => Ok(Self {
+                stream,
+                path: pair.slave_path,
+                slave_fd: pair.slave_fd,
+            }),
+            Err(error) => {
+                close_fd(pair.slave_fd);
+                Err(io::Error::from(error))
+            }
+        }
+    }
+}
+
+impl Drop for VirtualPort {
+    fn drop(&mut self) {
+        close_fd(self.slave_fd);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

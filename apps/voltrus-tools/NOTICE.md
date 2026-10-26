@@ -12,6 +12,9 @@ carries all of these texts in `Contents/Resources/Licenses`.
 | [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | Monospace face for values and addresses | SIL OFL 1.1 (`vt-ui/assets/fonts/OFL-JetBrainsMono.txt`) |
 | [iTerm2 Color Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes), © 2011 to present Mark Badolato | Origin of most bundled colour schemes, as distributed with Ghostty | MIT (below) |
 | [rumqttc](https://github.com/bytebeamio/rumqtt), Bytebeam | MQTT client (through `mt-mqtt`) and the packet codec of the MQTT broker simulator (`vt-engine/src/mqtt/broker.rs`) | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) |
+| [serialport](https://github.com/serialport/serialport-rs) | Serial ports for the serial monitor and Modbus RTU (through `mt-serial` and `mt-modbus`); its source is on [crates.io](https://crates.io/crates/serialport) | MPL-2.0 (`packaging/licenses/serialport-LICENSE-MPL.txt`; the licence text is at https://mozilla.org/MPL/2.0/) |
+| [tokio-serial](https://github.com/berkowski/tokio-serial), © 2017 Zac Berkowitz and contributors | Async serial port streams (through `mt-serial`) | MIT (`packaging/licenses/tokio-serial-LICENSE-MIT.txt`) |
+| [regex](https://github.com/rust-lang/regex), The Rust Project Developers | The serial monitor's line patterns | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) or MIT |
 | [btleplug](https://github.com/deviceplug/btleplug), Nonpolynomial (with parts from Rumble and blurmac) | Bluetooth LE central (through `mt-ble`) | BSD-3-Clause, with MIT/Apache-2.0 and BSD-3-Clause parts (`packaging/licenses/btleplug-LICENSE.txt`) |
 | [objc2](https://github.com/madsmtm/objc2), Mads Marquart | CoreBluetooth bindings used by btleplug on macOS (`objc2`, `objc2-foundation`, `objc2-core-bluetooth`, `block2`) | MIT (`packaging/licenses/objc2-LICENSE-MIT.txt`) |
 

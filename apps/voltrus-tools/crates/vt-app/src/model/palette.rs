@@ -41,6 +41,11 @@ pub enum Command {
     NewEnipClient,
     NewEnipAdapter,
     EnipDemo,
+    NewSerialMonitor,
+    NewSerialDevice,
+    SerialDemo,
+    /// Send a serial connection's macro, by index.
+    SerialMacro(ConnectionId, usize),
     NewBleClient,
     BleDemo,
 }
@@ -325,6 +330,24 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             Command::ChooseTheme,
         ),
         (
+            "New serial connection…",
+            "Open a port: terminal, sends, macros, logging, lines into trends",
+            Icon::Plus,
+            Command::NewSerialMonitor,
+        ),
+        (
+            "New serial device simulator…",
+            "An instrument printing its values on a virtual port",
+            Icon::Server,
+            Command::NewSerialDevice,
+        ),
+        (
+            "Start the serial demo",
+            "A water analyser on a virtual port and a monitor trending its lines",
+            Icon::Zap,
+            Command::SerialDemo,
+        ),
+        (
             "New Bluetooth LE connection…",
             "Scan for a peripheral, browse its GATT services, read, write and subscribe",
             Icon::Bluetooth,
@@ -348,5 +371,28 @@ fn commands(model: &AppModel) -> Vec<Entry> {
             }),
     );
     entries.extend(super::dnp3::palette_entries(model));
+    // The focused serial connection's macros, so they are a ⌘K away.
+    if let Some(connection) = model.focused_connection()
+        && let Some(saved) = model.workspace.connection(connection)
+        && let vt_protocol::SessionSpec::SerialMonitor(monitor) = &saved.spec
+    {
+        entries.extend(monitor.macros.iter().enumerate().map(|(index, item)| {
+            Entry {
+                title: format!("Send {}", item.name).into(),
+                detail: format!(
+                    "{} · {}",
+                    saved.name,
+                    if item.hex {
+                        item.payload.clone()
+                    } else {
+                        format!("“{}”", item.payload)
+                    }
+                )
+                .into(),
+                icon: Icon::Send,
+                command: Command::SerialMacro(connection, index),
+            }
+        }));
+    }
     entries
 }
