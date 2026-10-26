@@ -383,14 +383,14 @@ fn a_client_watches_requests_and_browses_the_simulated_server() {
             .map(|point| point.address.as_str()),
         Some("test.* · panel")
     );
-    assert!(
+    // The server reports its traffic on its own tick.
+    engine.until("the server to see the publish", |engine| {
         engine
             .server
             .traffic
             .iter()
-            .any(|line| line.starts_with("HPUB test.limit")),
-        "the server saw the publish"
-    );
+            .any(|line| line.starts_with("HPUB test.limit"))
+    });
     // Wildcards are refused before the wire.
     engine.nats(NatsRequest::Publish {
         subject: "test.*".into(),
