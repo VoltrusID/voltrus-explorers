@@ -41,11 +41,15 @@ pub(crate) async fn run(
     let users = mt_opcua::pki::server_dir(spec.port).join("users");
     let certificate = users.join("operator.der");
     let private_key = users.join("operator.pem");
-    let user_certificate = match mt_opcua::create_user_certificate(
-        &certificate,
-        &private_key,
-        USER_CERTIFICATE_NAME,
-    ) {
+    out.log(LogLevel::Info, "Preparing the server's certificates…");
+    let (cert, key) = (certificate.clone(), private_key.clone());
+    let created = tokio::task::spawn_blocking(move || {
+        mt_opcua::create_user_certificate(&cert, &key, USER_CERTIFICATE_NAME)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .unwrap_or_else(|error| Err(error.to_string()));
+    let user_certificate = match created {
         Ok(()) => Some(certificate.clone()),
         Err(error) => {
             out.log(

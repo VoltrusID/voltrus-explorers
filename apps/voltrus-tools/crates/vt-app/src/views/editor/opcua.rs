@@ -427,17 +427,17 @@ pub fn client(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
             group("Subscription", cx)
                 .child(
                     row()
-                        .child(div().w(px(150.0)).child(field(
+                        .child(div().w(px(150.0)).flex_none().child(field(
                             "Publishing (ms)",
                             fields.publishing.clone(),
                             cx,
                         )))
-                        .child(div().w(px(150.0)).child(field(
+                        .child(div().w(px(150.0)).flex_none().child(field(
                             "Sampling (ms)",
                             fields.sampling.clone(),
                             cx,
                         )))
-                        .child(div().flex_1().pb(SPACE_3).child(hint(
+                        .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
                             "The server samples each variable this often and sends changes every publishing interval. 0 samples as fast as it can.",
                             cx,
                         ))),
@@ -472,9 +472,10 @@ pub fn server(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
                 .child(
                     div()
                         .w(px(130.0))
+                        .flex_none()
                         .child(field("TCP port", fields.server_port.clone(), cx)),
                 )
-                .child(div().flex_1().pb(SPACE_3).child(hint(
+                .child(div().flex_1().min_w_0().pb(SPACE_3).child(hint(
                     "Listens on every interface. 4840 is the OPC UA port. Endpoints: None, Basic256Sha256 (Sign, Sign & Encrypt) and Aes256 RsaPss.",
                     cx,
                 ))),

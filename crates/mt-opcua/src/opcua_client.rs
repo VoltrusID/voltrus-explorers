@@ -303,6 +303,7 @@ impl OpcUaProtocolClient {
         identity_token: IdentityToken,
     ) -> Result<(), String> {
         let pki_dir = crate::pki::client_dir();
+        Self::prepare_certificate().await?;
         let endpoint_url = config.endpoint_url.clone();
         let policy_uri = policy_uri(&config.security_policy);
         let security_mode = parse_mode(&config.security_mode);
@@ -389,7 +390,19 @@ impl OpcUaProtocolClient {
         Ok(())
     }
 
+    /// The client's application instance certificate, made off the async workers and without
+    /// resolving the host name (the stack's own sample certificate does both).
+    async fn prepare_certificate() -> Result<(), String> {
+        crate::pki::ensure_own_certificate(
+            crate::pki::client_dir(),
+            "OPC UA Explorer Client",
+            "urn:opcua-explorer-client",
+        )
+        .await
+    }
+
     pub async fn get_endpoints(url: &str) -> Result<Vec<EndpointInfo>, String> {
+        Self::prepare_certificate().await?;
         let client = Self::discovery_client()?;
         let endpoints = client
             .get_server_endpoints_from_url(url)
@@ -414,6 +427,7 @@ impl OpcUaProtocolClient {
     }
 
     pub async fn find_servers(url: &str) -> Result<Vec<ServerInfo>, String> {
+        Self::prepare_certificate().await?;
         let client = Self::discovery_client()?;
         let servers = client
             .find_servers(url, None, None)

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use opcua::crypto::{CertificateStore, SecurityPolicy, X509Data};
+use opcua::crypto::SecurityPolicy;
 use opcua::server::address_space::{
     AccessLevel, AddressSpace, MethodBuilder, NodeType, ObjectBuilder, VariableBuilder,
 };
@@ -19,7 +19,7 @@ use opcua::server::node_manager::memory::{
 };
 use opcua::server::{ANONYMOUS_USER_TOKEN_ID, ServerBuilder, ServerHandle, ServerUserToken};
 use opcua::types::{
-    ApplicationDescription, Argument, DataEncoding, DataTypeId, DataValue, DateTime, EUInformation,
+    Argument, DataEncoding, DataTypeId, DataValue, DateTime, EUInformation,
     ExtensionObject, LocalizedText, MessageSecurityMode, NodeId, NumericRange, ObjectId,
     ObjectTypeId, Range, StatusCode, TimestampsToReturn, UAString, VariableTypeId, Variant,
 };
@@ -103,25 +103,15 @@ pub struct PlantServer {
 }
 
 /// Make a user certificate and private key (PEM) at the given paths unless they exist: what a
-/// client signs in with to the server's certificate user.
+/// client signs in with to the server's certificate user. Blocking: call it off the async workers.
 pub fn create_user_certificate(certificate: &Path, private_key: &Path, common_name: &str) -> Result<()> {
-    if certificate.exists() && private_key.exists() {
-        return Ok(());
-    }
-    for path in [certificate, private_key] {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    let mut data = X509Data::from(ApplicationDescription {
-        application_uri: UAString::from(format!("urn:voltrus:user:{common_name}")),
-        application_name: LocalizedText::new("", common_name),
-        ..Default::default()
-    });
-    data.common_name = common_name.to_owned();
-    CertificateStore::create_certificate_and_key(&data, true, certificate, private_key)
-        .map_err(|e| anyhow!("Cannot create the user certificate: {e}"))?;
-    Ok(())
+    crate::pki::ensure_certificate(
+        certificate,
+        private_key,
+        common_name,
+        &format!("urn:voltrus:user:{}", common_name.replace(' ', "-")),
+    )
+    .map_err(|e| anyhow!("Cannot create the user certificate: {e}"))
 }
 
 fn data_type_id(name: &str) -> NodeId {
@@ -290,6 +280,14 @@ impl PlantServer {
     pub async fn start(config: PlantServerConfig, nodes: &[PlantNode], on_call: MethodHandler) -> Result<Self> {
         let listener = bind(config.port).await?;
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(config.port);
+        // The server's own certificate, made here without resolving the host name.
+        crate::pki::ensure_own_certificate(
+            crate::pki::server_dir(port),
+            &config.application_name,
+            "urn:voltrus:tools:plant",
+        )
+        .await
+        .map_err(|e| anyhow!(e))?;
         let url = format!("opc.tcp://localhost:{port}");
 
         let mut tokens: Vec<&str> = Vec::new();
