@@ -81,9 +81,29 @@ impl Events {
                     })
                     .map(|event| format!("{} {:?}", event.session, event.kind))
                     .collect();
+                // And how far each session's values got: frames since, and the last one.
+                let mut values: Vec<String> = Vec::new();
+                for event in &self.kept {
+                    if let EventKind::Values(frame) = &event.kind {
+                        let readings: Vec<String> = frame
+                            .readings
+                            .iter()
+                            .map(|reading| format!("{:.1}/{:?}", reading.value, reading.quality))
+                            .collect();
+                        values.push(format!(
+                            "{} at {} {}",
+                            event.session,
+                            frame.at_ms,
+                            readings.join(" ")
+                        ));
+                    }
+                }
+                let tail = values.len().saturating_sub(6);
                 panic!(
-                    "timed out waiting for an event from {session}; it said:\n{}",
-                    said.join("\n")
+                    "timed out waiting for an event from {session}; it said:\n{}\n{} value frames, the last:\n{}",
+                    said.join("\n"),
+                    values.len(),
+                    values[tail..].join("\n")
                 );
             }
             match self.receiver.try_recv() {
