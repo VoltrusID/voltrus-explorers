@@ -232,5 +232,10 @@ try Bluetooth LE on real peripherals from the bundle (`dist/Voltrus Tools.app`),
 not `cargo run`. The sandboxed build needs the `com.apple.security.device.bluetooth`
 entitlement.
 
+Built from source, every tool is unlocked. The Mac App Store build
+(`--features store`) is a free download with a 14-day trial and a one-time
+unlock: how it is licensed, sandboxed, built and uploaded is in
+[docs/release.md](docs/release.md).
+
 Architecture: [docs/architecture.md](docs/architecture.md). Third-party
 notices: [NOTICE.md](NOTICE.md).

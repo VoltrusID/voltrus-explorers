@@ -9,6 +9,7 @@ pub mod ble;
 pub mod dnp3;
 pub mod editor;
 pub mod enip;
+pub mod licence;
 pub mod live;
 pub mod palette;
 pub mod publish;
@@ -119,7 +120,9 @@ pub struct Chrome {
 pub struct AppModel {
     pub workspace: Workspace,
     store: Option<PathBuf>,
-    engine: EngineHandle,
+    /// The session engine behind the licence gate (store builds lock it once
+    /// the trial is over).
+    engine: licence::GatedEngine,
     pub live: HashMap<ConnectionId, Live>,
     sessions: HashMap<SessionId, ConnectionId>,
     next_session: u64,
@@ -142,6 +145,8 @@ pub struct AppModel {
     _subscriptions: Vec<Subscription>,
     /// The inspector's explicit message form (EtherNet/IP).
     pub cip: enip::CipForm,
+    /// The App Store trial and unlock, and their sheets.
+    pub licensing: licence::Licensing,
     /// BLE: the inspector's characteristic tools and the adapter new
     /// connections start on.
     pub ble: ble::BleState,
@@ -201,10 +206,11 @@ impl AppModel {
             async {}
         });
         let subscriptions = vec![write_events, appearance, quit];
+        let licensing = licence::Licensing::new(cx.focus_handle());
         let mut model = Self {
             workspace: boot.workspace,
             store: boot.store,
-            engine,
+            engine: licence::GatedEngine::new(engine, licensing.gate.clone()),
             live: HashMap::new(),
             sessions: HashMap::new(),
             next_session: 0,
@@ -242,9 +248,11 @@ impl AppModel {
             _tasks: vec![pump],
             _subscriptions: subscriptions,
             cip: enip::CipForm::new(window, cx),
+            licensing,
             ble: ble::BleState::new(window, cx),
         };
         window.focus(&model.focus);
+        model.start_licensing(cx);
         if let Some(notice) = boot.notice {
             model.show_toast(notice, true, cx);
         }
@@ -320,6 +328,9 @@ impl AppModel {
         else {
             return;
         };
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.stop(connection);
         self.next_session += 1;
         let session = SessionId(self.next_session);
@@ -497,6 +508,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("sma-inverter") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
@@ -532,6 +546,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let Some(profile) = templates::find_modbus("sma-inverter") else {
             self.show_toast("The demo device template is missing", true, cx);
             return None;
@@ -564,6 +581,9 @@ impl AppModel {
 
     /// Start a protocol's demo plant.
     pub fn start_demo(&mut self, protocol: Protocol, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         match protocol {
             Protocol::Modbus => {
                 self.start_demo_plant(cx);

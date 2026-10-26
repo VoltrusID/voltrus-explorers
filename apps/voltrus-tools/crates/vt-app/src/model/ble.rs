@@ -207,6 +207,9 @@ impl AppModel {
 
     /// Scan for peripherals on the editor's adapter.
     pub fn scan_ble(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         self.next_session += 1;
         let request = SessionId(self.next_session);
         let Some(editor) = self.editor_mut() else {
@@ -336,6 +339,9 @@ impl AppModel {
     }
 
     pub fn read_selected_ble(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         if let Some((_, session, point)) = self.selected_ble() {
             self.engine.send(EngineCommand::Ble {
                 session,
@@ -346,6 +352,9 @@ impl AppModel {
     }
 
     pub fn toggle_selected_ble_notify(&mut self, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some((connection, session, point)) = self.selected_ble() else {
             return;
         };
@@ -370,6 +379,9 @@ impl AppModel {
     /// Decode the selected characteristic as `format` (with the inspector's
     /// offset and scale for numbers), and remember it in the connection.
     pub fn decode_selected_ble(&mut self, format: BleFormat, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some((connection, session, point)) = self.selected_ble() else {
             return;
         };
@@ -430,6 +442,9 @@ impl AppModel {
 
     /// Write the inspector's bytes (or text) to the selected characteristic.
     pub fn write_ble_bytes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.licence_allows(cx) {
+            return;
+        }
         let Some((connection, session, point)) = self.selected_ble() else {
             return;
         };
@@ -466,6 +481,9 @@ impl AppModel {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<(ConnectionId, ConnectionId)> {
+        if !self.licence_allows(cx) {
+            return None;
+        }
         let mut clients = demo_clients().into_iter();
         let (Some((monitor_name, monitor)), Some((sensor_name, sensor))) =
             (clients.next(), clients.next())

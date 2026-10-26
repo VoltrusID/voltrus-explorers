@@ -11,6 +11,7 @@ mod device;
 mod dnp3;
 mod editor;
 pub mod inspector;
+mod licence;
 mod log;
 mod new_menu;
 mod palette;
@@ -45,6 +46,7 @@ use crate::model::{AppModel, Drag, Overlay};
 impl Render for AppModel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_pane_views(cx);
+        self.sync_licence_sheet(window, cx);
         self.sync_serial_consoles(window, cx);
         let theme = theme(cx).clone();
         let ui = self.workspace.ui.clone();
@@ -223,6 +225,8 @@ impl Render for AppModel {
                 Overlay::Editor(_) => this.child(editor::render(self, cx)),
                 Overlay::NewMenu { .. } => this.child(new_menu::render(self, cx)),
             })
+            // Above every overlay: a refused command can come from any of them.
+            .child(licence::render(self, cx))
             .when_some(self.toast.as_ref(), |this, toast| {
                 let color = if toast.error {
                     theme.danger

@@ -12,11 +12,17 @@ publish.workspace = true
 name = "voltrus-tools"
 path = "src/main.rs"
 
+[features]
+# Mac App Store build: a 14-day trial, then a one-time unlock, bought through
+# StoreKit (see vt-store and docs/release.md). Without it everything is unlocked.
+store = ["vt-store/store"]
+
 [dependencies]
 vt-protocol = { path = "../vt-protocol" }
 vt-engine = { path = "../vt-engine" }
 vt-app-core = { path = "../vt-app-core" }
 vt-ui = { path = "../vt-ui" }
+vt-store = { path = "../vt-store" }
 async-channel.workspace = true
 gpui = "0.2.2"
 

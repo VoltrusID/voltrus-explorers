@@ -32,6 +32,12 @@ pub enum StoreError {
 
 /// `<data dir>/Voltrus Tools/workspace.json`, e.g. under
 /// `~/Library/Application Support` on macOS.
+///
+/// `dirs` builds it from `$HOME`, which the App Sandbox points at the app's
+/// container: the Mac App Store build saves under
+/// `~/Library/Containers/com.joyodigitama.voltrus-tools/Data/Library/Application Support/`.
+/// Everything the app keeps (the licence cache, protocol certificates) goes
+/// beside this file.
 pub fn default_path() -> Result<PathBuf, StoreError> {
     dirs::data_dir()
         .map(|dir| dir.join("Voltrus Tools").join(FILE))

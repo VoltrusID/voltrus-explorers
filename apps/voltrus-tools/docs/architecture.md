@@ -10,6 +10,7 @@ flowchart LR
     APP --> CORE["vt-app-core<br/>workspace, forms, store"]
     APP --> ENGINE["vt-engine<br/>sessions"]
     APP --> PROTO["vt-protocol<br/>messages"]
+    APP --> STORE["vt-store<br/>App Store licence"]
     CORE --> PROTO
     ENGINE --> PROTO
     ENGINE --> MT["../../crates/mt-*<br/>protocol crates"]
@@ -21,6 +22,7 @@ flowchart LR
 | `vt-engine` | One tokio task per session on its own runtime thread. Polls, writes, simulates, reports. | no |
 | `vt-app-core` | Saved connections, tabs, split tree, form validation, fuzzy search, atomic storage. | no |
 | `vt-ui` | Theme tokens from a colour scheme, metrics, components, text input, charts. No app state. | yes |
+| `vt-store` | The Mac App Store trial and unlock: licence state machine, cached entitlements, StoreKit 2 through a Swift bridge (`store` feature). See [release.md](release.md). | no |
 | `vt-app` | The binary: one `AppModel` entity, views as functions over it. | yes |
 
 The allowed dependencies are listed in `Cargo.toml`
