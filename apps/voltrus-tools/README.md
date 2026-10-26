@@ -45,6 +45,25 @@ standalone Tauri apps in this repository.
   on any UDP port. It answers Who-Is, ReadProperty(Multiple), WriteProperty
   with a 16-level priority array, and SubscribeCOV. A value set from the app
   or commanded by any client is held until released or relinquished.
+- **DNP3 master** (on `mt-dnp3`): TCP to an outstation with its link
+  addresses; an integrity poll on connect and every integrity period, class
+  1-3 event polls between them, and class polls, time sync, counter freeze
+  and warm or cold restart on demand (inspector or palette). Every point the
+  outstation reports is listed (binary and double-bit inputs, binary outputs,
+  counters, analog inputs and outputs), named ones first; its flags decide
+  its quality (offline, restart, comm lost, over range read bad) and the
+  inspector shows them with the object variation and the last event's time
+  stamp. Binary events are logged as a sequence of events. Outputs take CROBs
+  (latch, pulse, trip, close) or analog output blocks by select-before-operate
+  or direct operate, and the outstation's echo decides success. The master
+  acts on the internal indications: it writes the time when asked, clears a
+  restart and polls everything again, and recovers from an event overflow.
+- **DNP3 outstation simulator**: plays a 13.8 kV feeder, a transformer bay or
+  a solar plant on any TCP port, for any master. Values move, every change is
+  a time-stamped event, outputs answer select-before-operate and direct
+  operate, and inputs follow them (trip the breaker and its status opens, the
+  currents fall to zero, the energy counter stops). A point can be taken
+  offline (COMM_LOST); inputs set from the app are held until released.
 - **NATS client** (on `mt-nats`, the official `async-nats` client): host and
   port, TLS against the built-in web trust roots, and a token, user and
   password, user NKey seed or `.creds` file (chosen in an open panel and kept
@@ -77,8 +96,8 @@ standalone Tauri apps in this repository.
   views of one session. Layout and connections are restored on launch.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
-Modbus, MQTT, BACnet and NATS are ported. The others in this repository (OPC
-UA, S7, EtherNet/IP, DNP3, serial, BLE) are being ported next; each plugs
+Modbus, MQTT, BACnet, DNP3 and NATS are ported. The others in this repository
+(OPC UA, S7, EtherNet/IP, serial, BLE) are being ported next; each plugs
 into the same engine and views ([how](docs/architecture.md#adding-a-protocol)).
 
 ## Try it
@@ -94,7 +113,10 @@ cargo run -p vt-app --release -- --demo points   # welcome, points, trend, traff
                                                  # mqtt-inspector, mqtt-editor
                                                  # bacnet-points, bacnet-trend,
                                                  # bacnet-traffic, bacnet-discover,
-                                                 # bacnet-command, nats-points,
+                                                 # bacnet-command, dnp3-points,
+                                                 # dnp3-trend, dnp3-traffic,
+                                                 # dnp3-control, dnp3-station,
+                                                 # dnp3-editor, nats-points,
                                                  # nats-trend, nats-traffic,
                                                  # nats-inspector, nats-jetstream,
                                                  # nats-editor
