@@ -502,8 +502,9 @@ fn clients_discover_browse_monitor_write_and_call_the_plant_server() {
         panic!("call answer");
     };
     assert_eq!(result, Ok(vec!["1002".to_owned()]));
-    says(&mut events, anonymous, 2, "Pale ale");
+    // One flush reports the values, then the payloads: wait for them in that order.
     reads(&mut events, anonymous, 3, |reading| reading.value == 1002.0);
+    says(&mut events, anonymous, 2, "Pale ale");
     assert!(engine.send(call(["Pale ale", "3000"])));
     let OpcuaEvent::Called { result, .. } = opcua(&mut events, anonymous) else {
         panic!("call answer");
