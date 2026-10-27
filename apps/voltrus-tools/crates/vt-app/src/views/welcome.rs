@@ -47,13 +47,21 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
             )
     };
 
+    // Centred when it fits; scrolls when the window is shorter than the content.
     div()
+        .id("welcome")
         .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px(SPACE_10)
+        .overflow_y_scroll()
         .child(
+            div()
+                .min_h_full()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .px(SPACE_10)
+                .py(SPACE_10)
+                .child(
             div()
                 .flex()
                 .flex_col()
@@ -202,6 +210,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .child(div().flex().items_center().gap(SPACE_3).child(kbd(shortcut("ModK"), cx)).child("Commands"))
                         .child(div().flex().items_center().gap(SPACE_3).child(kbd(shortcut("ModN"), cx)).child("New connection"))
                         .child(div().flex().items_center().gap(SPACE_3).child(kbd(shortcut("ModD"), cx)).child("Split")),
+                ),
                 ),
         )
         .into_any_element()
