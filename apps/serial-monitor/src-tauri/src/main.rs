@@ -383,8 +383,9 @@ pub fn run() {
             virtual_port::destroy_virtual_port,
             virtual_port::send_virtual,
             virtual_port::virtual_port_status,
-            system::open_url,
+            system::open_url, system::connect_open_url,
             mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::store_activate, mt_store::store_deactivate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

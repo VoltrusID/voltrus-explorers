@@ -3,5 +3,10 @@
   "free_since": {
     "macos_version": "1.5.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-serial-monitor.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/a747039d-cac3-465a-9057-652366b04eac",
+    "price": "$4.99"
   }
 }

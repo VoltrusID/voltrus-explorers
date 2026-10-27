@@ -10,7 +10,7 @@
 # Signing identities come from the keychain search list (CI imports them into a temporary keychain).
 #   appstore: "Apple Distribution" + "3rd Party Mac Developer Installer", and MAS_PROFILE = path to a
 #             MAC_APP_STORE provisioning profile for the app's bundle id (scripts/asc-profile.py).
-#   dmg:      "Developer ID Application".
+#   dmg:      "Developer ID Application". Apps with a `license` feature (Serial Monitor, BLE Inspector) are built with it.
 # --upload, --notarize and the App Store validation (when ASC_KEY_ID is set) use the App Store Connect API key:
 # ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH.
 # BUILD_NUMBER (CFBundleVersion) defaults to the Unix time, the scheme the existing App Store builds use.
@@ -45,9 +45,15 @@ identity_name() { # full name of that identity (productbuild wants a name, not a
 
 echo "==> $PRODUCT $VERSION ($BUILD_NUMBER), $MODE"
 rm -rf "$OUT" && mkdir -p "$OUT"
-# Only the App Store build sells Pro (StoreKit); source, DMG and CI builds have everything unlocked.
+# Pro is sold by the App Store build (StoreKit, `store`) and by the direct-download DMG of an app that declares the
+# `license` feature (licence key bought in the Voltrus console, see docs/release.md). Source, CI and the DMG of every
+# other app have everything unlocked.
 FEATURES=()
-[[ "$MODE" == appstore ]] && FEATURES=(--features store)
+if [[ "$MODE" == appstore ]]; then
+  FEATURES=(--features store)
+elif [[ "$MODE" == dmg ]] && grep -q '^license = ' "$APP_DIR/src-tauri/Cargo.toml"; then
+  FEATURES=(--features license)
+fi
 # ${a[@]+...}: macOS /bin/bash 3.2 treats an empty array as unbound under `set -u`.
 ( cd "$APP_DIR" && bun run tauri build --target universal-apple-darwin --bundles app --ci ${FEATURES[@]+"${FEATURES[@]}"} )
 cp -R "$ROOT/target/universal-apple-darwin/release/bundle/macos/$PRODUCT.app" "$OUT/"

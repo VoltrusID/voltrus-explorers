@@ -6,20 +6,42 @@
 //!   `src-tauri/store.json`; while `free_since` is unset the app is still paid, so every store install is Pro.
 //! - Direct-sale builds (`keys` feature, the Windows installer): Pro unlocks with a Voltrus licence key,
 //!   activated online once (see [`key`]). Configured by the app's `keys.json`; store builds never contain it.
+//! - Direct-download builds (`license` feature, the macOS DMGs of Serial Monitor and BLE Inspector): Pro unlocks
+//!   with a licence key bought in the Voltrus console and activated against the app's download worker, the key
+//!   kept in the Keychain (see [`license`]). The `license` section of `store.json` names the worker and the
+//!   checkout page.
 //!
 //! Apps register [`setup`] on their builder and the commands; the frontend only calls `store_status`,
-//! `store_purchase`, `store_restore` and, in `keys` builds, `store_activate` and `store_deactivate`.
+//! `store_purchase`, `store_restore` and, in `keys` and `license` builds, `store_activate` and `store_deactivate`.
 
-#[cfg(all(feature = "store", feature = "keys"))]
-compile_error!("the `store` and `keys` features are different ways to sell Pro; enable one");
+#[cfg(any(
+    all(feature = "store", feature = "keys"),
+    all(feature = "store", feature = "license"),
+    all(feature = "keys", feature = "license")
+))]
+compile_error!("the `store`, `keys` and `license` features are different ways to sell Pro; enable one");
 
 #[cfg(feature = "keys")]
 pub mod key;
+#[cfg(feature = "license")]
+pub mod license;
 mod receipt;
 
 use serde::{Deserialize, Serialize};
 
 pub use receipt::{installed_original_version, original_application_version};
+
+/// `license` section of `store.json`: how a direct-download build sells Pro by licence key.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LicenseConfig {
+    /// Download worker that activates and validates keys, e.g. `https://dl-serial-monitor.voltrus.id`.
+    pub server: String,
+    /// Console checkout page of the Pro licence; opened in the browser by the Buy button.
+    pub buy_url: String,
+    /// Display price of Pro, e.g. `$4.99`.
+    #[serde(default)]
+    pub price: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StoreConfig {
@@ -27,6 +49,9 @@ pub struct StoreConfig {
     pub pro_product_id: String,
     #[serde(default)]
     pub free_since: FreeSince,
+    /// Licence-key sales; read by `license` builds only.
+    #[serde(default)]
+    pub license: Option<LicenseConfig>,
 }
 
 /// First release that was free to download. Buyers whose original download predates it keep Pro.
@@ -42,7 +67,7 @@ pub struct FreeSince {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProReason {
-    /// Source or GitHub build: no store, nothing locked.
+    /// Source or CI build: no store, nothing locked.
     Build,
     /// First downloaded while the app was paid.
     Grandfathered,
@@ -56,11 +81,11 @@ pub enum ProReason {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StoreStatus {
-    /// Pro is sold in this build (App Store build).
+    /// Pro is sold in this build through the App Store, or by licence key in the Windows build (`keys`).
     pub store: bool,
     pub pro: bool,
     pub reason: ProReason,
-    /// Localized Pro price, when the store answered.
+    /// Localized Pro price, when the store answered (App Store) or the configured display price (licence key).
     pub price: Option<String>,
     /// Pro is unlocked by entering a licence key (`store_activate`) instead of a store purchase.
     pub activation: bool,
@@ -97,9 +122,13 @@ pub fn grandfathered(free_since: &FreeSince, original: Option<&str>, ios: bool) 
     }
 }
 
-/// Registers the store configuration (and the StoreKit plugin in store builds).
+/// Registers the store configuration (the StoreKit plugin in store builds, the licence client in licence builds).
 pub fn setup<R: tauri::Runtime>(builder: tauri::Builder<R>, config_json: &str) -> tauri::Builder<R> {
     let config: StoreConfig = serde_json::from_str(config_json).expect("invalid store.json");
+    #[cfg(feature = "license")]
+    let builder = builder.manage(license::Slot::new(
+        config.license.clone().expect("store.json needs a `license` section in licence builds"),
+    ));
     let builder = builder.manage(config);
     #[cfg(feature = "store")]
     let builder = builder.plugin(tauri_plugin_iap::init());
@@ -112,7 +141,7 @@ pub fn setup_keys<R: tauri::Runtime>(builder: tauri::Builder<R>, config_json: &s
     builder.manage(serde_json::from_str::<key::KeyConfig>(config_json).expect("invalid keys.json"))
 }
 
-#[cfg(not(any(feature = "store", feature = "keys")))]
+#[cfg(not(any(feature = "store", feature = "keys", feature = "license")))]
 mod commands {
     use super::{ProReason, StoreStatus};
 
@@ -284,6 +313,63 @@ mod commands {
     }
 }
 
+#[cfg(feature = "license")]
+mod commands {
+    use super::license::{Entitlement, Slot};
+    use super::{ProReason, StoreStatus};
+    use tauri::{AppHandle, State};
+
+    /// A licence-key DMG is not an App Store build (`store: false`: no sandbox, so the virtual port and the source
+    /// link stay), but the frontend gets the same key flow as the Windows build: `activation` and `buy_url`.
+    fn status_of(slot: &Slot, e: Entitlement) -> StoreStatus {
+        StoreStatus {
+            store: false,
+            pro: e.pro,
+            reason: if e.pro { ProReason::Key } else { ProReason::None },
+            price: slot.config.price.clone(),
+            activation: true,
+            buy_url: Some(slot.config.buy_url.clone()),
+        }
+    }
+
+    #[tauri::command]
+    pub async fn store_status(app: AppHandle, slot: State<'_, Slot>) -> Result<StoreStatus, String> {
+        let e = slot.licence(&app).await?.status().await;
+        Ok(status_of(&slot, e))
+    }
+
+    /// Pro is bought on the web, not in the app: the frontend opens `buy_url` and asks for the key.
+    #[tauri::command]
+    pub async fn store_purchase() -> Result<StoreStatus, String> {
+        Err("Buy a licence key in the Voltrus console, then enter it here.".into())
+    }
+
+    #[tauri::command]
+    pub async fn store_restore() -> Result<StoreStatus, String> {
+        Err("Enter your licence key to unlock Pro.".into())
+    }
+
+    /// Activates a licence key on this device; the error text is meant for the user. With `relocate` the licence
+    /// is moved here: the server releases the device that holds it first.
+    #[tauri::command]
+    pub async fn store_activate(
+        app: AppHandle,
+        slot: State<'_, Slot>,
+        key: String,
+        relocate: Option<bool>,
+    ) -> Result<StoreStatus, String> {
+        let e = slot.licence(&app).await?.activate(&key, relocate.unwrap_or(false)).await?;
+        Ok(status_of(&slot, e))
+    }
+
+    /// Forgets the licence key on this device; Pro locks again.
+    #[tauri::command]
+    pub async fn store_deactivate(app: AppHandle, slot: State<'_, Slot>) -> Result<StoreStatus, String> {
+        let e = slot.licence(&app).await?.remove().await?;
+        Ok(status_of(&slot, e))
+    }
+}
+
 pub use commands::{store_activate, store_deactivate, store_purchase, store_restore, store_status};
 
 #[cfg(test)]
@@ -334,5 +420,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(free.free_since.ios_build, Some(1_800_000_000));
+    }
+
+    #[test]
+    fn store_json_carries_the_licence_section() {
+        let c: StoreConfig = serde_json::from_str(
+            r#"{"pro_product_id":"x.pro","license":{"server":"https://dl.example","buy_url":"https://console.example/checkout","price":"$4.99"}}"#,
+        )
+        .unwrap();
+        let l = c.license.unwrap();
+        assert_eq!((l.server.as_str(), l.price.as_deref()), ("https://dl.example", Some("$4.99")));
+        assert_eq!(serde_json::to_value(ProReason::Key).unwrap(), "key");
     }
 }

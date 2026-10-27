@@ -6,3 +6,13 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// The Pro dialog's Buy button (`packages/mt-ui/src/pro.tsx`) opens the console checkout through this name,
+/// which the apps with mt-connect provide; only https pages are opened.
+#[tauri::command]
+pub fn connect_open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("Only https links can be opened.".into());
+    }
+    open_url(url)
+}

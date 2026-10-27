@@ -5,7 +5,7 @@ import { Badge, Button, Callout, Dialog, Field } from "./primitives";
 
 /** Mirrors `mt_store::StoreStatus`. */
 export interface StoreStatus {
-  /** Pro is sold in this build (App Store build). */
+  /** Pro is sold in this build (App Store build; the Windows licence-key build too). */
   store: boolean;
   pro: boolean;
   reason: "build" | "grandfathered" | "purchased" | "key" | "none";
@@ -242,7 +242,7 @@ export function ProBadge() {
 export function ProAboutRow() {
   const { status, openUpsell, applyStatus } = useProStatus();
   const [error, setError] = useState<string | null>(null);
-  if (!status?.store) return null;
+  if (!status?.store && !status?.activation) return null;
   const label =
     status.reason === "purchased" ? "Pro unlocked. Thank you!" :
     status.reason === "key" ? "Pro unlocked with your licence key. Thank you!" :

@@ -3,5 +3,10 @@
   "free_since": {
     "macos_version": "1.2.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-ble-inspector.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/14bfde73-ab3b-428f-ab49-ba7ad5de0396",
+    "price": "$4.99"
   }
 }

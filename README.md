@@ -8,9 +8,9 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS, iOS and Windows) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) · [Windows](https://voltrus.id/modbus-poll/windows/) |
 | **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds notify plots, value decoding, RSSI chart, write presets and macros, several notifications and devices at once, and log export | Free download ([GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases/tag/ble-inspector-v1.2.0)) |
+| **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds notify plots, value decoding, RSSI chart, write presets and macros, several notifications and devices at once, and log export | Free download ([DMG](https://dl-ble-inspector.voltrus.id/latest) · [voltrus.id](https://voltrus.id/ble-inspector/)); Pro by licence key ([buy in the console](https://console.voltrus.id/checkout?product=ble-inspector)) |
 | **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, line view with live traffic table, frame simulation. Pro adds log export, send macros, repeat-send and saved profiles | Free download ([GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases/tag/serial-monitor-v1.5.0)) |
+| **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, line view with live traffic table, frame simulation. Pro adds log export, send macros, repeat-send and saved profiles | Free download ([DMG](https://dl-serial-monitor.voltrus.id/latest) · [voltrus.id](https://voltrus.id/serial-terminal/)); Pro by licence key ([buy in the console](https://console.voltrus.id/checkout?product=serial-terminal)) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
@@ -27,7 +27,11 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-## Free and Pro (App Store builds)
+Serial Monitor and BLE Inspector are not on the App Store or GitHub Releases. They are free to download from
+[voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
+Pro is a licence key bought there, see [Serial Monitor](#serial-monitor) and [BLE Inspector](#ble-inspector).
+
+## Free and Pro (App Store and licence-key builds)
 
 The App Store builds of DNP3 Explorer and OPC UA Explorer are free to download; Pro is a one-time in-app purchase.
 People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub
@@ -68,15 +72,22 @@ Siemens AG; it is not affiliated with or endorsed by Siemens.
 | Pro | Unlimited live tags, more than one saved tag watch list, tag watch list CSV export, write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), custom response decoders, packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
 
 EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
-The App Store build of Serial Monitor is free to download too; Pro is a one-time in-app purchase. Builds from source
-and the GitHub Releases have everything.
+
+### Serial Monitor
+
+Free to download as a notarized DMG from [voltrus.id/serial-terminal](https://voltrus.id/serial-terminal/) or the
+[Voltrus Console](https://console.voltrus.id), no sign-in needed (direct link: `https://dl-serial-monitor.voltrus.id/latest`).
+Pro is a one-time licence key (USD 4.99, no subscription) bought through Polar in the console: open Info (or any Pro
+prompt) in the app, choose Buy Pro, then paste the key and press Activate. The key is kept in the macOS Keychain and
+checked against the licence server at launch; without a connection Pro stays on, and it only locks when the server
+says the key is no longer valid. Remove key (Info) forgets it on this device. Builds from source have everything.
 
 | Serial Monitor | |
 | --- | --- |
 | Free | Open one port (baud rate, data and stop bits, parity, read timeout), send and receive in HEX or ASCII, traffic table, the last 200 communication log lines with single-line copy, one saved port profile, Modbus RTU frame simulation templates |
 | Pro | Several ports open side by side, capture all traffic to a CSV file (timestamp, port, direction, hex, text), copy-all and CSV export of the communication log, unlimited log scrollback, send macros, repeat-send at a fixed interval, unlimited saved port profiles |
 
-The virtual serial port (PTY, a Pro feature) is available in source builds and GitHub Releases only; the App Sandbox of the App Store build does not allow creating pseudo-terminals.
+The virtual serial port (PTY, a Pro feature) is available in source builds and the direct download only; the App Sandbox of an App Store build would not allow creating pseudo-terminals.
 
 ### NATS Explorer
 
@@ -90,7 +101,12 @@ Free to download on the App Store; Pro is a one-time in-app purchase. People who
 
 ### BLE Inspector
 
-Free to download on the App Store; Pro is a one-time in-app purchase. Version 1.2.0 is the first release, and it is free.
+Free to download as a notarized DMG from [voltrus.id/ble-inspector](https://voltrus.id/ble-inspector/) or the
+[Voltrus Console](https://console.voltrus.id), no sign-in needed (direct link: `https://dl-ble-inspector.voltrus.id/latest`).
+Pro is a one-time licence key (USD 4.99, no subscription) bought through Polar in the console: open Info (or any Pro
+prompt) in the app, choose Buy Pro, then paste the key and press Activate. The key is kept in the macOS Keychain and
+checked against the licence server at launch; without a connection Pro stays on, and it only locks when the server
+says the key is no longer valid. Remove key (Info) forgets it on this device. Builds from source have everything.
 
 | | |
 | --- | --- |
@@ -127,6 +143,7 @@ scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/uns
 ```
 
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store -p mt-connect` and `bun run --cwd apps/modbus-poll test`.
+The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-nats -p mt-store` and `bun run --cwd apps/modbus-poll test`.
@@ -162,7 +179,7 @@ crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
-crates/mt-store        Pro entitlement for App Store builds (StoreKit purchase, receipt check)
+crates/mt-store        Pro entitlement: App Store builds (StoreKit purchase, receipt check) and direct-download builds (licence key)
 crates/mt-connect      Voltrus Connect client (sign-in with PKCE, Keychain tokens, profile sync, App Store subscription linking)
 packages/mt-ui         shared React components and design tokens
 scripts/               macOS/iOS build, signing and App Store Connect helpers

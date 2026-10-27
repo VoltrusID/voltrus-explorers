@@ -5,7 +5,7 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 | Workflow | Trigger | Secrets | Does |
 | --- | --- | --- | --- |
 | `ci.yml` | push to `main`, pull requests, manual | none | crate tests, frontend typecheck/build/tests (Linux); unsigned universal build of both apps (macOS) |
-| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release |
+| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release (never for Serial Monitor and BLE Inspector, see below) |
 
 Voltrus Tools (the GPUI suite in `apps/voltrus-tools`) has its own Mac App Store path: `release.yml` with
 `app=voltrus-tools`, a 14-day trial and a one-time unlock through StoreKit 2. See
@@ -40,7 +40,8 @@ always increase.
     identifier, packs a `.pkg` signed with the Mac Installer identity, then validates it against App Store Connect
     (or uploads it with `upload=true`).
   - `dmg`: signs with Developer ID (hardened runtime), packs and signs the DMG, notarizes it with `notarytool`
-    (API key) and staples it.
+    (API key) and staples it. Apps with a `license` feature in `src-tauri/Cargo.toml` (Serial Monitor, BLE Inspector)
+    are built with `--features license` (Pro by licence key, see below); every other app's DMG has everything unlocked.
 - iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
   (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
   app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for every app that ships on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer).
@@ -67,13 +68,64 @@ the system clears). The built-in server needs `com.apple.security.network.server
 scanner asks, answer with the justification already in the review notes (the server binds a TCP listener only when
 the user starts server mode).
 
-## Pro (in-app purchase)
+## Pro (in-app purchase and licence key)
 
-**Serial Monitor and BLE Inspector are GitHub-only.** Apple rejected both under guideline 4.3 (Spam) and the App Store
-submissions were withdrawn. They ship as notarized DMGs on GitHub Releases (`serial-monitor-v<version>`,
-`ble-inspector-v<version>`), built without the `store` feature, so every Pro feature is unlocked. Their `store.json`
-files and the two Pro products below are kept but unused; do not dispatch `appstore=true` for either app. Release with:
-`gh workflow run release.yml --ref main -f app=<app> -f appstore=false -f dmg=true -f ios=false -f upload=false -f github_release=true`.
+**Serial Monitor and BLE Inspector are distributed through the Voltrus console and landing page only.** Apple rejected
+both under guideline 4.3 (Spam) and the App Store submissions were withdrawn. They are not on GitHub Releases either:
+the notarized DMG is free for anyone to download, without signing in, from `https://dl-serial-monitor.voltrus.id/latest`
+and `https://dl-ble-inspector.voltrus.id/latest` (linked from voltrus.id and console.voltrus.id), and Pro is a licence
+key sold through Polar in the console (one-time, USD 4.99 each; Pro features as in the README). The `store.json` files
+keep the App Store product ids below, unused; do not dispatch `appstore=true` for either app, and do not publish their
+DMGs on GitHub (`release.yml` refuses `github_release=true` for them).
+
+Release one of them:
+
+1. Bump the version as above and merge to `main`.
+2. Build the notarized DMG (built with `--features license`; `github_release` must stay off):
+
+   ```bash
+   gh workflow run release.yml -R VoltrusID/voltrus-explorers --ref main -f app=serial-monitor \
+     -f appstore=false -f dmg=true -f ios=false -f upload=false -f github_release=false
+   ```
+
+3. Publish it to the app's download worker, locally with your own Cloudflare login (`npx wrangler login`) and `gh`:
+
+   ```bash
+   scripts/publish-direct.sh serial-monitor 1.6.0 --run <workflow run id>     # or a local path to the .dmg
+   scripts/publish-direct.sh ble-inspector 1.3.0 --run <workflow run id>
+   ```
+
+   The script downloads the run artifact, checks the notarization (on macOS), uploads the DMG to the R2 bucket
+   (`serial-monitor-releases`, `ble-inspector-releases`) and writes the `releases` and `release_files`
+   (`darwin-aarch64`, `darwin-x86_64`) rows to D1 (`serial-monitor-releases-db`, `ble-inspector-releases-db`), then
+   checks that `/latest` redirects to the new file. `--dry-run` prints what it would do. The run id is in the
+   workflow summary and the run's URL.
+
+### Pro by licence key (`license` feature)
+
+- `crates/mt-store` with `--features license` (exclusive with `store` and `keys`): Pro is a licence key activated against the
+  app's download worker, the same `POST /license/activate` and `/license/validate` service the older MacTools builds
+  used (`license` section of `src-tauri/store.json`: `server`, `buy_url`, `price`). Keys are Polar licence keys or
+  console `VLT-XXXXX-XXXXX-XXXXX` licences (app slugs `serial-terminal`, `ble-inspector`, `mactools`).
+- The key, its activation id and a per-device id are kept in the macOS Keychain (the app's own generic-password items,
+  sandbox-safe); other platforms use files under the app data directory. The key is validated once per launch.
+  An unreachable server, a 5xx or an unreadable answer keeps Pro (a paying user is never locked out offline); only
+  an explicit `{"valid": false}` removes the key and locks Pro.
+- Frontend: the same key flow as the Windows build (`keys`, see Windows below). `store_status` reports `activation: true`,
+  `buy_url`, `price` and `reason: "key"` once unlocked, but `store: false`: a DMG is not an App Store build, so the virtual
+  port and the GitHub source link stay. `store_activate(key, relocate?)` and `store_deactivate()` return the new
+  status. `ProProvider` (`packages/mt-ui/src/pro.tsx`) shows Buy Pro (opens the console checkout in the browser through
+  `connect_open_url`, which both apps provide in `system.rs`), a licence-key field with Activate, and Remove key in
+  `ProAboutRow`. A refused second device (`code: "seat_limit"`) shows the server's text, which offers "Move licence
+  here" (`POST /license/move`).
+- Remove key only forgets the key on the device: the download workers have no deactivate endpoint, so the activation
+  seat stays used on the server side until the licence is moved or released in the console.
+- `store`, `keys` and `license` are mutually exclusive features of `mt-store` (compile error otherwise).
+- Tests: `cargo test -p mt-store --features license` (mock licence server: valid, invalid, network failure keeps Pro).
+- Console rule (voltrus-console `docs/licence-keys.md`): never detach a Polar licence-key benefit from a product that
+  has buyers; retire a product by archiving it.
+
+The App Store products below stay unused for these two apps.
 
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
@@ -88,15 +140,16 @@ files and the two Pro products below are kept but unused; do not dispatch `appst
 | MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | USD 4.99 (the app was never paid, so it is free from its first release; `free_since` 1.2.0) |
 | OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | USD 9.99 (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
 
-- Only App Store builds (`--features store`) lock Pro features; source, DMG and CI builds have everything unlocked.
+- Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
+  CI builds and the DMGs of the other apps have everything unlocked.
   The logic is `crates/mt-store` (Rust) and `packages/mt-ui/src/pro.tsx` (`ProProvider`, `requirePro`).
 - Each app's `src-tauri/store.json` holds the product id and the free cut-over. While `free_since` is `null` the app is
   still paid, so every store install counts as Pro and the store builds behave exactly as before.
 - Both products are `READY_TO_SUBMIT` (localization, price, all territories and a review screenshot of the Pro dialog
   are set). Submit each together with the app version that turns the app free: while the app is still paid, every
   store install is Pro, so a reviewer could not see or test the purchase.
-- App Review: store builds contain no license keys, no outside payment and no link to the GitHub builds (the About
-  window shows the GitHub link only in source builds). Keep it that way, and keep the App Store support/marketing
+- App Review: store builds contain no license keys, no outside payment and no link to the direct-download builds (the About
+  window shows the GitHub source link only outside App Store builds). Keep it that way, and keep the App Store support/marketing
   pages free of other ways to buy the same features.
 
 For BACnet Explorer `free_since.ios_build` stays `null` for now: the iOS app has never been paid, and `null` means "every
