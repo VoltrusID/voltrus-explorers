@@ -618,7 +618,7 @@ pub fn run() {
             server_start, server_stop, server_read_tags, server_write_tag, server_set_tags,
             sim_start, sim_stop, sim_set_value, sim_set_bool, sim_status, open_device_panel,
             open_url,
-            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
         ])
         .setup(|app| {
             // Default the window to 1280 logical wide × full screen height, centered.

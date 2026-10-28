@@ -28,3 +28,11 @@ security-framework = { version = "3", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSSet", "NSEnumerator"] }
+objc2-store-kit = { version = "0.3", default-features = false, features = ["std", "SKStoreReviewController"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-ui-kit = { version = "0.3", default-features = false, features = ["std", "UIApplication", "UIScene", "UISceneDefinitions", "UIWindowScene", "UIResponder"] }

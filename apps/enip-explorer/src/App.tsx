@@ -44,6 +44,7 @@ import {
   SheetSelect,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
+import { noteDeviceError, noteDeviceSuccess } from "@mactools/ui";
 import appIcon from "../src-tauri/icons/128x128.png";
 import { DiscoveryPanel } from "./DiscoveryPanel";
 import { IdentityPanel } from "./IdentityPanel";
@@ -565,8 +566,14 @@ function App() {
     const idx = orderedTags.findIndex((t) => t.name === name);
     if (idx >= polledTags.length) {
       invoke<unknown[]>("read_tags", { tags: [orderedTags[idx]] })
-        .then((vals) => setOnDemand((prev) => ({ ...prev, [name]: vals[0] })))
-        .catch((e) => addLog("error", `Read ${name} failed: ${String(e)}`));
+        .then((vals) => {
+          setOnDemand((prev) => ({ ...prev, [name]: vals[0] }));
+          noteDeviceSuccess();
+        })
+        .catch((e) => {
+          noteDeviceError();
+          addLog("error", `Read ${name} failed: ${String(e)}`);
+        });
       return;
     }
     if (!requirePro("Tag writes")) return;

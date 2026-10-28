@@ -3746,6 +3746,10 @@ dependencies = [
 name = "mt-store"
 version = "2.0.0"
 dependencies = [
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-store-kit",
+ "objc2-ui-kit",
  "reqwest",
  "security-framework 3.7.0",
  "serde",
@@ -4190,6 +4194,16 @@ dependencies = [
  "bitflags 2.11.1",
  "objc2 0.6.4",
  "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-store-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29a1cef520f802b637e2cca72d7dfd2f17cfff947fb5f802dd2d8c68e6c63072"
+dependencies = [
+ "objc2 0.6.4",
  "objc2-foundation 0.3.2",
 ]
 
@@ -6805,7 +6819,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",

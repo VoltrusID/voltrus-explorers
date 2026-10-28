@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
-import { appendTextFile, saveTextFile } from "@mactools/ui";
+import { appendTextFile, noteDeviceError, noteDeviceSuccess, saveTextFile } from "@mactools/ui";
 import { CSV_LOG_HEADER, csvLogFileName, csvLogLines } from "./csvLog";
 import { readPlanKey, type ReadPlan, type ReadTag } from "./helpers";
 import { effectivePlan } from "./limits";
@@ -154,12 +154,14 @@ async function readOnce(id: string, ctx: PollContext, gen: number) {
     const latency = Math.round(performance.now() - start);
     patch(id, { values: result, latency, pollCount, error: null, stale: false });
     onPoll(id, ctx, result, pollCount, latency);
+    noteDeviceSuccess();
     return result;
   } catch (e) {
     if (gen === generations.get(id)) {
       const message = explainModbusError(String(e));
       if (message !== runtimeOf(id).error) log(id, "error", message);
       patch(id, { error: message, stale: true });
+      noteDeviceError();
     }
     return [];
   }

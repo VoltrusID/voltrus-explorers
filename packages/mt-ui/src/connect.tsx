@@ -14,6 +14,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Check, Cloud, Copy, LogOut, RefreshCw, Share2, Sparkles, UserRound, Users } from "lucide-react";
 import { Badge, Button, Callout, Dialog, EmptyState, Field, IconButton, Section, Tabs } from "./primitives";
 import { SheetSelect } from "./sheetSelect";
+import { openExternal } from "./links";
 import {
   acceptServerCopy,
   applyOps,
@@ -680,8 +681,8 @@ function useAction() {
   return { busy, error, notice, setNotice, run };
 }
 
-function openLink(url: string) {
-  void invoke("connect_open_url", { url }).catch(() => {});
+function openLink(url: string, campaign: string) {
+  void openExternal(url, campaign).catch(() => {});
 }
 
 function Messages({ error, notice }: { error: string | null; notice: string | null }) {
@@ -765,7 +766,7 @@ function AccountTab() {
       {ent && !ent.active && store && c.plansOffered && <SubscribePanel />}
       {ent && !ent.active && !store && c.info?.console_url && (
         <div style={row}>
-          <Button size="sm" onClick={() => openLink(c.info!.console_url!)}>
+          <Button size="sm" onClick={() => openLink(c.info!.console_url!, "connect-console")}>
             Open your Voltrus account
           </Button>
         </div>
@@ -775,7 +776,7 @@ function AccountTab() {
         <p style={{ ...dim, margin: "0 0 8px" }}>
           Permanently deletes your Voltrus account and everything Connect stores for it. You confirm with a code we email you.
         </p>
-        <Button size="sm" variant="danger" onClick={() => openLink(c.info?.delete_account_url ?? "https://console.voltrus.id/app/settings?delete=1")}>
+        <Button size="sm" variant="danger" onClick={() => openLink(c.info?.delete_account_url ?? "https://console.voltrus.id/app/settings?delete=1", "delete-account")}>
           Delete account
         </Button>
       </Section>
@@ -813,13 +814,13 @@ const PRIVACY = "https://voltrus.id/privacy/";
 const RENEWAL_TERMS =
   "Renews automatically until cancelled; manage or cancel in your Apple Account settings. Payment is charged to your Apple Account at confirmation of purchase, and renewal is charged within 24 hours before the end of the current period unless you cancel at least 24 hours before it ends.";
 
-function LegalLink({ url, children }: { url: string; children: ReactNode }) {
+function LegalLink({ url, campaign, children }: { url: string; campaign: string; children: ReactNode }) {
   return (
     <a
       href={url}
       onClick={(e) => {
         e.preventDefault();
-        openLink(url);
+        openLink(url, campaign);
       }}
       style={{ fontSize: "var(--fs-sm)", color: "var(--accent, var(--text))", textDecoration: "underline", cursor: "pointer" }}
     >
@@ -832,8 +833,8 @@ function LegalLink({ url, children }: { url: string; children: ReactNode }) {
 function LegalLinks() {
   return (
     <div style={{ ...row, gap: 16 }}>
-      <LegalLink url={APPLE_TERMS}>Terms of Use (EULA)</LegalLink>
-      <LegalLink url={PRIVACY}>Privacy Policy</LegalLink>
+      <LegalLink url={APPLE_TERMS} campaign="terms">Terms of Use (EULA)</LegalLink>
+      <LegalLink url={PRIVACY} campaign="privacy">Privacy Policy</LegalLink>
     </div>
   );
 }

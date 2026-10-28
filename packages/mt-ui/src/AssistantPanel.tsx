@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { openExternal } from "./links";
 import { ExternalLink, ImagePlus, Sparkles, X } from "lucide-react";
 import { Badge, Button, Callout, EmptyState, Field, Tabs } from "./primitives";
 import { SheetSelect } from "./sheetSelect";
@@ -76,8 +76,8 @@ const dim = { fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.
 const col = { display: "flex", flexDirection: "column", gap: 10 } as const;
 const row = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } as const;
 
-function openLink(url: string) {
-  void invoke("connect_open_url", { url }).catch(() => {});
+function openLink(url: string, campaign: string) {
+  void openExternal(url, campaign).catch(() => {});
 }
 
 /** The Assistant: gate (sign in, subscribe, consent), quota line and one view per task. */
@@ -212,7 +212,7 @@ function SourceLine({ block }: { block: AssistantBlock }) {
     return (
       <button
         type="button"
-        onClick={() => openLink(url)}
+        onClick={() => openLink(url, "assistant-source")}
         style={{ ...dim, background: "none", border: 0, padding: 0, textAlign: "left", cursor: "pointer", textDecoration: "underline" }}
       >
         <ExternalLink size={11} style={{ verticalAlign: "-1px", marginRight: 4 }} />

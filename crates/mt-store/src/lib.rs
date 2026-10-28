@@ -12,7 +12,7 @@
 //!   checkout page.
 //!
 //! Apps register [`setup`] on their builder and the commands; the frontend only calls `store_status`,
-//! `store_purchase`, `store_restore` and, in `keys` and `license` builds, `store_activate` and `store_deactivate`.
+//! `store_purchase`, `store_restore`, `request_review` (App Store builds only do anything) and, in `keys` and `license` builds, `store_activate` and `store_deactivate`.
 
 #[cfg(any(
     all(feature = "store", feature = "keys"),
@@ -26,10 +26,12 @@ pub mod key;
 #[cfg(feature = "license")]
 pub mod license;
 mod receipt;
+mod review;
 
 use serde::{Deserialize, Serialize};
 
 pub use receipt::{installed_original_version, original_application_version};
+pub use review::request_review;
 
 /// `license` section of `store.json`: how a direct-download build sells Pro by licence key.
 #[derive(Debug, Clone, Deserialize)]

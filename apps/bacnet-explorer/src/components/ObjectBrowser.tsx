@@ -20,7 +20,7 @@ import {
   ToggleLeft,
   type LucideIcon,
 } from "lucide-react";
-import { Button, EmptyState, ExportTagsDialog, IconButton, ProBadge, saveTextFile, useProStatus } from "@mactools/ui";
+import { Button, EmptyState, ExportTagsDialog, IconButton, ProBadge, noteDeviceError, noteDeviceSuccess, saveTextFile, useProStatus } from "@mactools/ui";
 import type { BacnetObjectDetail, BacnetObjectInfo, BacnetPropertyEntry, BacnetValue } from "../types";
 import { formatObjectType } from "../types";
 import { buildObjectListCsv, type ObjectListRow } from "../objectCsv";
@@ -347,7 +347,9 @@ export function ObjectBrowser(props: ObjectBrowserProps) {
       if (requestId !== propertiesRequest.current) return;
       setDetail(result);
       setProperties(result?.properties ?? []);
+      if (result) noteDeviceSuccess();
     } catch (e) {
+      noteDeviceError();
       if (requestId !== propertiesRequest.current) return;
       setDetail(null);
       setProperties([]);

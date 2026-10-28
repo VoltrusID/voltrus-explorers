@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Radar } from "lucide-react";
-import { Button, DataTable, Dialog, Field, type Column } from "@mactools/ui";
+import { Button, DataTable, Dialog, Field, noteDeviceError, noteDeviceSuccess, type Column } from "@mactools/ui";
 
 export interface EnipDevice {
   host: string;
@@ -44,8 +44,9 @@ export function DiscoveryPanel({ onClose, onConnect }: Props) {
       const found = await invoke<EnipDevice[]>("discover_devices", { timeoutMs });
       found.sort((a, b) => a.host.localeCompare(b.host, undefined, { numeric: true }));
       setDevices(found);
+      if (found.length > 0) noteDeviceSuccess();
     } catch {
-      /* ignore */
+      noteDeviceError();
     } finally {
       setScanning(false);
     }

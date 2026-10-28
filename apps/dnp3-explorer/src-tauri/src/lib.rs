@@ -371,7 +371,7 @@ pub fn run() {
             outstation_write_analog, outstation_write_binary,
             sim_start, sim_stop, sim_load_profile, sim_read_values,
             open_url,
-            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

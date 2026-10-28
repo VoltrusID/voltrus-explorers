@@ -32,6 +32,7 @@ import {
   useProtocol,
 } from "@mactools/ui";
 import type { LogEntry, PhoneTabItem } from "@mactools/ui";
+import { noteDeviceError, noteDeviceSuccess } from "@mactools/ui";
 import type { BacnetConfig, BacnetObject, BacnetValue, BacnetDiscoveredDevice, SimPoint, SimPointDef, SimInfo, DeviceTemplate } from "./types";
 import { bacnetValueToNumber } from "./types";
 import { WRITE_KIND_TYPES, parseWriteValue, writeKindFor, type WriteKind } from "./writeValue";
@@ -361,7 +362,9 @@ function App() {
       const devices = await invoke<BacnetDiscoveredDevice[]>("discover", { timeoutSecs: 5 });
       setDiscoveredDevices(devices);
       addLog("info", `Discovered ${devices.length} device(s)`);
+      if (devices.length > 0) noteDeviceSuccess();
     } catch (e) {
+      noteDeviceError();
       setDiscoveryError(String(e));
       addLog("error", `Discovery failed: ${e}`);
     } finally {

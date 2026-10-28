@@ -925,7 +925,7 @@ pub fn run() {
             start_cov_listener, stop_cov_listener,
             sim_start, sim_stop, sim_set_value, sim_set_bool, sim_status, open_device_panel,
             system::open_url, system::platform,
-            mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
             mt_connect::connect_info, mt_connect::connect_signed_in, mt_connect::connect_sign_in, mt_connect::connect_sign_out,
             mt_connect::connect_me, mt_connect::connect_sync, mt_connect::connect_profile_save, mt_connect::connect_new_id,
             mt_connect::connect_ai_availability, mt_connect::connect_ai_status, mt_connect::connect_ai_run, mt_connect::connect_open_url, mt_connect::connect_teams, mt_connect::connect_team_create, mt_connect::connect_team_invite,

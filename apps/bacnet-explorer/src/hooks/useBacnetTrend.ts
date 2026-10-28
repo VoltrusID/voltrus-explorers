@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { noteDeviceError, noteDeviceSuccess } from "@mactools/ui";
 import { bacnetValueToNumber } from "../types";
 import type {
   BacnetObjectDetail,
@@ -189,8 +190,12 @@ export function useBacnetTrend(deviceKey: string | null, openKeys: string[], onE
             if (pv == null) throw new Error("device returned no presentValue");
             appendPoint(e.key, parseFloat(pv));
             setPollError(e.key, null);
+            noteDeviceSuccess();
           } catch (err) {
-            if (!cancelled) setPollError(e.key, `${POLL_ERROR_PREFIX}${err}`);
+            if (!cancelled) {
+              setPollError(e.key, `${POLL_ERROR_PREFIX}${err}`);
+              noteDeviceError();
+            }
           }
         }),
       );

@@ -83,3 +83,6 @@ export { AssistantPanel, type AssistantPanelProps } from "./AssistantPanel";
 export { AssistantProvider, useAssistant, useAssistantAccess, type AssistantAccess } from "./assistantProvider";
 export { commonWordOrder } from "./assistantLogic";
 export type { AssistantBlock, AssistantContext, AssistantProtocol, AssistantTask, WordOrder } from "./assistantLogic";
+
+export { noteDeviceSuccess, noteDeviceError } from "./review";
+export { withUtm, openExternal } from "./links";

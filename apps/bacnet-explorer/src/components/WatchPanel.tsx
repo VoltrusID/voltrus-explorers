@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw, Star, Trash2, X } from "lucide-react";
-import { Button, EmptyState, IconButton, ProBadge, Segmented, useProStatus } from "@mactools/ui";
+import { Button, EmptyState, IconButton, ProBadge, Segmented, noteDeviceError, noteDeviceSuccess, useProStatus } from "@mactools/ui";
 import type { BacnetObjectDetail } from "../types";
 import { formatObjectType } from "../types";
 
@@ -35,10 +35,15 @@ async function readItem(item: WatchItem): Promise<WatchReading> {
     });
     const pv = detail?.present_value ?? detail?.properties.find((p) => p.property_identifier === 85)?.raw_value ?? null;
     const name = detail?.object_name ?? null;
-    if (pv == null) return { name, value: "—", status: detail?.status_flags ?? "", error: "The device returned no presentValue" };
+    if (pv == null) {
+      noteDeviceError();
+      return { name, value: "—", status: detail?.status_flags ?? "", error: "The device returned no presentValue" };
+    }
+    noteDeviceSuccess();
     const unit = detail?.units_symbol ?? "";
     return { name, value: unit ? `${pv} ${unit}` : pv, status: detail?.status_flags ?? "", error: null };
   } catch (e) {
+    noteDeviceError();
     return { name: null, value: "—", status: "", error: String(e) };
   }
 }

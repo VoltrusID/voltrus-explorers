@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ExternalLink, KeyRound, Sparkles } from "lucide-react";
+import { openExternal } from "./links";
 import { Badge, Button, Callout, Dialog, Field } from "./primitives";
 
 /** Mirrors `mt_store::StoreStatus`. */
@@ -100,7 +101,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
   };
 
   const buy = () => {
-    if (status?.buy_url) void invoke("connect_open_url", { url: status.buy_url }).catch((e) => setError(String(e)));
+    if (status?.buy_url) void openExternal(status.buy_url, "buy").catch((e) => setError(String(e)));
   };
 
   const run = async (kind: "purchase" | "restore") => {

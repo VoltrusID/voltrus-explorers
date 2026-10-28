@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useState, useCallback, useRef } from "react";
+import { noteDeviceError, noteDeviceSuccess } from "../review";
 
 export interface WriteResult {
   ok: boolean;
@@ -37,6 +38,7 @@ export function useProtocol<TConfig, TTag, TValue>(protocolModule: string) {
         if (!aborted.current) {
           setError(String(e));
           setConnected(false);
+          noteDeviceError();
         }
         return false;
       } finally {
@@ -90,11 +92,13 @@ export function useProtocol<TConfig, TTag, TValue>(protocolModule: string) {
       setPollCount((c) => c + 1);
       setError(null);
       setStale(false);
+      if (tags.length > 0) noteDeviceSuccess();
       return result;
     } catch (e) {
       if (gen === generation.current) {
         setError(String(e));
         setStale(true);
+        noteDeviceError();
       }
       return [];
     }

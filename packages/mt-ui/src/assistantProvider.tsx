@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button, Callout, Dialog } from "./primitives";
+import { openExternal } from "./links";
 import { useConnect } from "./connect";
 import {
   CONSENT_VERSION,
@@ -164,8 +165,8 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   return <AssistantContext.Provider value={value}>{children}</AssistantContext.Provider>;
 }
 
-function openLink(url: string) {
-  void invoke("connect_open_url", { url }).catch(() => {});
+function openLink(url: string, campaign: string) {
+  void openExternal(url, campaign).catch(() => {});
 }
 
 /** Apple 5.1.2(i): who gets the data and what is sent, asked before first use. */
@@ -203,7 +204,7 @@ export function ConsentSheet({ open, onAgree, onClose }: { open: boolean; onAgre
           does not use it to train models.
         </p>
         <p style={{ margin: 0 }}>The Assistant only reads and suggests. It never writes to a device, and nothing is added until you confirm it.</p>
-        <Button variant="ghost" size="sm" style={{ alignSelf: "flex-start" }} onClick={() => openLink("https://voltrus.id/privacy/")}>
+        <Button variant="ghost" size="sm" style={{ alignSelf: "flex-start" }} onClick={() => openLink("https://voltrus.id/privacy/", "privacy")}>
           Read the privacy policy
         </Button>
         <Callout tone="neutral">You can stop any time by not using the Assistant. It is never run in the background.</Callout>
