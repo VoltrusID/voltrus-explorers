@@ -109,6 +109,13 @@ from the provisioning profile:
 | `device.serial` | Modbus RTU and the serial terminal |
 | `device.bluetooth` | the BLE inspector; `NSBluetoothAlwaysUsageDescription` is set by `build-mas.sh` |
 
+App Review's automated scan flagged `network.server` on 1.0.0 as "no matching functionality". Keep the explanation of
+the simulators' listeners (which demo, which port) at the top of the App Review Information notes.
+
+App Review also rejects private API symbols found in the binary. gpui's `CGSSetWindowBackgroundBlurRadius` (macOS < 12 blur)
+is removed in the pinned fork commit; check a new gpui pin with
+`llvm-nm -u "Voltrus Tools.app/Contents/MacOS/voltrus-tools" | grep -E '_CGS|_SLS'` (expect no output).
+
 `NSLocalNetworkUsageDescription` is in [`packaging/Info.plist`](../packaging/Info.plist). The protocol agents' reports
 for this release: OPC UA keeps its PKI under the data folder and needs nothing more; the serial simulator's pty and its
 symlink live in the container's temporary folder.

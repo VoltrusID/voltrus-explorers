@@ -55,7 +55,8 @@ print_stdout = "deny"
 lto = "thin"
 codegen-units = 4
 
-# gpui 0.2.2 from crates.io plus Metal memory and frame-pacing fixes, kept in
-# the VoltrusID fork of muxy-app/gpui (Apache-2.0) and pinned by commit.
+# gpui 0.2.2 from crates.io plus Metal memory and frame-pacing fixes, and
+# without the private CGSSetWindowBackgroundBlurRadius App Review rejects,
+# kept in the VoltrusID fork of muxy-app/gpui (Apache-2.0) and pinned by commit.
 [patch.crates-io]
-gpui = { git = "https://github.com/VoltrusID/gpui", rev = "6c718f33b99b8d27e5987b746fe4b00dc6051a7c" }
+gpui = { git = "https://github.com/VoltrusID/gpui", rev = "5c1b811991c6721d738eb5ca29d2c889e085ead5" }
