@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
-const files = vi.hoisted(() => ({ saveTextFile: vi.fn(), appendTextFile: vi.fn() }));
+const files = vi.hoisted(() => ({
+  saveTextFile: vi.fn(),
+  appendTextFile: vi.fn(),
+  noteDeviceSuccess: vi.fn(),
+  noteDeviceError: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 vi.mock("@mactools/ui", () => files);
