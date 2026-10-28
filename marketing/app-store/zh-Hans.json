@@ -1,0 +1,42 @@
+{
+ "Modbus Poll": {
+  "name": "Modbus Poll",
+  "subtitle": "TCP/RTU 主站与从站模拟器",
+  "keywords": "串口,RS485,PLC,上位机,调试工具,电表,逆变器,组态,SCADA,仿真,工控,寄存器,通讯,变频器,调试助手",
+  "promotionalText": null,
+  "description": "Modbus Poll 可在 Mac 上读取、写入并模拟 Modbus 设备。通过 Modbus TCP 连接 PLC、电表、变频器或逆变器，也可通过 USB 串口适配器经 RS-485 连接，并实时查看每个寄存器的更新。\n\n主站\n• Modbus TCP 与 Modbus RTU（串口）\n• 读取线圈、离散输入、输入寄存器和保持寄存器\n• 写入单个或多个线圈和保持寄存器\n• 数据类型：INT16、UINT16、INT32、FLOAT32 和 FLOAT64\n• 字序 AB CD、CD AB 或 BA DC；十进制、十六进制或二进制显示；地址从 0 或 1 起算\n• 每台设备可设置多个读取块，统一轮询\n• Modbus 异常码显示在受影响的行上\n\n从站模拟器\n• 在 Mac 上运行 Modbus TCP 或 RTU 从站\n• 带实时变化数值的设备模板：Schneider Electric PM5560、SMA STP 60-US-10、Endress+Hauser Promag 10W、ABB AZL402、Emerson Daniel 1000 以及 Raritan PDU\n• 锁定某个寄存器以保持其数值，其余寄存器继续变化\n• 内置虚拟串口从站，无需硬件即可测试 RTU\n\n诊断\n• 通信日志，每条请求和响应均已解码\n• 任意寄存器的实时趋势图\n• 扫描子网内监听 502 端口的设备\n• 在各单元 ID 上扫描 RS-485 总线，并自动检测串口参数\n• 保存连接配置，读取块支持 CSV 导入和导出，日志可导出\n\n需要 macOS 13 或更高版本。Modbus RTU 需要 USB 转 RS-485 适配器（FTDI、CH340、CP2102 或 PL2303）。\n\nVoltrus Connect 订阅将自动续订，直至您在 Apple 账户设置中取消。\n隐私政策：https://voltrus.id/privacy/\n使用条款（EULA）：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/\n\n应用界面为英文。",
+  "whatsNew": "小幅修复和改进。"
+ },
+ "BACnet Explorer": {
+  "name": "BACnet Explorer - Voltrus",
+  "subtitle": "楼宇自控设备浏览与仿真",
+  "keywords": "暖通空调,HVAC,BMS,楼宇,调试,控制器,COV,冷水机组,空调机组,监控,智能建筑,物联网,点表,工控,IP",
+  "promotionalText": null,
+  "description": "BACnet Explorer 可在 Mac 上发现、读取和写入 BACnet/IP 设备。可用于控制器调试、排查错误的设定值，或了解楼宇自控网络的构成。\n\n设备发现\n• 发送 Who-Is 广播，所有 I-Am 应答按设备实例、地址和厂商列出\n\n浏览与写入\n• 已连接设备的对象树，按对象类型分组\n• 所选对象的全部属性\n• 以正确的数据类型写入当前值：模拟量用 Real，二进制量用 Enumerated，多态对象用 Unsigned\n\n实时趋势\n• 通过轮询或 COV 订阅，为任意点位实时绘制曲线\n• COV 订阅会在到期前自动续订\n\n报警\n• 设备的报警摘要和事件信息\n• 确认报警\n\n趋势日志与时间表\n• 分页读取趋势日志缓冲区并导出为 CSV\n• 查看每周时间表及其有效期\n\n设备模拟器\n• 基于模板在 Mac 上运行 BACnet/IP 设备：空气处理机组、离心式冷水机组和 VAV 末端\n• 可响应 Who-Is、ReadProperty、WriteProperty 和 COV 订阅，测试时可通过控制面板修改其数值\n\n设备返回的 Error、Reject 和 Abort 应答会连同原因一并显示，被拒绝的写入不会再被误认为网络超时。\n\n需要 macOS 13 或更高版本。\n\n免费版与 Pro\nBACnet Explorer 可免费下载：发现设备、浏览对象并读取所有属性。一次性购买 Pro 后可使用：带优先级和 Relinquish 的写入、同时连接多台设备、CSV 导出、自动刷新的监视列表、实时 COV 趋势、带确认功能的报警摘要、设备模拟器，以及趋势日志和时间表查看器。如果您在 BACnet Explorer 转为免费之前已购买，Pro 已自动解锁。\n\nVoltrus Connect 订阅将自动续订，直至您在 Apple 账户设置中取消。\n隐私政策：https://voltrus.id/privacy/\n使用条款（EULA）：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/\n\n应用界面为英文。",
+  "whatsNew": "小幅修复和改进。"
+ },
+ "EtherNet/IP Explorer": {
+  "name": "EtherNet/IP Explorer",
+  "subtitle": "CIP 标签浏览与抓包工具",
+  "keywords": "PLC,罗克韦尔,AB,ControlLogix,CompactLogix,Micro800,EDS,自动化,上位机,调试工具,工控,Logix,以太网",
+  "promotionalText": "发现 EtherNet/IP 设备，浏览并监视 PLC 标签，查看 CIP 对象并抓取数据包。内置适配器可直接测试，无需硬件。",
+  "description": "EtherNet/IP Explorer 是一款原生 Mac 工具，面向使用 Allen-Bradley、Rockwell 及其他 EtherNet/IP 设备的自动化工程师。可发现网络上的设备、浏览控制器标签、读取实时数值，并查看任意设备内部的 CIP 对象。\n\n发现与连接\n- 广播 ListIdentity 请求，列出所有应答设备，包括厂商、产品名称、版本和序列号\n- 通过 IP 地址连接 Logix 或 Micro800 控制器\n- 随时读取设备标识\n\n浏览与监视标签\n- 列出所有控制器标签及其 CIP 数据类型\n- 实时监视数值，轮询间隔可调，最短 50 ms\n- 数值列可在十进制与十六进制之间切换\n- 点击标签即可按需读取\n\n浏览 CIP 对象树\n- Identity、TCP/IP Interface 和 Ethernet Link 等标准类，属性名称和数值已解码\n- 列出任意类的实例\n- 在 CIP 浏览器中发送 Get Attribute Single 和 Get Attribute All 请求\n- 加载 EDS 文件以显示厂商属性名称\n\n故障排查\n- 数据包记录器，记录每个 EtherNet/IP 帧，带 Tx 和 Rx 过滤器及十六进制视图\n- 通信日志可导出为 CSV\n\n无需硬件即可测试\n- 内置 EtherNet/IP 适配器，附带现成的设备模板\n- 打开适配器的控制面板修改数值，然后从应用的扫描器端或任何其他 EtherNet/IP 客户端连接\n\nEtherNet/IP Explorer 提供免费版，包含设备发现、标签浏览、最多 10 个标签的实时轮询、CIP 对象树和数据包记录器。一次性应用内购买 Pro 后，可解锁不限数量的实时标签、标签写入、实时趋势、全部 CIP 服务、隐式 I/O、自定义响应解码器、数据包日志导出和适配器模拟器。\n\nEtherNet/IP 和 CIP 是 ODVA, Inc. 的商标。本应用为独立工具，与 ODVA 或 Rockwell Automation 无关联，也未获其认可。\n\n应用界面为英文。",
+  "whatsNew": "小幅修复和改进。"
+ },
+ "DNP3 Explorer": {
+  "name": "DNP3 Explorer",
+  "subtitle": "SCADA 主站与子站模拟器",
+  "keywords": "变电站,远动,电力,RTU,遥测,遥控,协议,仿真,工控,调试工具,配电,馈线,水务,油气,上位机",
+  "promotionalText": "使用自定义点表轮询任意 DNP3 子站，按类扫描事件，并用内置子站模拟器测试。无需硬件。",
+  "description": "DNP3 Explorer 是 DNP3 主站和子站模拟器，面向在电力、水务、石油天然气及工业网络中调试、测试和排查 SCADA 系统的工程师。\n\n主站\n- 通过 TCP 连接 DNP3 子站，可自定义主站和子站地址\n- 自建点表：模拟量、二进制量、计数器和状态点，含 group、variation 和 index\n- 按设定间隔轮询点表，实时查看数值并显示往返时间\n- 为每个站点保存连接配置\n- 详细的通信日志，可导出 CSV\n\n购买 Pro 可获得更多功能\n- 轮询列表中的点数不限\n- 控制：控制继电器输出和模拟量输出命令\n- Class 1、2 和 3 事件扫描\n- 设备控制：对时、冷启动和热启动、冻结计数器\n- 实时趋势图\n- 保存的连接配置数量不限\n\n子站模拟器\n- 在 Mac 上启动内置 DNP3 子站，让任意主站连接它\n- 馈线、变压器等设备模板，带实时模拟数值\n- 带类分配的事件缓冲区\n\n核心功能免费提供。Pro 为一次性应用内购买，可解锁其余功能。\n\n应用界面为英文。",
+  "whatsNew": "小幅修复和改进。"
+ },
+ "Voltrus Tools": {
+  "name": "Voltrus Tools",
+  "subtitle": "10 种工业协议，一个应用",
+  "keywords": "PLC,上位机,调试工具,串口,RS485,蓝牙,MQTT,OPC UA,西门子,仿真,组态,物联网,工控,自动化,Modbus",
+  "promotionalText": "在一个 Mac 应用中轮询、模拟并绘制 Modbus、MQTT、BACnet、OPC UA、S7、EtherNet/IP、DNP3、NATS、串口和蓝牙 LE 设备的趋势。可免费试用 14 天。",
+  "description": "Voltrus Tools 是工业协议一体化套件：调试和排查所需的十种协议，集中在一个原生 Mac 窗口中。连接 PLC、仪表、变频器、控制器或代理服务器，读写其数值并实时查看；当手边没有真实设备时，可在同一台 Mac 上运行对端的模拟器。\n\n协议\n• Modbus TCP 和 RTU 主站：任意区域和数据类型的寄存器块、字序、自动重连轮询、线圈和保持寄存器写入、延迟和错误计数。\n• Modbus 模拟器：提供设备模板（逆变器、电表、流量计、分析仪、流量计算机、PDU）或纯寄存器映像。在应用中设置或由任意主站写入的值会一直保持，直到您释放。\n• MQTT 客户端：TLS、用户名和密码、带 QoS 的通配符订阅。数字、布尔值、JSON 字段和 Sparkplug B 指标会转为点位；可发布任意负载，并设置 QoS 和 retain。\n• MQTT 代理模拟器：在 Mac 上运行的代理服务器，发布设备模板，也可作为 Sparkplug B 边缘节点。\n• BACnet/IP 客户端：Who-Is 发现、对象列表、COV 订阅、ReadPropertyMultiple 轮询、按所选优先级的 WriteProperty 以及 Relinquish。\n• BACnet 设备模拟器：空气处理机、冷水机组或 VAV 末端，带 16 级优先级数组和 COV。\n• OPC UA 客户端：端点发现，None、Basic256Sha256 和 Aes 安全模式，匿名、用户或证书登录；可用键盘操作的地址空间浏览器、订阅、带类型的写入和方法调用。\n• OPC UA 服务器模拟器：带单元、量程和方法的流程工厂。\n• Siemens S7 客户端（ISO-on-TCP）：S7-1200/1500、300 和 400 预设；按原样书写的标签（DB1.DBD0、MW20、I0.3、T5）；PLC 视图含 CPU 标识、模式、诊断缓冲区和块。\n• S7 PLC 模拟器：电机驱动、反应釜或包装线。\n• EtherNet/IP（CIP）客户端：ListIdentity 发现、按名称访问 Logix 标签、标签浏览、CIP 属性、写入和显式报文。\n• EtherNet/IP 适配器模拟器，含标签、assembly 和 class 1 I/O。\n• DNP3 主站：完整性轮询和事件轮询、对时、冻结和重启；通过先选择后操作或直接操作执行 CROB 和模拟量输出。\n• DNP3 子站模拟器：馈线、变压器间隔或光伏电站，带时标事件。\n• NATS 客户端：TLS，token、NKey 或 .creds 登录，通配符和队列订阅，发布、请求以及 JetStream 浏览器。\n• 适用于 USB、RS-232 和 RS-485 的串口监视器：文本或十六进制终端、宏、CSV 记录以及解析为点位的数值；虚拟端口上的串口设备模拟器。\n• 蓝牙 LE 扫描器和 GATT 客户端：信号强度、服务和特征、读取、写入和通知。\n\n视图\n• 实时点位：每个值连同其地址、名称、单位、类型、原始字和最近一分钟的迷你曲线。\n• 趋势：30 秒到 15 分钟的多序列图表。量级相差悬殊的序列会使用各自的泳道和刻度。\n• 通信与日志：请求和响应及其负载、模拟器收到的请求，以及每次连接、失败和外部写入。\n• 标签页与分屏：并排查看设备及其模拟器。布局和连接会在启动时恢复。\n• 命令面板（Command-K）和 492 种配色方案，支持实时预览。\n\n每种协议在欢迎页都有演示：模拟设备会在轮询它的客户端旁边打开，无需硬件即可试用应用。\n\n试用与解锁\nVoltrus Tools 可免费下载。在应用内开始 14 天试用，可不受限制地使用所有工具。试用结束后，一次性购买解锁即可继续使用；不是订阅。如果不解锁，应用将保持只读：已保存的连接、点位、趋势和日志仍可打开，但连接、模拟和向设备写入将被锁定。恢复购买位于购买界面和“关于 Voltrus Tools”中。\n\n隐私\n一切都在您的 Mac 上运行。无需账户，应用不收集任何数据：无分析、无遥测、无崩溃报告。\n\n应用界面为英文。",
+  "whatsNew": "小幅修复和改进。"
+ }
+}
