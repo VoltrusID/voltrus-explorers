@@ -15,6 +15,7 @@ pub mod nats;
 pub mod opcua;
 pub mod palette;
 pub mod publish;
+pub mod review;
 pub mod s7;
 pub mod serial;
 pub mod terminal;
@@ -24,7 +25,7 @@ use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext as _, Bounds, Context, Entity, FocusHandle, IntoElement as _, Pixels, Point,
@@ -159,6 +160,10 @@ pub struct AppModel {
     /// BLE: the inspector's characteristic tools and the adapter new
     /// connections start on.
     pub ble: ble::BleState,
+    /// When to ask for an App Store rating.
+    review: review::ReviewGate,
+    /// When the app started: a rating is never asked for at launch.
+    launched: Instant,
 }
 
 impl AppModel {
@@ -181,7 +186,7 @@ impl AppModel {
                 }
                 let applied = this.update(cx, |model, cx| {
                     for event in batch {
-                        model.apply_event(event);
+                        model.apply_event(event, cx);
                     }
                     cx.notify();
                 });
@@ -216,6 +221,8 @@ impl AppModel {
         });
         let subscriptions = vec![write_events, appearance, quit];
         let licensing = licence::Licensing::new(cx.focus_handle());
+        let review =
+            review::ReviewGate::new(env!("CARGO_PKG_VERSION"), &boot.workspace.review_prompted);
         let mut model = Self {
             workspace: boot.workspace,
             store: boot.store,
@@ -262,6 +269,8 @@ impl AppModel {
             cip: enip::CipForm::new(window, cx),
             licensing,
             ble: ble::BleState::new(window, cx),
+            review,
+            launched: Instant::now(),
         };
         window.focus(&model.focus);
         model.start_licensing(cx);
@@ -273,7 +282,8 @@ impl AppModel {
 
     // ── Engine ────────────────────────────────────────────────────────────
 
-    fn apply_event(&mut self, event: Event) {
+    fn apply_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.review_observe(event.session, &event.kind, cx);
         // The device picker's Who-Is runs under a request id, not a session.
         let event = match event {
             Event {

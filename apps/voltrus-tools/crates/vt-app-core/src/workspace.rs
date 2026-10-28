@@ -119,6 +119,9 @@ pub struct Workspace {
     pub tabs: Vec<Tab>,
     pub active_tab: Option<TabId>,
     pub ui: UiState,
+    /// The app version the App Store rating prompt was last requested for
+    /// (empty: never).
+    pub review_prompted: String,
     next_id: u64,
 }
 

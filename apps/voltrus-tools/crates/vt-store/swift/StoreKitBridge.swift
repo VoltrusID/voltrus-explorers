@@ -7,6 +7,7 @@
 // Only transactions StoreKit verified (signed by the App Store for this app and device) count:
 // unverified or revoked ones are skipped, so a refund removes the entitlement.
 
+import AppKit
 import Foundation
 import StoreKit
 
@@ -146,6 +147,21 @@ public func vt_sk_listen(_ callback: @escaping @convention(c) () -> Void) {
                 await transaction.finish()
             }
             callback()
+        }
+    }
+}
+
+/// Asks StoreKit to show the system rating prompt. Apple decides whether it appears (at most three
+/// times a year); nothing is returned. Returns at once: the request runs on the main actor. Uses
+/// `AppStore.requestReview(in:)` with the key window's view controller when there is one, and
+/// `SKStoreReviewController.requestReview()` for a window without one.
+@_cdecl("vt_sk_request_review")
+public func vt_sk_request_review() {
+    Task { @MainActor in
+        if #available(macOS 13.0, *), let controller = NSApplication.shared.keyWindow?.contentViewController {
+            AppStore.requestReview(in: controller)
+        } else {
+            SKStoreReviewController.requestReview()
         }
     }
 }

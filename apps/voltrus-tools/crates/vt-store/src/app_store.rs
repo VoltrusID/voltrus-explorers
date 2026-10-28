@@ -30,6 +30,13 @@ pub fn listen(on_update: extern "C" fn()) {
     bridge::listen(on_update);
 }
 
+/// Ask StoreKit to show the system rating prompt. Apple decides whether it
+/// appears. Returns at once: the bridge runs it on the main thread. Does
+/// nothing outside Mac App Store builds.
+pub fn request_review() {
+    bridge::request_review();
+}
+
 fn products_json() -> String {
     serde_json::to_string(&PRODUCTS).unwrap_or_else(|_| "[]".to_owned())
 }
@@ -40,6 +47,7 @@ mod bridge {
     use std::ffi::{CStr, CString, c_char};
 
     unsafe extern "C" {
+        fn vt_sk_request_review();
         fn vt_sk_snapshot(ids_json: *const c_char) -> *mut c_char;
         fn vt_sk_purchase(id: *const c_char) -> *mut c_char;
         fn vt_sk_restore(ids_json: *const c_char) -> *mut c_char;
@@ -84,6 +92,12 @@ mod bridge {
         // of the process.
         unsafe { vt_sk_listen(callback) }
     }
+
+    pub fn request_review() {
+        // SAFETY: the bridge function takes no arguments and only schedules
+        // work on the main actor.
+        unsafe { vt_sk_request_review() }
+    }
 }
 
 /// Source builds, and other systems: nothing is sold.
@@ -104,6 +118,8 @@ mod bridge {
     }
 
     pub fn listen(_: extern "C" fn()) {}
+
+    pub fn request_review() {}
 }
 
 #[cfg(test)]
