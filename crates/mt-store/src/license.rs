@@ -6,6 +6,8 @@
 //! ```text
 //! POST /license/activate  { key, device_id, app_version, platform } -> { valid, activation_id?, error? }
 //! POST /license/validate  { key, activation_id, device_id, ... }    -> { valid, error? }
+//! POST /license/move      { key, device_id, ... }                   -> { valid, activation_id?, error?, code? }
+//! POST /license/deactivate { key, activation_id, device_id }       -> { ok }
 //! ```
 //!
 //! The key, its activation id and the device id live in the macOS Keychain (the app's own generic-password
@@ -239,11 +241,23 @@ impl Licence {
         }
     }
 
-    /// Forgets the key on this device.
+    /// Releases this device's activation on the server (best effort: the key is forgotten here even when the
+    /// server cannot be asked) and forgets the key on this device.
     pub async fn remove(&self) -> Result<Entitlement, String> {
         let mut state = self.state.lock().await;
+        let saved = match state.saved.take() {
+            Some(saved) => Some(saved),
+            None => self.load().ok().flatten(),
+        };
+        if let Some(saved) = saved {
+            let body = json!({
+                "key": saved.key,
+                "activation_id": saved.activation_id,
+                "device_id": self.device_id().unwrap_or_default(),
+            });
+            self.ask("/license/deactivate", &body).await;
+        }
         self.secrets.delete(KEY_ITEM)?;
-        state.saved = None;
         state.checked = true;
         Ok(entitlement(&state))
     }
@@ -536,6 +550,26 @@ mod tests {
         assert_eq!(server.count("/license/move"), 0);
         assert!(licence.activate("K", true).await.unwrap().pro);
         assert_eq!(server.count("/license/move"), 1);
+    }
+
+    #[tokio::test]
+    async fn remove_releases_the_seat_and_forgets_the_key_even_offline() {
+        let server = MockServer::start(|r| match r.path.as_str() {
+            "/license/activate" => ok_activation(r),
+            _ => (200, r#"{"ok":true,"valid":false}"#.into()),
+        })
+        .await;
+        let secrets = MemorySecrets::default();
+        let licence = client(&server.base, &secrets);
+        licence.activate("K", false).await.unwrap();
+        assert!(!licence.remove().await.unwrap().pro);
+        assert_eq!(server.count("/license/deactivate"), 1);
+
+        let offline = client(DEAD, &secrets);
+        let licence = client(&server.base, &secrets);
+        licence.activate("K", false).await.unwrap();
+        assert!(!offline.remove().await.unwrap().pro);
+        assert!(!client(&server.base, &secrets).status().await.pro);
     }
 
     #[tokio::test]
