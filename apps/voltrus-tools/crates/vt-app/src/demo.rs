@@ -67,6 +67,8 @@ pub enum Scenario {
     BleTrend,
     BleScan,
     BleInspector,
+    MtconnectPoints,
+    FanucPoints,
 }
 
 impl Scenario {
@@ -126,6 +128,8 @@ impl Scenario {
         "ble-trend",
         "ble-scan",
         "ble-inspector",
+        "mtconnect-points",
+        "fanuc-points",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -185,6 +189,8 @@ impl Scenario {
             "ble-trend" => Self::BleTrend,
             "ble-scan" => Self::BleScan,
             "ble-inspector" => Self::BleInspector,
+            "mtconnect-points" => Self::MtconnectPoints,
+            "fanuc-points" => Self::FanucPoints,
             _ => return None,
         })
     }
@@ -266,6 +272,13 @@ pub fn apply(
         | Scenario::NatsJetstream => nats(model, scenario, cx),
         Scenario::BlePoints | Scenario::BleTrend | Scenario::BleScan | Scenario::BleInspector => {
             ble(model, scenario, window, cx)
+        }
+        // A simulated machine side by side with the client reading it.
+        Scenario::MtconnectPoints => {
+            model.start_mtconnect_demo(cx);
+        }
+        Scenario::FanucPoints => {
+            model.start_focas_demo(cx);
         }
         Scenario::Palette => {
             model.start_demo_plant(cx);
