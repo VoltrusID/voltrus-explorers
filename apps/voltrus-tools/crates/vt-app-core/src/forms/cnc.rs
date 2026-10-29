@@ -8,7 +8,7 @@ use vt_protocol::{
 use super::{Field, FormError, error, name, number};
 
 /// A local address as typed, bare or in brackets (`[::]`), kept bare.
-fn bind_address(text: &str) -> Result<String, FormError> {
+pub(super) fn bind_address(text: &str) -> Result<String, FormError> {
     let text = text.trim();
     let bare = text
         .strip_prefix('[')

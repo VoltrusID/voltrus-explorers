@@ -206,6 +206,31 @@ standalone Tauri apps in this repository.
 - **FANUC CNC simulator** (`mt-focas`'s): plays a 31i-B or 0i-F mill running a
   demo program. Its control points act as an operator would: cycle start and
   hold, emergency stop, a P/S 100 alarm, and the part counter.
+- **SECS/GEM host** (beta, on `mt-secsgem`): the GEM host of semiconductor
+  and electronics equipment over HSMS (TCP, default port 5000, any device id).
+  It selects the session, establishes communications (S1F13) and names the
+  status variables (S1F11) and equipment constants (S2F29); every status
+  variable becomes a read-only point and every numeric equipment constant a
+  writable one, written with S2F15 (a value outside the equipment's range is
+  refused with the range, and a constant the equipment locks says so). You can
+  limit the ids read (`10, 11` or `1001-1005`). Listing collection event ids
+  defines a report of the status variables, links it to them and enables
+  them; alarm reports (S5F3) are enabled by default. S6F11 event reports and
+  S5F1 alarms go to the log, and the traffic view shows every HSMS message in
+  both directions as SML with its name (`S6F11 Event report`). An id the
+  equipment cannot provide reads as bad and is logged; a lost link
+  reconnects. The crate has been cross-checked against the open-source
+  secsgem library and tested against its simulator, not against real
+  equipment or a commercial host, so the connection is labelled Beta in the
+  app; please report your equipment model to support@voltrus.id.
+- **SECS/GEM equipment simulator** (`mt-secsgem`'s): plays a wafer processing
+  chamber on any port (default 5600: macOS's AirPlay Receiver holds 5000), for
+  any GEM host. Its control points act as an operator would: start, stop,
+  pause and resume the process, take the equipment on or offline and into
+  remote control, and raise or clear its three alarms; its five equipment
+  constants are set the way an operator sets them at the tool. It can keep
+  processing wafers on its own, and sends the events and alarms a host has
+  enabled.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -225,11 +250,13 @@ standalone Tauri apps in this repository.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
 Every protocol in this repository is ported: Modbus, MQTT, BACnet, DNP3,
-EtherNet/IP, serial, S7, NATS, Bluetooth LE, OPC UA, MTConnect and FANUC CNCs
-(twelve), each plugged into the same engine and views
+EtherNet/IP, serial, S7, NATS, Bluetooth LE, OPC UA, MTConnect, FANUC CNCs and
+SECS/GEM equipment
+(thirteen), each plugged into the same engine and views
 ([how](docs/architecture.md#adding-a-protocol)). FANUC and FOCAS are trademarks
-of FANUC CORPORATION and MTConnect is a registered trademark of AMT; Voltrus
-Tools is independent of both.
+of FANUC CORPORATION, MTConnect is a registered trademark of AMT, and SECS/GEM,
+SECS-II and HSMS are SEMI standards; Voltrus Tools is independent of all three
+and not certified by SEMI.
 
 ## Try it
 

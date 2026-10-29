@@ -4730,6 +4730,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-secsgem"
+version = "2.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mt-serial"
 version = "2.0.0"
 dependencies = [
@@ -8649,6 +8659,7 @@ dependencies = [
  "mt-opcua",
  "mt-protocol",
  "mt-s7",
+ "mt-secsgem",
  "mt-serial",
  "prost 0.14.4",
  "regex",

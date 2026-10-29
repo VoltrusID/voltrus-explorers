@@ -18,6 +18,7 @@ pub mod palette;
 pub mod publish;
 pub mod review;
 pub mod s7;
+pub mod secsgem;
 pub mod serial;
 pub mod terminal;
 
@@ -677,6 +678,9 @@ impl AppModel {
             Protocol::Focas => {
                 self.start_focas_demo(cx);
             }
+            Protocol::SecsGem => {
+                self.start_secsgem_demo(cx);
+            }
         }
     }
 
@@ -1051,6 +1055,12 @@ impl AppModel {
         }
         if editing.is_none()
             && add_client
+            && let SessionSpec::SecsGemSimulator(simulator) = &spec
+        {
+            self.add_secsgem_client(&name, simulator, cx);
+        }
+        if editing.is_none()
+            && add_client
             && let SessionSpec::NatsServer(server) = &spec
             && server.template.is_some()
         {
@@ -1241,6 +1251,15 @@ impl AppModel {
             }
             Command::FocasDemo => {
                 self.start_focas_demo(cx);
+            }
+            Command::NewSecsGemClient => {
+                self.open_editor(EditorKind::SecsGemClient, None, window, cx)
+            }
+            Command::NewSecsGemSimulator => {
+                self.open_editor(EditorKind::SecsGemSimulator, None, window, cx)
+            }
+            Command::SecsGemDemo => {
+                self.start_secsgem_demo(cx);
             }
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),

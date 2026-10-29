@@ -252,6 +252,19 @@ pub fn focas_client_for(host: &str, port: u16) -> vt_protocol::FocasClientSpec {
     }
 }
 
+/// A host of the simulated chamber on this computer: every status variable
+/// and equipment constant, the process and alarm events, and
+/// the alarm reports.
+pub fn secsgem_client_for(host: &str, port: u16, device_id: u16) -> vt_protocol::SecsGemClientSpec {
+    vt_protocol::SecsGemClientSpec {
+        host: host.into(),
+        port,
+        device_id,
+        events: vec![100, 101, 102, 103, 104, 300, 301],
+        ..vt_protocol::SecsGemClientSpec::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

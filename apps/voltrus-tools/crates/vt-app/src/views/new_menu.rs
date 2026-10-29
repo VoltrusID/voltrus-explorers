@@ -51,7 +51,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                     Role::Simulator => format!("{} simulator", protocol.name()),
                                 }))
                                 .when(role == Role::Client && is_beta(protocol), |this| {
-                                    this.child(beta_badge(("new-menu-beta", index), cx))
+                                    this.child(beta_badge(("new-menu-beta", index), protocol, cx))
                                 }),
                         )
                         .child(

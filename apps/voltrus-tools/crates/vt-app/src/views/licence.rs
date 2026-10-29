@@ -17,7 +17,7 @@ use crate::model::licence::{
 };
 
 /// Everything the trial and the unlock cover.
-const PROTOCOLS: [&str; 12] = [
+const PROTOCOLS: [&str; 13] = [
     "Modbus",
     "MQTT",
     "BACnet",
@@ -30,6 +30,7 @@ const PROTOCOLS: [&str; 12] = [
     "BLE",
     "MTConnect",
     "FANUC CNC",
+    "SECS/GEM",
 ];
 
 /// The trial or read-only state in the status bar; nothing once unlocked.
@@ -528,6 +529,6 @@ mod tests {
     #[test]
     fn the_unlock_sheet_lists_every_protocol() {
         assert_eq!(PROTOCOLS.len(), vt_protocol::Protocol::ALL.len());
-        assert_eq!(vt_protocol::Protocol::ALL.len(), 12);
+        assert_eq!(vt_protocol::Protocol::ALL.len(), 13);
     }
 }

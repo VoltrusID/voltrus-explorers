@@ -69,6 +69,7 @@ pub enum Scenario {
     BleInspector,
     MtconnectPoints,
     FanucPoints,
+    SecsGemPoints,
 }
 
 impl Scenario {
@@ -130,6 +131,7 @@ impl Scenario {
         "ble-inspector",
         "mtconnect-points",
         "fanuc-points",
+        "secsgem-points",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -191,6 +193,7 @@ impl Scenario {
             "ble-inspector" => Self::BleInspector,
             "mtconnect-points" => Self::MtconnectPoints,
             "fanuc-points" => Self::FanucPoints,
+            "secsgem-points" => Self::SecsGemPoints,
             _ => return None,
         })
     }
@@ -279,6 +282,9 @@ pub fn apply(
         }
         Scenario::FanucPoints => {
             model.start_focas_demo(cx);
+        }
+        Scenario::SecsGemPoints => {
+            model.start_secsgem_demo(cx);
         }
         Scenario::Palette => {
             model.start_demo_plant(cx);

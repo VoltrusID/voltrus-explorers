@@ -184,6 +184,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                                                 format!("welcome-beta-{}", protocol.monogram())
                                                                     .into(),
                                                             ),
+                                                            protocol,
                                                             cx,
                                                         ))
                                                     }),

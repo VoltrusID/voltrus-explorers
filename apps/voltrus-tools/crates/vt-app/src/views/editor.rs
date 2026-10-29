@@ -24,6 +24,7 @@ mod mqtt;
 mod nats;
 mod opcua;
 mod s7;
+mod secsgem;
 mod serial;
 
 /// A click handler that changes the open editor.
@@ -93,6 +94,10 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::FocasClient, true) => "Edit FANUC CNC connection",
         (EditorKind::FocasSimulator, false) => "New FANUC CNC simulator",
         (EditorKind::FocasSimulator, true) => "Edit FANUC CNC simulator",
+        (EditorKind::SecsGemClient, false) => "New SECS/GEM connection",
+        (EditorKind::SecsGemClient, true) => "Edit SECS/GEM connection",
+        (EditorKind::SecsGemSimulator, false) => "New SECS/GEM equipment simulator",
+        (EditorKind::SecsGemSimulator, true) => "Edit SECS/GEM equipment simulator",
     };
     let subtitle = match editor.kind {
         EditorKind::Master => "Poll a device over Modbus TCP or RTU.",
@@ -160,6 +165,12 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::FocasSimulator => {
             "Play a FANUC controller on this computer for any FOCAS/Ethernet client."
         }
+        EditorKind::SecsGemClient => {
+            "Host a piece of equipment over HSMS: status variables, equipment constants, events and alarms, with the SML of every message."
+        }
+        EditorKind::SecsGemSimulator => {
+            "Play a wafer processing chamber on this computer for any GEM host."
+        }
     };
     let body = match editor.kind {
         EditorKind::Master => master(editor, cx),
@@ -185,6 +196,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         EditorKind::MtconnectAgent => cnc::mtconnect_agent(editor, cx),
         EditorKind::FocasClient => cnc::focas_client(editor, cx),
         EditorKind::FocasSimulator => cnc::focas_simulator(editor, cx),
+        EditorKind::SecsGemClient => secsgem::client(editor, cx),
+        EditorKind::SecsGemSimulator => secsgem::simulator(editor, cx),
     };
     let save_label = match (editor.kind, editing.is_some()) {
         (_, true) => "Save",
@@ -211,6 +224,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
         (EditorKind::MtconnectAgent, false) => "Start simulator",
         (EditorKind::FocasClient, false) => "Save and connect",
         (EditorKind::FocasSimulator, false) => "Start simulator",
+        (EditorKind::SecsGemClient, false) => "Save and connect",
+        (EditorKind::SecsGemSimulator, false) => "Start simulator",
     };
     let confirm_delete = editor.confirm_delete;
 

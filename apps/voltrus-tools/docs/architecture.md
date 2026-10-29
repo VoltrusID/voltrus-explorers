@@ -164,6 +164,25 @@ raised condition, cycle start, emergency stop) as the app's other simulators'
 writes do. FANUC is labelled Beta in the app (`vt-app/src/model/cnc.rs`)
 because `mt-focas` has only been tested against its simulator.
 
+SECS/GEM sessions (`vt-engine/src/secsgem`) are also points, `Payloads`, `Traffic`,
+`Stats` and `Log` with a point write as the only request. A host (`GemHost`)
+establishes communications, names the status variables and equipment constants
+(S1F11, S2F29) and lays its points out from them and the types of the first
+read: status variables first, read-only, then equipment constants, writable when
+numeric; a write sends S2F15 with an item of the constant's own type and maps a
+refused `EAC` to a message. An id the equipment answers with an empty list reads
+as bad. Events and alarms arrive on `GemHost::subscribe` and are logged. Unlike
+MTConnect and FANUC, `mt-secsgem` reports every message it sends and receives
+(`LogEntry`, with one-line SML), so the traffic view shows the real exchange:
+`vt-engine/src/secsgem/mod.rs` turns each entry into a `TrafficFrame` named by
+stream and function. The simulator is `EquipmentSimulator` (a wafer processing
+chamber); its points are controls (process, pause, online, remote, one per alarm),
+status variables and equipment constants, and a write acts as an operator at the
+tool would. SECS/GEM is labelled Beta in the app (`vt-app/src/model/cnc.rs`) because
+`mt-secsgem` has only been tested against its simulator and one open-source
+library, and the About sheet says it is an independent implementation of SEMI
+standards, not affiliated with or certified by SEMI.
+
 The serial port picker works the same way: it sends `Command::ListSerialPorts`
 under a request id every two seconds while the editor is open (so a device
 plugged in shows up), and `EventKind::SerialPorts` comes back to the editor.

@@ -60,6 +60,9 @@ pub enum Command {
     NewFocasClient,
     NewFocasSimulator,
     FocasDemo,
+    NewSecsGemClient,
+    NewSecsGemSimulator,
+    SecsGemDemo,
     NewNatsClient,
     NewNatsServer,
     NatsDemo,
@@ -465,5 +468,6 @@ fn commands(model: &AppModel) -> Vec<Entry> {
     }
     entries.extend(super::s7::palette_entries(model));
     entries.extend(super::cnc::palette_entries());
+    entries.extend(super::secsgem::palette_entries());
     entries
 }

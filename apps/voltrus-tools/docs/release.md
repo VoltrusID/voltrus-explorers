@@ -103,8 +103,8 @@ from the provisioning profile:
 | Entitlement | Why |
 | --- | --- |
 | `app-sandbox` | required on the Mac App Store |
-| `network.client` | every client: Modbus TCP, MQTT, BACnet/IP, OPC UA, S7, EtherNet/IP, DNP3, NATS, MTConnect (HTTP), FANUC FOCAS/Ethernet |
-| `network.server` | the simulators: Modbus slave, MQTT broker, BACnet device, OPC UA server, DNP3 outstation, MTConnect agent (and its SHDR adapter), FANUC CNC; listeners open only when the user starts one. BACnet and EtherNet/IP discovery also receive broadcasts |
+| `network.client` | every client: Modbus TCP, MQTT, BACnet/IP, OPC UA, S7, EtherNet/IP, DNP3, NATS, MTConnect (HTTP), FANUC FOCAS/Ethernet, SECS/GEM (HSMS) |
+| `network.server` | the simulators: Modbus slave, MQTT broker, BACnet device, OPC UA server, DNP3 outstation, MTConnect agent (and its SHDR adapter), FANUC CNC, SECS/GEM equipment (HSMS); listeners open only when the user starts one. BACnet and EtherNet/IP discovery also receive broadcasts |
 | `files.user-selected.read-write` | importing and exporting through open/save panels (e.g. OPC UA user certificates, serial logs) |
 | `device.serial` | Modbus RTU and the serial terminal |
 | `device.bluetooth` | the BLE inspector; `NSBluetoothAlwaysUsageDescription` is set by `build-mas.sh` |

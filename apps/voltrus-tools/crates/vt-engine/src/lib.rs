@@ -18,6 +18,7 @@ mod mtconnect;
 mod nats;
 pub mod opcua;
 mod s7;
+mod secsgem;
 mod serial;
 pub mod templates;
 
@@ -126,6 +127,10 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         SessionSpec::FocasClient(client) => client.poll_ms,
         SessionSpec::FocasSimulator(_) => {
             u64::try_from(focas::simulator::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::SecsGemClient(client) => client.poll_ms,
+        SessionSpec::SecsGemSimulator(_) => {
+            u64::try_from(secsgem::simulator::TICK.as_millis()).unwrap_or(u64::MAX)
         }
     }
 }
@@ -252,6 +257,8 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::MtconnectClient(_) => None,
                     SessionSpec::FocasSimulator(simulator) => Some(simulator.port),
                     SessionSpec::FocasClient(_) => None,
+                    SessionSpec::SecsGemSimulator(simulator) => Some(simulator.port),
+                    SessionSpec::SecsGemClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -443,5 +450,9 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::MtconnectAgent(spec) => mtconnect::agent::run(spec, control, &out).await,
         SessionSpec::FocasClient(spec) => focas::client::run(spec, control, &out).await,
         SessionSpec::FocasSimulator(spec) => focas::simulator::run(spec, control, &out).await,
+        SessionSpec::SecsGemClient(spec) => secsgem::client::run(spec, control, &out).await,
+        SessionSpec::SecsGemSimulator(spec) => {
+            secsgem::simulator::run(spec, control, &out).await;
+        }
     }
 }

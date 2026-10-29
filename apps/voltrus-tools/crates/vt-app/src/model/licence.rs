@@ -674,6 +674,10 @@ mod tests {
             }
             (Protocol::Focas, Role::Client) => SessionSpec::FocasClient(Default::default()),
             (Protocol::Focas, Role::Simulator) => SessionSpec::FocasSimulator(Default::default()),
+            (Protocol::SecsGem, Role::Client) => SessionSpec::SecsGemClient(Default::default()),
+            (Protocol::SecsGem, Role::Simulator) => {
+                SessionSpec::SecsGemSimulator(Default::default())
+            }
         })
     }
 

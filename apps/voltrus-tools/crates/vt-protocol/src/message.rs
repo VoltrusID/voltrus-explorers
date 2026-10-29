@@ -1336,4 +1336,37 @@ mod tests {
             (MtconnectTemplate::Vmc, false)
         );
     }
+
+    #[test]
+    fn secsgem_specs_round_trip_and_fill_what_older_files_lack() {
+        use crate::{SecsGemClientSpec, SecsGemSimulatorSpec};
+        let specs = [
+            SessionSpec::SecsGemClient(SecsGemClientSpec {
+                svids: vec![10, 11],
+                ecids: vec![1001],
+                events: vec![100, 101, 300],
+                alarms: false,
+                ..SecsGemClientSpec::default()
+            }),
+            SessionSpec::SecsGemSimulator(SecsGemSimulatorSpec {
+                device_id: 3,
+                run: false,
+                ..SecsGemSimulatorSpec::default()
+            }),
+        ];
+        for spec in specs {
+            let json = serde_json::to_string(&spec).unwrap();
+            let back: SessionSpec = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, spec, "{json}");
+        }
+        let SessionSpec::SecsGemClient(client) =
+            serde_json::from_str(r#"{"kind":"secs_gem_client","host":"10.0.0.9"}"#).unwrap()
+        else {
+            panic!("a SECS/GEM client spec");
+        };
+        assert_eq!(
+            (client.port, client.alarms, client.svids.is_empty()),
+            (5000, true, true)
+        );
+    }
 }

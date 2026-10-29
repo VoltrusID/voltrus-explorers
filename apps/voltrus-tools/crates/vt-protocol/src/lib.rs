@@ -16,6 +16,7 @@ mod mqtt;
 mod mtconnect;
 mod nats;
 mod s7;
+mod secsgem;
 mod serial;
 mod value;
 
@@ -60,6 +61,10 @@ pub use nats::{
 pub use s7::{
     S7_DEFAULT_PDU, S7_MAX_PDU, S7_MIN_PDU, S7_PORT, S7Address, S7Area, S7Block, S7ClientSpec,
     S7CpuInfo, S7DiagEntry, S7PlcReport, S7ServerSpec, S7TagSpec, S7Type, S7Width,
+};
+pub use secsgem::{
+    SECSGEM_MAX_IDS, SECSGEM_MAX_REPORT_VIDS, SECSGEM_PORT, SECSGEM_SIM_PORT, SecsGemClientSpec,
+    SecsGemSimulatorSpec,
 };
 pub use serial::{
     FlowControl, LineEnding, LineParser, SerialChunk, SerialDeviceSpec, SerialFormat, SerialMacro,
@@ -117,6 +122,11 @@ pub enum SessionSpec {
     FocasClient(FocasClientSpec),
     /// Play a FANUC controller on this computer.
     FocasSimulator(FocasSimulatorSpec),
+    /// Act as the GEM host of semiconductor equipment over HSMS: status
+    /// variables as points, equipment constants writable.
+    SecsGemClient(SecsGemClientSpec),
+    /// Play a wafer processing chamber behind a GEM interface.
+    SecsGemSimulator(SecsGemSimulatorSpec),
     /// Watch and talk to a serial port; parse its lines into points.
     SerialMonitor(SerialMonitorSpec),
     /// Play an instrument on a virtual serial port.
@@ -151,6 +161,7 @@ impl SessionSpec {
             Self::BleClient(_) => Protocol::Ble,
             Self::MtconnectClient(_) | Self::MtconnectAgent(_) => Protocol::Mtconnect,
             Self::FocasClient(_) | Self::FocasSimulator(_) => Protocol::Focas,
+            Self::SecsGemClient(_) | Self::SecsGemSimulator(_) => Protocol::SecsGem,
         }
     }
 
@@ -171,8 +182,12 @@ impl SessionSpec {
             Self::S7Server(_) => Role::Simulator,
             Self::NatsClient(_) => Role::Client,
             Self::NatsServer(_) => Role::Simulator,
-            Self::MtconnectClient(_) | Self::FocasClient(_) => Role::Client,
-            Self::MtconnectAgent(_) | Self::FocasSimulator(_) => Role::Simulator,
+            Self::MtconnectClient(_) | Self::FocasClient(_) | Self::SecsGemClient(_) => {
+                Role::Client
+            }
+            Self::MtconnectAgent(_) | Self::FocasSimulator(_) | Self::SecsGemSimulator(_) => {
+                Role::Simulator
+            }
         }
     }
 
@@ -280,6 +295,8 @@ impl SessionSpec {
                     spec.profile.name()
                 )
             }
+            Self::SecsGemClient(spec) => host_port(&spec.host, spec.port),
+            Self::SecsGemSimulator(spec) => host_port(&spec.bind, spec.port),
         }
     }
 
@@ -311,6 +328,8 @@ impl SessionSpec {
             Self::MtconnectAgent(spec) => host_port(&spec.bind, spec.port),
             Self::FocasClient(spec) => host_port(&spec.host, spec.port),
             Self::FocasSimulator(spec) => host_port(&spec.bind, spec.port),
+            Self::SecsGemClient(spec) => host_port(&spec.host, spec.port),
+            Self::SecsGemSimulator(spec) => host_port(&spec.bind, spec.port),
         }
     }
 }
@@ -349,6 +368,7 @@ pub enum Protocol {
     Ble,
     Mtconnect,
     Focas,
+    SecsGem,
 }
 
 impl Protocol {
@@ -365,6 +385,7 @@ impl Protocol {
         Protocol::Ble,
         Protocol::Mtconnect,
         Protocol::Focas,
+        Protocol::SecsGem,
     ];
 
     pub fn name(self) -> &'static str {
@@ -381,6 +402,7 @@ impl Protocol {
             Self::Ble => "Bluetooth LE",
             Self::Mtconnect => "MTConnect",
             Self::Focas => "FANUC CNC",
+            Self::SecsGem => "SECS/GEM",
         }
     }
 
@@ -399,6 +421,7 @@ impl Protocol {
             Self::Ble => "BL",
             Self::Mtconnect => "MT",
             Self::Focas => "FC",
+            Self::SecsGem => "SG",
         }
     }
 
@@ -437,6 +460,9 @@ impl Protocol {
             }
             Self::Focas => {
                 "FOCAS/Ethernet reads of status, axes, feed, spindle, program and alarms, macro writes, and a CNC simulator"
+            }
+            Self::SecsGem => {
+                "Semiconductor equipment over HSMS: status variables, equipment constants, events and alarms with SML traffic, and a chamber simulator"
             }
         }
     }
@@ -506,7 +532,19 @@ mod tests {
             (Protocol::Focas, Role::Simulator)
         );
         assert_eq!(sim.address(), "[::1]:8193");
-        assert_eq!(Protocol::ALL.len(), 12);
+        let gem = SessionSpec::SecsGemClient(SecsGemClientSpec::default());
+        assert_eq!(
+            (gem.protocol(), gem.role()),
+            (Protocol::SecsGem, Role::Client)
+        );
+        assert_eq!(gem.address(), "192.168.1.60:5000");
+        let equipment = SessionSpec::SecsGemSimulator(SecsGemSimulatorSpec::default());
+        assert_eq!(
+            (equipment.protocol(), equipment.role()),
+            (Protocol::SecsGem, Role::Simulator)
+        );
+        assert_eq!(equipment.address(), "127.0.0.1:5600");
+        assert_eq!(Protocol::ALL.len(), 13);
         assert_eq!(
             mtconnect_host_port("https://demo.mtconnect.org/path?x=1"),
             "demo.mtconnect.org"

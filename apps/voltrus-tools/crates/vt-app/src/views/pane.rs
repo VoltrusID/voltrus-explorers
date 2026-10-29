@@ -381,6 +381,12 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 (SessionSpec::FocasClient(_), _) => {
                     "Connect to poll the controller: status, axes, feed, spindle, program, alarms and macro variables."
                 }
+                (SessionSpec::SecsGemSimulator(_), _) => {
+                    "Start it to play a wafer processing chamber behind a GEM interface on this computer. Any GEM host can connect to it, including this app."
+                }
+                (SessionSpec::SecsGemClient(_), _) => {
+                    "Connect to host the equipment: status variables and equipment constants as points, events and alarms in the log, every message as SML in the traffic view."
+                }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."
                 }

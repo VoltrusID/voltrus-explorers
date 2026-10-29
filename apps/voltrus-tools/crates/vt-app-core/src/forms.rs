@@ -44,6 +44,10 @@ mod cnc;
 pub use cnc::{
     FocasClientForm, FocasSimulatorForm, MtconnectAgentForm, MtconnectClientForm, parse_macros,
 };
+
+mod secsgem;
+
+pub use secsgem::{SecsGemClientForm, SecsGemSimulatorForm, parse_ids};
 mod ble;
 
 pub use ble::BleClientForm;
@@ -125,6 +129,12 @@ pub enum Field {
     /// MTConnect: the SHDR adapter's port. FANUC: the macro variables.
     ShdrPort,
     Macros,
+    /// SECS/GEM: the HSMS device id and the lists of status variables,
+    /// equipment constants and collection events.
+    DeviceId,
+    SvIds,
+    EcIds,
+    Events,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

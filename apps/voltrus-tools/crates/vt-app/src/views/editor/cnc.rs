@@ -12,7 +12,7 @@ use crate::model::AppModel;
 use crate::model::cnc::BETA_NOTE;
 use crate::model::editor::Editor;
 
-fn group(title: &'static str, cx: &Context<AppModel>) -> gpui::Div {
+pub(super) fn group(title: &'static str, cx: &Context<AppModel>) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -20,7 +20,7 @@ fn group(title: &'static str, cx: &Context<AppModel>) -> gpui::Div {
         .child(section_label(title, cx))
 }
 
-fn hint(text: &'static str, cx: &Context<AppModel>) -> gpui::Div {
+pub(super) fn hint(text: &'static str, cx: &Context<AppModel>) -> gpui::Div {
     let theme = theme(cx);
     div()
         .text_size(FONT_SMALL)
@@ -199,7 +199,7 @@ pub fn mtconnect_agent(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElemen
 }
 
 /// The Beta label and what it means.
-fn beta(cx: &Context<AppModel>) -> gpui::Div {
+pub(super) fn beta(note: &'static str, cx: &Context<AppModel>) -> gpui::Div {
     let theme = theme(cx).clone();
     div()
         .flex()
@@ -217,7 +217,7 @@ fn beta(cx: &Context<AppModel>) -> gpui::Div {
                 .min_w_0()
                 .text_size(FONT_SMALL)
                 .text_color(theme.fg_muted)
-                .child(BETA_NOTE),
+                .child(note),
         )
 }
 
@@ -227,7 +227,7 @@ pub fn focas_client(editor: &Editor, cx: &mut Context<AppModel>) -> AnyElement {
         .flex()
         .flex_col()
         .gap(SPACE_7)
-        .child(beta(cx))
+        .child(beta(BETA_NOTE, cx))
         .child(field("Name", editor.name.clone(), cx))
         .child(
             group("Controller", cx)

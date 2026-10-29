@@ -36,6 +36,9 @@ pub use cnc::{
     CncFields, NEW_FOCAS_CLIENT_NAME, NEW_FOCAS_SIMULATOR_NAME, NEW_MTCONNECT_AGENT_NAME,
     NEW_MTCONNECT_CLIENT_NAME,
 };
+mod secsgem;
+
+pub use secsgem::{NEW_SECSGEM_CLIENT_NAME, NEW_SECSGEM_SIMULATOR_NAME, SecsGemFields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -62,6 +65,8 @@ pub enum EditorKind {
     MtconnectAgent,
     FocasClient,
     FocasSimulator,
+    SecsGemClient,
+    SecsGemSimulator,
 }
 
 impl EditorKind {
@@ -94,6 +99,8 @@ impl EditorKind {
             (Protocol::Mtconnect, Role::Simulator) => Self::MtconnectAgent,
             (Protocol::Focas, Role::Client) => Self::FocasClient,
             (Protocol::Focas, Role::Simulator) => Self::FocasSimulator,
+            (Protocol::SecsGem, Role::Client) => Self::SecsGemClient,
+            (Protocol::SecsGem, Role::Simulator) => Self::SecsGemSimulator,
         })
     }
 
@@ -123,6 +130,8 @@ impl EditorKind {
             SessionSpec::MtconnectAgent(_) => Self::MtconnectAgent,
             SessionSpec::FocasClient(_) => Self::FocasClient,
             SessionSpec::FocasSimulator(_) => Self::FocasSimulator,
+            SessionSpec::SecsGemClient(_) => Self::SecsGemClient,
+            SessionSpec::SecsGemSimulator(_) => Self::SecsGemSimulator,
         }
     }
 }
@@ -172,6 +181,7 @@ pub struct Editor {
     pub nats: NatsFields,
     pub ble: BleFields,
     pub cnc: CncFields,
+    pub secsgem: SecsGemFields,
 }
 
 fn input(
@@ -215,6 +225,7 @@ impl Editor {
         };
         let ble = BleFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let cnc = CncFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let secsgem = SecsGemFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -281,7 +292,9 @@ impl Editor {
                 SessionSpec::MtconnectClient(_)
                 | SessionSpec::MtconnectAgent(_)
                 | SessionSpec::FocasClient(_)
-                | SessionSpec::FocasSimulator(_),
+                | SessionSpec::FocasSimulator(_)
+                | SessionSpec::SecsGemClient(_)
+                | SessionSpec::SecsGemSimulator(_),
             )) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -317,6 +330,8 @@ impl Editor {
                     EditorKind::MtconnectAgent => NEW_MTCONNECT_AGENT_NAME.to_owned(),
                     EditorKind::FocasClient => NEW_FOCAS_CLIENT_NAME.to_owned(),
                     EditorKind::FocasSimulator => NEW_FOCAS_SIMULATOR_NAME.to_owned(),
+                    EditorKind::SecsGemClient => NEW_SECSGEM_CLIENT_NAME.to_owned(),
+                    EditorKind::SecsGemSimulator => NEW_SECSGEM_SIMULATOR_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -388,6 +403,7 @@ impl Editor {
             nats: NatsFields::new(&nats_client, &nats_server, cx),
             ble,
             cnc,
+            secsgem,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -435,6 +451,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.cnc.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.secsgem.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -651,6 +670,16 @@ impl Editor {
                 .focas_simulator_form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::FocasSimulator(spec))),
+            EditorKind::SecsGemClient => self
+                .secsgem
+                .client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::SecsGemClient(spec))),
+            EditorKind::SecsGemSimulator => self
+                .secsgem
+                .simulator_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::SecsGemSimulator(spec))),
         }
     }
 }

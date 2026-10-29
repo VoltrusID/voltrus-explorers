@@ -69,7 +69,7 @@ pub(super) fn palette_entries() -> Vec<Entry> {
 
 /// The address a client on this computer uses for a simulator bound to
 /// `bind`.
-fn loopback(bind: &str) -> &str {
+pub(super) fn loopback(bind: &str) -> &str {
     match bind {
         "0.0.0.0" => "127.0.0.1",
         "::" => "::1",
@@ -191,7 +191,7 @@ impl AppModel {
 
     /// A TCP port in `range` that no saved simulator (`port_of` says which
     /// ports a spec holds) uses and nothing listens on.
-    fn free_cnc_port(
+    pub(super) fn free_cnc_port(
         &self,
         range: Range<u16>,
         port_of: impl Fn(&SessionSpec) -> Option<u16>,
@@ -208,20 +208,33 @@ impl AppModel {
     }
 }
 
-/// Whether this protocol's clients are labelled beta in the app: FANUC's
-/// connection was only tested against its own simulator.
+/// Whether this protocol's clients are labelled beta in the app: FANUC's and
+/// SECS/GEM's connections were only tested against their own simulators (and,
+/// for SECS/GEM, one open-source library), not real equipment.
 pub fn is_beta(protocol: Protocol) -> bool {
-    protocol == Protocol::Focas
+    matches!(protocol, Protocol::Focas | Protocol::SecsGem)
 }
 
-/// The explanation shown wherever the Beta label is.
+/// The explanation shown wherever the FANUC Beta label is.
 pub const BETA_NOTE: &str = "Tested against the built-in simulator; please report your controller model to support@voltrus.id";
 
+/// The explanation shown wherever the SECS/GEM Beta label is.
+pub const SECSGEM_BETA_NOTE: &str = "Independent implementation, cross-checked against the open-source secsgem library and tested against the built-in simulator, not real equipment or a commercial host; please report your equipment model to support@voltrus.id";
+
+/// The Beta explanation for a protocol that is beta.
+pub fn beta_note(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::SecsGem => SECSGEM_BETA_NOTE,
+        _ => BETA_NOTE,
+    }
+}
+
 /// What the About sheet says about the names these protocols use. The app
-/// is independent of both organisations.
-pub const TRADEMARK_NOTES: [&str; 2] = [
+/// is independent of all three organisations.
+pub const TRADEMARK_NOTES: [&str; 3] = [
     "FANUC and FOCAS are trademarks of FANUC CORPORATION. Voltrus Tools is independent software, not affiliated with, endorsed by or supported by FANUC; the FANUC CNC connection is for FANUC CNCs and is in beta.",
     "MTConnect is a registered trademark of AMT - The Association For Manufacturing Technology. Voltrus Tools is not affiliated with or endorsed by AMT.",
+    "SECS/GEM, SECS-II and HSMS are SEMI standards (SEMI E5, E30 and E37). Voltrus Tools contains an independent implementation, not affiliated with, endorsed by or certified by SEMI, and untested on real equipment or commercial hosts; the SECS/GEM connection is in beta.",
 ];
 
 #[cfg(test)]
@@ -229,23 +242,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_about_sheet_names_both_trademarks_and_disclaims_affiliation() {
+    fn the_about_sheet_names_the_trademarks_and_disclaims_affiliation() {
         let notes = TRADEMARK_NOTES.join(" ");
         assert!(notes.contains("FANUC CORPORATION"));
         assert!(notes.contains("not affiliated with, endorsed by or supported by FANUC"));
         assert!(notes.contains("MTConnect is a registered trademark"));
+        assert!(notes.contains("SEMI standards"));
+        assert!(notes.contains("not affiliated with, endorsed by or certified by SEMI"));
     }
 
     #[test]
-    fn only_the_fanuc_connection_is_beta() {
+    fn only_the_fanuc_and_secsgem_connections_are_beta() {
         for &protocol in Protocol::ALL {
             assert_eq!(
                 is_beta(protocol),
-                protocol == Protocol::Focas,
+                matches!(protocol, Protocol::Focas | Protocol::SecsGem),
                 "{protocol:?}"
             );
         }
         assert!(BETA_NOTE.contains("support@voltrus.id"));
+        assert!(SECSGEM_BETA_NOTE.contains("not real equipment"));
+        assert_eq!(beta_note(Protocol::SecsGem), SECSGEM_BETA_NOTE);
+        assert_eq!(beta_note(Protocol::Focas), BETA_NOTE);
     }
 
     #[test]

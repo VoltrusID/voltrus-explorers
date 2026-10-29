@@ -274,4 +274,41 @@ mod tests {
             Reading::Nothing
         );
     }
+
+    #[test]
+    fn good_secsgem_status_variable_reads_count_for_the_host_and_not_for_the_simulator() {
+        use vt_protocol::{
+            Reading as Value, SecsGemClientSpec, SecsGemSimulatorSpec, SessionSpec, ValueFrame,
+        };
+        let reading = |quality| Value {
+            quality,
+            ..Value::bad()
+        };
+        let frame = |readings| {
+            EventKind::Values(ValueFrame {
+                at_ms: 0,
+                latency_us: 0,
+                readings,
+            })
+        };
+        // Numbers and text points (text points read NaN, good) are reads; an
+        // id the equipment cannot provide is bad and cancels the ask.
+        assert_eq!(
+            classify(&frame(vec![reading(Quality::Good), reading(Quality::Good)])),
+            Reading::Success
+        );
+        assert_eq!(
+            classify(&frame(vec![reading(Quality::Good), reading(Quality::Bad)])),
+            Reading::Error
+        );
+        // review_observe skips simulators by role.
+        assert_eq!(
+            SessionSpec::SecsGemClient(SecsGemClientSpec::default()).role(),
+            Role::Client
+        );
+        assert_eq!(
+            SessionSpec::SecsGemSimulator(SecsGemSimulatorSpec::default()).role(),
+            Role::Simulator
+        );
+    }
 }
