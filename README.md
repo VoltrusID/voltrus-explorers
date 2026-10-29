@@ -14,6 +14,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -72,6 +73,20 @@ Siemens AG; it is not affiliated with or endorsed by Siemens.
 | Pro | Unlimited live tags, more than one saved tag watch list, tag watch list CSV export, write tags, trends for tag values, Set Attribute and any other CIP service, implicit I/O (ForwardOpen, cyclic data), custom response decoders, packet log CSV export, adapter mode (built-in EtherNet/IP server and PLC simulator with templates) |
 
 EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
+
+### CNC Explorer
+
+| CNC Explorer | |
+| --- | --- |
+| Free | Connect to one MTConnect agent or one FANUC CNC, device and component tree, live values for 10 MTConnect items (any other item can be read once with Refresh), conditions (Normal, Warning, Fault), assets with raw XML, FANUC identity, status, axis positions, feed, spindle, servo load, program, alarms, macro variable, parameter, diagnosis and PMC reads, communication log with CSV export, 1 saved connection profile |
+| Pro | Unlimited live MTConnect items, live trends (numeric MTConnect samples, FANUC feed, spindle, servo load and positions), MTConnect agent simulator (3-axis VMC and 2-axis lathe, SHDR adapter) and FANUC CNC simulator (31i-B and 0i-F), macro variable writes (with a confirm step), data table CSV export, unlimited saved profiles |
+
+The FANUC connection is a **Beta**: it is tested against the built-in simulator only, not against a real controller.
+Please report your controller model to support@voltrus.id.
+
+CNC Explorer is an independent tool. FANUC and FOCAS are trademarks of FANUC CORPORATION, and MTConnect is a
+registered trademark of AMT - The Association For Manufacturing Technology; it is not affiliated with or endorsed by
+either.
 
 ### Serial Monitor
 
@@ -132,7 +147,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc
 ```
 
 Universal release build (unsigned):
@@ -142,7 +157,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-store -p mt-connect` and `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p mt-focas -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/modbus-poll test`.
 The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
@@ -158,6 +173,7 @@ apps/bacnet-explorer   Tauri app (src/ React UI, src-tauri/ Rust commands)
 apps/enip-explorer      Tauri app (EtherNet/IP scanner and adapter)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
+apps/cnc-explorer      Tauri app (macOS), MTConnect and FANUC FOCAS client and simulators
 apps/s7-explorer       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
@@ -176,6 +192,8 @@ crates/mt-nats         NATS client, embedded server, JetStream, KV/object stores
 crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
+crates/mt-mtconnect    MTConnect agent client (probe, current, sample, stream, assets), agent simulator and SHDR adapter
+crates/mt-focas        FANUC FOCAS/Ethernet client and CNC simulator (pure Rust, Beta)
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store

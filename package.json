@@ -12,7 +12,8 @@
     "dev:serial": "bun --filter serial-monitor tauri dev",
     "dev:nats": "bun --filter nats-explorer tauri dev",
     "dev:mqtt": "bun --filter mqtt-explorer tauri dev",
-    "dev:opcua": "bun --filter opcua-explorer tauri dev"
+    "dev:opcua": "bun --filter opcua-explorer tauri dev",
+    "dev:cnc": "bun --filter cnc-explorer tauri dev"
   },
   "devDependencies": {
     "puppeteer-core": "^25.15.0"

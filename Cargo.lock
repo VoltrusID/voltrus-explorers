@@ -1147,6 +1147,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cnc_explorer"
+version = "2.0.0"
+dependencies = [
+ "mt-focas",
+ "mt-mtconnect",
+ "mt-store",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tokio",
+]
+
+[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

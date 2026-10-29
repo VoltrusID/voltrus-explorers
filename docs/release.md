@@ -139,6 +139,7 @@ The App Store products below stay unused for these two apps.
 | Serial Monitor | `com.joyodigitama.serialmonitor.pro` | USD 4.99 (never sold before, free from its first App Store release, `free_since` 1.5.0) |
 | MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | USD 4.99 (the app was never paid, so it is free from its first release; `free_since` 1.2.0) |
 | OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | USD 9.99 (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
+| CNC Explorer | `com.joyodigitama.cncexplorer.pro` | USD 9.99 (proposed, not yet set in App Store Connect; new app, nobody to grandfather, `free_since` is `1.0.0`; macOS only) |
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.

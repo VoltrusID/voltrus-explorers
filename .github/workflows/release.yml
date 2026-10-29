@@ -1,5 +1,5 @@
 # Signed release builds. Manual only: Actions -> Release -> Run workflow, or
-#   gh workflow run release.yml -R VoltrusID/voltrus-explorers -f app=bacnet-explorer -f appstore=true -f dmg=true
+#   gh workflow run release.yml -R VoltrusID/voltrus-explorers -f app=cnc-explorer -f appstore=true -f dmg=true
 #
 # Jobs run in the `release` environment (deployments from main only), which holds the signing secrets;
 # pull requests and forks never see them. Setup and secrets: docs/release.md.
@@ -22,7 +22,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, voltrus-tools]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, voltrus-tools]
       appstore:
         description: Mac App Store .pkg
         type: boolean
