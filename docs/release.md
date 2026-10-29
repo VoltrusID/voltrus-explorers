@@ -75,7 +75,7 @@ Apple rejected Serial Monitor and BLE Inspector under guideline 4.3 (Spam) and t
 CNC Explorer and SECS/GEM Explorer are sold direct from the start. They are not on GitHub Releases either:
 the notarized DMG is free for anyone to download, without signing in, from `https://dl-serial-monitor.voltrus.id/latest`
 `https://dl-ble-inspector.voltrus.id/latest`, `https://dl-cnc-explorer.voltrus.id/latest` and `https://dl-secsgem-explorer.voltrus.id/latest` (linked from voltrus.id and console.voltrus.id), and Pro is a licence
-key sold through Polar in the console (one-time, USD 4.99 each for Serial Monitor and BLE Inspector, USD 39.99 each for CNC Explorer and SECS/GEM Explorer, one Mac; Pro features as in the README; CNC Explorer's Polar product is `6f42df6e-6dd2-46f1-af23-72d2e074534c`, keys `VOLTRUS-CNC-...`; SECS/GEM Explorer's checkout link in `store.json` is still the placeholder `POLAR_ID_PENDING` until its Polar product exists). The `store.json` files
+key sold through Polar in the console (one-time, USD 4.99 each for Serial Monitor and BLE Inspector, USD 39.99 each for CNC Explorer and SECS/GEM Explorer, one Mac; Pro features as in the README; CNC Explorer's Polar product is `6f42df6e-6dd2-46f1-af23-72d2e074534c`, keys `VOLTRUS-CNC-...`; SECS/GEM Explorer's is `a7bfae63-8d11-4e19-bae7-f7b1b41cade4`, keys `VOLTRUS-SECS-...`). The `store.json` files
 keep the App Store product ids below, unused; do not dispatch `appstore=true` for any of them, and do not publish their
 DMGs on GitHub (`release.yml` refuses `github_release=true` for them).
 
@@ -145,11 +145,9 @@ The App Store products below stay unused for these four apps.
 | CNC Explorer | `com.joyodigitama.cncexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build) |
 | SECS/GEM Explorer | `com.joyodigitama.secsgemexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only, Beta) |
 
-SECS/GEM Explorer needs two things before its first `publish-direct.sh` run: the download worker with the R2 bucket
-`secsgem-explorer-releases` and the D1 database `secsgem-explorer-releases-db` behind `https://dl-secsgem-explorer.voltrus.id`
-(same layout as the other three), and that database's id in the `DB_ID` line of the `secsgem-explorer` case of
-`scripts/publish-direct.sh`, which is empty and makes the script stop with a clear message until it is set. Its Polar product id
-replaces `POLAR_ID_PENDING` in the `buy_url` of `apps/secsgem-explorer/src-tauri/store.json`. The bundle is named
+SECS/GEM Explorer's download worker (`secsgem-explorer-updates`, R2 `secsgem-explorer-releases`, D1
+`secsgem-explorer-releases-db` `2e0b346e-3f23-4be2-a766-376da02407cc`) lives in the MacTools repo next to the other three.
+The bundle is named
 `SECS-GEM Explorer.app` (a `/` cannot be part of a file name); the window title and the app's texts say SECS/GEM Explorer.
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,

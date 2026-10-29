@@ -54,9 +54,7 @@ case "$APP" in
   secsgem-explorer)
     PRODUCT="SECS/GEM Explorer"; BASE="https://dl-secsgem-explorer.voltrus.id"
     BUCKET="secsgem-explorer-releases"; DB="secsgem-explorer-releases-db"
-    # Set to the id printed by `wrangler d1 create secsgem-explorer-releases-db` once the worker exists.
-    DB_ID=""
-    : "${DB_ID:?DB_ID of secsgem-explorer-releases-db is not set in scripts/publish-direct.sh: create the D1 database and the R2 bucket for the download worker first (docs/release.md)}"
+    DB_ID="2e0b346e-3f23-4be2-a766-376da02407cc"
     NAME_RE='secs' ;;
   *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer)" >&2; exit 1 ;;
 esac
