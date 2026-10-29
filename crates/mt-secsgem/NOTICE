@@ -1,0 +1,18 @@
+mt-secsgem
+==========
+
+The SECS-II stream/function layouts, data item meanings and ack codes, the GEM state models, and
+the HSMS header layout in this crate were derived by reading the source of
+
+  secsgem - Python SECS/GEM implementation
+  https://github.com/bparzella/secsgem
+  Copyright (c) 2013-2024 Benjamin Parzella
+  GNU Lesser General Public License, version 2.1 or (at your option) any later version
+
+and porting the relevant behaviour to Rust. secsgem's license permits use under later versions of
+the LGPL and conversion to the GNU GPL; this crate is licensed GPL-3.0-or-later. No SEMI standard
+text is reproduced. secsgem (version 0.3.0) was also used, unmodified, as a cross-check peer
+during development; none of it is included in this repository.
+
+SECS/GEM, SECS-II and HSMS are SEMI standards (E5, E30, E37). This crate is an independent
+implementation, not affiliated with or endorsed by SEMI.

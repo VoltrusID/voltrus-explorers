@@ -3768,6 +3768,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-secsgem"
+version = "2.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "mt-serial"
 version = "2.0.0"
 dependencies = [

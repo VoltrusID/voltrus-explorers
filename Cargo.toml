@@ -16,6 +16,7 @@ members = [
     "crates/mt-connect",
     "crates/mt-mtconnect",
     "crates/mt-focas",
+    "crates/mt-secsgem",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/ble-inspector/src-tauri",
