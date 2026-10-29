@@ -173,6 +173,39 @@ standalone Tauri apps in this repository.
   writable setpoint and a UART that echoes, and a beacon) runs the same
   session without hardware. The app asks for Bluetooth access the first time
   it scans.
+- **MTConnect client** (on `mt-mtconnect`): the agent's address (a bare host
+  and port is taken as `http://`) and optionally one device. The probe turns
+  every data item of every device into a point, named by its component path
+  (`Axes/X/Xact`), with its type, sub-type and unit; the live stream (the
+  agent's `multipart` stream, polling `/sample` when it does not stream) keeps
+  them current. Samples are numbers, events are numbers or text (shown in the
+  value column and the inspector), conditions are Normal, Warning or Fault with
+  the controller's code and message, and `UNAVAILABLE` is shown as such rather
+  than as an error. An agent restart (a new instance id) probes again and an
+  `OUT_OF_RANGE` stream resynchronises from `current`; both are logged. The
+  traffic view lists the requests and the sequence numbers of each document,
+  and the log the assets the agent holds. An agent is read-only.
+- **MTConnect agent simulator** (`mt-mtconnect`'s): plays a 3-axis machining
+  centre or a 2-axis lathe behind `/probe`, `/current`, `/sample` and
+  `/assets` on any port (default 5100: macOS's AirPlay Receiver holds 5000),
+  and optionally an SHDR adapter port that streams the same observations.
+  Samples can be forced to a value (and held until released), conditions
+  raised (2 warning, 3 fault) and cleared (1), and the emergency stop pressed.
+- **FANUC CNC client** (beta, on `mt-focas`): FOCAS/Ethernet on port 8193,
+  for FANUC CNCs. Points are the controller's identity, mode, run state,
+  motion, cycle, emergency and alarm flags, feed rate, spindle speed, running
+  program, sequence number, executing block, alarm messages, four positions
+  per axis (absolute, machine, relative, distance to go) and the macro
+  variables you list (`500, 501` or `500-503`), which can be written from the
+  inspector. A refused item goes bad on its own and is logged; the rest keep
+  reading, and a lost link reconnects. The crate has been tested only against
+  its simulator and a third-party client, not a real controller, so the
+  connection is labelled Beta in the app; please report your controller model
+  to support@voltrus.id. The traffic view describes each exchange (no wire
+  bytes) because the crate reports none.
+- **FANUC CNC simulator** (`mt-focas`'s): plays a 31i-B or 0i-F mill running a
+  demo program. Its control points act as an operator would: cycle start and
+  hold, emergency stop, a P/S 100 alarm, and the part counter.
 - **Live points**: every value with its Modicon address, name, unit, type, raw
   words and a sparkline of the last minute. Clients of a simulated template
   get its register names and units. Columns drop out as a pane narrows.
@@ -192,8 +225,11 @@ standalone Tauri apps in this repository.
 - **Command palette** (⌘K) and 492 colour schemes with live preview.
 
 Every protocol in this repository is ported: Modbus, MQTT, BACnet, DNP3,
-EtherNet/IP, serial, S7, NATS, Bluetooth LE and OPC UA, each plugged into the
-same engine and views ([how](docs/architecture.md#adding-a-protocol)).
+EtherNet/IP, serial, S7, NATS, Bluetooth LE, OPC UA, MTConnect and FANUC CNCs
+(twelve), each plugged into the same engine and views
+([how](docs/architecture.md#adding-a-protocol)). FANUC and FOCAS are trademarks
+of FANUC CORPORATION and MTConnect is a registered trademark of AMT; Voltrus
+Tools is independent of both.
 
 ## Try it
 

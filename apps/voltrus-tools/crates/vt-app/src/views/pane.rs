@@ -281,6 +281,7 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
         SessionSpec::EnipAdapter(_) => true,
         SessionSpec::SerialDevice(_) => true,
         SessionSpec::S7Server(_) => true,
+        SessionSpec::MtconnectAgent(_) => true,
         SessionSpec::NatsServer(spec) => spec.template.is_some(),
         _ => false,
     };
@@ -367,6 +368,18 @@ pub fn render(model: &AppModel, pane_id: PaneId, cx: &mut Context<AppModel>) -> 
                 }
                 (SessionSpec::BleClient(_), _) => {
                     "Connect to find the peripheral and browse its GATT services. Every characteristic becomes a point: read, written or pushed by notifications."
+                }
+                (SessionSpec::MtconnectAgent(_), _) => {
+                    "Start it to play the machine behind an MTConnect agent on this computer. Any MTConnect client can probe and stream it, including this app."
+                }
+                (SessionSpec::MtconnectClient(_), _) => {
+                    "Connect to probe the agent. Every data item of its devices becomes a point, kept current by the live stream."
+                }
+                (SessionSpec::FocasSimulator(_), _) => {
+                    "Start it to play a FANUC controller on this computer. Any FOCAS/Ethernet client can poll it, including this app."
+                }
+                (SessionSpec::FocasClient(_), _) => {
+                    "Connect to poll the controller: status, axes, feed, spindle, program, alarms and macro variables."
                 }
                 (_, true) => {
                     "Start it to serve its registers on this computer. Any Modbus master can poll it, including this app."

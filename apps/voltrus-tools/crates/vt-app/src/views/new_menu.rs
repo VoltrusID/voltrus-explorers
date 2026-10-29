@@ -6,6 +6,8 @@ use vt_protocol::{Protocol, Role};
 use vt_ui::components::{monogram, section_label};
 use vt_ui::theme::*;
 
+use super::cnc::beta_badge;
+use crate::model::cnc::is_beta;
 use crate::model::editor::EditorKind;
 use crate::model::{AppModel, Overlay};
 
@@ -39,10 +41,19 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .flex()
                         .flex_col()
                         .min_w_0()
-                        .child(div().font_weight(FontWeight::MEDIUM).child(match role {
-                            Role::Client => format!("{} connection", protocol.name()),
-                            Role::Simulator => format!("{} simulator", protocol.name()),
-                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(SPACE_3)
+                                .child(div().font_weight(FontWeight::MEDIUM).child(match role {
+                                    Role::Client => format!("{} connection", protocol.name()),
+                                    Role::Simulator => format!("{} simulator", protocol.name()),
+                                }))
+                                .when(role == Role::Client && is_beta(protocol), |this| {
+                                    this.child(beta_badge(("new-menu-beta", index), cx))
+                                }),
+                        )
                         .child(
                             div()
                                 .text_size(FONT_SMALL)

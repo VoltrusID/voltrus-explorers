@@ -1280,4 +1280,60 @@ mod tests {
         };
         assert!(server.username.is_empty() && server.password.is_empty());
     }
+
+    #[test]
+    fn cnc_specs_round_trip_and_fill_what_older_files_lack() {
+        use crate::{
+            FocasClientSpec, FocasProfile, FocasSimulatorSpec, MtconnectAgentSpec,
+            MtconnectClientSpec, MtconnectTemplate,
+        };
+        let specs = [
+            SessionSpec::MtconnectClient(MtconnectClientSpec {
+                url: "https://demo.mtconnect.org".into(),
+                device: "Mazak".into(),
+                ..MtconnectClientSpec::default()
+            }),
+            SessionSpec::MtconnectAgent(MtconnectAgentSpec {
+                template: MtconnectTemplate::Lathe,
+                shdr: true,
+                ..MtconnectAgentSpec::default()
+            }),
+            SessionSpec::FocasClient(FocasClientSpec {
+                macros: vec![500, 501, 510],
+                ..FocasClientSpec::default()
+            }),
+            SessionSpec::FocasSimulator(FocasSimulatorSpec {
+                profile: FocasProfile::Series0iF,
+                run: false,
+                ..FocasSimulatorSpec::default()
+            }),
+        ];
+        for spec in specs {
+            let json = serde_json::to_string(&spec).unwrap();
+            let back: SessionSpec = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, spec, "{json}");
+            let open = Command::Open {
+                session: SessionId(7),
+                spec,
+            };
+            let json = serde_json::to_string(&open).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), open);
+        }
+        // A file that names only what it changes keeps the defaults for the rest.
+        let SessionSpec::FocasClient(client) =
+            serde_json::from_str(r#"{"kind":"focas_client","host":"10.0.0.8"}"#).unwrap()
+        else {
+            panic!("a FANUC client spec");
+        };
+        assert_eq!((client.port, client.macros.as_slice()), (8193, &[500][..]));
+        let SessionSpec::MtconnectAgent(agent) =
+            serde_json::from_str(r#"{"kind":"mtconnect_agent","port":5200}"#).unwrap()
+        else {
+            panic!("an MTConnect agent spec");
+        };
+        assert_eq!(
+            (agent.template, agent.shdr),
+            (MtconnectTemplate::Vmc, false)
+        );
+    }
 }

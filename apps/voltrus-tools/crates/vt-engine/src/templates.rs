@@ -219,6 +219,39 @@ pub fn dnp3_master_for(
     }
 }
 
+/// The machines the MTConnect agent simulator plays.
+pub fn mtconnect() -> &'static [vt_protocol::MtconnectTemplate] {
+    vt_protocol::MtconnectTemplate::ALL
+}
+
+/// A client of a simulated MTConnect agent on this computer.
+pub fn mtconnect_client_for(host: &str, port: u16) -> vt_protocol::MtconnectClientSpec {
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    vt_protocol::MtconnectClientSpec {
+        url: format!("http://{host}:{port}"),
+        ..vt_protocol::MtconnectClientSpec::default()
+    }
+}
+
+/// The controller families the FANUC simulator presents itself as.
+pub fn focas() -> &'static [vt_protocol::FocasProfile] {
+    vt_protocol::FocasProfile::ALL
+}
+
+/// A client of a simulated FANUC controller on this computer: its status,
+/// axes, spindle and program, and the part counter macro.
+pub fn focas_client_for(host: &str, port: u16) -> vt_protocol::FocasClientSpec {
+    vt_protocol::FocasClientSpec {
+        host: host.into(),
+        port,
+        ..vt_protocol::FocasClientSpec::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

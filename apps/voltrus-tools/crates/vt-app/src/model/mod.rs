@@ -6,6 +6,7 @@
 
 pub mod bacnet;
 pub mod ble;
+pub mod cnc;
 pub mod dnp3;
 pub mod editor;
 pub mod enip;
@@ -670,6 +671,12 @@ impl AppModel {
             Protocol::Ble => {
                 self.start_ble_demo(cx);
             }
+            Protocol::Mtconnect => {
+                self.start_mtconnect_demo(cx);
+            }
+            Protocol::Focas => {
+                self.start_focas_demo(cx);
+            }
         }
     }
 
@@ -1032,6 +1039,18 @@ impl AppModel {
         }
         if editing.is_none()
             && add_client
+            && let SessionSpec::MtconnectAgent(agent) = &spec
+        {
+            self.add_mtconnect_client(&name, agent, cx);
+        }
+        if editing.is_none()
+            && add_client
+            && let SessionSpec::FocasSimulator(simulator) = &spec
+        {
+            self.add_focas_client(&name, simulator, cx);
+        }
+        if editing.is_none()
+            && add_client
             && let SessionSpec::NatsServer(server) = &spec
             && server.template.is_some()
         {
@@ -1207,6 +1226,22 @@ impl AppModel {
                 self.start_s7_demo(cx);
             }
             Command::ReadS7Plc(connection) => self.read_s7_plc(connection, cx),
+            Command::NewMtconnectClient => {
+                self.open_editor(EditorKind::MtconnectClient, None, window, cx)
+            }
+            Command::NewMtconnectAgent => {
+                self.open_editor(EditorKind::MtconnectAgent, None, window, cx)
+            }
+            Command::MtconnectDemo => {
+                self.start_mtconnect_demo(cx);
+            }
+            Command::NewFocasClient => self.open_editor(EditorKind::FocasClient, None, window, cx),
+            Command::NewFocasSimulator => {
+                self.open_editor(EditorKind::FocasSimulator, None, window, cx)
+            }
+            Command::FocasDemo => {
+                self.start_focas_demo(cx);
+            }
             Command::SplitRight => self.split(Axis::Horizontal, cx),
             Command::SplitDown => self.split(Axis::Vertical, cx),
             Command::ClosePane => self.close_pane(cx),

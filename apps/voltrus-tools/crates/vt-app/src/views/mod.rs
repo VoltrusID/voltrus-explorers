@@ -7,6 +7,7 @@
 mod ble;
 pub mod cached;
 mod cip;
+mod cnc;
 mod device;
 mod dnp3;
 mod editor;

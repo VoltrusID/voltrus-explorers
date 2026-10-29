@@ -7,7 +7,9 @@ use vt_ui::Icon;
 use vt_ui::components::{Button, brand_mark, kbd, monogram};
 use vt_ui::theme::*;
 
+use super::cnc::beta_badge;
 use crate::model::AppModel;
+use crate::model::cnc::is_beta;
 
 pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
     let theme = theme(cx).clone();
@@ -168,8 +170,23 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                             .min_w_0()
                                             .child(
                                                 div()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .child(protocol.name()),
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap(SPACE_3)
+                                                    .child(
+                                                        div()
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .child(protocol.name()),
+                                                    )
+                                                    .when(is_beta(protocol), |this| {
+                                                        this.child(beta_badge(
+                                                            ElementId::Name(
+                                                                format!("welcome-beta-{}", protocol.monogram())
+                                                                    .into(),
+                                                            ),
+                                                            cx,
+                                                        ))
+                                                    }),
                                             )
                                             .child(
                                                 div()

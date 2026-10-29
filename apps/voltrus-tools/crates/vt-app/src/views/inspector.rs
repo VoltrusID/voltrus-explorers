@@ -104,6 +104,9 @@ fn point_detail(
         Some(SessionSpec::EnipAdapter(_)) => true,
         Some(SessionSpec::SerialDevice(_)) => true,
         Some(SessionSpec::S7Server(_)) => true,
+        // Samples and the emergency stop can be held at a value; conditions
+        // are raised and cleared (they have named states).
+        Some(SessionSpec::MtconnectAgent(_)) => info.writable && info.states.is_empty(),
         Some(SessionSpec::NatsServer(server)) => server.template.is_some(),
         _ => false,
     };

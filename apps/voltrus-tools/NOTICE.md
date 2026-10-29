@@ -19,6 +19,8 @@ carries all of these texts in `Contents/Resources/Licenses`.
 | [async-nats](https://github.com/nats-io/nats.rs) and [nkeys](https://github.com/wasmcloud/nkeys), The NATS Authors / wasmCloud | NATS client (through `mt-nats`, and directly in `vt-engine/src/nats`) and NKey/creds signing | Apache-2.0 (same text as `packaging/licenses/gpui-LICENSE-APACHE.txt`) |
 | [btleplug](https://github.com/deviceplug/btleplug), Nonpolynomial (with parts from Rumble and blurmac) | Bluetooth LE central (through `mt-ble`) | BSD-3-Clause, with MIT/Apache-2.0 and BSD-3-Clause parts (`packaging/licenses/btleplug-LICENSE.txt`) |
 | [objc2](https://github.com/madsmtm/objc2), Mads Marquart | CoreBluetooth bindings used by btleplug on macOS (`objc2`, `objc2-foundation`, `objc2-core-bluetooth`, `block2`) | MIT (`packaging/licenses/objc2-LICENSE-MIT.txt`) |
+| [pyfanuc](https://github.com/diohpix/pyfanuc), diohpix | The FOCAS/Ethernet wire protocol (framing, function numbers, payload layouts) that `mt-focas` implements for the FANUC CNC client and simulator; no code is copied | Unlicense (public domain) |
+| [pyfocas](https://pypi.org/project/pyfocas/), © 2026 Moritz Breurather, Rene Schwaiger | The macro write function number and request layout, checked in `mt-focas`; no code is copied | MIT |
 
 The MIT notice required by muxy:
 

@@ -9,9 +9,11 @@ mod bacnet;
 mod ble;
 mod dnp3;
 mod enip;
+mod focas;
 mod message;
 mod modbus;
 mod mqtt;
+mod mtconnect;
 mod nats;
 mod s7;
 mod serial;
@@ -34,6 +36,7 @@ pub use enip::{
     CipRequest, CipResponse, CipType, ENIP_PORT, EnipAdapterSpec, EnipAddress, EnipClientSpec,
     EnipDeviceInfo, EnipDiscoverSpec, EnipPoint,
 };
+pub use focas::{FOCAS_MAX_MACROS, FOCAS_PORT, FocasClientSpec, FocasProfile, FocasSimulatorSpec};
 pub use message::{
     Command, Event, EventKind, LogEntry, LogLevel, PointText, SessionId, SessionState, Stats,
 };
@@ -44,6 +47,10 @@ pub use modbus::{
 pub use mqtt::{
     MqttBrokerSpec, MqttClientSpec, MqttQos, MqttSubscription, PathStep, SPARKPLUG_GROUP,
     SPARKPLUG_NAMESPACE, parse_json_path, valid_filter, valid_topic,
+};
+pub use mtconnect::{
+    MTCONNECT_PORT, MTCONNECT_SHDR_PORT, MTCONNECT_SIM_PORT, MtconnectAgentSpec,
+    MtconnectClientSpec, MtconnectTemplate, mtconnect_host_port,
 };
 pub use nats::{
     NATS_PORT, NatsAuth, NatsClientSpec, NatsConsumer, NatsEvent, NatsHeader, NatsReply,
@@ -99,6 +106,17 @@ pub enum SessionSpec {
     EnipClient(EnipClientSpec),
     /// Play an EtherNet/IP adapter whose tags a plant template drives.
     EnipAdapter(EnipAdapterSpec),
+    /// Watch an MTConnect agent: its device tree as points, kept current by
+    /// the live stream.
+    MtconnectClient(MtconnectClientSpec),
+    /// Play an MTConnect agent with a simulated machine, optionally with an
+    /// SHDR adapter.
+    MtconnectAgent(MtconnectAgentSpec),
+    /// Poll a FANUC controller over FOCAS/Ethernet and write its macro
+    /// variables.
+    FocasClient(FocasClientSpec),
+    /// Play a FANUC controller on this computer.
+    FocasSimulator(FocasSimulatorSpec),
     /// Watch and talk to a serial port; parse its lines into points.
     SerialMonitor(SerialMonitorSpec),
     /// Play an instrument on a virtual serial port.
@@ -131,6 +149,8 @@ impl SessionSpec {
             Self::S7Client(_) | Self::S7Server(_) => Protocol::S7,
             Self::NatsClient(_) | Self::NatsServer(_) => Protocol::Nats,
             Self::BleClient(_) => Protocol::Ble,
+            Self::MtconnectClient(_) | Self::MtconnectAgent(_) => Protocol::Mtconnect,
+            Self::FocasClient(_) | Self::FocasSimulator(_) => Protocol::Focas,
         }
     }
 
@@ -151,6 +171,8 @@ impl SessionSpec {
             Self::S7Server(_) => Role::Simulator,
             Self::NatsClient(_) => Role::Client,
             Self::NatsServer(_) => Role::Simulator,
+            Self::MtconnectClient(_) | Self::FocasClient(_) => Role::Client,
+            Self::MtconnectAgent(_) | Self::FocasSimulator(_) => Role::Simulator,
         }
     }
 
@@ -241,6 +263,23 @@ impl SessionSpec {
                 None => host_port(&spec.bind, spec.port),
             },
             Self::BleClient(spec) => format!("{} · {}", spec.adapter.name(), ble_label(spec)),
+            Self::MtconnectClient(spec) => match spec.device.trim() {
+                "" => spec.url.trim().to_owned(),
+                device => format!("{} · {device}", spec.url.trim()),
+            },
+            Self::MtconnectAgent(spec) => format!(
+                "http://{} · {}",
+                host_port(&spec.bind, spec.port),
+                spec.template.name()
+            ),
+            Self::FocasClient(spec) => host_port(&spec.host, spec.port),
+            Self::FocasSimulator(spec) => {
+                format!(
+                    "{} · {}",
+                    host_port(&spec.bind, spec.port),
+                    spec.profile.name()
+                )
+            }
         }
     }
 
@@ -268,6 +307,10 @@ impl SessionSpec {
             Self::NatsClient(spec) => host_port(&spec.host, spec.port),
             Self::NatsServer(spec) => host_port(&spec.bind, spec.port),
             Self::BleClient(spec) => ble_label(spec),
+            Self::MtconnectClient(spec) => mtconnect_host_port(&spec.url).to_owned(),
+            Self::MtconnectAgent(spec) => host_port(&spec.bind, spec.port),
+            Self::FocasClient(spec) => host_port(&spec.host, spec.port),
+            Self::FocasSimulator(spec) => host_port(&spec.bind, spec.port),
         }
     }
 }
@@ -304,6 +347,8 @@ pub enum Protocol {
     S7,
     Nats,
     Ble,
+    Mtconnect,
+    Focas,
 }
 
 impl Protocol {
@@ -318,6 +363,8 @@ impl Protocol {
         Protocol::S7,
         Protocol::Nats,
         Protocol::Ble,
+        Protocol::Mtconnect,
+        Protocol::Focas,
     ];
 
     pub fn name(self) -> &'static str {
@@ -332,6 +379,8 @@ impl Protocol {
             Self::S7 => "Siemens S7",
             Self::Nats => "NATS",
             Self::Ble => "Bluetooth LE",
+            Self::Mtconnect => "MTConnect",
+            Self::Focas => "FANUC CNC",
         }
     }
 
@@ -348,6 +397,8 @@ impl Protocol {
             Self::S7 => "S7",
             Self::Nats => "NA",
             Self::Ble => "BL",
+            Self::Mtconnect => "MT",
+            Self::Focas => "FC",
         }
     }
 
@@ -380,6 +431,12 @@ impl Protocol {
             }
             Self::Ble => {
                 "Scan with signal and advertisements, browse GATT, read, write and notify with SIG decoders"
+            }
+            Self::Mtconnect => {
+                "Probe tree as points, live stream, conditions, assets, and an agent simulator with SHDR"
+            }
+            Self::Focas => {
+                "FOCAS/Ethernet reads of status, axes, feed, spindle, program and alarms, macro writes, and a CNC simulator"
             }
         }
     }
@@ -417,5 +474,42 @@ mod tests {
         });
         assert_eq!(opcua.address(), "[::1]:4840");
         assert!(opcua.endpoint().starts_with("opc.tcp://[::1]:4840"));
+    }
+
+    #[test]
+    fn the_cnc_protocols_have_two_roles_each_and_show_where_they_talk() {
+        let client = SessionSpec::MtconnectClient(MtconnectClientSpec::default());
+        assert_eq!(
+            (client.protocol(), client.role()),
+            (Protocol::Mtconnect, Role::Client)
+        );
+        assert_eq!(client.address(), "localhost:5000");
+        let agent = SessionSpec::MtconnectAgent(MtconnectAgentSpec::default());
+        assert_eq!(
+            (agent.protocol(), agent.role()),
+            (Protocol::Mtconnect, Role::Simulator)
+        );
+        assert_eq!(agent.address(), "127.0.0.1:5100");
+        assert!(agent.endpoint().starts_with("http://127.0.0.1:5100"));
+        let cnc = SessionSpec::FocasClient(FocasClientSpec::default());
+        assert_eq!(
+            (cnc.protocol(), cnc.role()),
+            (Protocol::Focas, Role::Client)
+        );
+        assert_eq!(cnc.address(), "192.168.1.50:8193");
+        let sim = SessionSpec::FocasSimulator(FocasSimulatorSpec {
+            bind: "::1".into(),
+            ..FocasSimulatorSpec::default()
+        });
+        assert_eq!(
+            (sim.protocol(), sim.role()),
+            (Protocol::Focas, Role::Simulator)
+        );
+        assert_eq!(sim.address(), "[::1]:8193");
+        assert_eq!(Protocol::ALL.len(), 12);
+        assert_eq!(
+            mtconnect_host_port("https://demo.mtconnect.org/path?x=1"),
+            "demo.mtconnect.org"
+        );
     }
 }

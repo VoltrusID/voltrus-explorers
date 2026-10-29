@@ -30,6 +30,12 @@ pub use s7::{CPU_PRESETS, NEW_S7_CLIENT_NAME, NEW_S7_SERVER_NAME, S7Fields};
 mod nats;
 
 pub use nats::NatsFields;
+mod cnc;
+
+pub use cnc::{
+    CncFields, NEW_FOCAS_CLIENT_NAME, NEW_FOCAS_SIMULATOR_NAME, NEW_MTCONNECT_AGENT_NAME,
+    NEW_MTCONNECT_CLIENT_NAME,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKind {
@@ -52,6 +58,10 @@ pub enum EditorKind {
     NatsClient,
     NatsServer,
     BleClient,
+    MtconnectClient,
+    MtconnectAgent,
+    FocasClient,
+    FocasSimulator,
 }
 
 impl EditorKind {
@@ -80,6 +90,10 @@ impl EditorKind {
             (Protocol::Ble, Role::Client) => Self::BleClient,
             // The demo's peripherals are simulated behind the adapter.
             (Protocol::Ble, Role::Simulator) => return None,
+            (Protocol::Mtconnect, Role::Client) => Self::MtconnectClient,
+            (Protocol::Mtconnect, Role::Simulator) => Self::MtconnectAgent,
+            (Protocol::Focas, Role::Client) => Self::FocasClient,
+            (Protocol::Focas, Role::Simulator) => Self::FocasSimulator,
         })
     }
 
@@ -105,6 +119,10 @@ impl EditorKind {
             SessionSpec::NatsClient(_) => Self::NatsClient,
             SessionSpec::NatsServer(_) => Self::NatsServer,
             SessionSpec::BleClient(_) => Self::BleClient,
+            SessionSpec::MtconnectClient(_) => Self::MtconnectClient,
+            SessionSpec::MtconnectAgent(_) => Self::MtconnectAgent,
+            SessionSpec::FocasClient(_) => Self::FocasClient,
+            SessionSpec::FocasSimulator(_) => Self::FocasSimulator,
         }
     }
 }
@@ -153,6 +171,7 @@ pub struct Editor {
     pub s7: S7Fields,
     pub nats: NatsFields,
     pub ble: BleFields,
+    pub cnc: CncFields,
 }
 
 fn input(
@@ -195,6 +214,7 @@ impl Editor {
             _ => vt_protocol::NatsServerSpec::default(),
         };
         let ble = BleFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
+        let cnc = CncFields::new(editing.as_ref().map(|(_, _, spec)| spec), cx);
         let mut mqtt_client = MqttClientSpec::default();
         let mut mqtt_broker = MqttBrokerSpec::default();
         let (name, master, slave) = match editing {
@@ -255,6 +275,18 @@ impl Editor {
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec::default(),
             ),
+            Some((
+                _,
+                name,
+                SessionSpec::MtconnectClient(_)
+                | SessionSpec::MtconnectAgent(_)
+                | SessionSpec::FocasClient(_)
+                | SessionSpec::FocasSimulator(_),
+            )) => (
+                name,
+                ModbusMasterSpec::default(),
+                ModbusSlaveSpec::default(),
+            ),
             Some((_, name, SessionSpec::BleClient(_))) => (
                 name,
                 ModbusMasterSpec::default(),
@@ -281,6 +313,10 @@ impl Editor {
                     EditorKind::NatsClient => "NATS server".to_owned(),
                     EditorKind::NatsServer => "NATS simulator".to_owned(),
                     EditorKind::BleClient => super::ble::NEW_CLIENT_NAME.to_owned(),
+                    EditorKind::MtconnectClient => NEW_MTCONNECT_CLIENT_NAME.to_owned(),
+                    EditorKind::MtconnectAgent => NEW_MTCONNECT_AGENT_NAME.to_owned(),
+                    EditorKind::FocasClient => NEW_FOCAS_CLIENT_NAME.to_owned(),
+                    EditorKind::FocasSimulator => NEW_FOCAS_SIMULATOR_NAME.to_owned(),
                 },
                 ModbusMasterSpec::default(),
                 ModbusSlaveSpec {
@@ -351,6 +387,7 @@ impl Editor {
             s7,
             nats: NatsFields::new(&nats_client, &nats_server, cx),
             ble,
+            cnc,
         };
         for block in master.blocks {
             editor.push_block(block, window, cx);
@@ -395,6 +432,9 @@ impl Editor {
             editor.watch(&field, window, cx);
         }
         for field in editor.ble.inputs() {
+            editor.watch(&field, window, cx);
+        }
+        for field in editor.cnc.inputs() {
             editor.watch(&field, window, cx);
         }
         editor.name.update(cx, |name, _| name.focus(window));
@@ -591,6 +631,26 @@ impl Editor {
                 .form(Self::text(&self.name, cx), cx)
                 .build()
                 .map(|(name, spec)| (name, SessionSpec::BleClient(spec))),
+            EditorKind::MtconnectClient => self
+                .cnc
+                .mtconnect_client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MtconnectClient(spec))),
+            EditorKind::MtconnectAgent => self
+                .cnc
+                .mtconnect_agent_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::MtconnectAgent(spec))),
+            EditorKind::FocasClient => self
+                .cnc
+                .focas_client_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::FocasClient(spec))),
+            EditorKind::FocasSimulator => self
+                .cnc
+                .focas_simulator_form(Self::text(&self.name, cx), cx)
+                .build()
+                .map(|(name, spec)| (name, SessionSpec::FocasSimulator(spec))),
         }
     }
 }

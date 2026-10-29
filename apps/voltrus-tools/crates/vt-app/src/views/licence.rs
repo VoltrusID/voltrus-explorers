@@ -17,7 +17,7 @@ use crate::model::licence::{
 };
 
 /// Everything the trial and the unlock cover.
-const PROTOCOLS: [&str; 10] = [
+const PROTOCOLS: [&str; 12] = [
     "Modbus",
     "MQTT",
     "BACnet",
@@ -28,6 +28,8 @@ const PROTOCOLS: [&str; 10] = [
     "NATS",
     "Serial",
     "BLE",
+    "MTConnect",
+    "FANUC CNC",
 ];
 
 /// The trial or read-only state in the status bar; nothing once unlocked.
@@ -369,6 +371,13 @@ fn about_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
         vec![
             Part::Section("Licence", vec![state.into()]),
             Part::Section("Software licence", software),
+            Part::Section(
+                "Trademarks",
+                crate::model::cnc::TRADEMARK_NOTES
+                    .iter()
+                    .map(|note| SharedString::from(*note))
+                    .collect(),
+            ),
         ],
     )
 }
@@ -510,4 +519,15 @@ fn hint(keys: &'static str, label: &'static str, theme: &Theme, cx: &App) -> Any
         .child(kbd(keys, cx))
         .child(label)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_unlock_sheet_lists_every_protocol() {
+        assert_eq!(PROTOCOLS.len(), vt_protocol::Protocol::ALL.len());
+        assert_eq!(vt_protocol::Protocol::ALL.len(), 12);
+    }
 }

@@ -668,6 +668,12 @@ mod tests {
             (Protocol::Ble, Role::Client) => SessionSpec::BleClient(Default::default()),
             // The BLE demo's peripherals are simulated behind its adapter.
             (Protocol::Ble, Role::Simulator) => return None,
+            (Protocol::Mtconnect, Role::Client) => SessionSpec::MtconnectClient(Default::default()),
+            (Protocol::Mtconnect, Role::Simulator) => {
+                SessionSpec::MtconnectAgent(Default::default())
+            }
+            (Protocol::Focas, Role::Client) => SessionSpec::FocasClient(Default::default()),
+            (Protocol::Focas, Role::Simulator) => SessionSpec::FocasSimulator(Default::default()),
         })
     }
 

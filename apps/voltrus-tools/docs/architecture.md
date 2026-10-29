@@ -148,6 +148,22 @@ them in the inspector (`vt-app/src/views/nats.rs`). The NATS simulator runs
 `mt-nats`'s embedded server in the session task (it stops and rebinds
 in-process); its request service is an ordinary client of that server.
 
+MTConnect and FANUC CNC sessions (`vt-engine/src/mtconnect`, `src/focas`) need
+no message of their own: everything they report is points, `Payloads` (the
+text of text events, conditions and FANUC's status words, sent only when it
+changes), `Traffic`, `Stats` and `Log`, and the only request is a point write.
+An MTConnect client names its points from the probe and sends `Points` again
+after a re-probe (an agent restart); `UNAVAILABLE` is a good reading with no
+number, so it does not count as an error to the review gate. A FANUC client
+lays its points out from its first snapshot (the axes the CNC reports), and a
+write to one of its macro points calls `write_macro`. Neither protocol crate
+reports wire frames, so their traffic views describe each exchange. The two
+simulators are `mt-mtconnect`'s `AgentSimulator` and `mt-focas`'s
+`FocasSimulator`; a point write on them acts on the machine (a forced sample, a
+raised condition, cycle start, emergency stop) as the app's other simulators'
+writes do. FANUC is labelled Beta in the app (`vt-app/src/model/cnc.rs`)
+because `mt-focas` has only been tested against its simulator.
+
 The serial port picker works the same way: it sends `Command::ListSerialPorts`
 under a request id every two seconds while the editor is open (so a device
 plugged in shows up), and `EventKind::SerialPorts` comes back to the editor.

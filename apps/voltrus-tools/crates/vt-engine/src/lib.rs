@@ -7,11 +7,14 @@
 
 mod bacnet;
 pub mod ble;
+mod cnc;
 mod dnp3;
 mod emit;
 mod enip;
+mod focas;
 mod modbus;
 mod mqtt;
+mod mtconnect;
 mod nats;
 pub mod opcua;
 mod s7;
@@ -115,6 +118,14 @@ pub fn sample_interval_ms(spec: &SessionSpec) -> u64 {
         }
         SessionSpec::BleClient(_) => {
             u64::try_from(ble::client::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::MtconnectClient(client) => client.interval_ms,
+        SessionSpec::MtconnectAgent(_) => {
+            u64::try_from(mtconnect::agent::TICK.as_millis()).unwrap_or(u64::MAX)
+        }
+        SessionSpec::FocasClient(client) => client.poll_ms,
+        SessionSpec::FocasSimulator(_) => {
+            u64::try_from(focas::simulator::TICK.as_millis()).unwrap_or(u64::MAX)
         }
     }
 }
@@ -237,6 +248,10 @@ async fn run(commands: async_channel::Receiver<Command>, events: async_channel::
                     SessionSpec::S7Client(_) => None,
                     SessionSpec::NatsClient(_) => None,
                     SessionSpec::BleClient(_) => None,
+                    SessionSpec::MtconnectAgent(agent) => Some(agent.port),
+                    SessionSpec::MtconnectClient(_) => None,
+                    SessionSpec::FocasSimulator(simulator) => Some(simulator.port),
+                    SessionSpec::FocasClient(_) => None,
                 };
                 if let Some(port) = port {
                     settle(&mut closing, port).await;
@@ -424,5 +439,9 @@ async fn run_session(spec: SessionSpec, control: mpsc::UnboundedReceiver<Control
         SessionSpec::NatsClient(spec) => nats::client::run(spec, control, &out).await,
         SessionSpec::NatsServer(spec) => nats::server::run(spec, control, &out).await,
         SessionSpec::BleClient(spec) => ble::client::run(spec, control, &out).await,
+        SessionSpec::MtconnectClient(spec) => mtconnect::client::run(spec, control, &out).await,
+        SessionSpec::MtconnectAgent(spec) => mtconnect::agent::run(spec, control, &out).await,
+        SessionSpec::FocasClient(spec) => focas::client::run(spec, control, &out).await,
+        SessionSpec::FocasSimulator(spec) => focas::simulator::run(spec, control, &out).await,
     }
 }

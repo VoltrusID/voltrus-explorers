@@ -39,6 +39,11 @@ mod nats;
 
 pub use nats::{NatsAuthKind, NatsClientForm, NatsServerForm, NatsSubjectField, NatsSubjectForm};
 
+mod cnc;
+
+pub use cnc::{
+    FocasClientForm, FocasSimulatorForm, MtconnectAgentForm, MtconnectClientForm, parse_macros,
+};
 mod ble;
 
 pub use ble::BleClientForm;
@@ -117,6 +122,9 @@ pub enum Field {
     Credential,
     /// BLE: the peripheral to connect to.
     Peripheral,
+    /// MTConnect: the SHDR adapter's port. FANUC: the macro variables.
+    ShdrPort,
+    Macros,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

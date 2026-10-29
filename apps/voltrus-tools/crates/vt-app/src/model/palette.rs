@@ -54,6 +54,12 @@ pub enum Command {
     S7Demo,
     /// Read an S7 client's CPU identity, mode, diagnostics and blocks again.
     ReadS7Plc(ConnectionId),
+    NewMtconnectClient,
+    NewMtconnectAgent,
+    MtconnectDemo,
+    NewFocasClient,
+    NewFocasSimulator,
+    FocasDemo,
     NewNatsClient,
     NewNatsServer,
     NatsDemo,
@@ -458,5 +464,6 @@ fn commands(model: &AppModel) -> Vec<Entry> {
         }));
     }
     entries.extend(super::s7::palette_entries(model));
+    entries.extend(super::cnc::palette_entries());
     entries
 }
