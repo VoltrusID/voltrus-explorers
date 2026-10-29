@@ -55,7 +55,16 @@ export async function withUtm(url: string, campaign: string): Promise<string> {
   }
 }
 
-/** Opens `url` in the system browser, tagged with UTM parameters when it is a voltrus.id link. */
+/**
+ * Opens `url` in the system browser, tagged with UTM parameters when it is a voltrus.id link. Apps with Voltrus Connect
+ * register `connect_open_url` (opener plugin, also on iOS); every app registers its own `open_url`, used otherwise.
+ */
 export async function openExternal(url: string, campaign: string): Promise<void> {
-  await invoke("connect_open_url", { url: await withUtm(url, campaign) });
+  const tagged = await withUtm(url, campaign);
+  try {
+    await invoke("connect_open_url", { url: tagged });
+  } catch (e) {
+    if (!String(e).includes("not found")) throw e;
+    await invoke("open_url", { url: tagged });
+  }
 }
