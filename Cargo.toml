@@ -14,6 +14,7 @@ members = [
     "crates/mt-mqtt",
     "crates/mt-opcua",
     "crates/mt-connect",
+    "crates/mt-focas",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/ble-inspector/src-tauri",
