@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- SECS/GEM Explorer: a wafer (flat and die grid) linked to a host over HSMS, in the MacTools
+       line-art style (black square, one green). -->
+  <rect width="1024" height="1024" fill="#000"/>
+  <defs>
+    <clipPath id="wafer"><path d="M231 775 A230 230 0 1 1 529 775 Z"/></clipPath>
+  </defs>
+  <g transform="translate(0 40)" fill="none" stroke="#04DD3C" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <!-- wafer with its flat -->
+    <path d="M231 775 A230 230 0 1 1 529 775 Z"/>
+    <!-- die grid -->
+    <g clip-path="url(#wafer)" stroke-width="14">
+      <line x1="300" y1="380" x2="300" y2="775"/>
+      <line x1="380" y1="380" x2="380" y2="775"/>
+      <line x1="460" y1="380" x2="460" y2="775"/>
+      <line x1="150" y1="500" x2="610" y2="500"/>
+      <line x1="150" y1="600" x2="610" y2="600"/>
+      <line x1="150" y1="700" x2="610" y2="700"/>
+    </g>
+    <!-- HSMS link, arrows both ways -->
+    <line x1="640" y1="570" x2="712" y2="570"/>
+    <path d="M660 548 L638 570 L660 592"/>
+    <path d="M692 548 L714 570 L692 592"/>
+    <!-- host -->
+    <rect x="732" y="470" width="210" height="200" rx="24"/>
+    <line x1="772" y1="530" x2="902" y2="530"/>
+    <line x1="772" y1="580" x2="862" y2="580"/>
+    <line x1="837" y1="670" x2="837" y2="730"/>
+    <line x1="782" y1="730" x2="892" y2="730"/>
+  </g>
+  <text x="512" y="260" font-family="Plus Jakarta Sans, DejaVu Sans, sans-serif" font-weight="800" font-size="170" fill="#04DD3C" text-anchor="middle">SECS</text>
+</svg>

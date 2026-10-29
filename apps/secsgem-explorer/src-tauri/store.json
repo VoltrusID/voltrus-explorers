@@ -1,0 +1,12 @@
+{
+  "pro_product_id": "com.joyodigitama.secsgemexplorer.pro",
+  "free_since": {
+    "macos_version": "1.0.0",
+    "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-secsgem-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/POLAR_ID_PENDING",
+    "price": "$39.99"
+  }
+}

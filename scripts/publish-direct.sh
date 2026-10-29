@@ -3,7 +3,7 @@
 #
 #   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
 #
-# <app> is serial-monitor, ble-inspector or cnc-explorer: they are not on GitHub Releases or the App Store; the console
+# <app> is serial-monitor, ble-inspector, cnc-explorer or secsgem-explorer: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
 # The DMG is the `dmg` output of the Release workflow (scripts/build-macos.sh <app> dmg --notarize, built with
 # `--features license`). It comes from, in order:
@@ -51,7 +51,14 @@ case "$APP" in
     PRODUCT="CNC Explorer"; BASE="https://dl-cnc-explorer.voltrus.id"
     BUCKET="cnc-explorer-releases"; DB="cnc-explorer-releases-db"; DB_ID="a66d6422-38fd-428c-a135-165961cca479"
     NAME_RE='cnc' ;;
-  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer)" >&2; exit 1 ;;
+  secsgem-explorer)
+    PRODUCT="SECS/GEM Explorer"; BASE="https://dl-secsgem-explorer.voltrus.id"
+    BUCKET="secsgem-explorer-releases"; DB="secsgem-explorer-releases-db"
+    # Set to the id printed by `wrangler d1 create secsgem-explorer-releases-db` once the worker exists.
+    DB_ID=""
+    : "${DB_ID:?DB_ID of secsgem-explorer-releases-db is not set in scripts/publish-direct.sh: create the D1 database and the R2 bucket for the download worker first (docs/release.md)}"
+    NAME_RE='secs' ;;
+  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer)" >&2; exit 1 ;;
 esac
 
 TMP="$(mktemp -d)"

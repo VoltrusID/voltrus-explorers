@@ -15,6 +15,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Free download ([DMG](https://dl-cnc-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/cnc-explorer/)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/6f42df6e-6dd2-46f1-af23-72d2e074534c)) |
+| **SECS/GEM Explorer** | GEM host for semiconductor and electronics equipment over HSMS (establish communications, status variables, equipment constants, reports and events, alarms, remote commands, process programs, terminal, SML message log; Beta), with a built-in equipment simulator | Free download ([DMG](https://dl-secsgem-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/POLAR_ID_PENDING)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -28,9 +29,9 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor, BLE Inspector and CNC Explorer are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer are not on the App Store or GitHub Releases. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
-Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector) and [CNC Explorer](#cnc-explorer).
+Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
 
 ## Free and Pro (App Store and licence-key builds)
 
@@ -95,6 +96,26 @@ CNC Explorer is an independent tool. FANUC and FOCAS are trademarks of FANUC COR
 registered trademark of AMT - The Association For Manufacturing Technology; it is not affiliated with or endorsed by
 either.
 
+### SECS/GEM Explorer
+
+Free to download as a notarized DMG (direct link: `https://dl-secsgem-explorer.voltrus.id/latest`), no sign-in needed.
+Pro is a one-time licence key (USD 39.99, no subscription, one Mac) bought through Polar in the console: open Info (or any Pro
+prompt) in the app, choose Buy Pro, then paste the key and press Activate. The key is kept in the macOS Keychain and
+checked against the licence server at launch; without a connection Pro stays on, and it only locks when the server
+says the key is no longer valid. Remove key (Info) forgets it on this device. Builds from source have everything.
+
+| SECS/GEM Explorer | |
+| --- | --- |
+| Free | GEM host: connect over HSMS (active or passive, device id, T3 T5 T6 T7 T8), establish communications, request online and offline, control and communication state, status variable names and values (live poll of up to 10 selected variables), equipment constant reads, alarm list, enable and live alarm reports, process program list, terminal messages (S10F3 and S10F1), HSMS message log with every message rendered as SML, communication log export, 1 saved connection profile |
+| Pro | Equipment simulator (passive or active: control state switches, process state, raise and clear alarms, edit status variables and constants), live trends, equipment constant writes (with a confirm step and range errors), report wizard (define, link, enable) with a live S6F11 table, remote commands (S2F41) with typed parameters, SML composer for any message, CSV export of the message log and of events, unlimited saved profiles |
+
+The app is a **Beta**. It uses [`mt-secsgem`](crates/mt-secsgem), an independent implementation that was cross-checked
+against the open-source [secsgem](https://github.com/bparzella/secsgem) library only: it has never been tested on real
+equipment or against a commercial factory host. Please report what you connect it to at support@voltrus.id.
+
+SECS/GEM, SECS-II and HSMS are the SEMI standards E5, E30 and E37. SECS/GEM Explorer is not affiliated with, endorsed by
+or certified by SEMI.
+
 ### Serial Monitor
 
 Free to download as a notarized DMG from [voltrus.id/serial-terminal](https://voltrus.id/serial-terminal/) or the
@@ -154,7 +175,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem
 ```
 
 Universal release build (unsigned):
@@ -164,7 +185,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p mt-focas -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p mt-focas -p mt-secsgem -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
 The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
@@ -181,6 +202,7 @@ apps/enip-explorer      Tauri app (EtherNet/IP scanner and adapter)
 apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/cnc-explorer      Tauri app (macOS), MTConnect and FANUC FOCAS client and simulators
+apps/secsgem-explorer  Tauri app (macOS), SECS/GEM host and equipment simulator over HSMS
 apps/s7-explorer       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
@@ -201,6 +223,7 @@ crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btlep
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-mtconnect    MTConnect agent client (probe, current, sample, stream, assets), agent simulator and SHDR adapter
 crates/mt-focas        FANUC FOCAS/Ethernet client and CNC simulator (pure Rust, Beta)
+crates/mt-secsgem      SECS/GEM host and equipment simulator: HSMS, SECS-II, GEM (pure Rust, Beta)
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store

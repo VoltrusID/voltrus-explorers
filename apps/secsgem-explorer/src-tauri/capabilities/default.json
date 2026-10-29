@@ -1,0 +1,15 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for SECS/GEM Explorer",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file"
+  ]
+}

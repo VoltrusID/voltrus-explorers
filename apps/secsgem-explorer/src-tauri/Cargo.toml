@@ -1,0 +1,27 @@
+[package]
+name = "secsgem_explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "secsgem_explorer_lib"
+
+[features]
+# App Store build: Pro sold as an in-app purchase (see crates/mt-store).
+store = ["mt-store/store"]
+# Direct-download build (console + landing page): Pro is sold by licence key. Exclusive with `store`.
+license = ["mt-store/license"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+mt-secsgem = { path = "../../../crates/mt-secsgem" }
+mt-store = { path = "../../../crates/mt-store" }
+tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-fs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

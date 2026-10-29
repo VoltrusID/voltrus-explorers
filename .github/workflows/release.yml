@@ -6,7 +6,7 @@
 #
 #   appstore  universal .pkg signed for the Mac App Store; uploaded to App Store Connect when `upload` is ticked
 #   dmg       universal Developer ID .dmg, notarized and stapled; attached to a GitHub Release when `github_release`.
-#             Serial Monitor, BLE Inspector and CNC Explorer (the apps with a `license` feature) are built with it and are never
+#             Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer (the apps with a `license` feature) are built with it and are never
 #             put on GitHub: download the artifact and run scripts/publish-direct.sh (docs/release.md).
 #   ios       iPhone/iPad App Store IPA of the selected app (apps/<app>/scripts/build-ios.sh); uploaded when `upload` is ticked
 #   windows   Modbus Poll only: unsigned NSIS installer and portable zip for x64 and ARM64 (scripts/build-windows.ps1), smoke-tested
@@ -22,7 +22,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, voltrus-tools]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, secsgem-explorer, voltrus-tools]
       appstore:
         description: Mac App Store .pkg
         type: boolean
@@ -40,7 +40,7 @@ on:
         type: boolean
         default: false
       github_release:
-        description: Publish the .dmg (or, with `windows`, the Windows files) as a GitHub Release (<app>-v<version>, modbus-poll-windows-v<version>); refused for Serial Monitor, BLE Inspector and CNC Explorer
+        description: Publish the .dmg (or, with `windows`, the Windows files) as a GitHub Release (<app>-v<version>, modbus-poll-windows-v<version>); refused for Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer
         type: boolean
         default: false
       windows:
@@ -75,7 +75,7 @@ jobs:
 
       # Apps that sell Pro by licence key are distributed from the Voltrus console and landing page only.
       - name: Refuse GitHub release of direct-licence apps
-        if: inputs.github_release && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer')
+        if: inputs.github_release && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer')
         run: |
           echo "::error::$APP is distributed through the Voltrus console and voltrus.id, not GitHub Releases. Untick github_release; publish the DMG with scripts/publish-direct.sh (docs/release.md)."
           exit 1
@@ -124,7 +124,7 @@ jobs:
         run: find build -name '*.pkg' -o -name '*.dmg' | xargs shasum -a 256 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Direct-download publish command
-        if: inputs.dmg && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer')
+        if: inputs.dmg && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer')
         run: |
           version="$(python3 -c "import json; print(json.load(open('apps/$APP/src-tauri/tauri.conf.json'))['version'])")"
           echo "Publish to the download worker (run locally, with your Cloudflare login): \`scripts/publish-direct.sh $APP $version --run $GITHUB_RUN_ID\`" | tee -a "$GITHUB_STEP_SUMMARY"

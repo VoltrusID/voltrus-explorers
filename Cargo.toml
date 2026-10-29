@@ -23,6 +23,7 @@ members = [
     "apps/nats-explorer/src-tauri",
     "apps/dnp3-explorer/src-tauri",
     "apps/cnc-explorer/src-tauri",
+    "apps/secsgem-explorer/src-tauri",
     "apps/s7-explorer/src-tauri",
     "apps/enip-explorer/src-tauri",
     "apps/serial-monitor/src-tauri",
