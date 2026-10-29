@@ -6,12 +6,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mt_focas::{
-    AlarmMessage, AlarmQuery, AlarmType, CncProfile, FocasClient, FocasConfig, FocasSimulator, MacroValue,
-    NumberedValues, PmcArea, PmcDataType, PmcValue, ProgramEntry, SimAlarm, SimulatorConfig, SysInfo,
+    AlarmMessage, AlarmQuery, AlarmType, CncProfile, FocasClient, FocasConfig, FocasSimulator,
+    MacroValue, NumberedValues, PmcArea, PmcDataType, PmcValue, ProgramEntry, SimAlarm,
+    SimulatorConfig, SysInfo,
 };
 use mt_mtconnect::{
-    AgentClient, AgentConfig, AgentSimulator, AssetList, Category, ConditionLevel, Devices, Observation, ResyncReason,
-    SimConfig, SimSnapshot, StreamEvent, StreamTransport, Streams, Value,
+    AgentClient, AgentConfig, AgentSimulator, AssetList, Category, ConditionLevel, Devices,
+    Observation, ResyncReason, SimConfig, SimSnapshot, StreamEvent, StreamTransport, Streams,
+    Value,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -71,7 +73,10 @@ pub struct Coded {
 }
 
 fn coded(label: &str, name: impl std::fmt::Debug) -> Coded {
-    Coded { label: label.to_string(), name: format!("{name:?}") }
+    Coded {
+        label: label.to_string(),
+        name: format!("{name:?}"),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,7 +209,10 @@ impl Core {
     }
 
     fn log(&self, direction: &str, message: impl Into<String>) {
-        self.emit("cnc-log", json!({ "direction": direction, "message": message.into() }));
+        self.emit(
+            "cnc-log",
+            json!({ "direction": direction, "message": message.into() }),
+        );
     }
 
     /// Logs a failure and returns its text for the command result.
@@ -225,10 +233,15 @@ impl Core {
     pub async fn mtc_connect(&self, config: AgentConfig) -> Result<Devices, String> {
         self.mtc_disconnect().await;
         let base = config.base_url.trim().trim_end_matches('/').to_string();
-        let client = Arc::new(AgentClient::new(config).map_err(|e| self.fail("MTConnect connect", e))?);
+        let client =
+            Arc::new(AgentClient::new(config).map_err(|e| self.fail("MTConnect connect", e))?);
         self.log("tx", format!("GET {base}/probe"));
         let devices = client.probe().await.map_err(|e| self.fail("probe", e))?;
-        let items: usize = devices.devices.iter().map(|d| d.flatten_data_items().len()).sum();
+        let items: usize = devices
+            .devices
+            .iter()
+            .map(|d| d.flatten_data_items().len())
+            .sum();
         self.log(
             "rx",
             format!(
@@ -256,9 +269,26 @@ impl Core {
 
     pub async fn mtc_current(&self, path: Option<String>) -> Result<Streams, String> {
         let (client, base) = self.mtc_client().await?;
-        self.log("tx", format!("GET {base}/current{}", path.as_deref().map(|p| format!("?path={p}")).unwrap_or_default()));
-        let s = client.current(path.as_deref()).await.map_err(|e| self.fail("current", e))?;
-        self.log("rx", format!("current: {} observations, next sequence {:?}", s.len(), s.header.next_sequence));
+        self.log(
+            "tx",
+            format!(
+                "GET {base}/current{}",
+                path.as_deref()
+                    .map(|p| format!("?path={p}"))
+                    .unwrap_or_default()
+            ),
+        );
+        let s = client
+            .current(path.as_deref())
+            .await
+            .map_err(|e| self.fail("current", e))?;
+        self.log(
+            "rx",
+            match s.header.next_sequence {
+                Some(n) => format!("current: {} observations, next sequence {n}", s.len()),
+                None => format!("current: {} observations", s.len()),
+            },
+        );
         Ok(s)
     }
 
@@ -278,7 +308,10 @@ impl Core {
         if let Some(h) = s.stream.take() {
             h.abort();
         }
-        self.log("tx", format!("GET {base}/sample?interval={}", interval.as_millis()));
+        self.log(
+            "tx",
+            format!("GET {base}/sample?interval={}", interval.as_millis()),
+        );
         let emit = self.emit.clone();
         s.stream = Some(tokio::spawn(stream_task(client, interval, emit)));
         Ok(())
@@ -294,17 +327,36 @@ impl Core {
     // ---- FOCAS client -----------------------------------------------------------------------
 
     async fn fanuc_client(&self) -> Result<Arc<FocasClient>, String> {
-        self.fanuc.lock().await.clone().ok_or_else(|| "Not connected".to_string())
+        self.fanuc
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "Not connected".to_string())
     }
 
     pub async fn fanuc_connect(&self, config: FocasConfig) -> Result<SysInfo, String> {
         self.fanuc_disconnect().await;
-        self.log("tx", format!("Open {}:{} (FOCAS/Ethernet)", config.host, config.port));
-        let client = FocasClient::connect(config).await.map_err(|e| self.fail("FANUC connect", e))?;
-        let info = client.sysinfo().await.map_err(|e| self.fail("sysinfo", e))?;
+        self.log(
+            "tx",
+            format!("Open {}:{} (FOCAS/Ethernet)", config.host, config.port),
+        );
+        let client = FocasClient::connect(config)
+            .await
+            .map_err(|e| self.fail("FANUC connect", e))?;
+        let info = client
+            .sysinfo()
+            .await
+            .map_err(|e| self.fail("sysinfo", e))?;
         self.log(
             "rx",
-            format!("sysinfo: {} {} {} v{}, {} axes", info.cnc_type.trim(), info.series.trim(), info.mt_type.trim(), info.version.trim(), info.axes.trim()),
+            format!(
+                "sysinfo: {} {} {} v{}, {} axes",
+                info.cnc_type.trim(),
+                info.series.trim(),
+                info.mt_type.trim(),
+                info.version.trim(),
+                info.axes.trim()
+            ),
         );
         *self.fanuc.lock().await = Some(Arc::new(client));
         Ok(info)
@@ -320,15 +372,24 @@ impl Core {
     pub async fn fanuc_poll(&self) -> Result<FanucPoll, String> {
         let c = self.fanuc_client().await?;
         let snap = c.snapshot().await.map_err(|e| self.fail("poll", e))?;
-        let (servo, name, block) = tokio::join!(c.servo_load(), c.main_program_name(), c.executing_block(80));
+        let (servo, name, block) =
+            tokio::join!(c.servo_load(), c.main_program_name(), c.executing_block(80));
         let mut errors = Vec::new();
 
         let status = take(&snap.status, "status", &mut errors).map(|s| status_view(&s));
         let names = take(&snap.positions.axes, "axis names", &mut errors).unwrap_or_default();
-        let abs = take(&snap.positions.absolute, "absolute position", &mut errors).unwrap_or_default();
-        let mach = take(&snap.positions.machine, "machine position", &mut errors).unwrap_or_default();
-        let rel = take(&snap.positions.relative, "relative position", &mut errors).unwrap_or_default();
-        let dtg = take(&snap.positions.distance_to_go, "distance to go", &mut errors).unwrap_or_default();
+        let abs =
+            take(&snap.positions.absolute, "absolute position", &mut errors).unwrap_or_default();
+        let mach =
+            take(&snap.positions.machine, "machine position", &mut errors).unwrap_or_default();
+        let rel =
+            take(&snap.positions.relative, "relative position", &mut errors).unwrap_or_default();
+        let dtg = take(
+            &snap.positions.distance_to_go,
+            "distance to go",
+            &mut errors,
+        )
+        .unwrap_or_default();
         let servo = servo
             .map_err(|e| errors.push(format!("servo load: {e}")))
             .unwrap_or_default();
@@ -364,7 +425,9 @@ impl Core {
                 block: block.ok().map(|b| b.text),
             },
             alarm_bits: bits.map(|b| b.0),
-            alarm_types: bits.map(|b| b.types().iter().map(|t| format!("{t:?}")).collect()).unwrap_or_default(),
+            alarm_types: bits
+                .map(|b| b.types().iter().map(|t| format!("{t:?}")).collect())
+                .unwrap_or_default(),
             errors,
         })
     }
@@ -372,7 +435,10 @@ impl Core {
     pub async fn fanuc_alarms(&self) -> Result<Vec<AlarmMessage>, String> {
         let c = self.fanuc_client().await?;
         self.log("tx", "Read alarm messages");
-        let a = c.alarm_messages(AlarmQuery::default()).await.map_err(|e| self.fail("alarms", e))?;
+        let a = c
+            .alarm_messages(AlarmQuery::default())
+            .await
+            .map_err(|e| self.fail("alarms", e))?;
         self.log("rx", format!("{} active alarm message(s)", a.len()));
         Ok(a)
     }
@@ -380,7 +446,10 @@ impl Core {
     pub async fn fanuc_programs(&self) -> Result<Vec<ProgramEntry>, String> {
         let c = self.fanuc_client().await?;
         self.log("tx", "List programs");
-        let p = c.list_programs().await.map_err(|e| self.fail("programs", e))?;
+        let p = c
+            .list_programs()
+            .await
+            .map_err(|e| self.fail("programs", e))?;
         self.log("rx", format!("{} program(s)", p.len()));
         Ok(p)
     }
@@ -391,7 +460,10 @@ impl Core {
         }
         let c = self.fanuc_client().await?;
         self.log("tx", format!("Read macro #{first}..#{last}"));
-        let v = c.read_macro(first, last).await.map_err(|e| self.fail("read macro", e))?;
+        let v = c
+            .read_macro(first, last)
+            .await
+            .map_err(|e| self.fail("read macro", e))?;
         self.log("rx", format!("{} macro value(s)", v.len()));
         Ok(v)
     }
@@ -399,23 +471,41 @@ impl Core {
     pub async fn fanuc_write_macro(&self, number: u32, value: f64) -> Result<(), String> {
         let c = self.fanuc_client().await?;
         self.log("tx", format!("Write macro #{number} = {value}"));
-        c.write_macro(number, value).await.map_err(|e| self.fail("write macro", e))?;
+        c.write_macro(number, value)
+            .await
+            .map_err(|e| self.fail("write macro", e))?;
         self.log("rx", format!("macro #{number} written"));
         Ok(())
     }
 
-    pub async fn fanuc_read_params(&self, first: u32, last: u32, axis: i32) -> Result<Vec<NumberedValues>, String> {
+    pub async fn fanuc_read_params(
+        &self,
+        first: u32,
+        last: u32,
+        axis: i32,
+    ) -> Result<Vec<NumberedValues>, String> {
         let c = self.fanuc_client().await?;
         self.log("tx", format!("Read parameters {first}..{last} axis {axis}"));
-        let v = c.read_params(first, last, axis).await.map_err(|e| self.fail("read parameters", e))?;
+        let v = c
+            .read_params(first, last, axis)
+            .await
+            .map_err(|e| self.fail("read parameters", e))?;
         self.log("rx", format!("{} parameter(s)", v.len()));
         Ok(v)
     }
 
-    pub async fn fanuc_read_diag(&self, first: u32, last: u32, axis: i32) -> Result<Vec<NumberedValues>, String> {
+    pub async fn fanuc_read_diag(
+        &self,
+        first: u32,
+        last: u32,
+        axis: i32,
+    ) -> Result<Vec<NumberedValues>, String> {
         let c = self.fanuc_client().await?;
         self.log("tx", format!("Read diagnosis {first}..{last} axis {axis}"));
-        let v = c.read_diag(first, last, axis).await.map_err(|e| self.fail("read diagnosis", e))?;
+        let v = c
+            .read_diag(first, last, axis)
+            .await
+            .map_err(|e| self.fail("read diagnosis", e))?;
         self.log("rx", format!("{} diagnosis value(s)", v.len()));
         Ok(v)
     }
@@ -428,8 +518,14 @@ impl Core {
         count: u32,
     ) -> Result<Vec<PmcValue>, String> {
         let c = self.fanuc_client().await?;
-        self.log("tx", format!("Read PMC {}{first} x{count} ({data_type:?})", area.letter()));
-        let v = c.read_pmc(area, data_type, first, count).await.map_err(|e| self.fail("read PMC", e))?;
+        self.log(
+            "tx",
+            format!("Read PMC {}{first} x{count} ({data_type:?})", area.letter()),
+        );
+        let v = c
+            .read_pmc(area, data_type, first, count)
+            .await
+            .map_err(|e| self.fail("read PMC", e))?;
         self.log("rx", format!("{} PMC value(s)", v.len()));
         Ok(v)
     }
@@ -439,7 +535,9 @@ impl Core {
     pub async fn mtc_sim_start(&self, mut config: SimConfig) -> Result<MtcSimInfo, String> {
         self.mtc_sim_stop().await;
         config.bind_addr = "0.0.0.0".into();
-        let sim = AgentSimulator::start(config).await.map_err(|e| self.fail("Agent simulator start", e))?;
+        let sim = AgentSimulator::start(config)
+            .await
+            .map_err(|e| self.fail("Agent simulator start", e))?;
         let info = MtcSimInfo {
             base_url: format!("http://localhost:{}", sim.http_addr().port()),
             http_port: sim.http_addr().port(),
@@ -452,7 +550,9 @@ impl Core {
             format!(
                 "MTConnect agent simulator on port {}{}",
                 info.http_port,
-                info.shdr_port.map(|p| format!(", SHDR adapter on port {p}")).unwrap_or_default()
+                info.shdr_port
+                    .map(|p| format!(", SHDR adapter on port {p}"))
+                    .unwrap_or_default()
             ),
         );
         *self.mtc_sim.lock().await = Some(MtcSim { sim, feed });
@@ -467,7 +567,10 @@ impl Core {
         }
     }
 
-    async fn with_mtc_sim<R>(&self, f: impl FnOnce(&mt_mtconnect::SimModel) -> R) -> Result<R, String> {
+    async fn with_mtc_sim<R>(
+        &self,
+        f: impl FnOnce(&mt_mtconnect::SimModel) -> R,
+    ) -> Result<R, String> {
         let g = self.mtc_sim.lock().await;
         let s = g.as_ref().ok_or("Agent simulator not running")?;
         Ok(f(s.sim.model()))
@@ -491,7 +594,10 @@ impl Core {
             let value = if text.eq_ignore_ascii_case("UNAVAILABLE") {
                 Value::Unavailable
             } else if category == Category::Sample {
-                Value::Number(text.parse().map_err(|_| format!("'{text}' is not a number"))?)
+                Value::Number(
+                    text.parse()
+                        .map_err(|_| format!("'{text}' is not a number"))?,
+                )
             } else {
                 Value::Text(text.clone())
             };
@@ -506,19 +612,34 @@ impl Core {
         self.with_mtc_sim(|m| m.release(&id)).await
     }
 
-    pub async fn mtc_sim_raise(&self, id: String, level: ConditionLevel, code: String, message: String) -> Result<(), String> {
-        self.with_mtc_sim(|m| m.raise_condition(&id, level, &code, &message).map_err(es)).await??;
+    pub async fn mtc_sim_raise(
+        &self,
+        id: String,
+        level: ConditionLevel,
+        code: String,
+        message: String,
+    ) -> Result<(), String> {
+        self.with_mtc_sim(|m| m.raise_condition(&id, level, &code, &message).map_err(es))
+            .await??;
         Ok(())
     }
 
     pub async fn mtc_sim_clear(&self, id: String) -> Result<(), String> {
-        self.with_mtc_sim(|m| m.clear_condition(&id).map_err(es)).await??;
+        self.with_mtc_sim(|m| m.clear_condition(&id).map_err(es))
+            .await??;
         Ok(())
     }
 
     pub async fn mtc_sim_set_paused(&self, paused: bool) -> Result<(), String> {
         self.with_mtc_sim(|m| m.set_paused(paused)).await?;
-        self.log("info", if paused { "Simulator program paused" } else { "Simulator program resumed" });
+        self.log(
+            "info",
+            if paused {
+                "Simulator program paused"
+            } else {
+                "Simulator program resumed"
+            },
+        );
         Ok(())
     }
 
@@ -539,11 +660,19 @@ impl Core {
             tick: Some(Duration::from_millis(100)),
         })
         .await
-        .map_err(|e| self.fail("CNC simulator start", format!("cannot listen on port {}: {e}", config.port)))?;
+        .map_err(|e| {
+            self.fail(
+                "CNC simulator start",
+                format!("cannot listen on port {}: {e}", config.port),
+            )
+        })?;
         let sim = Arc::new(sim);
         let port = sim.port();
         let monitor = tokio::spawn(focas_monitor(sim.clone(), self.emit.clone()));
-        self.log("info", format!("FANUC CNC simulator ({:?}) on port {port}", config.profile));
+        self.log(
+            "info",
+            format!("FANUC CNC simulator ({:?}) on port {port}", config.profile),
+        );
         *self.focas_sim.lock().await = Some(FocasSim { sim, monitor });
         Ok(port)
     }
@@ -557,17 +686,28 @@ impl Core {
     }
 
     async fn focas_sim(&self) -> Result<Arc<FocasSimulator>, String> {
-        self.focas_sim.lock().await.as_ref().map(|s| s.sim.clone()).ok_or_else(|| "CNC simulator not running".into())
+        self.focas_sim
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.sim.clone())
+            .ok_or_else(|| "CNC simulator not running".into())
     }
 
     pub async fn focas_sim_view(&self) -> Result<FocasSimView, String> {
         let sim = self.focas_sim().await?;
         let m = sim.model();
         Ok(FocasSimView {
-            profile: format!("{} {}", m.sysinfo.cnc_type.trim(), m.sysinfo.series.trim()).trim().to_string(),
+            profile: format!("{} {}", m.sysinfo.cnc_type.trim(), m.sysinfo.series.trim())
+                .trim()
+                .to_string(),
             port: sim.port(),
             status: status_view(&m.status()),
-            axes: m.axes.iter().map(|a| (a.name.to_string(), a.absolute)).collect(),
+            axes: m
+                .axes
+                .iter()
+                .map(|a| (a.name.to_string(), a.absolute))
+                .collect(),
             feed_rate: m.feed_rate,
             spindle_speed: m.spindle_speed,
             program: m.program_numbers().running,
@@ -603,16 +743,27 @@ impl Core {
             }
         });
         if !ok {
-            return Err("Cycle start refused: emergency stop, active alarm, or no program in MEM/MDI mode".into());
+            return Err(
+                "Cycle start refused: emergency stop, active alarm, or no program in MEM/MDI mode"
+                    .into(),
+            );
         }
         self.log("info", format!("CNC simulator: {action:?}"));
         Ok(())
     }
 
-    pub async fn focas_sim_raise_alarm(&self, number: i32, alarm_type: AlarmType, message: String) -> Result<(), String> {
+    pub async fn focas_sim_raise_alarm(
+        &self,
+        number: i32,
+        alarm_type: AlarmType,
+        message: String,
+    ) -> Result<(), String> {
         let sim = self.focas_sim().await?;
         sim.with_model(|m| m.raise_alarm(number, alarm_type, 0, message.clone()));
-        self.log("info", format!("CNC simulator: alarm {number} raised ({message})"));
+        self.log(
+            "info",
+            format!("CNC simulator: alarm {number} raised ({message})"),
+        );
         Ok(())
     }
 
@@ -648,7 +799,12 @@ impl Core {
 // ---- background tasks ---------------------------------------------------------------------------
 
 async fn stream_task(client: Arc<AgentClient>, interval: Duration, emit: Emit) {
-    let log = |direction: &str, message: String| emit("cnc-log", json!({ "direction": direction, "message": message }));
+    let log = |direction: &str, message: String| {
+        emit(
+            "cnc-log",
+            json!({ "direction": direction, "message": message }),
+        )
+    };
     let mut stream = client.stream_sample(interval);
     let mut transport = StreamTransport::Connecting;
     while let Some(item) = stream.next().await {
@@ -656,7 +812,10 @@ async fn stream_task(client: Arc<AgentClient>, interval: Duration, emit: Emit) {
             Ok(ev) => ev,
             Err(e) => {
                 log("error", format!("stream: {e}"));
-                emit("mtc-stream", json!({ "event": "error", "message": e.to_string() }));
+                emit(
+                    "mtc-stream",
+                    json!({ "event": "error", "message": e.to_string() }),
+                );
                 return;
             }
         };
@@ -683,11 +842,13 @@ async fn stream_task(client: Arc<AgentClient>, interval: Duration, emit: Emit) {
         if kind != "observations" || !observations.is_empty() {
             log(
                 "rx",
-                format!(
-                    "{kind}: {} observation(s), next sequence {:?}",
-                    observations.len(),
-                    streams.header.next_sequence
-                ),
+                match streams.header.next_sequence {
+                    Some(n) => format!(
+                        "{kind}: {} observation(s), next sequence {n}",
+                        observations.len()
+                    ),
+                    None => format!("{kind}: {} observation(s)", observations.len()),
+                },
             );
         }
         emit(
@@ -702,7 +863,10 @@ async fn sim_feed(mut rx: broadcast::Receiver<Observation>, emit: Emit) {
     loop {
         match rx.recv().await {
             Ok(o) if o.category != Category::Sample => {
-                emit("cnc-log", json!({ "direction": "rx", "message": format!("[agent] {}", observation_line(&o)) }));
+                emit(
+                    "cnc-log",
+                    json!({ "direction": "rx", "message": format!("[agent] {}", observation_line(&o)) }),
+                );
             }
             Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => return,
@@ -719,11 +883,17 @@ async fn focas_monitor(sim: Arc<FocasSimulator>, emit: Emit) {
         tick.tick().await;
         let (s, r) = (sim.active_sessions(), sim.requests_served());
         if s != sessions {
-            emit("cnc-log", json!({ "direction": "info", "message": format!("[cnc] {s} client(s) connected") }));
+            emit(
+                "cnc-log",
+                json!({ "direction": "info", "message": format!("[cnc] {s} client(s) connected") }),
+            );
             sessions = s;
         }
         if r != requests {
-            emit("cnc-log", json!({ "direction": "rx", "message": format!("[cnc] {} request(s) served", r - requests) }));
+            emit(
+                "cnc-log",
+                json!({ "direction": "rx", "message": format!("[cnc] {} request(s) served", r - requests) }),
+            );
             requests = r;
         }
     }
