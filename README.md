@@ -14,7 +14,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | [Build from source](#build-from-source) |
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Mac App Store: not released yet · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Mac App Store (coming soon) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Free download ([DMG](https://dl-cnc-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/cnc-explorer/)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/6f42df6e-6dd2-46f1-af23-72d2e074534c)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -28,9 +28,9 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor and BLE Inspector are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector and CNC Explorer are not on the App Store or GitHub Releases. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
-Pro is a licence key bought there, see [Serial Monitor](#serial-monitor) and [BLE Inspector](#ble-inspector).
+Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector) and [CNC Explorer](#cnc-explorer).
 
 ## Free and Pro (App Store and licence-key builds)
 
@@ -75,6 +75,13 @@ Siemens AG; it is not affiliated with or endorsed by Siemens.
 EtherNet/IP Explorer buyers from before 1.5.0 keep Pro without purchasing anything.
 
 ### CNC Explorer
+
+Free to download as a notarized DMG from [voltrus.id/cnc-explorer](https://voltrus.id/cnc-explorer/) or the
+[Voltrus Console](https://console.voltrus.id), no sign-in needed (direct link: `https://dl-cnc-explorer.voltrus.id/latest`).
+Pro is a one-time licence key (USD 39.99, no subscription, one Mac) bought through Polar in the console: open Info (or any Pro
+prompt) in the app, choose Buy Pro, then paste the key and press Activate. The key is kept in the macOS Keychain and
+checked against the licence server at launch; without a connection Pro stays on, and it only locks when the server
+says the key is no longer valid. Remove key (Info) forgets it on this device. Builds from source have everything.
 
 | CNC Explorer | |
 | --- | --- |

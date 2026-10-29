@@ -50,6 +50,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
   const [keyInput, setKeyInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const device = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent) ? "Mac" : "PC";
 
   useEffect(() => {
     invoke<StoreStatus>("store_status")
@@ -185,7 +186,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
           )}
           <p style={{ margin: 0 }}>
             {status?.activation
-              ? "A one-time purchase, no subscription. Buy a licence key, enter it below and Pro unlocks on this PC. Activation needs the internet once; after that the app works offline. A key covers one device at a time: you can move it here from another one."
+              ? `A one-time purchase${status.price ? ` of ${status.price}` : ""}, no subscription. Buy a licence key, enter it below and Pro unlocks on this ${device}. Activation needs the internet once; after that the app works offline. A key covers one ${device} at a time: you can move it here from another one.`
               : "A one-time purchase. No subscription, no account."}
           </p>
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>

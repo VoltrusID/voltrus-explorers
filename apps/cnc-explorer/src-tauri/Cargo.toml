@@ -10,6 +10,8 @@ name = "cnc_explorer_lib"
 [features]
 # App Store build: Pro sold as an in-app purchase (see crates/mt-store).
 store = ["mt-store/store"]
+# Direct-download build (console + landing page): Pro is sold by licence key. Exclusive with `store`.
+license = ["mt-store/license"]
 
 [build-dependencies]
 tauri-build = { workspace = true }

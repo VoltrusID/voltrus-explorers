@@ -1,7 +1,12 @@
 {
   "pro_product_id": "com.joyodigitama.cncexplorer.pro",
   "free_since": {
-    "macos_version": null,
+    "macos_version": "1.0.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-cnc-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/6f42df6e-6dd2-46f1-af23-72d2e074534c",
+    "price": "$39.99"
   }
 }

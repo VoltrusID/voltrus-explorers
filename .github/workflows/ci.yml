@@ -97,7 +97,7 @@ jobs:
       - name: Licence-key tests and direct-download builds
         run: |
           cargo test -p mt-store --features license
-          cargo check -p serial_monitor -p ble_inspector --features license
+          cargo check -p serial_monitor -p ble_inspector -p cnc_explorer --features license
 
   macos:
     runs-on: macos-15

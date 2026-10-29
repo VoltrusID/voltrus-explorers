@@ -237,6 +237,7 @@ pub fn run() {
             focas_sim_clear_alarm, focas_sim_set_macro,
             open_url,
             mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::store_activate, mt_store::store_deactivate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

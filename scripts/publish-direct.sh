@@ -3,7 +3,7 @@
 #
 #   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
 #
-# <app> is serial-monitor or ble-inspector: they are not on GitHub Releases or the App Store; the console
+# <app> is serial-monitor, ble-inspector or cnc-explorer: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
 # The DMG is the `dmg` output of the Release workflow (scripts/build-macos.sh <app> dmg --notarize, built with
 # `--features license`). It comes from, in order:
@@ -47,7 +47,11 @@ case "$APP" in
     PRODUCT="BLE Inspector"; BASE="https://dl-ble-inspector.voltrus.id"
     BUCKET="ble-inspector-releases"; DB="ble-inspector-releases-db"; DB_ID="ab0187c9-a3bf-4e64-b484-f99268c644f4"
     NAME_RE='ble' ;;
-  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector)" >&2; exit 1 ;;
+  cnc-explorer)
+    PRODUCT="CNC Explorer"; BASE="https://dl-cnc-explorer.voltrus.id"
+    BUCKET="cnc-explorer-releases"; DB="cnc-explorer-releases-db"; DB_ID="a66d6422-38fd-428c-a135-165961cca479"
+    NAME_RE='cnc' ;;
+  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer)" >&2; exit 1 ;;
 esac
 
 TMP="$(mktemp -d)"

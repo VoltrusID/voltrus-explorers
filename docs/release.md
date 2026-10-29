@@ -5,7 +5,7 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 | Workflow | Trigger | Secrets | Does |
 | --- | --- | --- | --- |
 | `ci.yml` | push to `main`, pull requests, manual | none | crate tests, frontend typecheck/build/tests (Linux); unsigned universal build of both apps (macOS) |
-| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release (never for Serial Monitor and BLE Inspector, see below) |
+| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release (never for Serial Monitor, BLE Inspector and CNC Explorer, see below) |
 
 Voltrus Tools (the GPUI suite in `apps/voltrus-tools`) has its own Mac App Store path: `release.yml` with
 `app=voltrus-tools`, a 14-day trial and a one-time unlock through StoreKit 2. See
@@ -40,7 +40,7 @@ always increase.
     identifier, packs a `.pkg` signed with the Mac Installer identity, then validates it against App Store Connect
     (or uploads it with `upload=true`).
   - `dmg`: signs with Developer ID (hardened runtime), packs and signs the DMG, notarizes it with `notarytool`
-    (API key) and staples it. Apps with a `license` feature in `src-tauri/Cargo.toml` (Serial Monitor, BLE Inspector)
+    (API key) and staples it. Apps with a `license` feature in `src-tauri/Cargo.toml` (Serial Monitor, BLE Inspector, CNC Explorer)
     are built with `--features license` (Pro by licence key, see below); every other app's DMG has everything unlocked.
 - iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
   (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
@@ -70,12 +70,13 @@ the user starts server mode).
 
 ## Pro (in-app purchase and licence key)
 
-**Serial Monitor and BLE Inspector are distributed through the Voltrus console and landing page only.** Apple rejected
-both under guideline 4.3 (Spam) and the App Store submissions were withdrawn. They are not on GitHub Releases either:
+**Serial Monitor, BLE Inspector and CNC Explorer are distributed through the Voltrus console and landing page only.**
+Apple rejected Serial Monitor and BLE Inspector under guideline 4.3 (Spam) and those App Store submissions were withdrawn;
+CNC Explorer is sold direct from the start. They are not on GitHub Releases either:
 the notarized DMG is free for anyone to download, without signing in, from `https://dl-serial-monitor.voltrus.id/latest`
-and `https://dl-ble-inspector.voltrus.id/latest` (linked from voltrus.id and console.voltrus.id), and Pro is a licence
-key sold through Polar in the console (one-time, USD 4.99 each; Pro features as in the README). The `store.json` files
-keep the App Store product ids below, unused; do not dispatch `appstore=true` for either app, and do not publish their
+`https://dl-ble-inspector.voltrus.id/latest` and `https://dl-cnc-explorer.voltrus.id/latest` (linked from voltrus.id and console.voltrus.id), and Pro is a licence
+key sold through Polar in the console (one-time, USD 4.99 each for Serial Monitor and BLE Inspector, USD 39.99 for CNC Explorer, one Mac; Pro features as in the README; CNC Explorer's Polar product is `6f42df6e-6dd2-46f1-af23-72d2e074534c`, keys `VOLTRUS-CNC-...`). The `store.json` files
+keep the App Store product ids below, unused; do not dispatch `appstore=true` for any of them, and do not publish their
 DMGs on GitHub (`release.yml` refuses `github_release=true` for them).
 
 Release one of them:
@@ -93,11 +94,12 @@ Release one of them:
    ```bash
    scripts/publish-direct.sh serial-monitor 1.6.0 --run <workflow run id>     # or a local path to the .dmg
    scripts/publish-direct.sh ble-inspector 1.3.0 --run <workflow run id>
+   scripts/publish-direct.sh cnc-explorer 1.0.0 --run <workflow run id>
    ```
 
    The script downloads the run artifact, checks the notarization (on macOS), uploads the DMG to the R2 bucket
-   (`serial-monitor-releases`, `ble-inspector-releases`) and writes the `releases` and `release_files`
-   (`darwin-aarch64`, `darwin-x86_64`) rows to D1 (`serial-monitor-releases-db`, `ble-inspector-releases-db`), then
+   (`serial-monitor-releases`, `ble-inspector-releases`, `cnc-explorer-releases`) and writes the `releases` and `release_files`
+   (`darwin-aarch64`, `darwin-x86_64`) rows to D1 (`serial-monitor-releases-db`, `ble-inspector-releases-db`, `cnc-explorer-releases-db`), then
    checks that `/latest` redirects to the new file. `--dry-run` prints what it would do. The run id is in the
    workflow summary and the run's URL.
 
@@ -106,7 +108,7 @@ Release one of them:
 - `crates/mt-store` with `--features license` (exclusive with `store` and `keys`): Pro is a licence key activated against the
   app's download worker, the same `POST /license/activate` and `/license/validate` service the older MacTools builds
   used (`license` section of `src-tauri/store.json`: `server`, `buy_url`, `price`). Keys are Polar licence keys or
-  console `VLT-XXXXX-XXXXX-XXXXX` licences (app slugs `serial-terminal`, `ble-inspector`, `mactools`).
+  console `VLT-XXXXX-XXXXX-XXXXX` licences (app slugs `serial-terminal`, `ble-inspector`, `mactools`; CNC Explorer uses Polar keys `VOLTRUS-CNC-...`).
 - The key, its activation id and a per-device id are kept in the macOS Keychain (the app's own generic-password items,
   sandbox-safe); other platforms use files under the app data directory. The key is validated once per launch.
   An unreachable server, a 5xx or an unreadable answer keeps Pro (a paying user is never locked out offline); only
@@ -125,7 +127,7 @@ Release one of them:
 - Console rule (voltrus-console `docs/licence-keys.md`): never detach a Polar licence-key benefit from a product that
   has buyers; retire a product by archiving it.
 
-The App Store products below stay unused for these two apps.
+The App Store products below stay unused for these three apps.
 
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
@@ -139,7 +141,7 @@ The App Store products below stay unused for these two apps.
 | Serial Monitor | `com.joyodigitama.serialmonitor.pro` | USD 4.99 (never sold before, free from its first App Store release, `free_since` 1.5.0) |
 | MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | USD 4.99 (the app was never paid, so it is free from its first release; `free_since` 1.2.0) |
 | OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | USD 9.99 (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
-| CNC Explorer | `com.joyodigitama.cncexplorer.pro` | USD 9.99 (proposed, not yet set in App Store Connect; new app, nobody to grandfather, `free_since` is `1.0.0`; macOS only) |
+| CNC Explorer | `com.joyodigitama.cncexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build) |
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.
