@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
   "productName": "EtherNet-IP Explorer",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "identifier": "com.joyodigitama.enip-explorer",
   "build": {
     "frontendDist": "../dist",

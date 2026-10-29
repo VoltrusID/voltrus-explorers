@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
   "productName": "BACnet Explorer",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "identifier": "com.joyodigitama.bacnet-explorer",
   "build": {
     "frontendDist": "../dist",

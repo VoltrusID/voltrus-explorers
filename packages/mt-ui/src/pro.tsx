@@ -9,7 +9,7 @@ export interface StoreStatus {
   /** Pro is sold in this build (App Store build; the Windows licence-key build too). */
   store: boolean;
   pro: boolean;
-  reason: "build" | "grandfathered" | "purchased" | "key" | "none";
+  reason: "build" | "grandfathered" | "paid" | "purchased" | "key" | "none";
   price: string | null;
   /** Pro is unlocked by entering a licence key (`store_activate`) instead of a store purchase. */
   activation?: boolean;
@@ -247,7 +247,7 @@ export function ProAboutRow() {
   const label =
     status.reason === "purchased" ? "Pro unlocked. Thank you!" :
     status.reason === "key" ? "Pro unlocked with your licence key. Thank you!" :
-    status.reason === "grandfathered" ? "Pro included with your original purchase." :
+    status.reason === "grandfathered" || status.reason === "paid" ? "Pro included with your original purchase." :
     "Free version";
   const removeKey = () => {
     setError(null);

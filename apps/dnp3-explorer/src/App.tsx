@@ -1047,7 +1047,7 @@ function App() {
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
           <p style={{ margin: "0 0 12px" }}>Connect to DNP3 outstations in SCADA networks.</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Master mode</p>
-          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor an editable list of points. Pro: click rows to operate controls (CROB and analog output, direct operate or select before operate) and import or export the point list as CSV.</p>
+          <p style={{ margin: "0 0 12px" }}>Connect to a DNP3 outstation to monitor an editable list of points. {pro ? "Click" : "Pro: click"} rows to operate controls (CROB and analog output, direct operate or select before operate) and import or export the point list as CSV.</p>
           <p style={{ margin: "0 0 4px", fontWeight: 600, color: "var(--text)" }}>Outstation mode</p>
           <p style={{ margin: "0 0 12px" }}>Run a DNP3 outstation server to simulate a device. Load device templates, auto-simulate live data.</p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>

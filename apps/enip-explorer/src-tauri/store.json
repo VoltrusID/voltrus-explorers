@@ -3,5 +3,8 @@
   "free_since": {
     "macos_version": "1.5.0",
     "ios_build": null
+  },
+  "paid_since": {
+    "date": "2026-10-28T00:00:00Z"
   }
 }

@@ -159,14 +159,24 @@ pub fn receipt_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// `original_application_version` of the installed app, if it came from the App Store. A sandbox receipt (App Review,
-/// TestFlight) gives `None`: its "1.0" would grandfather the reviewer into Pro and hide the in-app purchase from review.
-pub fn installed_original_version() -> Option<String> {
-    let bytes = receipt_paths().into_iter().find_map(|p| std::fs::read(p).ok())?;
+/// What the installed app's receipt says about its origin.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledReceipt {
+    /// `original_application_version`; `None` without a readable receipt and for sandbox receipts, whose "1.0"
+    /// would grandfather the reviewer into Pro and hide the in-app purchase from App Review.
+    pub original_version: Option<String>,
+    /// App Review, TestFlight or sandbox tester receipt.
+    pub sandbox: bool,
+}
+
+pub fn installed_receipt() -> InstalledReceipt {
+    let Some(bytes) = receipt_paths().into_iter().find_map(|p| std::fs::read(p).ok()) else {
+        return InstalledReceipt::default();
+    };
     if is_sandbox_receipt(&bytes) {
-        return None;
+        return InstalledReceipt { original_version: None, sandbox: true };
     }
-    original_application_version(&bytes)
+    InstalledReceipt { original_version: original_application_version(&bytes), sandbox: false }
 }
 
 #[cfg(test)]
