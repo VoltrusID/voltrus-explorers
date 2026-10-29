@@ -3678,6 +3678,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-mtconnect"
+version = "2.0.0"
+dependencies = [
+ "quick-xml",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "mt-nats"
 version = "2.0.0"
 dependencies = [
