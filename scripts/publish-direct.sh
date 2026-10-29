@@ -108,7 +108,7 @@ read -r -a WRANGLER <<< "${WRANGLER:-npx --yes wrangler}"
 wr() { "${WRANGLER[@]}" "$@" -c "$CONF"; }
 d1_value() { # first column of the first row of a SELECT, empty when there is none
   wr d1 execute "$DB" --remote --json --command "$1" \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["results"]; print(next(iter(r[0].values()), "") if r else "")'
+    | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["results"]; v=next(iter(r[0].values()), None) if r else None; print("" if v is None else v)'
 }
 
 # ---- build number: reuse the row of this version, else the next free one ---------------------------------------------
