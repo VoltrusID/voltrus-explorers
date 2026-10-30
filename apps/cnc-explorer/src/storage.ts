@@ -25,7 +25,7 @@ export function normalizeProfile(raw: unknown): ConnProfile | null {
   return {
     name: r.name,
     type: r.type === "fanuc" ? "fanuc" : "mtconnect",
-    url: typeof r.url === "string" ? r.url : "http://localhost:5000",
+    url: typeof r.url === "string" ? r.url : "http://localhost:5050",
     device: typeof r.device === "string" ? r.device : "",
     host: typeof r.host === "string" ? r.host : "192.168.1.100",
     port: typeof r.port === "number" ? r.port : 8193,

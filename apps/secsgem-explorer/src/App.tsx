@@ -31,7 +31,7 @@ import ConstantsView from "./ConstantsView";
 import EventsView from "./EventsView";
 import MessagesView from "./MessagesView";
 import ProgramsView from "./ProgramsView";
-import RemoteView from "./RemoteView";
+import RemoteView, { DEFAULT_PARAMS, DEFAULT_RCMD, type RemoteResult } from "./RemoteView";
 import SimDashboard from "./SimView";
 import StatusView from "./StatusView";
 import TerminalView, { type TerminalLine } from "./TerminalView";
@@ -40,7 +40,7 @@ import { useTrend } from "./useTrend";
 import { useStatusVars } from "./useStatusVars";
 import { eventRow, hostConnectOf, hostFormOf, pushCapped, sameHost, type EventRow } from "./gem";
 import { HOST_DEFAULTS, loadProfiles, needsPro, saveProfiles, type ConnProfile } from "./storage";
-import type { ConnInfo, ControlView, EstablishView, GemEvent, HostForm, LocalReport, MsgEntry, OnlineView } from "./types";
+import type { ConnInfo, ControlView, EstablishView, GemEvent, HostForm, LocalReport, MsgEntry, OnlineView, ParamIn } from "./types";
 import { ackText } from "./gem";
 import { hint } from "./ui";
 
@@ -113,6 +113,9 @@ function App() {
   const [eventRows, setEventRows] = useState<EventRow[]>([]);
   const [alarmEvents, setAlarmEvents] = useState<AlarmEvent[]>([]);
   const [terminal, setTerminal] = useState<TerminalLine[]>([]);
+  const [rcmd, setRcmd] = useState(DEFAULT_RCMD);
+  const [rcmdParams, setRcmdParams] = useState<ParamIn[]>(DEFAULT_PARAMS);
+  const [rcmdResults, setRcmdResults] = useState<RemoteResult[]>([]);
 
   // Simulator
   const [simPort, setSimPort] = useState<number | null>(null);
@@ -491,7 +494,7 @@ function App() {
         />
       )}
       {tab === "alarms" && <AlarmsView events={alarmEvents} onClear={() => setAlarmEvents([])} addLog={addLog} />}
-      {tab === "commands" && <RemoteView pro={pro} requirePro={requirePro} addLog={addLog} />}
+      {tab === "commands" && <RemoteView rcmd={rcmd} setRcmd={setRcmd} params={rcmdParams} setParams={setRcmdParams} result={rcmdResults} setResult={setRcmdResults} pro={pro} requirePro={requirePro} addLog={addLog} />}
       {tab === "programs" && <ProgramsView />}
       {tab === "terminal" && (
         <TerminalView

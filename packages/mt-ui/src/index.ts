@@ -86,3 +86,4 @@ export type { AssistantBlock, AssistantContext, AssistantProtocol, AssistantTask
 
 export { noteDeviceSuccess, noteDeviceError } from "./review";
 export { withUtm, openExternal } from "./links";
+export { TREND_COLORS, nextTrendColor, toLocalChartTime } from "./trend";

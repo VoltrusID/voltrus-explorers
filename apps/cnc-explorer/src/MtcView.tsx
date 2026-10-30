@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Callout, DataTable, EmptyState, IconButton, ProBadge, Tabs, saveTextFile } from "@mactools/ui";
 import type { Tone } from "@mactools/ui";
 import { Copy, Download, FileCode, Plus, RefreshCw, X } from "lucide-react";
-import { formatValue, numericValue, sortConditions, toCsv, type Item } from "./mtc";
+import { formatValue, numericValue, prettyXml, sortConditions, toCsv, type Item } from "./mtc";
 import { FREE_LIVE_ITEMS } from "./storage";
 import type { AssetList, Component, Device, Devices, Observation } from "./types";
 
@@ -279,7 +279,7 @@ function AssetsTab({ addLog }: { addLog: Props["addLog"] }) {
                     <Copy size={14} strokeWidth={1.75} />
                   </IconButton>
                 </div>
-                <pre className="mono" style={{ margin: 0, padding: 10, overflow: "auto", flex: 1, fontSize: "var(--fs-xs)", lineHeight: 1.5, color: "var(--text)" }}>{asset.rawXml}</pre>
+                <pre className="mono" style={{ margin: 0, padding: 10, overflow: "auto", flex: 1, fontSize: "var(--fs-xs)", lineHeight: 1.5, color: "var(--text)" }}>{prettyXml(asset.rawXml)}</pre>
               </>
             ) : (
               <EmptyState compact title="No asset selected" />

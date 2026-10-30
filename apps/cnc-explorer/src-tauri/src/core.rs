@@ -874,27 +874,19 @@ async fn sim_feed(mut rx: broadcast::Receiver<Observation>, emit: Emit) {
     }
 }
 
-/// Logs client connections and request counts of the CNC simulator once per second.
+/// Logs CNC simulator client connections and disconnections when the session count changes.
 async fn focas_monitor(sim: Arc<FocasSimulator>, emit: Emit) {
     let mut sessions = 0;
-    let mut requests = 0;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tick.tick().await;
-        let (s, r) = (sim.active_sessions(), sim.requests_served());
+        let s = sim.active_sessions();
         if s != sessions {
             emit(
                 "cnc-log",
                 json!({ "direction": "info", "message": format!("[cnc] {s} client(s) connected") }),
             );
             sessions = s;
-        }
-        if r != requests {
-            emit(
-                "cnc-log",
-                json!({ "direction": "rx", "message": format!("[cnc] {} request(s) served", r - requests) }),
-            );
-            requests = r;
         }
     }
 }

@@ -23,7 +23,7 @@ fn default_timeout_ms() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
-    /// Agent base URL, e.g. `http://localhost:5000` or `https://demo.mtconnect.org`.
+    /// Agent base URL, e.g. `http://localhost:5050` or `https://demo.mtconnect.org`.
     pub base_url: String,
     /// Restrict requests to one device (`/{device}/current`, ...). Name or uuid.
     #[serde(default)]

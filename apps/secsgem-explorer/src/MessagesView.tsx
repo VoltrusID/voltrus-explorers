@@ -67,7 +67,7 @@ export default function MessagesView({ entries, onClear, requirePro, addLog, can
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 8, overflow: "auto" }}>
       <div style={row}>
         <Segmented
           label="Message filter"
@@ -80,7 +80,7 @@ export default function MessagesView({ entries, onClear, requirePro, addLog, can
         <Button size="sm" onClick={() => void exportCsv()} disabled={shown.length === 0}>Export CSV <ProBadge /></Button>
         <Button size="sm" onClick={() => { onClear(); setSelected(null); }} disabled={entries.length === 0}>Clear</Button>
       </div>
-      <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 8 }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 160, gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
           <DataTable
             columns={[
@@ -112,7 +112,7 @@ export default function MessagesView({ entries, onClear, requirePro, addLog, can
         </div>
       </div>
       {canCompose && (
-        <div style={{ ...card, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ ...card, flexShrink: 0, maxHeight: 300, overflow: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={row}>
             <strong style={{ fontSize: "var(--fs-sm)" }}>SML composer <ProBadge /></strong>
             <Field label="">
@@ -128,14 +128,14 @@ export default function MessagesView({ entries, onClear, requirePro, addLog, can
             value={sml}
             onChange={(e) => setSml(e.target.value)}
             aria-label="SML message"
-            style={{ resize: "vertical" }}
+            style={{ resize: "vertical", maxHeight: 160, flexShrink: 0 }}
           />
           <span style={hint}>
             One message in SML, e.g. <span className="mono">S1F13 W &lt;L [2] &lt;A "MDLN"&gt; &lt;A "SOFTREV"&gt;&gt;.</span> With the W-bit the reply is shown below; without it nothing is awaited.
           </span>
           {error && <Callout tone="danger">{error}</Callout>}
           {reply && (
-            <pre className="mono" style={{ margin: 0, fontSize: "var(--fs-xs)", whiteSpace: "pre-wrap" }}>
+            <pre className="mono" style={{ margin: 0, fontSize: "var(--fs-xs)", whiteSpace: "pre-wrap", maxHeight: 180, overflow: "auto", flexShrink: 0 }}>
               {reply.name ? `Reply ${reply.name}\n${reply.sml}` : "Sent (no W-bit, no reply awaited)"}
             </pre>
           )}

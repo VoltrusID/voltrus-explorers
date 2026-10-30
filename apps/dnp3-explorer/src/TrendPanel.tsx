@@ -10,7 +10,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { Activity, X } from "lucide-react";
-import { Button, EmptyState, IconButton, Segmented } from "@mactools/ui";
+import { Button, EmptyState, IconButton, Segmented, toLocalChartTime } from "@mactools/ui";
 
 export interface TrendSeries {
   name: string;
@@ -140,7 +140,7 @@ export default function TrendPanel({ series, onRemove, windowSec, onWindowChange
       const bySecond = new Map<number, number>();
       for (const p of s.points) {
         if (p.t < cutoff) continue;
-        bySecond.set(Math.floor(p.t / 1000), p.v);
+        bySecond.set(toLocalChartTime(Math.floor(p.t / 1000)), p.v);
       }
       const unique: LineData<Time>[] = Array.from(bySecond, ([t, v]) => ({
         time: t as Time,

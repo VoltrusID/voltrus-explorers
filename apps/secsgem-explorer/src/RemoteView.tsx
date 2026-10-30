@@ -1,22 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Callout, Field, IconButton, SheetSelect } from "@mactools/ui";
 import { Plus, Send, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import type { CommandView, ParamIn } from "./types";
 import { AckBadge, Locked, card, hint, row, type AddLog, type RequirePro } from "./ui";
 
 const KINDS = ["ascii", "u1", "u2", "u4", "i1", "i2", "i4", "f4", "f8", "bool", "binary", "sml"].map((k) => ({ value: k, label: k.toUpperCase() }));
 
+export interface RemoteResult {
+  rcmd: string;
+  view: CommandView;
+}
+
+export const DEFAULT_RCMD = "START";
+export const DEFAULT_PARAMS: ParamIn[] = [{ name: "PPID", kind: "ascii", value: "ETCH_SIO2" }];
+
 interface Props {
+  /** Draft and results live in the parent so they survive a switch to another tab. */
+  rcmd: string;
+  setRcmd: Dispatch<SetStateAction<string>>;
+  params: ParamIn[];
+  setParams: Dispatch<SetStateAction<ParamIn[]>>;
+  result: RemoteResult[];
+  setResult: Dispatch<SetStateAction<RemoteResult[]>>;
   pro: boolean;
   requirePro: RequirePro;
   addLog: AddLog;
 }
 
-export default function RemoteView({ pro, requirePro, addLog }: Props) {
-  const [rcmd, setRcmd] = useState("START");
-  const [params, setParams] = useState<ParamIn[]>([{ name: "PPID", kind: "ascii", value: "ETCH_SIO2" }]);
-  const [result, setResult] = useState<{ rcmd: string; view: CommandView }[]>([]);
+export default function RemoteView({ rcmd, setRcmd, params, setParams, result, setResult, pro, requirePro, addLog }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -46,7 +58,7 @@ export default function RemoteView({ pro, requirePro, addLog }: Props) {
           <Field label="Command (RCMD)">
             <input className="vt-input vt-input--mono" style={{ width: 200 }} value={rcmd} onChange={(e) => setRcmd(e.target.value)} />
           </Field>
-          <Button size="sm" onClick={() => { setRcmd("START"); setParams([{ name: "PPID", kind: "ascii", value: "ETCH_SIO2" }]); }}>START</Button>
+          <Button size="sm" onClick={() => { setRcmd(DEFAULT_RCMD); setParams(DEFAULT_PARAMS); }}>START</Button>
           <Button size="sm" onClick={() => { setRcmd("STOP"); setParams([]); }}>STOP</Button>
           <Button size="sm" onClick={() => { setRcmd("PAUSE"); setParams([]); }}>PAUSE</Button>
           <Button size="sm" onClick={() => { setRcmd("RESUME"); setParams([]); }}>RESUME</Button>

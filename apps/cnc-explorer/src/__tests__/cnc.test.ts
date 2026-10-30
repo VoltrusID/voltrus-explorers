@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyObservations, csvCell, flattenItems, formatValue, liveIdSet, sortConditions, toCsv, trendLabels } from "../mtc";
+import { applyObservations, csvCell, flattenItems, formatValue, liveIdSet, prettyXml, sortConditions, toCsv, trendLabels } from "../mtc";
 import { alarmTypeName, fanucTrendRows, pmcHex } from "../fanuc";
 import { needsPro, loadProfiles, normalizeProfile, saveProfiles, PROFILES_KEY, type ConnProfile } from "../storage";
 import type { DataItem, Devices, Observation } from "../types";
@@ -104,5 +104,15 @@ describe("profiles", () => {
     expect(needsPro([p], "b", false)).toBe(true);
     expect(needsPro([p], "a", false)).toBe(false);
     expect(needsPro([p], "b", true)).toBe(false);
+  });
+});
+
+describe("prettyXml", () => {
+  it("indents nested elements and keeps text inline", () => {
+    const x = '<a x="1"><b>hi</b><c/><d><e>1</e></d></a>';
+    expect(prettyXml(x)).toBe('<a x="1">\n  <b>hi</b>\n  <c/>\n  <d>\n    <e>1</e>\n  </d>\n</a>');
+  });
+  it("returns plain text unchanged", () => {
+    expect(prettyXml("no tags")).toBe("no tags");
   });
 });

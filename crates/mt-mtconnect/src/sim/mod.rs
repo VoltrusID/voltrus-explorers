@@ -25,7 +25,7 @@ fn default_bind() -> String {
     "127.0.0.1".into()
 }
 fn default_port() -> u16 {
-    5000
+    5050
 }
 fn default_shdr_port() -> Option<u16> {
     Some(7878)

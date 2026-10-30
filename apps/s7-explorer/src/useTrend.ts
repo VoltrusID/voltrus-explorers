@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { nextTrendColor } from "@mactools/ui";
 import type { TrendSeries } from "./TrendPanel";
 
 export function useTrend(tableData: { name: string; value: string | number }[]) {
@@ -39,8 +40,7 @@ export function useTrend(tableData: { name: string; value: string | number }[]) 
       } else {
         const row = tableData.find((r) => r.name === name);
         const v = row ? (typeof row.value === "number" ? row.value : parseFloat(String(row.value))) : 0;
-        const colors = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#ec4899", "#14b8a6", "#f97316"];
-        next.set(name, { name, color: colors[next.size % colors.length], points: [{ t: Date.now(), v: isNaN(v) ? 0 : v }] });
+        next.set(name, { name, color: nextTrendColor(Array.from(next.values(), (x) => x.color)), points: [{ t: Date.now(), v: isNaN(v) ? 0 : v }] });
       }
       return next;
     });

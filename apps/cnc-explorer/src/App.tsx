@@ -62,13 +62,13 @@ const BETA_EXPLAINER =
 type FormValues = Record<string, string | number>;
 
 const DEFAULTS: Record<ConnType, FormValues> = {
-  mtconnect: { url: "http://localhost:5000", device: "", timeout: 10000, interval: 500 },
+  mtconnect: { url: "http://localhost:5050", device: "", timeout: 10000, interval: 500 },
   fanuc: { host: "192.168.1.100", port: 8193, timeout: 5000, interval: 1000 },
 };
 
 const FIELDS = {
   mtconnect: [
-    { name: "url", label: "Agent URL", type: "text" as const, default: "http://localhost:5000" },
+    { name: "url", label: "Agent URL", type: "text" as const, default: "http://localhost:5050" },
     { name: "device", label: "Device (optional)", type: "text" as const, default: "", placeholder: "All devices" },
     { name: "timeout", label: "Timeout (ms)", type: "number" as const, default: 10000 },
     { name: "interval", label: "Stream interval (ms)", type: "number" as const, default: 500 },
@@ -142,7 +142,7 @@ function App() {
   // Simulators
   const [simKind, setSimKind] = useState<ConnType>("mtconnect");
   const [mtcTemplate, setMtcTemplate] = useState("Vmc3Axis");
-  const [mtcPort, setMtcPort] = useState(5000);
+  const [mtcPort, setMtcPort] = useState(5050);
   const [shdrOn, setShdrOn] = useState(true);
   const [shdrPort, setShdrPort] = useState(7878);
   const [mtcSim, setMtcSim] = useState<MtcSimInfo | null>(null);

@@ -105,3 +105,25 @@ export function csvCell(v: unknown): string {
 export function toCsv(header: string[], rows: unknown[][]): string {
   return [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\n") + "\n";
 }
+
+/** Indents an XML string for display. Returns the input unchanged when it has no tags. */
+export function prettyXml(xml: string): string {
+  const tokens = xml.replace(/>\s+</g, "><").trim().match(/<[^>]+>|[^<]+/g);
+  if (!tokens) return xml;
+  const out: string[] = [];
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const isOpen = /^<[^/!?]/.test(t) && !t.endsWith("/>");
+    // `<a>text</a>` stays on one line.
+    if (isOpen && i + 2 < tokens.length && !tokens[i + 1].startsWith("<") && tokens[i + 2].startsWith("</")) {
+      out.push("  ".repeat(depth) + t + tokens[i + 1].trim() + tokens[i + 2]);
+      i += 2;
+      continue;
+    }
+    if (t.startsWith("</")) depth = Math.max(0, depth - 1);
+    out.push("  ".repeat(depth) + t.trim());
+    if (isOpen) depth++;
+  }
+  return out.join("\n");
+}
