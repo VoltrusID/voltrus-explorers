@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use mt_focas::{
-    AlarmMessage, AlarmQuery, AlarmType, CncProfile, FocasClient, FocasConfig, FocasSimulator,
-    MacroValue, NumberedValues, PmcArea, PmcDataType, PmcValue, ProgramEntry, SimAlarm,
-    SimulatorConfig, SysInfo,
+use focas_proto::{
+    AlarmMessage, AlarmQuery, AlarmType, CncProfile, ExtraQuery, FocasClient, FocasConfig,
+    FocasSimulator, MacroValue, NumberedValues, PmcArea, PmcDataType, PmcValue, ProgramEntry,
+    SimAlarm, SimulatorConfig, SysInfo,
 };
 use mt_mtconnect::{
     AgentClient, AgentConfig, AgentSimulator, AssetList, Category, ConditionLevel, Devices,
@@ -20,14 +20,16 @@ use serde_json::{Value as Json, json};
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 
+use crate::capture::{self, CaptureBundle, MachineState};
+
 /// Event sink: `(event name, JSON payload)`.
 pub type Emit = Arc<dyn Fn(&str, Json) + Send + Sync>;
 
 /// The value of a reading, or `None` with the refusal recorded in `errors`.
-fn take<T: Clone>(r: &mt_focas::Reading<T>, what: &str, errors: &mut Vec<String>) -> Option<T> {
+fn take<T: Clone>(r: &focas_proto::Reading<T>, what: &str, errors: &mut Vec<String>) -> Option<T> {
     match r {
-        mt_focas::Reading::Value(v) => Some(v.clone()),
-        mt_focas::Reading::Failed(f) => {
+        focas_proto::Reading::Value(v) => Some(v.clone()),
+        focas_proto::Reading::Failed(f) => {
             errors.push(format!("{what}: {}", f.message));
             None
         }
@@ -109,6 +111,13 @@ pub struct ProgramView {
     pub block: Option<String>,
 }
 
+/// A watched macro variable; `value` is `None` when the controller flags it empty or refuses it.
+#[derive(Debug, Clone, Serialize)]
+pub struct MacroRow {
+    pub number: u32,
+    pub value: Option<f64>,
+}
+
 /// One poll of a FANUC CNC. An item the controller refuses is `None` and listed in `errors`.
 #[derive(Debug, Clone, Serialize)]
 pub struct FanucPoll {
@@ -117,6 +126,7 @@ pub struct FanucPoll {
     pub feed_rate: Option<f64>,
     pub spindle_speed: Option<f64>,
     pub program: ProgramView,
+    pub macros: Vec<MacroRow>,
     pub alarm_bits: Option<u32>,
     pub alarm_types: Vec<String>,
     pub errors: Vec<String>,
@@ -166,7 +176,7 @@ pub enum FocasSimAction {
     EmergencyOff,
 }
 
-fn status_view(s: &mt_focas::StatInfo) -> StatusView {
+fn status_view(s: &focas_proto::StatInfo) -> StatusView {
     StatusView {
         mode: coded(s.aut.label(), s.aut),
         run: coded(s.run.label(), s.run),
@@ -369,11 +379,22 @@ impl Core {
         }
     }
 
-    pub async fn fanuc_poll(&self) -> Result<FanucPoll, String> {
+    /// One poll: the batched snapshot, then servo load, program name and the `macros` the UI
+    /// watches in one extended read, and the executing block.
+    pub async fn fanuc_poll(&self, macros: Vec<u32>) -> Result<FanucPoll, String> {
         let c = self.fanuc_client().await?;
+        let macros: Vec<u32> = macros
+            .into_iter()
+            .filter(|n| *n > 0)
+            .take(capture::MAX_WATCHED_MACROS)
+            .collect();
         let snap = c.snapshot().await.map_err(|e| self.fail("poll", e))?;
-        let (servo, name, block) =
-            tokio::join!(c.servo_load(), c.main_program_name(), c.executing_block(80));
+        let query = ExtraQuery {
+            servo_load: true,
+            program_name: true,
+            macros: macros.clone(),
+        };
+        let (extra, block) = tokio::join!(c.extended_snapshot(&query), c.executing_block(80));
         let mut errors = Vec::new();
 
         let status = take(&snap.status, "status", &mut errors).map(|s| status_view(&s));
@@ -390,9 +411,28 @@ impl Core {
             &mut errors,
         )
         .unwrap_or_default();
-        let servo = servo
-            .map_err(|e| errors.push(format!("servo load: {e}")))
+        // A failed request (not a refused item) loses the extras but not the snapshot.
+        let extra = extra
+            .map_err(|e| errors.push(format!("extended read: {e}")))
+            .ok();
+        let servo = extra
+            .as_ref()
+            .and_then(|x| x.servo_load.as_ref())
+            .and_then(|r| take(r, "servo load", &mut errors))
             .unwrap_or_default();
+        let name = extra
+            .as_ref()
+            .and_then(|x| x.program_name.as_ref())
+            .and_then(|r| r.value().cloned());
+        let macro_rows: Vec<MacroRow> = extra
+            .iter()
+            .flat_map(|x| &x.macros)
+            .zip(&macros)
+            .map(|(r, n)| MacroRow {
+                number: *n,
+                value: take(r, &format!("macro #{n}"), &mut errors).and_then(|m| m.value),
+            })
+            .collect();
         let at = |v: &[Option<f64>], i: usize| v.get(i).copied().flatten();
         let axes = names
             .iter()
@@ -411,7 +451,8 @@ impl Core {
         let programs = take(&snap.programs, "program numbers", &mut errors);
         let sequence = take(&snap.sequence_number, "sequence number", &mut errors);
         let bits = take(&snap.alarm_bits, "alarm bits", &mut errors);
-        // The program name call is 30i-and-later only; a refusal is normal on older controls.
+        // The program name call is 30i-and-later only; a refusal is normal on older controls, so
+        // it is not listed in `errors`.
         Ok(FanucPoll {
             status,
             axes,
@@ -420,16 +461,52 @@ impl Core {
             program: ProgramView {
                 running: programs.map(|p| p.running),
                 main: programs.map(|p| p.main),
-                name: name.ok(),
+                name,
                 sequence,
                 block: block.ok().map(|b| b.text),
             },
+            macros: macro_rows,
             alarm_bits: bits.map(|b| b.0),
             alarm_types: bits
                 .map(|b| b.types().iter().map(|t| format!("{t:?}")).collect())
                 .unwrap_or_default(),
             errors,
         })
+    }
+
+    /// Records a read-only probe of the connected CNC on a session of its own (see
+    /// [`crate::capture`]) and returns the files to save. The live session keeps polling; the
+    /// controller sees a second, short connection.
+    pub async fn fanuc_capture(
+        &self,
+        state: MachineState,
+        macros: Vec<u32>,
+        app_version: &str,
+    ) -> Result<CaptureBundle, String> {
+        let config = self.fanuc_client().await?.config().clone();
+        self.log(
+            "tx",
+            format!(
+                "Capture session to {}:{} (state: {})",
+                config.host,
+                config.port,
+                state.label()
+            ),
+        );
+        let bundle = capture::record(config, state, &macros, app_version)
+            .await
+            .map_err(|e| self.fail("capture", e))?;
+        self.log(
+            "rx",
+            format!(
+                "capture: {} frame exchange(s), {} call(s), {} failed, replay {}",
+                bundle.exchanges,
+                bundle.calls,
+                bundle.failed_calls,
+                if bundle.replay_ok { "ok" } else { "differs" }
+            ),
+        );
+        Ok(bundle)
     }
 
     pub async fn fanuc_alarms(&self) -> Result<Vec<AlarmMessage>, String> {

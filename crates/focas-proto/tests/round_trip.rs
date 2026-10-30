@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use mt_focas::codec::{self, Command, DEVICE_CNC, SubRequest};
-use mt_focas::functions::{self, req_position, req_sequence_number, req_statinfo};
-use mt_focas::*;
+use focas_proto::codec::{self, Command, DEVICE_CNC, SubRequest};
+use focas_proto::functions::{self, req_position, req_sequence_number, req_statinfo};
+use focas_proto::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -774,5 +774,82 @@ async fn garbage_closes_only_that_session() {
         .unwrap_or(0);
     assert_eq!(n, 0, "no answer to garbage, connection closed");
     assert!(client.statinfo().await.is_ok());
+    sim.stop().await;
+}
+
+#[tokio::test]
+async fn extended_snapshot_reads_servo_name_and_macros() {
+    let (sim, client) = start().await;
+    sim.with_model(|m| {
+        m.cycle_start();
+    });
+    sim.advance(Duration::from_millis(1500));
+    let extra = client
+        .extended_snapshot(&ExtraQuery {
+            servo_load: true,
+            program_name: true,
+            macros: vec![500, 501, 9999],
+        })
+        .await
+        .unwrap();
+    let load = extra.servo_load.unwrap().into_result().unwrap();
+    assert_eq!(load.len(), 32);
+    assert!(load[0].is_some());
+    assert_eq!(
+        extra.program_name.unwrap().into_result().unwrap(),
+        "//CNC_MEM/USER/PATH1/O3000"
+    );
+    assert_eq!(extra.macros.len(), 3);
+    assert_eq!(extra.macros[1].value().unwrap().value, Some(1250.5));
+    // a vacant variable is a value of `None`, not a failure
+    assert_eq!(extra.macros[2].value().unwrap().value, None);
+
+    // nothing asked, nothing sent
+    let before = sim.requests_served();
+    let none = client
+        .extended_snapshot(&ExtraQuery::default())
+        .await
+        .unwrap();
+    assert!(none.servo_load.is_none() && none.program_name.is_none() && none.macros.is_empty());
+    assert_eq!(sim.requests_served(), before);
+    assert!(matches!(
+        client
+            .extended_snapshot(&ExtraQuery {
+                macros: vec![0],
+                ..Default::default()
+            })
+            .await,
+        Err(FocasError::InvalidArgument(_))
+    ));
+    sim.stop().await;
+}
+
+#[tokio::test]
+async fn a_refused_item_fails_alone() {
+    let (sim, client) = start().await;
+    sim.with_model(|m| {
+        m.refuse
+            .insert(functions::func::ACTUAL_SPINDLE.function, ew::NOOPT);
+        m.refuse
+            .insert(functions::func::PROGRAM_NAME.function, ew::FUNC);
+    });
+    let snap = client.snapshot().await.unwrap();
+    assert!(snap.status.is_value());
+    assert!(snap.positions.absolute.is_value());
+    match &snap.spindle_speed {
+        Reading::Failed(f) => assert_eq!(f.code, Some(ew::NOOPT)),
+        other => panic!("spindle should be refused: {other:?}"),
+    }
+    let extra = client
+        .extended_snapshot(&ExtraQuery {
+            servo_load: true,
+            program_name: true,
+            macros: vec![500],
+        })
+        .await
+        .unwrap();
+    assert!(extra.servo_load.unwrap().is_value());
+    assert!(!extra.program_name.unwrap().is_value());
+    assert!(extra.macros[0].is_value());
     sim.stop().await;
 }

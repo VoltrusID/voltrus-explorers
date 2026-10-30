@@ -1,4 +1,4 @@
-// JSON shapes of the Rust commands (crates/mt-mtconnect, crates/mt-focas and src-tauri/src/core.rs).
+// JSON shapes of the Rust commands (crates/mt-mtconnect, crates/focas-proto and src-tauri/src/core.rs).
 
 export type ConnType = "mtconnect" | "fanuc";
 
@@ -160,12 +160,19 @@ export interface AxisRow {
   servo_load: number | null;
 }
 
+/** A macro variable the live view watches; `null` when the controller flags it empty or refuses it. */
+export interface MacroRow {
+  number: number;
+  value: number | null;
+}
+
 export interface FanucPoll {
   status: StatusView | null;
   axes: AxisRow[];
   feed_rate: number | null;
   spindle_speed: number | null;
   program: { running: number | null; main: number | null; name: string | null; sequence: number | null; block: string | null };
+  macros: MacroRow[];
   alarm_bits: number | null;
   alarm_types: string[];
   errors: string[];
@@ -189,6 +196,23 @@ export interface NumberedValues {
   axis: number;
   data_type: number;
   values: number[];
+}
+
+/** What the operator says the machine is doing while a capture is recorded; the slug goes into the file name and `meta`. */
+export type MachineState = "idle" | "running" | "feed-hold" | "alarm" | "estop" | "mdi";
+
+/** A recorded capture: the three files to save and how the recording went (Rust `CaptureBundle`). */
+export interface CaptureBundle {
+  capture_json: string;
+  report_json: string;
+  summary: string;
+  base_name: string;
+  exchanges: number;
+  calls: number;
+  failed_calls: number;
+  aborted: string | null;
+  replay_ok: boolean;
+  notes: string[];
 }
 
 export interface FocasSimView {

@@ -1,4 +1,4 @@
-//! Plays a FANUC controller: `mt-focas`'s simulator serving a three-axis
+//! Plays a FANUC controller: `focas-proto`'s simulator serving a three-axis
 //! mill that runs a demo program, for any FOCAS/Ethernet client.
 //!
 //! Points are the controller as an operator sees it. Writing a control
@@ -8,7 +8,7 @@
 use std::io::ErrorKind;
 use std::time::Duration;
 
-use mt_focas::{AlarmType, CncModel, EmergencyState, FocasSimulator, RunState, SimulatorConfig};
+use focas_proto::{AlarmType, CncModel, EmergencyState, FocasSimulator, RunState, SimulatorConfig};
 use tokio::sync::mpsc;
 use tokio::time::{Instant, MissedTickBehavior};
 use vt_protocol::{
@@ -385,7 +385,7 @@ fn bind_error(spec: &FocasSimulatorSpec, error: &std::io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use mt_focas::CncProfile;
+    use focas_proto::CncProfile;
 
     use super::*;
 

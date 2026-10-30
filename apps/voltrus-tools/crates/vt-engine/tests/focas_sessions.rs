@@ -1,4 +1,4 @@
-//! A FANUC CNC simulator (`mt-focas`) and clients talking over loopback
+//! A FANUC CNC simulator (`focas-proto`) and clients talking over loopback
 //! through the engine, the way the app drives them: the controller's status,
 //! axes, spindle and alarms as points, macro writes, controls set on the
 //! simulator, and losing the controller.

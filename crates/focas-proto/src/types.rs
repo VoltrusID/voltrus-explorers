@@ -497,3 +497,28 @@ pub struct Snapshot {
     pub sequence_number: Reading<i32>,
     pub alarm_bits: Reading<AlarmBits>,
 }
+
+/// Optional reads of [`FocasClient::extended_snapshot`](crate::FocasClient::extended_snapshot),
+/// on top of what [`Snapshot`] carries.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtraQuery {
+    /// Servo load meter of every axis slot (function `0x56`).
+    pub servo_load: bool,
+    /// Main program name with path (function `0xb9`, series 30i and later).
+    pub program_name: bool,
+    /// Macro variables to read, one sub-packet each so that a refused one does not hide the
+    /// others. Numbers start at 1.
+    pub macros: Vec<u32>,
+}
+
+/// Result of [`FocasClient::extended_snapshot`](crate::FocasClient::extended_snapshot). A field
+/// is `None` when it was not asked for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtraSnapshot {
+    /// One value per axis slot of the payload (32 in the reference sample); keep the first
+    /// `n` for `n` controlled axes.
+    pub servo_load: Option<Reading<Vec<Option<f64>>>>,
+    pub program_name: Option<Reading<String>>,
+    /// One entry per requested macro number, in request order.
+    pub macros: Vec<Reading<MacroValue>>,
+}

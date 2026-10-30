@@ -51,3 +51,18 @@ export function saveProfiles(profiles: ConnProfile[], storage: Pick<Storage, "se
 export function needsPro(profiles: ConnProfile[], name: string, pro: boolean): boolean {
   return !pro && !profiles.some((p) => p.name === name) && profiles.length >= FREE_PROFILE_LIMIT;
 }
+
+export const WATCH_KEY = "cnc-explorer-fanuc-watch";
+
+/** The macro variables the FANUC live view watches, as the text the user typed (`500, 501`). */
+export function loadWatch(storage: Pick<Storage, "getItem"> = localStorage): string {
+  try {
+    return storage.getItem(WATCH_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function saveWatch(text: string, storage: Pick<Storage, "setItem"> = localStorage) {
+  storage.setItem(WATCH_KEY, text);
+}

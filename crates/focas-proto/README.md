@@ -1,4 +1,4 @@
-# mt-focas
+# focas-proto
 
 A pure-Rust FANUC **FOCAS/Ethernet** client (TCP 8193) and a **CNC simulator** that speaks the same
 wire protocol. No FANUC library is involved, so it builds and runs on macOS (and anywhere else
@@ -13,11 +13,12 @@ Rust does). FANUC ships FOCAS only as a C library for Windows and Linux.
 let client = FocasClient::connect(FocasConfig::new("192.168.1.50")).await?;
 let info = client.sysinfo().await?;          // series, version, max axes
 let snap = client.snapshot().await?;         // status, positions, feed, spindle, program, alarms
+let extra = client.extended_snapshot(&ExtraQuery { servo_load: true, program_name: true, macros: vec![500] }).await?;
 client.disconnect().await?;
 ```
 
 ```text
-cargo run -p mt-focas --example focas_sim -- 8193 127.0.0.1 31i --run
+cargo run -p focas-proto --example focas_sim -- 8193 127.0.0.1 31i --run
 ```
 
 ## Not verified against a real controller
@@ -56,7 +57,7 @@ Details and the byte-exact samples are in `src/codec.rs` and `src/functions.rs` 
 | Client call | Function | Source |
 | --- | --- | --- |
 | `sysinfo` | `01 18` | pyfanuc `getsysinfo` |
-| `statinfo` (aut, run, motion, mstb, emergency, alarm, edit) | `01 19` | pyfanuc `statinfo` (14-byte payload only) |
+| `statinfo` (aut, run, motion, mstb, emergency, alarm, edit) | `01 19` | pyfanuc `statinfo` (14-byte payload; an 18-byte payload is read as the 9-word `ODBST` of `fwlib32.h`, no capture shows one) |
 | `axis_names` | `01 89` | pyfanuc `protocol.txt` + `sample_multipacket.md` |
 | `read_position` / `read_positions` (absolute 4, machine 1, relative 6, distance-to-go 7, skip 8) | `01 26` | pyfanuc `readaxes`, `sample_with_error.md` |
 | `actual_feed`, `spindle_speed` | `01 24`, `01 25` | pyfanuc `readactfeed`, `readactspindlespeed` |
@@ -74,6 +75,7 @@ Details and the byte-exact samples are in `src/codec.rs` and `src/functions.rs` 
 | `read_diag` | `01 30` | pyfanuc `readdiag` |
 | `read_pmc` (byte/word/dword, areas G F Y X A R T K C D) | `02 8001` | pyfanuc `readpmc` |
 | `snapshot` | several in one request | `sample_with_error.md` shows the multi-request |
+| `extended_snapshot` | servo load, program name, one sub-packet per macro number | the single calls above, batched; a refused item fails alone |
 | `request` | any | raw sub-packets with the same framing, splitting and echo checks |
 
 Field names and the meaning of the `statinfo`, `sysinfo`, alarm and axis-position values follow
@@ -115,7 +117,7 @@ it was recorded from hardware.
   (4-sub-packet request), `sample_with_error.md` (9-sub-packet request and response, including the
   error sub-packets 1 and 6), its README (PMC D2204 request and response, diagnosis 980/981
   payload) and open/close packets; the scaled-number decoder against the sample values and the
-  pyfocas doctest value. `cargo test -p mt-focas`.
+  pyfocas doctest value. `cargo test -p focas-proto`.
 - **Round trip:** client against simulator over loopback TCP for every implemented call, plus
   timeouts, dropped connections, a silent server, garbage input, several clients, multi-request
   splitting, and a raw-socket replay of the 9-sub-packet pyfanuc request.
@@ -144,14 +146,60 @@ it was recorded from hardware.
   from the low two bytes of the slot and was never checked against a capture. Parameter and
   diagnosis payloads use `max_axis * 4 + 8` bytes per number as pyfanuc's `readparam` does, with
   `max_axis` from `sysinfo`; the 31i diagnosis form uses another layout (function `93`).
-- `statinfo` accepts only the 14-byte (7-word) payload the reference decodes, although the FOCAS
-  `ODBST` of 16/18/21/0i/30i has 9 words; pyfanuc itself only decodes it for CNC types `16` and `31`.
+- `statinfo`: the reference decodes the 14-byte (7-word) payload; the FOCAS `ODBST` of 16/18/21/0i/30i has 9 words
+  (two leading `hdck`/`tmmode` words, then the same seven), so an 18-byte payload is read that way. No capture shows
+  18 bytes; pyfanuc itself only decodes statinfo for CNC types `16` and `31`.
 - The `AlarmType` names are the 30i / 0i-D/F table; older series number alarm bits differently.
 - `snapshot` sends at most 9 sub-packets per request (the largest seen in the samples).
 
+## Probe, capture and replay
+
+Checking a controller by hand is slow, so the crate carries a read-only probe and a frame recorder:
+
+- `probe::run(&client, &ProbeOptions::default())` runs every read once and returns a `ProbeReport`: the decoded
+  result of each call as JSON, plus the values an operator can compare with the CNC screen (`to_text()` prints them).
+  It never writes to the controller.
+- `FocasClient::connect_with_capture` records every request and response frame, hex, tagged with the call
+  (`set_capture_label`) and returned by `take_exchanges()`; a connect that fails hands back the frames up to the
+  failure (`CaptureFailure`). A `Capture` is that list as JSON (`format: "focas-capture/1"`).
+- `ReplayServer::start(&capture)` serves a capture over loopback: a request is answered with the response recorded for
+  the same request bytes (several answers to one request play in order, the last repeats; a recorded timeout or drop
+  drops the connection; a request not in the capture closes it and is listed in `misses()`).
+
+`opex-flow focas-probe --host H [--port 8193] [--library PATH] [--out DIR]` wraps all three and, with a FOCAS2 library,
+diffs the library's values against the native ones. The field procedure is in
+[`docs/focas-field-test.md`](../../docs/focas-field-test.md).
+
+### Field captures as regression tests
+
+`tests/replay.rs` replays every `tests/fixtures/NAME.capture.json` through the real client and requires the decoded
+result of the probe to equal `NAME.report.json`, every request to be found in the capture, and every recorded
+exchange to be asked for. A capture from a real controller therefore stays a test of the decoder once somebody has
+checked its report against the CNC screen.
+
+1. Record with `opex-flow focas-probe --host <cnc> --out <dir>` (or any client that writes the `focas-capture/1`
+   format). One directory per machine state.
+2. Check `probe-report.json` (or `probe-report.txt`) against the photos of the CNC screen. Fix the decoder if they
+   disagree; do not bless a report that is wrong.
+3. Copy `probe-capture.json` to `crates/focas-proto/tests/fixtures/<machine>-<state>.capture.json` and
+   `probe-report.json` to `<machine>-<state>.report.json`. Do not edit the hex. Strip nothing the decoder reads; to
+   share less, remove `controller` and similar from `meta` only. Program names, block text and macro values are in the
+   frames: check with the machine owner before committing a capture.
+4. `cargo test -p focas-proto --test replay` must pass. The test takes the probe options (macros, parameters, PMC
+   ranges) from the report, so a capture recorded with non-default `--macros` or `--pmc` replays as recorded.
+5. When a decoder fix changes a decoded value on purpose, run
+   `UPDATE_FIXTURES=1 cargo test -p focas-proto --test replay`, review the diff of the `*.report.json` files against the
+   screen photos, and commit it. When the client's request encoding changes (a different sub-packet order, say) the
+   old captures no longer match any request: re-record on the machine, or keep the fixture as a record of the old bytes.
+
+The committed `sim-*` fixtures were recorded from the simulator (idle, running, feed hold, alarm, emergency stop, MDI,
+and the 0i-F identity) with
+`cargo test -p focas-proto --test replay -- --ignored record_sim_fixtures`. They exercise the harness; they prove
+nothing about a real controller, and the README's "Not verified" section stays true until a real capture is in.
+
 ## Naming
 
-FANUC and FOCAS are trademarks of FANUC CORPORATION. `mt-focas` is an independent project, not
+FANUC and FOCAS are trademarks of FANUC CORPORATION. `focas-proto` is an independent project, not
 affiliated with, endorsed by or supported by FANUC, and contains no FANUC code or library.
 
 ## NOTICE
@@ -165,9 +213,21 @@ and sample packets used here come from its `pyfanuc.py`, `protocol.txt`, `README
 The macro write function (`01 a8`) and the byte-level description of scaled numbers were checked
 against [pyfocas](https://pypi.org/project/pyfocas/) 0.1.1 (MIT, Copyright (c) 2026 Moritz
 Breurather, Rene Schwaiger), which in turn credits pyfanuc. No pyfocas code is copied; only the
-function number and request layout of `write_macro` are taken from it.
+function number and request layout of `write_macro` are taken from it. The full credit text is in
+the [`NOTICE`](NOTICE) file.
 
 Field meanings follow FANUC's FOCAS function documentation as published by inventcom.net; no text
 or code from it is included.
 
-This crate is licensed GPL-3.0-or-later like the rest of the workspace.
+## Use in this repository
+
+`crates/focas-proto` is a **vendored copy** of the crate of the same name in opex-flow (the file [`VENDORED`](VENDORED)
+records the commit). Do not edit it here: change it in opex-flow and run `scripts/sync-focas-proto.sh`.
+CNC Explorer (`apps/cnc-explorer/src-tauri`) and Voltrus Tools (`apps/voltrus-tools/crates/vt-engine`) depend on it by
+path. It replaces `mt-focas`, from which it came.
+
+## License
+
+GPL-3.0-or-later, like the rest of this repository (`license` in `Cargo.toml`). The crate was written for this
+project; opex-flow carries its own copy under its own terms. The pyfanuc (Unlicense) and pyfocas (MIT) credits above
+and in `NOTICE` stay.

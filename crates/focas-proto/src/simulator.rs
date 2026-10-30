@@ -252,6 +252,10 @@ pub fn answer(model: &mut CncModel, req: &SubRequest) -> SubResponse {
     let fail = |code: i16| SubResponse::failed(cmd, code);
     let a = req.args;
 
+    if let Some(code) = model.refuse.get(&cmd.function) {
+        return fail(*code);
+    }
+
     if cmd.device == DEVICE_PMC {
         return if cmd == func::PMC_READ {
             answer_pmc(model, req)

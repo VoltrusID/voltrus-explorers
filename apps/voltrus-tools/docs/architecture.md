@@ -156,13 +156,13 @@ An MTConnect client names its points from the probe and sends `Points` again
 after a re-probe (an agent restart); `UNAVAILABLE` is a good reading with no
 number, so it does not count as an error to the review gate. A FANUC client
 lays its points out from its first snapshot (the axes the CNC reports), and a
-write to one of its macro points calls `write_macro`. Neither protocol crate
-reports wire frames, so their traffic views describe each exchange. The two
-simulators are `mt-mtconnect`'s `AgentSimulator` and `mt-focas`'s
+write to one of its macro points calls `write_macro`. Neither session records
+wire frames (`focas-proto` can; CNC Explorer's Save capture uses it), so their traffic views describe each exchange. The two
+simulators are `mt-mtconnect`'s `AgentSimulator` and `focas-proto`'s
 `FocasSimulator`; a point write on them acts on the machine (a forced sample, a
 raised condition, cycle start, emergency stop) as the app's other simulators'
 writes do. FANUC is labelled Beta in the app (`vt-app/src/model/cnc.rs`)
-because `mt-focas` has only been tested against its simulator.
+because `focas-proto` has only been tested against its simulator.
 
 SECS/GEM sessions (`vt-engine/src/secsgem`) are also points, `Payloads`, `Traffic`,
 `Stats` and `Log` with a point write as the only request. A host (`GemHost`)

@@ -191,7 +191,7 @@ standalone Tauri apps in this repository.
   and optionally an SHDR adapter port that streams the same observations.
   Samples can be forced to a value (and held until released), conditions
   raised (2 warning, 3 fault) and cleared (1), and the emergency stop pressed.
-- **FANUC CNC client** (beta, on `mt-focas`): FOCAS/Ethernet on port 8193,
+- **FANUC CNC client** (beta, on `focas-proto`): FOCAS/Ethernet on port 8193,
   for FANUC CNCs. Points are the controller's identity, mode, run state,
   motion, cycle, emergency and alarm flags, feed rate, spindle speed, running
   program, sequence number, executing block, alarm messages, four positions
@@ -202,8 +202,9 @@ standalone Tauri apps in this repository.
   its simulator and a third-party client, not a real controller, so the
   connection is labelled Beta in the app; please report your controller model
   to support@voltrus.id. The traffic view describes each exchange (no wire
-  bytes) because the crate reports none.
-- **FANUC CNC simulator** (`mt-focas`'s): plays a 31i-B or 0i-F mill running a
+  bytes) because the session does not record frames; `focas-proto` can, and
+  CNC Explorer's Save capture uses it for field tests.
+- **FANUC CNC simulator** (`focas-proto`'s): plays a 31i-B or 0i-F mill running a
   demo program. Its control points act as an operator would: cycle start and
   hold, emergency stop, a P/S 100 alarm, and the part counter.
 - **SECS/GEM host** (beta, on `mt-secsgem`): the GEM host of semiconductor

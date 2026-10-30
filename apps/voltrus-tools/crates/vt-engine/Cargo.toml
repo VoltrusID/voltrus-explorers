@@ -21,7 +21,7 @@ mt-serial = { path = "../../../../crates/mt-serial" }
 mt-s7 = { path = "../../../../crates/mt-s7" }
 mt-ble = { path = "../../../../crates/mt-ble" }
 mt-mtconnect = { path = "../../../../crates/mt-mtconnect" }
-mt-focas = { path = "../../../../crates/mt-focas" }
+focas-proto = { path = "../../../../crates/focas-proto" }
 mt-secsgem = { path = "../../../../crates/mt-secsgem" }
 async-channel.workspace = true
 # rumqttc's MQTT codec frames the simulator's broker; prost encodes its

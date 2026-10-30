@@ -1,13 +1,13 @@
 //! Run the CNC simulator from a terminal.
 //!
 //! ```text
-//! cargo run -p mt-focas --example focas_sim -- [port] [bind-address] [31i|0i] [--run]
+//! cargo run -p focas-proto --example focas_sim -- [port] [bind-address] [31i|0i] [--run]
 //! ```
 //!
 //! `--run` starts the demo program cycle and repeats it, so positions, feed and spindle move.
 //! Defaults: port 8193, bind address 127.0.0.1, profile 31i-B. Stop with Ctrl-C.
 
-use mt_focas::{CncProfile, FocasSimulator, SimulatorConfig};
+use focas_proto::{CncProfile, FocasSimulator, SimulatorConfig};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {

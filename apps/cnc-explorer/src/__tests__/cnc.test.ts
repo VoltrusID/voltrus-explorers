@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { applyObservations, csvCell, flattenItems, formatValue, liveIdSet, prettyXml, sortConditions, toCsv, trendLabels } from "../mtc";
-import { alarmTypeName, fanucTrendRows, pmcHex } from "../fanuc";
-import { needsPro, loadProfiles, normalizeProfile, saveProfiles, PROFILES_KEY, type ConnProfile } from "../storage";
+import { MACHINE_STATES, MAX_WATCHED_MACROS, alarmTypeName, captureStem, fanucTrendRows, parseMacroList, pmcHex } from "../fanuc";
+import { needsPro, loadProfiles, loadWatch, normalizeProfile, saveProfiles, saveWatch, PROFILES_KEY, type ConnProfile } from "../storage";
 import type { DataItem, Devices, Observation } from "../types";
 
 const item = (id: string, category: DataItem["category"], name: string | null = null): DataItem => ({
@@ -84,8 +84,32 @@ describe("fanuc helpers", () => {
       status: null, feed_rate: 100, spindle_speed: null, alarm_bits: 0, alarm_types: [], errors: [],
       program: { running: 1, main: 1, name: null, sequence: null, block: null },
       axes: [{ name: "X", absolute: 1, machine: 1, relative: 1, distance_to_go: 0, servo_load: 5 }],
+      macros: [{ number: 500, value: 12 }, { number: 501, value: null }],
     });
-    expect(rows.map((r) => r.name)).toEqual(["Feed rate", "Servo load X", "Absolute X"]);
+    expect(rows.map((r) => r.name)).toEqual(["Feed rate", "Servo load X", "Absolute X", "Macro #500"]);
+  });
+  it("parses the watched macro list", () => {
+    expect(parseMacroList("500, 501")).toEqual([500, 501]);
+    expect(parseMacroList("500-503;510 510")).toEqual([500, 501, 502, 503, 510]);
+    expect(parseMacroList("0, -4, abc, 1.5, 7")).toEqual([7]);
+    expect(parseMacroList("1-100")).toHaveLength(MAX_WATCHED_MACROS);
+    expect(parseMacroList("9-5")).toEqual([]);
+    expect(parseMacroList("")).toEqual([]);
+  });
+  it("derives the capture stem from the chosen path", () => {
+    expect(captureStem("/tmp/mill1-idle.capture.json")).toBe("/tmp/mill1-idle");
+    expect(captureStem("C:\\field\\mill1.CAPTURE.JSON")).toBe("C:\\field\\mill1");
+    expect(captureStem("/tmp/mill1.json")).toBe("/tmp/mill1");
+    expect(captureStem("/tmp/mill1")).toBe("/tmp/mill1");
+  });
+  it("offers the six machine states of the field procedure", () => {
+    expect(MACHINE_STATES.map((s) => s.value)).toEqual(["idle", "running", "feed-hold", "alarm", "estop", "mdi"]);
+  });
+  it("keeps the watched macros", () => {
+    const store: Record<string, string> = {};
+    expect(loadWatch({ getItem: () => null })).toBe("");
+    saveWatch("500-503", { setItem: (k, v) => { store[k] = v; } });
+    expect(loadWatch({ getItem: (k) => store[k] ?? null })).toBe("500-503");
   });
 });
 

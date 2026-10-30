@@ -1,0 +1,32 @@
+focas-proto
+===========
+
+focas-proto is an independent implementation of the FANUC FOCAS/Ethernet wire protocol. It is
+not affiliated with, endorsed by or supported by FANUC CORPORATION and contains no FANUC code or
+library. FANUC and FOCAS are trademarks of FANUC CORPORATION.
+
+Credits
+-------
+
+pyfanuc  (https://github.com/diohpix/pyfanuc)  by diohpix  -  Unlicense (public domain)
+    The wire protocol was reverse-engineered there. The framing, function numbers, request
+    arguments, payload layouts, scaled-number format and the sample packets used by the codec
+    tests come from its pyfanuc.py, protocol.txt, README.md, sample_multipacket.md and
+    sample_with_error.md.
+
+pyfocas  (https://pypi.org/project/pyfocas/) 0.1.1  -  MIT
+    Copyright (c) 2026 Moritz Breurather, Rene Schwaiger
+    The macro write function (01 a8) and the byte-level description of scaled numbers were
+    checked against it. No pyfocas code is copied; only the function number and request layout
+    of write_macro are taken from it. pyfocas in turn credits pyfanuc.
+
+FANUC FOCAS documentation (as published by inventcom.net)
+    Field names and the meaning of statinfo, sysinfo, alarm and axis-position values follow it.
+    No text or code from it is included.
+
+Origin
+------
+
+The code was written for the voltrus project (crate mt-focas, same author), developed further in opex-flow, and is
+vendored back here from there (see VENDORED). In this repository it is licensed GPL-3.0-or-later like the rest of
+the workspace.

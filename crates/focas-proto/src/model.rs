@@ -307,6 +307,12 @@ pub struct CncModel {
     pub auto_repeat: bool,
     /// Seconds of simulated time.
     pub clock: f64,
+    /// Functions the simulated CNC refuses with the given `EW_*` code, keyed by the function
+    /// word of the sub-packet ([`Command::function`](crate::Command), e.g. `0x0001_0025` for the
+    /// actual spindle speed). Lets a host test how it copes with a controller that lacks an
+    /// option; a real one answers `EW_NOOPT` or `EW_FUNC` for such items.
+    #[serde(default)]
+    pub refuse: BTreeMap<u32, i16>,
 }
 
 impl Default for CncModel {
@@ -385,6 +391,7 @@ impl CncModel {
             pmc: Default::default(),
             auto_repeat: false,
             clock: 0.0,
+            refuse: BTreeMap::new(),
         };
         // PMC data the reference's own examples read: D2204 as a word, D1870 and D1874 as dwords.
         model.set_pmc(PmcArea::D, PmcDataType::Word, 2204, 600);

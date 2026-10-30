@@ -8,13 +8,14 @@
 
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
+use crate::capture::{Exchange, Recorder, to_hex};
 use crate::codec::{
     CHANNEL_CONTROL, Frame, FrameType, HEADER_LEN, SYNC, SubRequest, SubResponse,
     decode_var_response, encode_var_request,
@@ -66,12 +67,29 @@ impl Default for FocasConfig {
     }
 }
 
+/// A [`FocasClient::connect_with_capture`] that failed, with the frames exchanged before it did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureFailure {
+    pub error: FocasError,
+    pub exchanges: Vec<Exchange>,
+}
+
+impl std::fmt::Display for CaptureFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for CaptureFailure {}
+
 /// A connection to one CNC.
 pub struct FocasClient {
     config: FocasConfig,
     stream: Mutex<Option<TcpStream>>,
     connected: AtomicBool,
     sysinfo: StdMutex<Option<SysInfo>>,
+    /// Frame recording, when asked for at connect time (see [`FocasClient::connect_with_capture`]).
+    capture: StdMutex<Option<Recorder>>,
 }
 
 fn io_err(e: std::io::Error) -> FocasError {
@@ -80,21 +98,30 @@ fn io_err(e: std::io::Error) -> FocasError {
 
 /// Read one whole frame: the header first, then exactly the payload it announces.
 pub(crate) async fn read_frame<R: AsyncRead + Unpin>(stream: &mut R) -> Result<Frame, FocasError> {
-    let mut head = [0u8; HEADER_LEN];
-    stream.read_exact(&mut head).await.map_err(io_err)?;
-    if head[..4] != SYNC {
+    read_frame_into(stream, &mut Vec::new()).await
+}
+
+/// [`read_frame`] that leaves the bytes it read in `raw`, also when they do not parse as a frame
+/// (a capture wants to keep them).
+pub(crate) async fn read_frame_into<R: AsyncRead + Unpin>(
+    stream: &mut R,
+    raw: &mut Vec<u8>,
+) -> Result<Frame, FocasError> {
+    raw.clear();
+    raw.resize(HEADER_LEN, 0);
+    stream.read_exact(raw).await.map_err(io_err)?;
+    if raw[..4] != SYNC {
         return Err(FocasError::Protocol(
             "frame does not start with a0 a0 a0 a0".into(),
         ));
     }
-    let len = usize::from(u16::from_be_bytes([head[8], head[9]]));
-    let mut buf = vec![0u8; HEADER_LEN + len];
-    buf[..HEADER_LEN].copy_from_slice(&head);
+    let len = usize::from(u16::from_be_bytes([raw[8], raw[9]]));
+    raw.resize(HEADER_LEN + len, 0);
     stream
-        .read_exact(&mut buf[HEADER_LEN..])
+        .read_exact(&mut raw[HEADER_LEN..])
         .await
         .map_err(io_err)?;
-    Ok(Frame::decode(&buf)?)
+    Ok(Frame::decode(raw)?)
 }
 
 fn decode<T>(
@@ -126,12 +153,38 @@ impl FocasClient {
     /// parameter and diagnosis calls then fail until [`FocasClient::sysinfo`] succeeds, because
     /// their payload layout depends on the maximum axis count.
     pub async fn connect(config: FocasConfig) -> Result<Self, FocasError> {
+        Self::connect_inner(config, false).await.map_err(|(e, _)| e)
+    }
+
+    /// [`FocasClient::connect`] that records every frame exchanged, starting with the open
+    /// handshake and the system info read. Retrieve them with [`FocasClient::take_exchanges`]; a
+    /// connect that fails hands back what was recorded up to the failure.
+    pub async fn connect_with_capture(config: FocasConfig) -> Result<Self, CaptureFailure> {
+        Self::connect_inner(config, true)
+            .await
+            .map_err(|(error, exchanges)| CaptureFailure { error, exchanges })
+    }
+
+    async fn connect_inner(
+        config: FocasConfig,
+        capture: bool,
+    ) -> Result<Self, (FocasError, Vec<Exchange>)> {
         let addr = format!("{}:{}", config.host, config.port);
         let timeout = Duration::from_millis(config.connect_timeout_ms);
         let stream = tokio::time::timeout(timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| FocasError::ConnectionFailed(format!("{addr}: timed out")))?
-            .map_err(|e| FocasError::ConnectionFailed(format!("{addr}: {e}")))?;
+            .map_err(|_| {
+                (
+                    FocasError::ConnectionFailed(format!("{addr}: timed out")),
+                    Vec::new(),
+                )
+            })?
+            .map_err(|e| {
+                (
+                    FocasError::ConnectionFailed(format!("{addr}: {e}")),
+                    Vec::new(),
+                )
+            })?;
         stream.set_nodelay(true).ok();
 
         let client = FocasClient {
@@ -139,7 +192,9 @@ impl FocasClient {
             stream: Mutex::new(Some(stream)),
             connected: AtomicBool::new(true),
             sysinfo: StdMutex::new(None),
+            capture: StdMutex::new(capture.then(Recorder::default)),
         };
+        client.set_capture_label("open");
         let open = tokio::time::timeout(
             timeout,
             client.exchange_with(
@@ -147,23 +202,48 @@ impl FocasClient {
                 Duration::from_millis(client.config.connect_timeout_ms),
             ),
         )
-        .await
-        .map_err(|_| FocasError::ConnectionFailed("open request timed out".into()))?;
-        let reply = open.map_err(|e| FocasError::ConnectionFailed(e.to_string()))?;
+        .await;
+        let open = match open {
+            Ok(r) => r,
+            Err(_) => {
+                return Err((
+                    FocasError::ConnectionFailed("open request timed out".into()),
+                    client.take_exchanges(),
+                ));
+            }
+        };
+        let reply = match open {
+            Ok(f) => f,
+            Err(e) => {
+                return Err((
+                    FocasError::ConnectionFailed(e.to_string()),
+                    client.take_exchanges(),
+                ));
+            }
+        };
         if reply.frame_type != FrameType::OpenResponse {
             client.drop_connection().await;
-            return Err(FocasError::ConnectionFailed(format!(
-                "expected an open response, got frame type {:04x}",
-                reply.frame_type.code()
-            )));
+            return Err((
+                FocasError::ConnectionFailed(format!(
+                    "expected an open response, got frame type {:04x}",
+                    reply.frame_type.code()
+                )),
+                client.take_exchanges(),
+            ));
         }
+        client.set_capture_label("sysinfo");
         match client.sysinfo().await {
             Ok(_) => {}
             // The CNC answered but refused or garbled sysinfo: stay connected.
             Err(e @ (FocasError::Cnc { .. } | FocasError::UnexpectedPayload { .. })) => {
                 tracing::warn!("FOCAS sysinfo failed after open: {e}");
             }
-            Err(e) => return Err(FocasError::ConnectionFailed(e.to_string())),
+            Err(e) => {
+                return Err((
+                    FocasError::ConnectionFailed(e.to_string()),
+                    client.take_exchanges(),
+                ));
+            }
         }
         Ok(client)
     }
@@ -217,14 +297,33 @@ impl FocasClient {
     async fn exchange_with(&self, frame: &Frame, timeout: Duration) -> Result<Frame, FocasError> {
         let bytes = frame.encode()?;
         let mut guard = self.stream.lock().await;
+        let started = Instant::now();
+        let mut raw = Vec::new();
         let outcome = {
             let stream = guard.as_mut().ok_or(FocasError::NotConnected)?;
             tokio::time::timeout(timeout, async {
                 stream.write_all(&bytes).await.map_err(io_err)?;
-                read_frame(stream).await
+                read_frame_into(stream, &mut raw).await
             })
             .await
         };
+        // `raw` holds a whole frame after a success, and the bare header after a bad sync; any
+        // other failure left it partly unread.
+        let (response_complete, error) = match &outcome {
+            Ok(Ok(_)) => (true, None),
+            Ok(Err(e @ FocasError::Protocol(_))) => (true, Some(e.to_string())),
+            Ok(Err(e)) => (false, Some(e.to_string())),
+            Err(_) => (
+                false,
+                Some(format!("no answer within {} ms", timeout.as_millis())),
+            ),
+        };
+        self.record(
+            &bytes,
+            response_complete.then_some(&raw[..]),
+            error,
+            started,
+        );
         match outcome {
             Ok(Ok(reply)) => Ok(reply),
             Ok(Err(e)) => {
@@ -241,6 +340,49 @@ impl FocasClient {
                 )))
             }
         }
+    }
+
+    fn record(
+        &self,
+        request: &[u8],
+        response: Option<&[u8]>,
+        error: Option<String>,
+        started: Instant,
+    ) {
+        let mut guard = self.capture.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(rec) = guard.as_mut() {
+            rec.exchanges.push(Exchange {
+                label: rec.label.clone(),
+                request: to_hex(request),
+                response: response.map(to_hex),
+                error,
+                elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            });
+        }
+    }
+
+    /// Tag the exchanges that follow with `label` (the call they belong to). Does nothing unless
+    /// the client was connected with [`FocasClient::connect_with_capture`].
+    pub fn set_capture_label(&self, label: &str) {
+        if let Some(rec) = self
+            .capture
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
+        {
+            rec.label = label.to_string();
+        }
+    }
+
+    /// The exchanges recorded since connect (or since the last call), oldest first; recording
+    /// goes on. Empty unless the client was connected with [`FocasClient::connect_with_capture`].
+    pub fn take_exchanges(&self) -> Vec<Exchange> {
+        self.capture
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_mut()
+            .map(|rec| std::mem::take(&mut rec.exchanges))
+            .unwrap_or_default()
     }
 
     /// Send sub-packets and return one response per request, in order. More than
@@ -571,6 +713,61 @@ impl FocasClient {
             })
             .into(),
             positions: build_positions(&r[6..]),
+        })
+    }
+
+    /// The optional reads of `query` (servo load, program name, macro variables) in as few
+    /// round trips as [`MAX_SUBPACKETS`] allows. Like [`FocasClient::snapshot`], an item the CNC
+    /// refuses is [`Reading::Failed`] and the rest is still filled in. Nothing is sent when
+    /// `query` asks for nothing.
+    pub async fn extended_snapshot(&self, query: &ExtraQuery) -> Result<ExtraSnapshot, FocasError> {
+        if let Some(n) = query.macros.iter().find(|n| **n == 0) {
+            return Err(FocasError::InvalidArgument(format!("macro number {n}")));
+        }
+        let mut subs: Vec<SubRequest> = Vec::new();
+        if query.servo_load {
+            subs.push(req_servo_load());
+        }
+        if query.program_name {
+            subs.push(req_program_name());
+        }
+        subs.extend(query.macros.iter().map(|n| req_macro_read(*n, *n)));
+        if subs.is_empty() {
+            return Ok(ExtraSnapshot {
+                servo_load: None,
+                program_name: None,
+                macros: Vec::new(),
+            });
+        }
+        let responses = self.request(&subs).await?;
+        let mut it = responses.iter();
+        let servo_load = query.servo_load.then(|| {
+            let r = it.next().expect("one response per sub-packet");
+            decode("servo load", r, |p| parse_scaled_list("servo load", p)).into()
+        });
+        let program_name = query.program_name.then(|| {
+            let r = it.next().expect("one response per sub-packet");
+            decode("program name", r, |p| Ok(parse_program_name(p))).into()
+        });
+        let macros = query
+            .macros
+            .iter()
+            .zip(it)
+            .map(|(n, r)| {
+                decode("macro read", r, |p| parse_macro_values(*n, p))
+                    .and_then(|mut v| {
+                        v.pop().ok_or_else(|| FocasError::UnexpectedPayload {
+                            call: "macro read",
+                            detail: "empty payload".into(),
+                        })
+                    })
+                    .into()
+            })
+            .collect();
+        Ok(ExtraSnapshot {
+            servo_load,
+            program_name,
+            macros,
         })
     }
 }

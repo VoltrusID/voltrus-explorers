@@ -1,14 +1,16 @@
+pub mod capture;
 pub mod core;
 
 use std::sync::Arc;
 
-use mt_focas::{
+use focas_proto::{
     AlarmMessage, AlarmType, FocasConfig, MacroValue, NumberedValues, PmcArea, PmcDataType, PmcValue, ProgramEntry,
     SysInfo,
 };
 use mt_mtconnect::{AgentConfig, AssetList, ConditionLevel, Devices, SimConfig, SimSnapshot, Streams};
 use tauri::{Emitter, Manager};
 
+use crate::capture::{CaptureBundle, MachineState};
 use crate::core::{Core, FanucPoll, FocasSimAction, FocasSimConfig, FocasSimView, MtcSimInfo};
 
 type State<'a> = tauri::State<'a, Arc<Core>>;
@@ -61,8 +63,20 @@ async fn fanuc_disconnect(core: State<'_>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn fanuc_poll(core: State<'_>) -> Result<FanucPoll, String> {
-    core.fanuc_poll().await
+async fn fanuc_poll(core: State<'_>, macros: Option<Vec<u32>>) -> Result<FanucPoll, String> {
+    core.fanuc_poll(macros.unwrap_or_default()).await
+}
+
+/// Records a read-only probe of the connected CNC and returns the capture, report and summary to save.
+#[tauri::command]
+async fn fanuc_capture(
+    core: State<'_>,
+    app: tauri::AppHandle,
+    state: MachineState,
+    macros: Option<Vec<u32>>,
+) -> Result<CaptureBundle, String> {
+    let version = app.package_info().version.to_string();
+    core.fanuc_capture(state, macros.unwrap_or_default(), &version).await
 }
 
 #[tauri::command]
@@ -229,7 +243,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             mtc_connect, mtc_disconnect, mtc_current, mtc_assets, mtc_stream_start, mtc_stream_stop,
-            fanuc_connect, fanuc_disconnect, fanuc_poll, fanuc_alarms, fanuc_programs, fanuc_read_macro,
+            fanuc_connect, fanuc_disconnect, fanuc_poll, fanuc_capture, fanuc_alarms, fanuc_programs, fanuc_read_macro,
             fanuc_write_macro, fanuc_read_params, fanuc_read_diag, fanuc_read_pmc,
             mtc_sim_start, mtc_sim_stop, mtc_sim_snapshot, mtc_sim_set_value, mtc_sim_release, mtc_sim_raise,
             mtc_sim_clear, mtc_sim_set_paused, mtc_sim_restart_agent,

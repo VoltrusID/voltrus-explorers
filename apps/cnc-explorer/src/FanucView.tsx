@@ -1,18 +1,21 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Badge, Button, Callout, DataTable, Dialog, Field, IconButton, ProBadge, SheetSelect, Tabs } from "@mactools/ui";
-import type { Tone } from "@mactools/ui";
-import { Pencil, Plus, RefreshCw, X } from "lucide-react";
-import { alarmTypeName, fanucTrendRows, fmt, pmcHex } from "./fanuc";
-import type { AlarmMessage, FanucPoll, NumberedValues, ProgramEntry, SysInfo } from "./types";
+import { Badge, Button, Callout, DataTable, Dialog, Field, IconButton, ProBadge, SheetSelect, Tabs, saveTextFile } from "@mactools/ui";
+import type { FileFilter, Tone } from "@mactools/ui";
+import { Pencil, Plus, RefreshCw, Save, X } from "lucide-react";
+import { MACHINE_STATES, MAX_WATCHED_MACROS, alarmTypeName, captureStem, fanucTrendRows, fmt, parseMacroList, pmcHex } from "./fanuc";
+import type { AlarmMessage, CaptureBundle, FanucPoll, MachineState, NumberedValues, ProgramEntry, SysInfo } from "./types";
 
-type Sub = "overview" | "axes" | "program" | "alarms" | "macros" | "data";
+type Sub = "overview" | "axes" | "program" | "alarms" | "macros" | "capture" | "data";
 
 interface Props {
   info: SysInfo;
   poll: FanucPoll | null;
   trending: Set<string>;
   onToggleTrend: (name: string) => void;
+  /** Macro variables to watch, as typed (`500, 501` or `500-503`). */
+  watch: string;
+  onWatchChange: (text: string) => void;
   requirePro: (feature: string) => boolean;
   addLog: (direction: "tx" | "rx" | "info" | "error", message: string) => void;
 }
@@ -53,6 +56,7 @@ export default function FanucView(props: Props) {
           { value: "program", label: "Program" },
           { value: "alarms", label: "Alarms", count: alarming ? poll?.alarm_types.length || 1 : undefined },
           { value: "macros", label: "Macros" },
+          { value: "capture", label: "Capture" },
           { value: "data", label: "Parameters, diagnosis, PMC" },
         ]}
       />
@@ -61,6 +65,7 @@ export default function FanucView(props: Props) {
       {sub === "program" && <Program poll={poll} addLog={props.addLog} />}
       {sub === "alarms" && <Alarms poll={poll} addLog={props.addLog} />}
       {sub === "macros" && <Macros requirePro={props.requirePro} addLog={props.addLog} />}
+      {sub === "capture" && <Capture watched={parseMacroList(props.watch)} addLog={props.addLog} />}
       {sub === "data" && <NumberedReads addLog={props.addLog} />}
     </div>
   );
@@ -70,7 +75,7 @@ function statusTone(label: string, bad: string[]): Tone {
   return bad.includes(label) ? "danger" : "neutral";
 }
 
-function Overview({ info, poll, trending, onToggleTrend, requirePro }: Props) {
+function Overview({ info, poll, trending, onToggleTrend, watch, onWatchChange, requirePro }: Props) {
   const s = poll?.status;
   const rows = fanucTrendRows(poll);
   return (
@@ -109,6 +114,21 @@ function Overview({ info, poll, trending, onToggleTrend, requirePro }: Props) {
           The controller refused {poll.errors.length} item(s): {poll.errors.slice(0, 3).join("; ")}
         </Callout>
       )}
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <Field label="Watch macros #">
+          <input
+            className="vt-input vt-input--mono"
+            style={{ width: 200 }}
+            aria-label="Macro variables to watch"
+            placeholder="500, 501 or 500-503"
+            value={watch}
+            onChange={(e) => onWatchChange(e.target.value)}
+          />
+        </Field>
+        <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", paddingBottom: 6 }}>
+          Read with servo load and the program name in one extended read (up to {MAX_WATCHED_MACROS}); they join the live values and the trend.
+        </span>
+      </div>
       <div style={{ minHeight: 160, display: "flex", flexDirection: "column" }}>
         <DataTable
           columns={[
@@ -406,6 +426,101 @@ function NumberedReads({ addLog }: Pick<Props, "addLog">) {
           emptyMessage="Choose a range, then Read"
           renderCell={(key, row) => mono(row[key])}
         />
+      )}
+    </div>
+  );
+}
+
+const JSON_FILTER: FileFilter = { name: "JSON", extensions: ["json"] };
+const TEXT_FILTER: FileFilter = { name: "Text", extensions: ["txt"] };
+
+/**
+ * Records a read-only probe of the connected CNC, then asks where to save `NAME.capture.json`,
+ * `NAME.report.json` and `NAME.summary.txt` (one save panel each: the sandboxed App Store build only
+ * gets access to the file the user picked, so the three names are not written beside each other).
+ */
+function Capture({ watched, addLog }: { watched: number[]; addLog: Props["addLog"] }) {
+  const [state, setState] = useState<MachineState>("idle");
+  const [busy, setBusy] = useState(false);
+  const [bundle, setBundle] = useState<CaptureBundle | null>(null);
+  const [notice, setNotice] = useState<{ tone: "success" | "warn"; text: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const saveFiles = useCallback(async (b: CaptureBundle) => {
+    const first = await saveTextFile(`${b.base_name}.capture.json`, b.capture_json, JSON_FILTER);
+    if (!first) {
+      setNotice({ tone: "warn", text: "Nothing saved. The recording is kept: use Save the files again." });
+      return;
+    }
+    const files = [first];
+    const skipped: string[] = [];
+    const stem = captureStem(first);
+    for (const [name, text, filter] of [
+      [`${stem}.report.json`, b.report_json, JSON_FILTER],
+      [`${stem}.summary.txt`, b.summary, TEXT_FILTER],
+    ] as const) {
+      const path = await saveTextFile(name, text, filter);
+      if (path) files.push(path);
+      else skipped.push(name.slice(stem.length + 1));
+    }
+    addLog("info", `Capture saved: ${files.join(", ")}`);
+    setNotice(
+      skipped.length === 0
+        ? { tone: "success", text: `Saved ${files.join(", ")}` }
+        : { tone: "warn", text: `Saved ${files.join(", ")}. Not saved: ${skipped.join(", ")}. A capture is replayed against its report, so keep both.` },
+    );
+  }, [addLog]);
+
+  const run = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try { await action(); } catch (e) { setError(String(e)); addLog("error", `Capture failed: ${String(e)}`); } finally { setBusy(false); }
+  };
+
+  const record = () => run(async () => {
+    const b = await invoke<CaptureBundle>("fanuc_capture", { state, macros: watched });
+    setBundle(b);
+    await saveFiles(b);
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, overflow: "auto", flex: 1 }}>
+      <Callout tone="warn">
+        <strong>Privacy.</strong> A capture holds every request and response of the recording as hex: the controller&apos;s
+        identity, the <strong>program name</strong> and executing block text, <strong>macro</strong>, parameter and diagnosis values, and the
+        machine&apos;s address. Share it only with the machine owner&apos;s agreement, and do not edit the hex: a replay test needs the frames intact.
+      </Callout>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <Field label="Machine state now">
+          <SheetSelect aria-label="Machine state" sheetTitle="Machine state" value={state} onChange={(v) => setState(v as MachineState)} options={MACHINE_STATES} />
+        </Field>
+        <Button variant="primary" icon={<Save size={14} strokeWidth={1.75} />} disabled={busy} onClick={record}>
+          {busy ? "Recording\u2026" : "Save capture\u2026"}
+        </Button>
+        {bundle && <Button disabled={busy} onClick={() => run(() => saveFiles(bundle))}>Save the files again</Button>}
+      </div>
+      <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-muted)", lineHeight: 1.5 }}>
+        Set the machine to the state first and let it settle, then record. The recording only reads (identity, status, positions, feed,
+        spindle, servo load, program, alarms, a few macros, parameters, diagnosis and PMC bytes
+        {watched.length > 0 ? `, and your watched macros #${watched.join(", #")}` : ""}) on a second short connection to the controller;
+        a controller that allows few simultaneous FOCAS connections may refuse it, so disconnect and reconnect first if it does.
+        You are asked for three files: <span className="mono">NAME.capture.json</span>, <span className="mono">NAME.report.json</span> and a
+        readable <span className="mono">NAME.summary.txt</span>.
+      </span>
+      {error && <Callout tone="danger">{error}</Callout>}
+      {notice && <Callout tone={notice.tone}>{notice.text}</Callout>}
+      {bundle && (
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <Badge tone={bundle.replay_ok ? "success" : "danger"}>{bundle.replay_ok ? "Replays exactly" : "Does not replay"}</Badge>
+            <span style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)" }}>
+              {bundle.exchanges} frame exchange(s), {bundle.calls} call(s), {bundle.failed_calls} refused or failed
+            </span>
+          </div>
+          {bundle.notes.map((n) => <Callout key={n} tone="warn">{n}</Callout>)}
+          <pre className="mono" style={{ ...card, margin: 0, fontSize: "var(--fs-xs)", whiteSpace: "pre-wrap", maxHeight: 320, overflow: "auto" }}>{bundle.summary}</pre>
+        </>
       )}
     </div>
   );

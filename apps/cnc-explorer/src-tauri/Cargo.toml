@@ -18,7 +18,7 @@ tauri-build = { workspace = true }
 
 [dependencies]
 mt-mtconnect = { path = "../../../crates/mt-mtconnect" }
-mt-focas = { path = "../../../crates/mt-focas" }
+focas-proto = { path = "../../../crates/focas-proto" }
 mt-store = { path = "../../../crates/mt-store" }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }

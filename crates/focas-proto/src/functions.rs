@@ -257,14 +257,21 @@ pub fn encode_sysinfo(s: &SysInfo) -> Vec<u8> {
     out
 }
 
-/// The CNC sends seven big-endian words; the reference only decodes statinfo from payloads of
-/// exactly that size (the 9-word `ODBST` of the FOCAS headers is not what the wire carries in
-/// its samples).
+/// The CNC sends seven big-endian words (`aut, run, motion, mstb, emergency, alarm, edit`); the
+/// reference decodes statinfo only from payloads of exactly that size.
+///
+/// The `ODBST` of `fwlib32.h` has nine words: two leading ones (`hdck`/`tmmode`, "dummy" in
+/// older headers) and then the same seven. A payload of 18 bytes is therefore read as that
+/// header layout, skipping the two leading words. No capture shows a controller sending 18
+/// bytes; the branch only exists so the wire call and the FOCAS library agree on the meaning of
+/// the seven words if one ever does. Any other length is an error.
 pub fn parse_statinfo(p: &[u8]) -> Result<StatInfo, FocasError> {
-    if p.len() != 14 {
-        return Err(bad("statinfo", format!("{} bytes, expected 14", p.len())));
-    }
-    let w = |i: usize| be_u16(&p[i * 2..i * 2 + 2]);
+    let words = match p.len() {
+        14 => p,
+        18 => &p[4..],
+        n => return Err(bad("statinfo", format!("{n} bytes, expected 14 (or 18)"))),
+    };
+    let w = |i: usize| be_u16(&words[i * 2..i * 2 + 2]);
     Ok(StatInfo {
         aut: AutoMode::from_code(w(0)),
         run: RunState::from_code(w(1)),
@@ -699,6 +706,11 @@ mod tests {
         let odd = parse_statinfo(&hex("00 63 00 00 00 00 00 00 00 00 00 00 00 00")).unwrap();
         assert_eq!(odd.aut, AutoMode::Unknown(0x63));
         assert!(parse_statinfo(&p[..12]).is_err());
+        // 9-word ODBST layout of fwlib32.h: hdck, tmmode, then the same seven words.
+        let mut odbst = hex("00 00 00 01");
+        odbst.extend_from_slice(&p);
+        assert_eq!(parse_statinfo(&odbst).unwrap(), s);
+        assert!(parse_statinfo(&odbst[..16]).is_err());
     }
 
     /// `sample_with_error.md`: running and main program O3000, sequence 0, feed 0.

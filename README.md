@@ -92,6 +92,20 @@ says the key is no longer valid. Remove key (Info) forgets it on this device. Bu
 The FANUC connection is a **Beta**: it is tested against the built-in simulator only, not against a real controller.
 Please report your controller model to support@voltrus.id.
 
+**FANUC FOCAS code.** CNC Explorer and [Voltrus Tools](apps/voltrus-tools) share one FOCAS implementation,
+`crates/focas-proto`: a vendored copy of the crate of the same name in opex-flow (a private repository, so it is copied in, not
+fetched). [`crates/focas-proto/VENDORED`](crates/focas-proto/VENDORED) records the commit; `scripts/sync-focas-proto.sh`
+(`--source DIR` or `OPEX_FLOW_DIR`, `--check` to compare) refreshes it. Change the crate in opex-flow and sync; do not edit the copy
+here. It replaces `mt-focas`.
+
+**Save capture.** In the FANUC view, the **Capture** tab records the controller's raw frames for the field test: pick the machine state
+(idle, running, feed hold, alarm, e-stop, MDI), set the machine to it, press **Save capture**. The app runs a read-only probe on a
+second short connection and asks for three files: `NAME.capture.json` (the frames), `NAME.report.json` (what the decoder made of
+them) and `NAME.summary.txt` (the lines to compare with the CNC screen). The first two are in the format of opex-flow's replay
+fixtures (`crates/focas-proto/tests/fixtures`), and the app replays the capture before it offers the files. A capture holds program
+names, executing block text, macro values and the machine's address: share it only with the machine owner's agreement.
+The procedure for the visit, with the checklist, is in [docs/focas-field-test.md](docs/focas-field-test.md).
+
 CNC Explorer is an independent tool. FANUC and FOCAS are trademarks of FANUC CORPORATION, and MTConnect is a
 registered trademark of AMT - The Association For Manufacturing Technology; it is not affiliated with or endorsed by
 either.
@@ -185,7 +199,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p mt-focas -p mt-secsgem -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
 The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
@@ -222,7 +236,7 @@ crates/mt-modbus       Modbus TCP/RTU client, server, simulator
 crates/mt-ble          Bluetooth LE scan, connect, GATT read/write/notify (btleplug)
 crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-mtconnect    MTConnect agent client (probe, current, sample, stream, assets), agent simulator and SHDR adapter
-crates/mt-focas        FANUC FOCAS/Ethernet client and CNC simulator (pure Rust, Beta)
+crates/focas-proto     FANUC FOCAS/Ethernet client, CNC simulator, probe and frame capture/replay (pure Rust, Beta); vendored from opex-flow, see scripts/sync-focas-proto.sh
 crates/mt-secsgem      SECS/GEM host and equipment simulator: HSMS, SECS-II, GEM (pure Rust, Beta)
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding

@@ -32,13 +32,15 @@ import MtcView from "./MtcView";
 import { FocasSimPanel, MtcSimPanel } from "./SimPanels";
 import TrendPanel from "./TrendPanel";
 import { useTrend } from "./useTrend";
-import { fanucTrendRows } from "./fanuc";
+import { fanucTrendRows, parseMacroList } from "./fanuc";
 import { applyObservations, flattenItems, liveIdSet, numericValue, trendLabels, type Item } from "./mtc";
 import {
   FREE_LIVE_ITEMS,
   loadProfiles,
+  loadWatch,
   needsPro,
   saveProfiles,
+  saveWatch,
   type ConnProfile,
 } from "./storage";
 import type {
@@ -182,6 +184,11 @@ function App() {
   const pollMs = Math.max(250, Number(formValues.interval) || 1000);
   const pollMsRef = useRef(pollMs);
   pollMsRef.current = pollMs;
+  const [watch, setWatch] = useState(loadWatch);
+  const watched = useMemo(() => parseMacroList(watch), [watch]);
+  const watchedRef = useRef(watched);
+  watchedRef.current = watched;
+  useEffect(() => { saveWatch(watch); }, [watch]);
   useEffect(() => {
     if (!connected || connType !== "fanuc") return;
     let alive = true;
@@ -189,7 +196,7 @@ function App() {
     const tick = async () => {
       const started = performance.now();
       try {
-        const p = await invoke<FanucPoll>("fanuc_poll");
+        const p = await invoke<FanucPoll>("fanuc_poll", { macros: watchedRef.current });
         if (!alive) return;
         setPoll(p);
         setLatency(Math.round(performance.now() - started));
@@ -545,7 +552,16 @@ function App() {
       addLog={addLog}
     />
   ) : connType === "fanuc" && info ? (
-    <FanucView info={info} poll={poll} trending={new Set(trendSeries.keys())} onToggleTrend={toggleTrend} requirePro={requirePro} addLog={addLog} />
+    <FanucView
+      info={info}
+      poll={poll}
+      trending={new Set(trendSeries.keys())}
+      onToggleTrend={toggleTrend}
+      watch={watch}
+      onWatchChange={setWatch}
+      requirePro={requirePro}
+      addLog={addLog}
+    />
   ) : null;
 
   const simMain =

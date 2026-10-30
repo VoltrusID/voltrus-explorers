@@ -1,14 +1,14 @@
-//! FANUC sessions over `mt-focas`: a client that polls a controller's
+//! FANUC sessions over `focas-proto`: a client that polls a controller's
 //! status, axes, spindle, program and alarms (and reads and writes macro
 //! variables), and a simulator that plays a controller on its server.
 //!
-//! `mt-focas` has only been tested against its own simulator, not a real
+//! `focas-proto` has only been tested against its own simulator, not a real
 //! controller; the app labels the protocol Beta.
 
 pub(crate) mod client;
 pub(crate) mod simulator;
 
-use mt_focas::{AxisName, CncProfile, Reading as FocasReading, Snapshot, SysInfo};
+use focas_proto::{AxisName, CncProfile, Reading as FocasReading, Snapshot, SysInfo};
 use vt_protocol::{FocasProfile, PointInfo, Quality, Reading};
 
 /// Per axis: where it is in four coordinate systems.
@@ -325,19 +325,19 @@ pub(crate) fn poll_readings(
             );
             put(
                 slot(Fixed::Cycle),
-                flag(status.run == mt_focas::RunState::Start),
+                flag(status.run == focas_proto::RunState::Start),
                 String::new(),
                 &mut polled,
             );
             put(
                 slot(Fixed::Emergency),
-                flag(status.emergency == mt_focas::EmergencyState::Emergency),
+                flag(status.emergency == focas_proto::EmergencyState::Emergency),
                 String::new(),
                 &mut polled,
             );
             put(
                 slot(Fixed::Alarm),
-                flag(status.alarm != mt_focas::AlarmState::None),
+                flag(status.alarm != focas_proto::AlarmState::None),
                 String::new(),
                 &mut polled,
             );

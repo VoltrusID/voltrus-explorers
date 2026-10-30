@@ -1,0 +1,820 @@
+{
+  "format": "focas-probe/1",
+  "host": "simulator",
+  "port": 8193,
+  "options": {
+    "macros": [
+      100,
+      500,
+      501
+    ],
+    "params": [
+      {
+        "number": 1020,
+        "axis": -1
+      },
+      {
+        "number": 3401,
+        "axis": 0
+      },
+      {
+        "number": 3741,
+        "axis": 0
+      },
+      {
+        "number": 6711,
+        "axis": 0
+      },
+      {
+        "number": 6712,
+        "axis": 0
+      }
+    ],
+    "diags": [
+      {
+        "number": 308,
+        "axis": -1
+      },
+      {
+        "number": 309,
+        "axis": -1
+      }
+    ],
+    "pmc": [
+      {
+        "area": "x",
+        "data_type": "byte",
+        "address": 0,
+        "count": 4
+      },
+      {
+        "area": "y",
+        "data_type": "byte",
+        "address": 0,
+        "count": 4
+      },
+      {
+        "area": "r",
+        "data_type": "byte",
+        "address": 0,
+        "count": 4
+      },
+      {
+        "area": "d",
+        "data_type": "word",
+        "address": 2204,
+        "count": 1
+      }
+    ],
+    "list_programs": false,
+    "exec_block_chars": 64
+  },
+  "aborted": null,
+  "calls": [
+    {
+      "name": "sysinfo",
+      "function": "01 18",
+      "ok": true,
+      "value": {
+        "addinfo": 1538,
+        "axes": "3",
+        "cnc_type": "0",
+        "max_axis": 8,
+        "mt_type": "M",
+        "series": "D4F1",
+        "version": "12.0"
+      },
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "statinfo",
+      "function": "01 19",
+      "ok": true,
+      "value": {
+        "alarm": "none",
+        "aut": "memory",
+        "edit": "not_editing",
+        "emergency": "normal",
+        "motion": "none",
+        "mstb": "none",
+        "run": "reset"
+      },
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "axis names",
+      "function": "01 89",
+      "ok": true,
+      "value": [
+        {
+          "name": "X",
+          "suffix": null
+        },
+        {
+          "name": "Y",
+          "suffix": null
+        },
+        {
+          "name": "Z",
+          "suffix": null
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "position absolute",
+      "function": "01 26",
+      "ok": true,
+      "value": [
+        0.0,
+        0.0,
+        50.0
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "position machine",
+      "function": "01 26",
+      "ok": true,
+      "value": [
+        -250.0,
+        -150.0,
+        -250.0
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "position relative",
+      "function": "01 26",
+      "ok": true,
+      "value": [
+        0.0,
+        0.0,
+        50.0
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "position distance to go",
+      "function": "01 26",
+      "ok": true,
+      "value": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "actual feed",
+      "function": "01 24",
+      "ok": true,
+      "value": 0.0,
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "spindle speed",
+      "function": "01 25",
+      "ok": true,
+      "value": 0.0,
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "servo load",
+      "function": "01 56",
+      "ok": true,
+      "value": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "program numbers",
+      "function": "01 1c",
+      "ok": true,
+      "value": {
+        "main": 3000,
+        "running": 3000
+      },
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "sequence number",
+      "function": "01 1d",
+      "ok": true,
+      "value": 10,
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "program name",
+      "function": "01 b9",
+      "ok": true,
+      "value": "//CNC_MEM/USER/PATH1/O3000",
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "executing block",
+      "function": "01 20",
+      "ok": true,
+      "value": {
+        "block": 0,
+        "text": "N10 G90 G54 G00 X0. Y0. S3000 M03"
+      },
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "alarm bits",
+      "function": "01 1a",
+      "ok": true,
+      "value": 0,
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "alarm messages",
+      "function": "01 23",
+      "ok": true,
+      "value": [],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "macro #100",
+      "function": "01 15",
+      "ok": true,
+      "value": [
+        {
+          "number": 100,
+          "value": null
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "macro #500",
+      "function": "01 15",
+      "ok": true,
+      "value": [
+        {
+          "number": 500,
+          "value": 0.0
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "macro #501",
+      "function": "01 15",
+      "ok": true,
+      "value": [
+        {
+          "number": 501,
+          "value": 1250.5
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "param 1020 axis -1",
+      "function": "01 0e",
+      "ok": true,
+      "value": [
+        {
+          "axis": -1,
+          "data_type": 0,
+          "number": 1020,
+          "values": [
+            88,
+            89,
+            90
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "param 3401 axis 0",
+      "function": "01 0e",
+      "ok": true,
+      "value": [
+        {
+          "axis": 0,
+          "data_type": 1,
+          "number": 3401,
+          "values": [
+            1
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "param 3741 axis 0",
+      "function": "01 0e",
+      "ok": true,
+      "value": [
+        {
+          "axis": 0,
+          "data_type": 3,
+          "number": 3741,
+          "values": [
+            8000
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "param 6711 axis 0",
+      "function": "01 0e",
+      "ok": true,
+      "value": [
+        {
+          "axis": 0,
+          "data_type": 3,
+          "number": 6711,
+          "values": [
+            0
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "param 6712 axis 0",
+      "function": "01 0e",
+      "ok": true,
+      "value": [
+        {
+          "axis": 0,
+          "data_type": 3,
+          "number": 6712,
+          "values": [
+            0
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "diag 308 axis -1",
+      "function": "01 30",
+      "ok": true,
+      "value": [
+        {
+          "axis": -1,
+          "data_type": 2,
+          "number": 308,
+          "values": [
+            28,
+            28,
+            44
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "diag 309 axis -1",
+      "function": "01 30",
+      "ok": true,
+      "value": [
+        {
+          "axis": -1,
+          "data_type": 2,
+          "number": 309,
+          "values": [
+            36,
+            36,
+            49
+          ]
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "pmc X0 Byte x4",
+      "function": "02 8001",
+      "ok": true,
+      "value": [
+        {
+          "address": 0,
+          "value": 1
+        },
+        {
+          "address": 1,
+          "value": 0
+        },
+        {
+          "address": 2,
+          "value": 0
+        },
+        {
+          "address": 3,
+          "value": 0
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "pmc Y0 Byte x4",
+      "function": "02 8001",
+      "ok": true,
+      "value": [
+        {
+          "address": 0,
+          "value": 0
+        },
+        {
+          "address": 1,
+          "value": 0
+        },
+        {
+          "address": 2,
+          "value": 0
+        },
+        {
+          "address": 3,
+          "value": 0
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "pmc R0 Byte x4",
+      "function": "02 8001",
+      "ok": true,
+      "value": [
+        {
+          "address": 0,
+          "value": 0
+        },
+        {
+          "address": 1,
+          "value": 0
+        },
+        {
+          "address": 2,
+          "value": 0
+        },
+        {
+          "address": 3,
+          "value": 0
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "pmc D2204 Word x1",
+      "function": "02 8001",
+      "ok": true,
+      "value": [
+        {
+          "address": 2204,
+          "value": 600
+        }
+      ],
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "snapshot",
+      "function": "-",
+      "ok": true,
+      "value": {
+        "alarm_bits": {
+          "data": 0,
+          "status": "value"
+        },
+        "feed_rate": {
+          "data": 0.0,
+          "status": "value"
+        },
+        "positions": {
+          "absolute": {
+            "data": [
+              0.0,
+              0.0,
+              50.0
+            ],
+            "status": "value"
+          },
+          "axes": {
+            "data": [
+              {
+                "name": "X",
+                "suffix": null
+              },
+              {
+                "name": "Y",
+                "suffix": null
+              },
+              {
+                "name": "Z",
+                "suffix": null
+              }
+            ],
+            "status": "value"
+          },
+          "distance_to_go": {
+            "data": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "status": "value"
+          },
+          "machine": {
+            "data": [
+              -250.0,
+              -150.0,
+              -250.0
+            ],
+            "status": "value"
+          },
+          "relative": {
+            "data": [
+              0.0,
+              0.0,
+              50.0
+            ],
+            "status": "value"
+          }
+        },
+        "programs": {
+          "data": {
+            "main": 3000,
+            "running": 3000
+          },
+          "status": "value"
+        },
+        "sequence_number": {
+          "data": 10,
+          "status": "value"
+        },
+        "spindle_speed": {
+          "data": 0.0,
+          "status": "value"
+        },
+        "status": {
+          "data": {
+            "alarm": "none",
+            "aut": "memory",
+            "edit": "not_editing",
+            "emergency": "normal",
+            "motion": "none",
+            "mstb": "none",
+            "run": "reset"
+          },
+          "status": "value"
+        }
+      },
+      "error": null,
+      "ew_code": null
+    },
+    {
+      "name": "extended snapshot",
+      "function": "-",
+      "ok": true,
+      "value": {
+        "macros": [
+          {
+            "data": {
+              "number": 100,
+              "value": null
+            },
+            "status": "value"
+          },
+          {
+            "data": {
+              "number": 500,
+              "value": 0.0
+            },
+            "status": "value"
+          },
+          {
+            "data": {
+              "number": 501,
+              "value": 1250.5
+            },
+            "status": "value"
+          }
+        ],
+        "program_name": {
+          "data": "//CNC_MEM/USER/PATH1/O3000",
+          "status": "value"
+        },
+        "servo_load": {
+          "data": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "status": "value"
+        }
+      },
+      "error": null,
+      "ew_code": null
+    }
+  ],
+  "screen": [
+    {
+      "item": "controller",
+      "value": "series 0 M D4F1, version 12.0, 3 of max 8 axes"
+    },
+    {
+      "item": "mode",
+      "value": "MEM"
+    },
+    {
+      "item": "run state",
+      "value": "****"
+    },
+    {
+      "item": "motion",
+      "value": "***"
+    },
+    {
+      "item": "M/S/T/B",
+      "value": "***"
+    },
+    {
+      "item": "emergency",
+      "value": "***"
+    },
+    {
+      "item": "alarm status",
+      "value": "***"
+    },
+    {
+      "item": "edit",
+      "value": "****"
+    },
+    {
+      "item": "axis X",
+      "value": "absolute 0.000, machine -250.000, relative 0.000, distance to go 0.000"
+    },
+    {
+      "item": "axis Y",
+      "value": "absolute 0.000, machine -150.000, relative 0.000, distance to go 0.000"
+    },
+    {
+      "item": "axis Z",
+      "value": "absolute 50.000, machine -250.000, relative 50.000, distance to go 0.000"
+    },
+    {
+      "item": "actual feed",
+      "value": "0.000"
+    },
+    {
+      "item": "spindle speed",
+      "value": "0.000"
+    },
+    {
+      "item": "servo load",
+      "value": "X 0.000, Y 0.000, Z 0.000"
+    },
+    {
+      "item": "program running",
+      "value": "O3000"
+    },
+    {
+      "item": "program main",
+      "value": "O3000"
+    },
+    {
+      "item": "sequence number",
+      "value": "N10"
+    },
+    {
+      "item": "program name",
+      "value": "//CNC_MEM/USER/PATH1/O3000"
+    },
+    {
+      "item": "executing block",
+      "value": "N10 G90 G54 G00 X0. Y0. S3000 M03"
+    },
+    {
+      "item": "alarm bits",
+      "value": "0x00000000 ()"
+    },
+    {
+      "item": "alarms",
+      "value": "none"
+    },
+    {
+      "item": "macro #100",
+      "value": "invalid"
+    },
+    {
+      "item": "macro #500",
+      "value": "0.000"
+    },
+    {
+      "item": "macro #501",
+      "value": "1250.500"
+    },
+    {
+      "item": "parameter 1020",
+      "value": "88, 89, 90"
+    },
+    {
+      "item": "parameter 3401",
+      "value": "1"
+    },
+    {
+      "item": "parameter 3741",
+      "value": "8000"
+    },
+    {
+      "item": "parameter 6711",
+      "value": "0"
+    },
+    {
+      "item": "parameter 6712",
+      "value": "0"
+    },
+    {
+      "item": "diagnosis 308",
+      "value": "28, 28, 44"
+    },
+    {
+      "item": "diagnosis 309",
+      "value": "36, 36, 49"
+    },
+    {
+      "item": "pmc X0",
+      "value": "X0=0x1 X1=0x0 X2=0x0 X3=0x0"
+    },
+    {
+      "item": "pmc Y0",
+      "value": "Y0=0x0 Y1=0x0 Y2=0x0 Y3=0x0"
+    },
+    {
+      "item": "pmc R0",
+      "value": "R0=0x0 R1=0x0 R2=0x0 R3=0x0"
+    },
+    {
+      "item": "pmc D2204",
+      "value": "D2204=0x258"
+    }
+  ]
+}

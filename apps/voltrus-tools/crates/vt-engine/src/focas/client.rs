@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use mt_focas::{AlarmQuery, FocasClient, FocasConfig, FocasError, MacroValue, Snapshot};
+use focas_proto::{AlarmQuery, FocasClient, FocasConfig, FocasError, MacroValue, Snapshot};
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 use vt_protocol::{Direction, FocasClientSpec, LogLevel, SessionState, Stats, ValueFrame};
@@ -193,7 +193,7 @@ async fn poll_once(
     client: &FocasClient,
     spec: &FocasClientSpec,
     axes: usize,
-    sysinfo: Option<&mt_focas::SysInfo>,
+    sysinfo: Option<&focas_proto::SysInfo>,
 ) -> Option<super::Polled> {
     let snapshot = client.snapshot().await.ok()?;
     let block = client.executing_block(BLOCK_CHARS).await;

@@ -1,4 +1,4 @@
-//! `mt-focas` - FANUC FOCAS/Ethernet client and CNC simulator in pure Rust.
+//! `focas-proto` - FANUC FOCAS/Ethernet client and CNC simulator in pure Rust.
 //!
 //! FANUC ships its FOCAS library only as a C library for Windows and Linux. This crate speaks the
 //! protocol directly over TCP (port 8193), so it runs anywhere Rust does, including macOS. The
@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use mt_focas::{FocasClient, FocasConfig};
+//! use focas_proto::{FocasClient, FocasConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,15 +28,18 @@
 //! }
 //! ```
 
+pub mod capture;
 pub mod client;
 pub mod codec;
 pub mod error;
 pub mod functions;
 pub mod model;
+pub mod probe;
 pub mod simulator;
 pub mod types;
 
-pub use client::{DEFAULT_PORT, FocasClient, FocasConfig, MAX_SUBPACKETS};
+pub use capture::{Capture, Exchange, ReplayServer};
+pub use client::{CaptureFailure, DEFAULT_PORT, FocasClient, FocasConfig, MAX_SUBPACKETS};
 pub use codec::{CodecError, Command, Frame, FrameType, SubRequest, SubResponse};
 pub use error::{FocasError, ReadFailure, Reading, ew, ew_name};
 pub use model::{CncModel, CncProfile, SimAlarm, SimAxis, SimBlock, SimNumbered, SimProgram};
