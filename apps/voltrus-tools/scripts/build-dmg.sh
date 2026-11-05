@@ -93,7 +93,10 @@ package)
   staging="$(mktemp -d)"
   cp -R "$app" "$staging/"
   ln -s /Applications "$staging/Applications"
-  hdiutil create -volname "$PRODUCT" -srcfolder "$staging" -ov -format UDZO "$dmg"
+  # hdiutil sizes the image from -srcfolder and sometimes guesses too small for a large binary ("No space left on
+  # device" inside the new volume): give it the folder size plus 20% and 20 MB.
+  dmg_mb=$(( $(du -sm "$staging" | cut -f1) * 12 / 10 + 20 ))
+  hdiutil create -volname "$PRODUCT" -srcfolder "$staging" -size "${dmg_mb}m" -ov -format UDZO "$dmg"
   rm -rf "$staging"
   codesign --force --timestamp --sign "$APP_ID" "$dmg"
   if [[ "$flag" == --notarize ]]; then
