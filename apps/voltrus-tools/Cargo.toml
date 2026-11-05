@@ -58,5 +58,9 @@ codegen-units = 4
 # gpui 0.2.2 from crates.io plus Metal memory and frame-pacing fixes, and
 # without the private CGSSetWindowBackgroundBlurRadius App Review rejects,
 # kept in the VoltrusID fork of muxy-app/gpui (Apache-2.0) and pinned by commit.
+# rumqttd 0.20.0 and rumqttc 0.25.1 on rustls 0.23 / rustls-webpki 0.103 (advisories in rustls 0.22 and webpki 0.102),
+# vendored in the root repo: see ../../vendor/README.md.
 [patch.crates-io]
-gpui = { git = "https://github.com/VoltrusID/gpui", rev = "5c1b811991c6721d738eb5ca29d2c889e085ead5" }
+rumqttd = { path = "../../vendor/rumqttd" }
+rumqttc = { path = "../../vendor/rumqttc" }
+gpui = { git = "https://github.com/VoltrusID/gpui", rev = "006435b1298bba807375568f8a75c1bcb025a8de" }

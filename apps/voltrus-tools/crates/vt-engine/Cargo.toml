@@ -28,7 +28,7 @@ async-channel.workspace = true
 # Sparkplug B payloads. Same versions as mt-mqtt uses.
 bytes = "1"
 prost = "0.14"
-rumqttc = "0.24"
+rumqttc = "0.25"
 # Serial monitors parse lines with a user's pattern.
 regex = "1"
 serde_json.workspace = true

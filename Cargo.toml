@@ -30,6 +30,8 @@ members = [
     "apps/mqtt-explorer/src-tauri",
     "apps/opcua-explorer/src-tauri",
 ]
+# Patched third-party crates, used through [patch.crates-io] below (not workspace members).
+exclude = ["vendor"]
 
 [workspace.package]
 version = "2.0.0"
@@ -47,3 +49,11 @@ tauri = { version = "2", features = [] }
 tauri-build = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+
+# rumqttd 0.20.0 and rumqttc 0.25.1 (Apache-2.0, bytebeamio/rumqtt), vendored with their TLS dependencies moved to
+# tokio-rustls 0.26 / rustls 0.23 and rustls-webpki 0.103: upstream's latest releases still pull rustls 0.22 and
+# webpki 0.102, which have open advisories (fixed in rustls 0.23.46, webpki 0.103.12). Nothing else is changed;
+# see vendor/README.md. Drop the patch once upstream releases versions on these lines.
+[patch.crates-io]
+rumqttd = { path = "vendor/rumqttd" }
+rumqttc = { path = "vendor/rumqttc" }

@@ -539,7 +539,7 @@ async fn read_packet(
     buffer: &mut BytesMut,
 ) -> Result<Packet, ReadError> {
     loop {
-        match v4::read(buffer, MAX_PACKET) {
+        match Packet::read(buffer, MAX_PACKET) {
             Err(CodecError::InsufficientBytes(_)) => {}
             result => return result.map_err(ReadError::Codec),
         }
