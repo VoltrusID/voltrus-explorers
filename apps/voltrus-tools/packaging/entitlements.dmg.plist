@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Direct download (Developer ID DMG, scripts/build-dmg.sh): hardened runtime,
+  no App Sandbox, so no entitlements are needed. Network clients and servers,
+  serial ports and Bluetooth are sandbox entitlements only; outside the
+  sandbox macOS asks the user through the usage strings in Info.plist
+  (NSLocalNetworkUsageDescription, NSBluetoothAlwaysUsageDescription). The
+  binary is plain Rust: no JIT, unsigned memory or library validation
+  exceptions.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

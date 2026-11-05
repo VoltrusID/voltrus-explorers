@@ -163,6 +163,15 @@ jobs:
       - name: Test
         run: cargo test --locked --no-fail-fast --workspace --features vt-app/store
 
+      # The direct download's flavour (`license`: trial on this Mac, licence
+      # key against a mock worker), so it can't rot either. Built with
+      # scripts/build-dmg.sh; release.yml (app voltrus-tools, dmg) signs it.
+      - name: Lint (licence key build)
+        run: cargo clippy --locked --keep-going -p vt-store -p vt-app --all-targets --features vt-app/license -- -D warnings
+
+      - name: Test (licence key build)
+        run: cargo test --locked --no-fail-fast -p vt-store -p vt-app --features vt-app/license
+
       - name: Bundle (universal, unsigned)
         run: scripts/build-mas.sh bundle dist-store
 

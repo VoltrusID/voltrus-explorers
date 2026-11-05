@@ -12,8 +12,10 @@
 #   windows   Modbus Poll only: unsigned NSIS installer and portable zip for x64 and ARM64 (scripts/build-windows.ps1), smoke-tested
 #             on Windows runners, published with SHA256SUMS.txt as GitHub Release modbus-poll-windows-v<version> when `github_release`.
 #             Needs no secrets, so these jobs do not use the `release` environment.
-#   voltrus-tools  app=voltrus-tools builds only the Mac App Store .pkg (`appstore`, `upload`) of the GPUI suite in
-#             apps/voltrus-tools (apps/voltrus-tools/scripts/build-mas.sh); `dmg`, `ios` and `windows` don't apply to it.
+#   voltrus-tools  app=voltrus-tools builds the GPUI suite in apps/voltrus-tools: the Mac App Store .pkg (`appstore`, `upload`;
+#             apps/voltrus-tools/scripts/build-mas.sh) and the notarized Developer ID .dmg sold by licence key (`dmg`;
+#             apps/voltrus-tools/scripts/build-dmg.sh), uploaded as a run artifact and never put on GitHub: publish it with
+#             scripts/publish-direct.sh. `ios`, `windows` and `github_release` don't apply to it.
 name: Release
 
 on:
@@ -40,7 +42,7 @@ on:
         type: boolean
         default: false
       github_release:
-        description: Publish the .dmg (or, with `windows`, the Windows files) as a GitHub Release (<app>-v<version>, modbus-poll-windows-v<version>); refused for the licence-key apps (Serial Monitor, BLE Inspector, CNC, SECS/GEM, MQTT, NATS, OPC UA and S7 Explorer)
+        description: Publish the .dmg (or, with `windows`, the Windows files) as a GitHub Release (<app>-v<version>, modbus-poll-windows-v<version>); refused for the licence-key apps (Serial Monitor, BLE Inspector, CNC, SECS/GEM, MQTT, NATS, OPC UA and S7 Explorer, Voltrus Tools)
         type: boolean
         default: false
       windows:
@@ -247,14 +249,22 @@ jobs:
         if: always()
         run: scripts/ci-keychain.sh cleanup
 
-  # Voltrus Tools (apps/voltrus-tools, GPUI, its own Cargo workspace): universal store build, signed for the Mac App
-  # Store and validated, or uploaded with `upload`. Licensing and release steps: apps/voltrus-tools/docs/release.md.
+  # Voltrus Tools (apps/voltrus-tools, GPUI, its own Cargo workspace): universal builds of the Mac App Store .pkg
+  # (`appstore`, validated, or uploaded with `upload`) and of the direct-download DMG (`dmg`: `license` feature, Developer ID,
+  # notarized and stapled). Licensing and release steps: apps/voltrus-tools/docs/release.md.
   voltrus-tools:
-    if: inputs.app == 'voltrus-tools' && inputs.appstore
+    if: inputs.app == 'voltrus-tools' && (inputs.appstore || inputs.dmg)
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 150
     environment: release
     steps:
+      # The DMG is sold by licence key from dl-voltrus-tools.voltrus.id, like the explorer apps' licence-key DMGs.
+      - name: Refuse GitHub release of Voltrus Tools
+        if: inputs.github_release
+        run: |
+          echo "::error::Voltrus Tools is distributed through the Voltrus console and voltrus.id, not GitHub Releases. Untick github_release; publish the DMG with scripts/publish-direct.sh (apps/voltrus-tools/docs/release.md)."
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -274,10 +284,16 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
-      # Builds every dependency's build.rs, so it runs before any signing
-      # identity or App Store Connect key is on the runner; it needs neither.
+      # The bundles build every dependency's build.rs, so they run before any
+      # signing identity or App Store Connect key is on the runner; they need
+      # neither.
       - name: "Mac App Store build: bundle"
+        if: inputs.appstore
         run: apps/voltrus-tools/scripts/build-mas.sh bundle build/voltrus-tools/appstore
+
+      - name: "Developer ID build: bundle"
+        if: inputs.dmg
+        run: apps/voltrus-tools/scripts/build-dmg.sh bundle build/voltrus-tools/dmg
 
       - name: Signing identities and App Store Connect key
         env:
@@ -286,22 +302,45 @@ jobs:
           APPLE_DIST_P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
           MAC_INSTALLER_P12_BASE64: ${{ secrets.MAC_INSTALLER_P12_BASE64 }}
           MAC_INSTALLER_P12_PASSWORD: ${{ secrets.MAC_INSTALLER_P12_PASSWORD }}
-        run: scripts/ci-keychain.sh setup APPLE_DIST MAC_INSTALLER
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          APPSTORE: ${{ inputs.appstore }}
+          DMG: ${{ inputs.dmg }}
+        run: |
+          identities=()
+          if [[ "$APPSTORE" == true ]]; then identities+=(APPLE_DIST MAC_INSTALLER); fi
+          if [[ "$DMG" == true ]]; then identities+=(DEVELOPER_ID); fi
+          scripts/ci-keychain.sh setup "${identities[@]}"
 
       - name: "Mac App Store build: package"
+        if: inputs.appstore
         run: |
           serial="$(security find-certificate -a -c 'Apple Distribution' -p "$RUNNER_TEMP/release.keychain-db" | openssl x509 -noout -serial | cut -d= -f2)"
           python3 scripts/asc-profile.py MAC_APP_STORE com.joyodigitama.voltrus-tools "$serial" "$RUNNER_TEMP/mas.provisionprofile"
           MAS_PROFILE="$RUNNER_TEMP/mas.provisionprofile" apps/voltrus-tools/scripts/build-mas.sh package \
             "build/voltrus-tools/appstore/Voltrus Tools.app" build/voltrus-tools/appstore ${{ inputs.upload && '--upload' || '' }}
 
+      - name: "Developer ID build: package (notarized)"
+        if: inputs.dmg
+        run: |
+          apps/voltrus-tools/scripts/build-dmg.sh package \
+            "build/voltrus-tools/dmg/Voltrus Tools.app" build/voltrus-tools/dmg --notarize
+
       - name: Checksums
-        run: shasum -a 256 build/voltrus-tools/appstore/*.pkg | tee -a "$GITHUB_STEP_SUMMARY"
+        run: find build/voltrus-tools -name '*.pkg' -o -name '*.dmg' | xargs shasum -a 256 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Direct-download publish command
+        if: inputs.dmg
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' apps/voltrus-tools/Cargo.toml | head -1)"
+          echo "Publish to the download worker (run locally, with your Cloudflare login): \`scripts/publish-direct.sh voltrus-tools $version --run $GITHUB_RUN_ID\`" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: voltrus-tools-macos-${{ github.run_number }}
-          path: build/voltrus-tools/appstore/*.pkg
+          path: |
+            build/voltrus-tools/appstore/*.pkg
+            build/voltrus-tools/dmg/*.dmg
           if-no-files-found: error
           retention-days: 30
 

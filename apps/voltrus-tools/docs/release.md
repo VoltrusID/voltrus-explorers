@@ -1,11 +1,16 @@
-# Releasing Voltrus Tools to the Mac App Store
+# Releasing Voltrus Tools
 
-Voltrus Tools ships in two flavours from the same source:
+Voltrus Tools ships in three flavours from the same source:
 
 | Build | How | Licence |
 | --- | --- | --- |
 | Source, CI (`voltrus-tools.yml`), GitHub | `cargo build -p vt-app` | everything unlocked, nothing sold ([`Licence::Unrestricted`](../crates/vt-store/src/lib.rs)) |
 | Mac App Store | `cargo build -p vt-app --features store` ([`scripts/build-mas.sh`](../scripts/build-mas.sh)) | free download, 14-day trial, then a one-time unlock |
+| Direct download (DMG) | `cargo build -p vt-app --features license` ([`scripts/build-dmg.sh`](../scripts/build-dmg.sh)) | free download, 14-day trial, then a one-time licence key (USD 49) from the Voltrus console; see [Direct download](#direct-download-licence-key) |
+
+`store` and `license` are exclusive: enabling both is a compile error. App Review rejected the App Store build under
+guideline 4.3, so the direct download is the one on sale; the App Store sections below stay for the record and for a
+later resubmission.
 
 The individual explorer apps stay on sale beside it; their pipeline is [`docs/release.md`](../../../docs/release.md).
 
@@ -198,3 +203,122 @@ Test purchases in TestFlight builds use the sandbox, so nothing is charged.
 3. App Review information: untick "Sign-in required", add contact details, note that the trial starts from the status
    bar or by connecting anything.
 4. Content Rights declaration; publish the App Privacy answer.
+
+## Direct download (licence key)
+
+A notarized Developer ID DMG, `Voltrus-Tools-<version>-universal.dmg`, served from
+`https://dl-voltrus-tools.voltrus.id/latest` (the worker serves only files matching `/voltrus[ _.-]*tools/i`). It is
+the same app as the store build with the `license` feature instead of `store`: no StoreKit, no sandbox.
+
+### States
+
+The same four states, the same gate and the same screens as the [store build](#states); only where the trial and the
+unlock come from differs.
+
+| State | When | Comes from |
+| --- | --- | --- |
+| Not started | no trial start known on this Mac, no key | the unlock sheet offers "Start free trial", "Buy licence · $49" and the key field |
+| Trial | started less than 14 days ago | "Start free trial" in the unlock sheet (which the status bar, the menu, the first connect or demo open) |
+| Expired | 14 × 24 h after the start | read-only, exactly like the store build |
+| Unlocked | a licence key is activated on this Mac | the key field's Activate |
+
+- **The trial without StoreKit.** Starting it writes its start (`Cache::start_trial`) to `licence.json` and to the
+  Keychain marks (`SystemMarks`, item `com.joyodigitama.voltrus-tools.licence` / `marks`, now kept in `license`
+  builds too). The earlier start and the later clock floor win, so deleting `licence.json`, rewriting it or turning
+  the clock back neither restarts nor extends the trial; asking for a new trial keeps the first start. Tests in
+  [`vt-store`](../crates/vt-store/src/lib.rs): `a_trial_started_on_this_mac_runs_fourteen_days_then_turns_read_only`,
+  `starting_the_trial_again_never_restarts_it`, `the_keychain_marks_outlive_a_deleted_cache_without_storekit`,
+  `a_clock_turned_back_before_starting_counts_from_the_latest_time_seen`.
+- **The unlock is the key in the Keychain**, not the cache file: at launch a saved key unlocks at once (offline
+  included), then it is validated once in the background.
+- **Unlock sheet**: a "Licence key" field with Activate (Enter in the field activates; Enter on the sheet activates a
+  typed key, otherwise starts the trial or opens the buy page), "Buy licence · $49" (opens `buy_url` in the browser),
+  and, when the server answers `code: "seat_limit"`, "Move licence here" (asks once more, then calls `/license/move`).
+  Once unlocked, the unlock sheet and About show "Remove key" (asks once more), which releases this Mac's seat and
+  forgets the key; the app goes back to the trial state it had (expired, as a rule). No "Restore purchases".
+- **About** says "direct download" and, unlike the store build, links to the source on GitHub.
+
+### Licence server protocol
+
+[`vt-store/src/license.rs`](../crates/vt-store/src/license.rs) mirrors `mt-store`'s `license` feature (the
+explorer apps' licence-key DMGs), field for field:
+
+```text
+POST {server}/license/activate   { key, device_id, app_version, platform } -> { valid, activation_id?, error? }
+POST {server}/license/validate   { key, activation_id, device_id, app_version, platform } -> { valid, error? }
+POST {server}/license/move       { key, device_id, app_version, platform } -> { valid, activation_id?, error?, code? }
+POST {server}/license/deactivate { key, activation_id, device_id }       -> { ok }
+```
+
+`platform` is `macos-aarch64` or `macos-x86_64`. As in `mt-store`, the bodies carry no app name: the worker serves
+one app, so `dl-voltrus-tools` is the app. The rules:
+
+- Validated once per launch, in the background. Only an explicit `{"valid": false}` removes the key (with a toast);
+  an unreachable server, a 5xx or an answer that isn't the worker's JSON keeps the unlock, so offline buyers are
+  never locked out.
+- Activation needs an `activation_id` in a valid answer; without one nothing is saved. Polar's raw error JSON is
+  shown by its `detail`; an unknown key reads "That licence key was not recognised."; the `seat_limit` text is shown
+  whole and offers "Move licence here".
+- Remove calls `/license/deactivate` best effort: the key is forgotten even offline.
+- The key and its activation id (item `licence`) and a per-device id made once (item `device-id`, kept when the key
+  is removed so the Mac doesn't take a new seat) are generic passwords of service `com.joyodigitama.voltrus-tools`
+  in the login Keychain; on other systems (tests) they are files in `licence-key/` beside `licence.json`.
+
+Tests run the real reqwest path against a mock HTTP server: valid, refused, unknown key, seat limit then move,
+remove (online and offline), unreachable server, 5xx and garbage answers keep the unlock, explicit invalid removes
+it, once per launch, and the blocking `Keys` front the app calls from its background thread.
+
+### Configuration
+
+[`vt-store/store.json`](../crates/vt-store/store.json), the `license` section of the explorer apps' `store.json`,
+compiled into the app:
+
+```json
+{ "license": { "server": "https://dl-voltrus-tools.voltrus.id", "buy_url": "https://console.voltrus.id/app/catalog", "price": "$49" } }
+```
+
+**TODO(polar product id):** the Polar product doesn't exist yet, so `buy_url` is the console catalog. Once it exists,
+set `buy_url` to `https://console.voltrus.id/checkout/p/<polar product id>` (as in the explorer apps' `store.json`)
+and drop the file's `todo` note.
+
+### Sandbox and signing
+
+No App Sandbox: hardened runtime with [`packaging/entitlements.dmg.plist`](../packaging/entitlements.dmg.plist),
+which is empty. Network, serial and Bluetooth need no entitlement outside the sandbox; macOS asks the user through
+`NSLocalNetworkUsageDescription` and `NSBluetoothAlwaysUsageDescription`, both in
+[`packaging/Info.plist`](../packaging/Info.plist) (`build-dmg.sh` checks them). The bundle id is the store's,
+`com.joyodigitama.voltrus-tools`. Data lives in the real home folder (`vt_app_core::store::default_path()` from
+`$HOME`), not in a container, so a Mac that ran the store build keeps two separate workspaces.
+
+```bash
+scripts/build-dmg.sh bundle dist-dmg                                        # cargo build --features license for both targets, lipo, bundle
+ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_PATH=… \
+  scripts/build-dmg.sh package "dist-dmg/Voltrus Tools.app" dist-dmg --notarize   # Developer ID, DMG, notarize, staple
+```
+
+`package` signs the app (Developer ID Application, hardened runtime, timestamp), packs it with an Applications link
+into `Voltrus-Tools-<version>-universal.dmg`, signs the DMG, submits it to `notarytool` with the App Store Connect
+API key, staples it and checks it with `spctl`.
+
+### Release
+
+1. Bump `version` in `apps/voltrus-tools/Cargo.toml` (`[workspace.package]`) and merge to `main`.
+2. Build, sign, notarize and upload the DMG as a run artifact:
+
+   ```bash
+   gh workflow run release.yml -R VoltrusID/voltrus-explorers --ref main \
+     -f app=voltrus-tools -f appstore=false -f dmg=true
+   ```
+
+   (`appstore` defaults to true; leave it on to build the store `.pkg` in the same run.) The `voltrus-tools` job
+   bundles before any secret is on the runner, then imports the `DEVELOPER_ID_*` identity with
+   `scripts/ci-keychain.sh` and runs `build-dmg.sh package --notarize`. `github_release=true` is refused: the DMG is
+   sold, not put on GitHub. The run summary prints the publish command.
+3. Publish it to the download worker, locally with your Cloudflare login:
+
+   ```bash
+   scripts/publish-direct.sh voltrus-tools <version> --run <run id>
+   ```
+
+   That script's `voltrus-tools` entry and the `dl-voltrus-tools` worker (bucket, `/latest`, the `/license/*`
+   routes against the Polar product) are set up separately, outside this app.
