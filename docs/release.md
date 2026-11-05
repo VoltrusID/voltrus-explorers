@@ -5,7 +5,7 @@ All builds run on GitHub-hosted `macos-15` runners. No local Mac is needed.
 | Workflow | Trigger | Secrets | Does |
 | --- | --- | --- | --- |
 | `ci.yml` | push to `main`, pull requests, manual | none | crate tests, frontend typecheck/build/tests (Linux); unsigned universal build of both apps (macOS) |
-| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release (never for Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer, see below) |
+| `release.yml` | manual only | environment `release` | Mac App Store `.pkg`, notarized Developer ID `.dmg`, iOS IPA of the apps that ship on iOS (Modbus Poll and BACnet Explorer; iPhone and iPad); optional App Store Connect upload and GitHub Release (never for Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer, see below) |
 
 Voltrus Tools (the GPUI suite in `apps/voltrus-tools`) has its own Mac App Store path: `release.yml` with
 `app=voltrus-tools`, a 14-day trial and a one-time unlock through StoreKit 2. See
@@ -44,7 +44,7 @@ always increase.
     are built with `--features license` (Pro by licence key, see below); every other app's DMG has everything unlocked.
 - iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
   (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
-  app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for every app that ships on iOS (Modbus Poll, BACnet Explorer, S7 Explorer, OPC UA Explorer).
+  app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for Modbus Poll, BACnet Explorer, S7 Explorer and OPC UA Explorer (the last two no longer ship on iOS, see below).
 - BACnet Explorer on iOS needs Apple's multicast entitlement for Who-Is scanning: see [ios-multicast.md](ios-multicast.md).
   Until it is granted the build simply leaves it out; connecting by IP address works either way.
 
@@ -128,20 +128,30 @@ Release one of them:
 - Console rule (voltrus-console `docs/licence-keys.md`): never detach a Polar licence-key benefit from a product that
   has buyers; retire a product by archiving it.
 
-The App Store products below stay unused for these four apps.
+### Not on the App Store: MQTT, NATS, OPC UA and S7 Explorer
+
+Apple rejected MQTT Explorer, NATS Explorer, OPC UA Explorer and S7 Explorer (Mac, and iOS for the last two) under
+guidelines 4.3 (Spam) and 4.2.6 in October 2026. Their App Store Connect records were removed on 2026-11-05, together with
+Serial Monitor, BLE Inspector and CNC Explorer, so the bundle ids can never be used for an App Store app again. Do not
+dispatch `appstore=true`, `ios=true` or `upload=true` for any of them. They are direct downloads only: the download workers
+`dl-mqtt-explorer`, `dl-nats-explorer`, `dl-opcua-explorer` and `dl-s7-explorer.voltrus.id` still serve the older paid
+MacTools builds. Moving them to the licence-key setup above (a `license` feature, a Polar product, a `publish-direct.sh`
+entry) has not been done yet.
+
+The App Store products below stay unused for these eight apps.
 
 | App | Product id (non-consumable) | Price |
 | --- | --- | --- |
 | BACnet Explorer | `com.joyodigitama.bacnetexplorer.pro` | USD 19.99 (recommended; set when `free_since` is set, previous buyers are grandfathered) |
 | EtherNet/IP Explorer | `com.joyodigitama.enipexplorer.pro` | USD 14.99 |
 | Modbus Poll | `com.joyodigitama.modbuspoll.pro` | USD 14.99 (recommended; set when `free_since` is set; one purchase covers macOS and iOS) |
-| NATS Explorer | `com.joyodigitama.natsexplorer.pro` | USD 9.99 (`free_since.macos_version` is `1.2.0`, the app was never released as paid) |
+| NATS Explorer | `com.joyodigitama.natsexplorer.pro` | removed with the app on 2026-11-05 (was USD 9.99) |
 | DNP3 Explorer | `com.joyodigitama.dnp3explorer.pro` | USD 19.99 (the app is still paid at 1.2.x; `free_since` is `1.3.0`) |
-| BLE Inspector | `com.joyodigitama.bleinspector.pro` | USD 4.99 (never paid; `free_since` 1.2.0, free from its first release) |
-| S7 Explorer | `com.joyodigitama.s7explorer.pro` | USD 19.99 (never sold before; `free_since` is `1.4.0`) |
-| Serial Monitor | `com.joyodigitama.serialmonitor.pro` | USD 4.99 (never sold before, free from its first App Store release, `free_since` 1.5.0) |
-| MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | USD 4.99 (the app was never paid, so it is free from its first release; `free_since` 1.2.0) |
-| OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | USD 9.99 (the app was never live, so nobody to grandfather; `free_since` is already `1.3.0`) |
+| BLE Inspector | `com.joyodigitama.bleinspector.pro` | removed with the app on 2026-11-05 (was USD 4.99) |
+| S7 Explorer | `com.joyodigitama.s7explorer.pro` | removed with the app on 2026-11-05 (was USD 19.99) |
+| Serial Monitor | `com.joyodigitama.serialmonitor.pro` | removed with the app on 2026-11-05 (was USD 4.99) |
+| MQTT Explorer | `com.joyodigitama.mqttexplorer.pro` | removed with the app on 2026-11-05 (was USD 4.99) |
+| OPC UA Explorer | `com.joyodigitama.opcuaexplorer.pro` | removed with the app on 2026-11-05 (was USD 9.99) |
 | CNC Explorer | `com.joyodigitama.cncexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build) |
 | SECS/GEM Explorer | `com.joyodigitama.secsgemexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only, Beta) |
 
