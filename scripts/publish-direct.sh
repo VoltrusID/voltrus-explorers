@@ -3,7 +3,7 @@
 #
 #   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
 #
-# <app> is serial-monitor, ble-inspector, cnc-explorer or secsgem-explorer: they are not on GitHub Releases or the App Store; the console
+# <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, mqtt-explorer, nats-explorer, opcua-explorer or s7-explorer: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
 # The DMG is the `dmg` output of the Release workflow (scripts/build-macos.sh <app> dmg --notarize, built with
 # `--features license`). It comes from, in order:
@@ -56,7 +56,23 @@ case "$APP" in
     BUCKET="secsgem-explorer-releases"; DB="secsgem-explorer-releases-db"
     DB_ID="2e0b346e-3f23-4be2-a766-376da02407cc"
     NAME_RE='secs' ;;
-  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer)" >&2; exit 1 ;;
+  mqtt-explorer)
+    PRODUCT="MQTT Explorer"; BASE="https://dl-mqtt-explorer.voltrus.id"
+    BUCKET="mqtt-explorer-releases"; DB="mqtt-explorer-releases-db"; DB_ID="01f431c4-2c20-421c-b234-9007156e7d5e"
+    NAME_RE='mqtt' ;;
+  nats-explorer)
+    PRODUCT="NATS Explorer"; BASE="https://dl-nats-explorer.voltrus.id"
+    BUCKET="nats-explorer-releases"; DB="nats-explorer-releases-db"; DB_ID="d9bb2c7b-4a24-4e13-a9ea-944060a1566e"
+    NAME_RE='nats' ;;
+  opcua-explorer)
+    PRODUCT="OPC UA Explorer"; BASE="https://dl-opcua-explorer.voltrus.id"
+    BUCKET="opcua-explorer-releases"; DB="opcua-explorer-releases-db"; DB_ID="956adb28-ad88-461f-bcbb-31dd1769322b"
+    NAME_RE='opc[ _.-]*ua' ;;
+  s7-explorer)
+    PRODUCT="S7 Explorer"; BASE="https://dl-s7-explorer.voltrus.id"
+    BUCKET="s7-explorer-releases"; DB="s7-explorer-releases-db"; DB_ID="8780dfd5-2e43-468e-a1f5-bf7d29cfeb53"
+    NAME_RE='s7' ;;
+  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer | mqtt-explorer | nats-explorer | opcua-explorer | s7-explorer)" >&2; exit 1 ;;
 esac
 
 TMP="$(mktemp -d)"

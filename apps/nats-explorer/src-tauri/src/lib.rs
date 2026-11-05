@@ -774,6 +774,7 @@ pub fn run() {
             mt_store::store_status,
             mt_store::store_purchase,
             mt_store::store_restore,
+            mt_store::store_activate, mt_store::store_deactivate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

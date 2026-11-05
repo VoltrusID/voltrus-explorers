@@ -70,7 +70,7 @@ the user starts server mode).
 
 ## Pro (in-app purchase and licence key)
 
-**Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer are distributed through the Voltrus console and landing page only.**
+**Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, MQTT Explorer, NATS Explorer, OPC UA Explorer and S7 Explorer are distributed through the Voltrus console and landing page only.**
 Apple rejected Serial Monitor and BLE Inspector under guideline 4.3 (Spam) and those App Store submissions were withdrawn;
 CNC Explorer and SECS/GEM Explorer are sold direct from the start. They are not on GitHub Releases either:
 the notarized DMG is free for anyone to download, without signing in, from `https://dl-serial-monitor.voltrus.id/latest`
@@ -128,15 +128,19 @@ Release one of them:
 - Console rule (voltrus-console `docs/licence-keys.md`): never detach a Polar licence-key benefit from a product that
   has buyers; retire a product by archiving it.
 
-### Not on the App Store: MQTT, NATS, OPC UA and S7 Explorer
+### MQTT, NATS, OPC UA and S7 Explorer: direct download, Pro by licence key
 
 Apple rejected MQTT Explorer, NATS Explorer, OPC UA Explorer and S7 Explorer (Mac, and iOS for the last two) under
 guidelines 4.3 (Spam) and 4.2.6 in October 2026. Their App Store Connect records were removed on 2026-11-05, together with
-Serial Monitor, BLE Inspector and CNC Explorer, so the bundle ids can never be used for an App Store app again. Do not
-dispatch `appstore=true`, `ios=true` or `upload=true` for any of them. They are direct downloads only: the download workers
-`dl-mqtt-explorer`, `dl-nats-explorer`, `dl-opcua-explorer` and `dl-s7-explorer.voltrus.id` still serve the older paid
-MacTools builds. Moving them to the licence-key setup above (a `license` feature, a Polar product, a `publish-direct.sh`
-entry) has not been done yet.
+Serial Monitor, BLE Inspector and CNC Explorer, so the bundle ids can never be used for an App Store app again. Never
+dispatch `appstore=true`, `ios=true` or `upload=true` for them.
+
+They are released like the four apps above: `release.yml` with `dmg=true` builds them with `--features license`, and
+`scripts/publish-direct.sh <app> <version> --run <id>` publishes the DMG to `dl-<app>.voltrus.id` (R2 `<app>-releases`,
+D1 `<app>-releases-db`). Pro is a USD 29.99 one-time licence sold through the console. Their Polar products are the
+old MacTools ones (`ce586f76-...` MQTT, `b5bea778-...` NATS, `857662be-...` OPC UA, `2d0fb063-...` S7). OPC UA's carries
+a licence-key benefit, so its buyers keep their Polar keys; MQTT, NATS and S7 buyers get console `VLT-` licences. The
+console entrypoints are `MqttExplorerLicence`, `NatsExplorerLicence`, `OpcuaExplorerLicence` and `S7ExplorerLicence`.
 
 The App Store products below stay unused for these eight apps.
 

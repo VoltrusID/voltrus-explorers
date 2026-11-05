@@ -3,5 +3,10 @@
   "free_since": {
     "macos_version": "1.2.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-nats-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/b5bea778-4f94-40cf-8bde-e3d6e5618d0c",
+    "price": "$29.99"
   }
 }

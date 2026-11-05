@@ -537,6 +537,7 @@ pub fn run() {
             broker_start, broker_stop, broker_get_status, broker_get_topics, broker_get_recent, broker_publish,
             system::open_url,
             mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::store_activate, mt_store::store_deactivate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -3,5 +3,10 @@
   "free_since": {
     "macos_version": "1.2.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-mqtt-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/ce586f76-0ca2-4714-b35f-b46407bc71a4",
+    "price": "$29.99"
   }
 }

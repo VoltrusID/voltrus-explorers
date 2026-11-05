@@ -381,6 +381,7 @@ pub fn run() {
             cert_generate,
             system::open_url,
             mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
+            mt_store::store_activate, mt_store::store_deactivate,
         ])
         .setup(|app| {
             // Certificates and keys live in the app data directory: inside the container in the sandboxed

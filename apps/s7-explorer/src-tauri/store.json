@@ -3,5 +3,10 @@
   "free_since": {
     "macos_version": "1.4.0",
     "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-s7-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/2d0fb063-5268-4a94-a22c-d0e0e5e5f193",
+    "price": "$29.99"
   }
 }
