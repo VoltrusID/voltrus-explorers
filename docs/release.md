@@ -44,7 +44,7 @@ always increase.
     are built with `--features license` (Pro by licence key, see below); every other app's DMG has everything unlocked.
 - iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
   (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
-  app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for Modbus Poll, BACnet Explorer, S7 Explorer and OPC UA Explorer (the last two no longer ship on iOS, see below).
+  app's `tauri.conf.json`. CI (`ci.yml`) also runs `cargo check --target aarch64-apple-ios` for every app that ships on iOS (Modbus Poll, BACnet Explorer).
 - BACnet Explorer on iOS needs Apple's multicast entitlement for Who-Is scanning: see [ios-multicast.md](ios-multicast.md).
   Until it is granted the build simply leaves it out; connecting by IP address works either way.
 
