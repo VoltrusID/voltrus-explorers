@@ -16,6 +16,10 @@ path = "src/main.rs"
 # Mac App Store build: a 14-day trial, then a one-time unlock, bought through
 # StoreKit (see vt-store and docs/release.md). Without it everything is unlocked.
 store = ["vt-store/store"]
+# Direct download (Developer ID DMG, scripts/build-dmg.sh): the same 14-day
+# trial, kept on this Mac, then a licence key bought in the Voltrus console.
+# Exclusive with `store`.
+license = ["vt-store/license"]
 
 [dependencies]
 vt-protocol = { path = "../vt-protocol" }

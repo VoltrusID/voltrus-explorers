@@ -222,7 +222,7 @@ impl AppModel {
             async {}
         });
         let subscriptions = vec![write_events, appearance, quit];
-        let licensing = licence::Licensing::new(cx.focus_handle());
+        let licensing = licence::Licensing::new(window, cx);
         let review =
             review::ReviewGate::new(env!("CARGO_PKG_VERSION"), &boot.workspace.review_prompted);
         let mut model = Self {

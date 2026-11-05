@@ -8,15 +8,19 @@
 //!   apps: the trial is a free item named "14-day Trial", and its purchase date
 //!   starts the trial. After it the app is read-only: saved data and views open,
 //!   connecting, simulating and writing don't.
+//! - Direct-download builds (`license` feature, the Developer ID DMG): the
+//!   same 14-day trial, started by the user on this Mac and kept in the cache
+//!   and the Keychain marks ([`Cache::start_trial`]), then the same read-only
+//!   state, unlocked by a licence key ([`license`]).
 //!
 //! [`Licence::evaluate`] turns the verified entitlements and the time into the
 //! licence; [`Cache`] keeps the last verified entitlements on disk so the app
 //! knows its licence offline and at once on launch, and keeps the latest time
 //! the Mac has seen so turning the clock back never extends a trial. The
 //! clock floor and the trial's start are also kept in a [`MarkStore`] (the
-//! Keychain in store builds), so deleting the cache file doesn't reset them.
-//! [`app_store`] talks to StoreKit 2 in store builds; elsewhere it sells
-//! nothing.
+//! Keychain in store and licence builds), so deleting the cache file doesn't
+//! reset them. [`app_store`] talks to StoreKit 2 in store builds; elsewhere it
+//! sells nothing.
 
 use std::fs;
 use std::io::{self, Write as _};
@@ -24,7 +28,13 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(feature = "store", feature = "license"))]
+compile_error!(
+    "the `store` (App Store) and `license` (licence key) features are different ways to sell Voltrus Tools; enable one"
+);
+
 pub mod app_store;
+pub mod license;
 
 /// The free "14-day Trial" non-consumable: buying it starts the trial.
 pub const TRIAL_PRODUCT: &str = "com.joyodigitama.voltrustools.trial14";
@@ -39,6 +49,17 @@ pub const TRIAL_SECONDS: i64 = TRIAL_DAYS * DAY;
 /// Whether this binary sells the app through the App Store.
 pub const fn store_build() -> bool {
     cfg!(feature = "store")
+}
+
+/// Whether this binary is the direct download sold by licence key.
+pub const fn license_build() -> bool {
+    cfg!(feature = "license")
+}
+
+/// Whether this binary has a trial and sells an unlock at all (source builds
+/// don't).
+pub const fn sells() -> bool {
+    store_build() || license_build()
 }
 
 /// What the App Store verified this Apple ID owns. Times are Unix seconds.
@@ -217,6 +238,19 @@ impl Cache {
         };
     }
 
+    /// Start the trial now, in builds without StoreKit (licence keys): the
+    /// user asked for it. A trial already started on this Mac (in the cache
+    /// or the Keychain marks) keeps its start, so asking again never
+    /// restarts it. Returns whether this call started it.
+    pub fn start_trial(&mut self, now: i64) -> bool {
+        let now = self.observe(now);
+        if self.entitlements.trial_started.is_some() {
+            return false;
+        }
+        self.entitlements.trial_started = Some(now);
+        true
+    }
+
     /// A purchase StoreKit just verified.
     pub fn purchased(&mut self, product: &str, original: i64) {
         if product == UNLOCK_PRODUCT {
@@ -259,29 +293,29 @@ pub trait MarkStore {
     fn write(&self, marks: Marks) -> io::Result<()>;
 }
 
-/// The Keychain in store builds for macOS; elsewhere nothing is sold, so
-/// nothing is kept.
+/// The Keychain in store and licence builds for macOS; elsewhere nothing is
+/// sold, so nothing is kept.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemMarks;
 
 impl MarkStore for SystemMarks {
     fn read(&self) -> Option<Marks> {
-        #[cfg(all(feature = "store", target_os = "macos"))]
+        #[cfg(all(any(feature = "store", feature = "license"), target_os = "macos"))]
         {
             keychain::read()
         }
-        #[cfg(not(all(feature = "store", target_os = "macos")))]
+        #[cfg(not(all(any(feature = "store", feature = "license"), target_os = "macos")))]
         {
             None
         }
     }
 
     fn write(&self, marks: Marks) -> io::Result<()> {
-        #[cfg(all(feature = "store", target_os = "macos"))]
+        #[cfg(all(any(feature = "store", feature = "license"), target_os = "macos"))]
         {
             keychain::write(marks)
         }
-        #[cfg(not(all(feature = "store", target_os = "macos")))]
+        #[cfg(not(all(any(feature = "store", feature = "license"), target_os = "macos")))]
         {
             let _ = marks;
             Ok(())
@@ -291,7 +325,7 @@ impl MarkStore for SystemMarks {
 
 /// One generic-password item in the app's own Keychain (sandbox-safe: no
 /// access group needed), holding the marks as JSON.
-#[cfg(all(feature = "store", target_os = "macos"))]
+#[cfg(all(any(feature = "store", feature = "license"), target_os = "macos"))]
 mod keychain {
     use std::io;
 
@@ -745,6 +779,124 @@ mod tests {
         );
         // The Keychain still knows the trial was used.
         assert_eq!(Cache::load_with(&path, &keychain), cache);
+    }
+
+    // ── Licence-key builds: the trial without StoreKit ──────────────────
+
+    #[test]
+    fn a_trial_started_on_this_mac_runs_fourteen_days_then_turns_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("licence.json");
+        let keychain = MemoryMarks::default();
+        let mut cache = Cache::load_with(&path, &keychain);
+        assert_eq!(cache.licence(T0), Licence::NotStarted);
+
+        assert!(cache.start_trial(T0));
+        cache.save_with(&path, &keychain).unwrap();
+        assert_eq!(
+            cache.licence(T0),
+            Licence::Trial {
+                ends: T0 + TRIAL_SECONDS,
+                days_left: 14
+            }
+        );
+
+        // Relaunched on day 13: the start comes back from the file.
+        let mut cache = Cache::load_with(&path, &keychain);
+        assert_eq!(
+            cache.licence(T0 + 13 * DAY),
+            Licence::Trial {
+                ends: T0 + TRIAL_SECONDS,
+                days_left: 1
+            }
+        );
+        assert_eq!(cache.licence(T0 + TRIAL_SECONDS), Licence::Expired);
+        assert!(!cache.licence(T0 + TRIAL_SECONDS).can_operate());
+    }
+
+    #[test]
+    fn starting_the_trial_again_never_restarts_it() {
+        let mut cache = Cache::default();
+        assert!(cache.start_trial(T0));
+        assert!(!cache.start_trial(T0 + 20 * DAY));
+        assert_eq!(cache.entitlements.trial_started, Some(T0));
+        assert_eq!(cache.licence(T0 + 20 * DAY), Licence::Expired);
+    }
+
+    #[test]
+    fn the_keychain_marks_outlive_a_deleted_cache_without_storekit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("licence.json");
+        let keychain = MemoryMarks::default();
+        let mut cache = Cache::default();
+        cache.start_trial(T0);
+        assert!(cache.licence(T0 + 15 * DAY) == Licence::Expired);
+        cache.save_with(&path, &keychain).unwrap();
+
+        // Delete licence.json, turn the clock back to before the trial, and
+        // ask for a new one: the Keychain still has the start and the floor.
+        fs::remove_file(&path).unwrap();
+        let mut reloaded = Cache::load_with(&path, &keychain);
+        assert_eq!(reloaded.entitlements.trial_started, Some(T0));
+        assert!(!reloaded.start_trial(T0 - DAY));
+        assert_eq!(reloaded.licence(T0 - DAY), Licence::Expired);
+
+        // A file rewritten with a later start loses to the Keychain's.
+        let rewritten = Cache {
+            entitlements: trial(T0 + 15 * DAY),
+            high_water: T0 + 15 * DAY,
+        };
+        fs::write(&path, serde_json::to_vec(&rewritten).unwrap()).unwrap();
+        assert_eq!(
+            Cache::load_with(&path, &keychain).licence(T0 + 15 * DAY),
+            Licence::Expired
+        );
+    }
+
+    #[test]
+    fn a_clock_turned_back_before_starting_counts_from_the_latest_time_seen() {
+        let mut cache = Cache {
+            entitlements: Entitlements::default(),
+            high_water: T0 + 5 * DAY,
+        };
+        // The clock says T0, but the Mac has already seen day 5: the trial
+        // starts there and ends 14 days later, not 5 days early or late.
+        cache.start_trial(T0);
+        assert_eq!(cache.entitlements.trial_started, Some(T0 + 5 * DAY));
+        assert_eq!(
+            cache.licence(T0),
+            Licence::Trial {
+                ends: T0 + 5 * DAY + TRIAL_SECONDS,
+                days_left: 14
+            }
+        );
+    }
+
+    #[test]
+    fn a_licence_key_unlocks_and_removing_it_returns_to_the_trial_state() {
+        let mut cache = Cache::default();
+        cache.start_trial(T0);
+        cache.entitlements.unlocked = true;
+        assert_eq!(cache.licence(T0 + 30 * DAY), Licence::Unlocked);
+        cache.entitlements.unlocked = false;
+        assert_eq!(cache.licence(T0 + 30 * DAY), Licence::Expired);
+        // Without a trial, a removed key leaves it not started.
+        let mut fresh = Cache {
+            entitlements: Entitlements {
+                unlocked: true,
+                trial_started: None,
+            },
+            high_water: T0,
+        };
+        assert_eq!(fresh.licence(T0), Licence::Unlocked);
+        fresh.entitlements.unlocked = false;
+        assert_eq!(fresh.licence(T0), Licence::NotStarted);
+    }
+
+    #[test]
+    fn the_flavour_is_known_at_compile_time() {
+        assert_eq!(sells(), store_build() || license_build());
+        assert!(!(store_build() && license_build()));
     }
 
     #[test]

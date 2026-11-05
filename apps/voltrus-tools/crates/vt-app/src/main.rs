@@ -35,10 +35,10 @@ fn main() -> ExitCode {
         },
         None => None,
     };
-    // Source builds only: a fixed licence to see the store's sheets. A store
-    // build's licence comes from the App Store alone.
+    // Source builds only: a fixed licence to see the store's sheets. A sold
+    // build's licence comes from the App Store or its licence key alone.
     let preview = match args.iter().position(|arg| arg == "--licence-preview") {
-        Some(index) if !vt_store::store_build() => match args
+        Some(index) if !vt_store::sells() => match args
             .get(index + 1)
             .and_then(|name| model::licence::Preview::parse(name))
         {
@@ -74,14 +74,14 @@ fn main() -> ExitCode {
             cx.bind_keys(actions::key_bindings());
             cx.bind_keys(model::opcua::key_bindings());
             cx.bind_keys(model::licence::key_bindings());
-            // The app menu starts with About (and, in store builds, Unlock).
+            // The app menu starts with About (and, in sold builds, Unlock).
             let mut menus = actions::menus();
             if let Some(app_menu) = menus.first_mut() {
                 let mut items = vec![gpui::MenuItem::action(
                     "About Voltrus Tools",
                     model::licence::ShowAbout,
                 )];
-                if vt_store::store_build() {
+                if vt_store::sells() {
                     items.push(gpui::MenuItem::action(
                         "Unlock Voltrus Tools…",
                         model::licence::ShowUnlock,

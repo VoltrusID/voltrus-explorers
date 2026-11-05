@@ -1,9 +1,12 @@
-//! The App Store licence inside the app: the gate in front of the engine, the
-//! unlock and About sheets, and the StoreKit calls behind them.
+//! The licence inside the app: the gate in front of the engine, the unlock
+//! and About sheets, and the StoreKit or licence-key calls behind them.
 //!
-//! Source builds are [`Licence::Unrestricted`] and never ask StoreKit. Store
+//! Source builds are [`Licence::Unrestricted`] and never ask anything. Store
 //! builds start from the cached licence (so a buyer is unlocked at once, also
-//! offline), then ask StoreKit and follow its updates. Once the licence stops
+//! offline), then ask StoreKit and follow its updates. Licence-key builds
+//! start the trial on this Mac when the user asks, are unlocked at once by a
+//! saved key and validate it once per launch in the background. Once the
+//! licence stops
 //! allowing work (trial not started or over), [`GatedEngine`] lets only
 //! commands that stop sessions through: whatever path tries to connect,
 //! simulate or write is refused and the unlock sheet opens.
@@ -11,16 +14,21 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gpui::{Context, FocusHandle, KeyBinding, SharedString, Window, actions};
+use gpui::{
+    AppContext as _, Context, Entity, FocusHandle, KeyBinding, SharedString, Subscription, Window,
+    actions,
+};
 use vt_app_core::{Appearance, ConnectionId, store};
 use vt_engine::EngineHandle;
 use vt_protocol::Command as EngineCommand;
+use vt_store::license::{ActivateError, Keys, LicenseConfig};
 use vt_store::{
     Cache, Licence, Outcome, Prices, Snapshot, StoreError, TRIAL_PRODUCT, UNLOCK_PRODUCT, app_store,
 };
+use vt_ui::text_input::{InputEvent, TextInput};
 
 use super::AppModel;
 
@@ -123,12 +131,18 @@ pub enum Sheet {
     About,
 }
 
-/// What the App Store is busy with.
+/// What the App Store (or the licence server) is busy with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Busy {
     Trial,
     Unlock,
     Restore,
+    /// Licence-key builds: activating the key in the field.
+    Activate,
+    /// Licence-key builds: moving the key here from another Mac.
+    Move,
+    /// Licence-key builds: removing the key from this Mac.
+    RemoveKey,
 }
 
 /// A fixed licence for screenshots and trying the sheets in a source build
@@ -181,43 +195,97 @@ pub struct Licensing {
     cache_path: Option<PathBuf>,
     /// A preview licence: nothing is asked, bought or saved.
     preview: bool,
+    /// Licence-key builds: the server, the buy page and the price.
+    pub config: LicenseConfig,
+    /// Licence-key builds: the key client; `None` elsewhere.
+    keys: Option<Arc<Keys>>,
+    /// The unlock sheet's licence key field (licence-key builds).
+    pub key_input: Entity<TextInput>,
+    /// The server said the key is active on another Mac: offer to move it.
+    pub seat_limit: bool,
+    /// A button that asks again before it acts (move, remove key).
+    pub confirm: Option<Busy>,
+    _key_events: Subscription,
 }
 
 impl Licensing {
-    pub fn new(focus: FocusHandle) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<AppModel>) -> Self {
         let cache_path = store::default_path()
             .ok()
             .map(|path| path.with_file_name("licence.json"));
         let mut cache = cache_path.as_deref().map(Cache::load).unwrap_or_default();
-        let licence = if vt_store::store_build() {
+        let config = LicenseConfig::bundled();
+        let keys = cache_path
+            .as_deref()
+            .and_then(|path| path.parent())
+            .and_then(|dir| Keys::open(&config, dir.to_owned()))
+            .map(Arc::new);
+        let mut prices = Prices::default();
+        if vt_store::license_build() {
+            // The key in the Keychain is the unlock, not the editable cache
+            // file; the server validates it after launch.
+            cache.entitlements.unlocked = keys.as_ref().is_some_and(|keys| keys.saved());
+            prices.unlock = config.price.clone();
+        }
+        let licence = if vt_store::sells() {
             cache.licence(unix_now())
         } else {
             Licence::Unrestricted
         };
+        let key_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("Paste your licence key")
+                .mono()
+        });
+        let key_events = cx.subscribe_in(
+            &key_input,
+            window,
+            |model, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Submitted => model.activate_key(false, cx),
+                InputEvent::Cancelled => model.close_licence_sheet(window, cx),
+                InputEvent::Changed => {
+                    model.licensing.seat_limit = false;
+                    model.licensing.confirm = None;
+                    cx.notify();
+                }
+                InputEvent::Blurred => {}
+            },
+        );
         Self {
             licence,
-            prices: Prices::default(),
+            prices,
             sheet: None,
             busy: None,
             notice: None,
-            focus,
+            focus: cx.focus_handle(),
             focus_sheet: false,
             focus_main: false,
             gate: Rc::new(Gate::new(licence.can_operate())),
             cache,
             cache_path,
             preview: false,
+            config,
+            keys,
+            key_input,
+            seat_limit: false,
+            confirm: None,
+            _key_events: key_events,
         }
     }
 
-    /// Whether this copy is sold through the App Store (or previews one).
+    /// Whether this copy is sold (or previews a store copy).
     pub fn sells(&self) -> bool {
-        vt_store::store_build() || self.preview
+        vt_store::sells() || self.preview
     }
 
-    /// Whether purchases really go to the App Store.
+    /// Whether this copy unlocks with a licence key instead of the App Store.
+    pub fn uses_keys(&self) -> bool {
+        vt_store::license_build() && !self.preview
+    }
+
+    /// Whether the licence is really judged and saved (not a preview).
     fn live(&self) -> bool {
-        vt_store::store_build() && !self.preview
+        vt_store::sells() && !self.preview
     }
 }
 
@@ -270,9 +338,15 @@ pub(crate) fn plural_days(days: i64) -> String {
 
 impl AppModel {
     /// Store builds: ask StoreKit now, whenever a transaction arrives, and
-    /// re-check the trial every minute.
+    /// re-check the trial every minute. Licence-key builds: validate the
+    /// saved key once, and re-check the trial every minute.
     pub(super) fn start_licensing(&mut self, cx: &mut Context<Self>) {
         if !self.licensing.live() {
+            return;
+        }
+        if self.licensing.uses_keys() {
+            self.every_minute(cx);
+            self.validate_key(cx);
             return;
         }
         let (updates, updated) = async_channel::bounded(1);
@@ -290,6 +364,13 @@ impl AppModel {
             }
         })
         .detach();
+        self.every_minute(cx);
+        self.refresh_licence(cx);
+    }
+
+    /// Re-check the trial every minute, so running sessions stop when it
+    /// ends.
+    fn every_minute(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -304,7 +385,6 @@ impl AppModel {
             }
         })
         .detach();
-        self.refresh_licence(cx);
     }
 
     /// Whether sessions may run now. If not, the unlock sheet opens and the
@@ -330,6 +410,7 @@ impl AppModel {
     pub fn close_licence_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.licensing.sheet = None;
         self.licensing.notice = None;
+        self.licensing.confirm = None;
         window.focus(&self.focus);
         cx.notify();
     }
@@ -345,8 +426,18 @@ impl AppModel {
             licensing.focus_sheet = true;
         }
         if std::mem::take(&mut licensing.focus_sheet) && licensing.sheet.is_some() {
-            cx.defer_in(window, |model, window, _| {
-                window.focus(&model.licensing.focus);
+            cx.defer_in(window, |model, window, cx| {
+                // Licence-key builds type the key straight away once the
+                // trial has started; Enter then activates it.
+                let licensing = &model.licensing;
+                if licensing.uses_keys()
+                    && licensing.sheet == Some(Sheet::Unlock)
+                    && matches!(licensing.licence, Licence::Trial { .. } | Licence::Expired)
+                {
+                    licensing.key_input.read(cx).focus(window);
+                } else {
+                    window.focus(&licensing.focus);
+                }
             });
         }
         if std::mem::take(&mut licensing.focus_main) {
@@ -356,6 +447,18 @@ impl AppModel {
 
     /// Enter on a sheet: its main button.
     pub fn licence_confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Licence-key builds: a typed key is activated first.
+        if self.licensing.uses_keys()
+            && self.licensing.sheet == Some(Sheet::Unlock)
+            && matches!(
+                self.licensing.licence,
+                Licence::Trial { .. } | Licence::Expired
+            )
+            && !self.licensing.key_input.read(cx).value().trim().is_empty()
+        {
+            self.activate_key(false, cx);
+            return;
+        }
         match (self.licensing.sheet, self.licensing.licence) {
             (Some(Sheet::Unlock), Licence::NotStarted) => self.buy(Busy::Trial, cx),
             (Some(Sheet::Unlock), Licence::Trial { .. } | Licence::Expired) => {
@@ -368,6 +471,13 @@ impl AppModel {
     /// Start the trial or buy the unlock.
     pub fn buy(&mut self, item: Busy, cx: &mut Context<Self>) {
         if self.licensing.busy.is_some() {
+            return;
+        }
+        if self.licensing.uses_keys() {
+            match item {
+                Busy::Trial => self.start_trial_here(cx),
+                _ => self.open_buy_page(cx),
+            }
             return;
         }
         if !self.licensing.live() {
@@ -427,7 +537,7 @@ impl AppModel {
     }
 
     pub fn restore_purchases(&mut self, cx: &mut Context<Self>) {
-        if self.licensing.busy.is_some() {
+        if self.licensing.busy.is_some() || self.licensing.uses_keys() {
             return;
         }
         if !self.licensing.live() {
@@ -463,6 +573,167 @@ impl AppModel {
             }
             cx.notify();
         });
+    }
+
+    // ── Licence keys ────────────────────────────────────────────────────
+
+    /// Licence-key builds: the user started the trial. It is kept in the
+    /// cache and the Keychain marks, so it neither restarts nor stretches.
+    fn start_trial_here(&mut self, cx: &mut Context<Self>) {
+        let started = self.licensing.cache.start_trial(unix_now());
+        self.recheck_licence(cx);
+        let message = match self.licensing.licence {
+            Licence::Trial { days_left, .. } if started => format!(
+                "Your free trial has started: {} of every tool.",
+                plural_days(days_left)
+            ),
+            Licence::Trial { days_left, .. } => {
+                format!(
+                    "Your free trial is running: {} left.",
+                    plural_days(days_left)
+                )
+            }
+            Licence::Unlocked => "Voltrus Tools is unlocked.".to_owned(),
+            _ => "Your free trial on this Mac has already ended.".to_owned(),
+        };
+        if self.licensing.licence.can_operate() {
+            self.licensing.sheet = None;
+            self.licensing.focus_main = true;
+            self.show_toast(message, false, cx);
+        } else {
+            self.licensing.notice = Some((message.into(), true));
+        }
+        cx.notify();
+    }
+
+    /// Open the console's page for the licence in the browser.
+    pub fn open_buy_page(&mut self, cx: &mut Context<Self>) {
+        cx.open_url(&self.licensing.config.buy_url);
+        self.licensing.notice = Some((
+            "The Voltrus console opened in your browser. Paste the licence key you receive \
+             here and choose Activate."
+                .into(),
+            false,
+        ));
+        cx.notify();
+    }
+
+    /// Activate the key in the field; with `relocate`, move it here from the
+    /// Mac that holds it (asks once more first).
+    pub fn activate_key(&mut self, relocate: bool, cx: &mut Context<Self>) {
+        let licensing = &mut self.licensing;
+        let Some(keys) = licensing.keys.clone() else {
+            return;
+        };
+        if licensing.busy.is_some() || licensing.licence == Licence::Unlocked {
+            return;
+        }
+        let busy = if relocate { Busy::Move } else { Busy::Activate };
+        if relocate && licensing.confirm != Some(Busy::Move) {
+            licensing.confirm = Some(Busy::Move);
+            cx.notify();
+            return;
+        }
+        let key = licensing.key_input.read(cx).value().trim().to_owned();
+        licensing.busy = Some(busy);
+        licensing.confirm = None;
+        licensing.notice = None;
+        cx.notify();
+        off_thread(
+            cx,
+            move || keys.activate(&key, relocate),
+            |model, result: Result<(), ActivateError>, cx| {
+                let licensing = &mut model.licensing;
+                licensing.busy = None;
+                match result {
+                    Ok(()) => {
+                        licensing.seat_limit = false;
+                        licensing.cache.entitlements.unlocked = true;
+                        licensing
+                            .key_input
+                            .update(cx, |input, cx| input.set_text("", cx));
+                        model.recheck_licence(cx);
+                        model.licensing.sheet = None;
+                        model.licensing.focus_main = true;
+                        model.show_toast("Voltrus Tools is unlocked. Thank you!", false, cx);
+                    }
+                    Err(error) => {
+                        licensing.seat_limit = error.seat_limit;
+                        licensing.notice = Some((error.message.into(), true));
+                    }
+                }
+                cx.notify();
+            },
+        );
+    }
+
+    /// Release this Mac's seat and forget the key (asks once more first).
+    pub fn remove_key(&mut self, cx: &mut Context<Self>) {
+        let licensing = &mut self.licensing;
+        let Some(keys) = licensing.keys.clone() else {
+            return;
+        };
+        if licensing.busy.is_some() {
+            return;
+        }
+        if licensing.confirm != Some(Busy::RemoveKey) {
+            licensing.confirm = Some(Busy::RemoveKey);
+            cx.notify();
+            return;
+        }
+        licensing.busy = Some(Busy::RemoveKey);
+        licensing.confirm = None;
+        licensing.notice = None;
+        cx.notify();
+        off_thread(
+            cx,
+            move || keys.remove(),
+            |model, result: Result<(), String>, cx| {
+                model.licensing.busy = None;
+                match result {
+                    Ok(()) => {
+                        model.licensing.cache.entitlements.unlocked = false;
+                        model.recheck_licence(cx);
+                        model.licensing.notice = Some((
+                            "The licence key was removed from this Mac. You can activate it \
+                             on another one."
+                                .into(),
+                            false,
+                        ));
+                    }
+                    Err(message) => model.licensing.notice = Some((message.into(), true)),
+                }
+                cx.notify();
+            },
+        );
+    }
+
+    /// Validate the saved key once per launch. Only the server's explicit
+    /// "not valid" removes the unlock; offline it stays.
+    fn validate_key(&mut self, cx: &mut Context<Self>) {
+        let Some(keys) = self.licensing.keys.clone() else {
+            return;
+        };
+        if !self.licensing.cache.entitlements.unlocked {
+            return;
+        }
+        off_thread(
+            cx,
+            move || keys.status(),
+            |model, valid, cx| {
+                if valid {
+                    return;
+                }
+                model.licensing.cache.entitlements.unlocked = false;
+                model.recheck_licence(cx);
+                model.show_toast(
+                    "The licence server no longer accepts the licence key on this Mac, so it \
+                     was removed. Activate it again, or write to support@voltrus.id.",
+                    true,
+                    cx,
+                );
+            },
+        );
     }
 
     /// Ask StoreKit for the current entitlements and prices. Offline or

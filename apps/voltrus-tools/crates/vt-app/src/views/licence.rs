@@ -1,14 +1,16 @@
-//! The unlock sheet (start the trial, unlock, restore), the About sheet and
-//! the licence item in the status bar.
+//! The unlock sheet (start the trial, unlock, restore; in licence-key builds
+//! activate, buy or remove a key), the About sheet and the licence item in
+//! the status bar.
 //!
 //! Before the trial starts the sheet says how long it lasts, what stops when
-//! it ends and what the unlock costs, as App Review guideline 3.1.1 asks.
+//! it ends and what the unlock costs, as App Review guideline 3.1.1 asks; the
+//! direct download says the same.
 
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, FontWeight, MouseButton, SharedString, div, hsla, px};
 use vt_store::{Licence, TRIAL_DAYS};
 use vt_ui::Icon;
-use vt_ui::components::{Button, IconButton, brand_mark, kbd, pill, section_label};
+use vt_ui::components::{Button, IconButton, brand_mark, field, kbd, pill, section_label};
 use vt_ui::theme::*;
 
 use crate::model::AppModel;
@@ -157,7 +159,8 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                         .gap(SPACE_7)
                         .px(SPACE_8)
                         .pb(SPACE_8)
-                        .children(body.into_iter().map(|part| part.render(&theme, cx))),
+                        .children(body.into_iter().map(|part| part.render(&theme, cx)))
+                        .when_some(key_entry(model, sheet, cx), |this, entry| this.child(entry)),
                 )
                 .when_some(licensing.notice.as_ref(), |this, (message, failed)| {
                     let color = if *failed { theme.danger } else { theme.success };
@@ -191,6 +194,52 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                 .child(footer(model, sheet, cx)),
         )
         .into_any_element()
+}
+
+/// Licence-key builds: the key field with Activate (and Move licence here
+/// once the server says the key is in use on another Mac), on the unlock
+/// sheet until the app is unlocked.
+fn key_entry(model: &AppModel, sheet: Sheet, cx: &mut Context<AppModel>) -> Option<AnyElement> {
+    let licensing = &model.licensing;
+    if !licensing.uses_keys() || sheet != Sheet::Unlock || licensing.licence == Licence::Unlocked {
+        return None;
+    }
+    let busy = licensing.busy;
+    let activate = Button::new(
+        "licence-activate",
+        if busy == Some(Busy::Activate) {
+            "Activating…"
+        } else {
+            "Activate"
+        },
+    )
+    .icon(Icon::LockOpen)
+    .primary()
+    .disabled(busy.is_some())
+    .on_click(cx.listener(|model, _, _, cx| model.activate_key(false, cx)));
+    let mut row = div()
+        .flex()
+        .items_end()
+        .gap(SPACE_4)
+        .child(div().flex_1().min_w_0().child(field(
+            "Licence key",
+            licensing.key_input.clone(),
+            cx,
+        )))
+        .child(activate);
+    if licensing.seat_limit {
+        let label = match (busy, licensing.confirm) {
+            (Some(Busy::Move), _) => "Moving…",
+            (_, Some(Busy::Move)) => "Confirm: move here",
+            _ => "Move licence here",
+        };
+        row = row.child(
+            Button::new("licence-move", label)
+                .disabled(busy.is_some())
+                .on_click(cx.listener(|model, _, _, cx| model.activate_key(true, cx))),
+        );
+    }
+    Some(row.into_any_element())
 }
 
 /// One block of a sheet's body.
@@ -254,7 +303,8 @@ impl Part {
     }
 }
 
-/// "$49.00" from the App Store, or nothing while it's unknown (offline).
+/// "$49.00" from the App Store (or "$49" from the licence configuration), or
+/// nothing while it's unknown (offline).
 fn price(model: &AppModel) -> Option<String> {
     model.licensing.prices.unlock.clone()
 }
@@ -337,7 +387,9 @@ fn unlock_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
 
 fn about_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
     let licensing = &model.licensing;
-    let edition = if licensing.sells() {
+    let edition = if licensing.uses_keys() {
+        "direct download"
+    } else if licensing.sells() {
         "Mac App Store"
     } else {
         "built from source"
@@ -351,6 +403,9 @@ fn about_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
         Licence::Expired => {
             "The free trial has ended: Voltrus Tools is read-only until you unlock it.".to_owned()
         }
+        Licence::Unlocked if licensing.uses_keys() => {
+            "Unlocked with a licence key. Thank you for buying Voltrus Tools.".to_owned()
+        }
         Licence::Unlocked => "Unlocked. Thank you for buying Voltrus Tools.".to_owned(),
     };
     let mut software: Vec<SharedString> = vec![
@@ -361,8 +416,9 @@ fn about_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
          Licenses."
             .into(),
     ];
-    // Store builds point nowhere else (App Review 3.1.1).
-    if !licensing.sells() {
+    // Store builds point nowhere else (App Review 3.1.1); the direct download
+    // may.
+    if !licensing.sells() || licensing.uses_keys() {
         software.push("Source: github.com/VoltrusID/voltrus-explorers".into());
     }
     software.push("© 2026 Joyo Digitama".into());
@@ -386,6 +442,11 @@ fn about_text(model: &AppModel) -> (SharedString, SharedString, Vec<Part>) {
 fn footer(model: &AppModel, sheet: Sheet, cx: &mut Context<AppModel>) -> AnyElement {
     let theme = theme(cx).clone();
     let licensing = &model.licensing;
+    if licensing.uses_keys() {
+        let licence = licensing.licence;
+        let (buttons, fine_print) = key_buttons(model, sheet, cx);
+        return footer_frame(buttons, fine_print, sheet, licence, &theme, cx);
+    }
     let busy = licensing.busy;
     let waiting = |item: Busy, label: String| -> String {
         if busy == Some(item) {
@@ -475,7 +536,97 @@ fn footer(model: &AppModel, sheet: Sheet, cx: &mut Context<AppModel>) -> AnyElem
             buttons.push(done.into_any_element());
         }
     }
+    footer_frame(buttons, fine_print, sheet, licence, &theme, cx)
+}
 
+/// Licence-key builds' buttons: start the trial, buy a key in the browser,
+/// remove the key. Activating is next to the key field.
+fn key_buttons(
+    model: &AppModel,
+    sheet: Sheet,
+    cx: &mut Context<AppModel>,
+) -> (Vec<AnyElement>, Option<&'static str>) {
+    let licensing = &model.licensing;
+    let busy = licensing.busy;
+    let buy = |primary: bool| {
+        let label = match price(model) {
+            Some(price) => format!("Buy licence · {price}"),
+            None => "Buy licence".to_owned(),
+        };
+        let button = Button::new("licence-buy", label)
+            .icon(Icon::Download)
+            .disabled(busy.is_some())
+            .on_click(cx.listener(|model, _, _, cx| model.open_buy_page(cx)));
+        if primary { button.primary() } else { button }
+    };
+    let remove = Button::new(
+        "licence-remove-key",
+        match (busy, licensing.confirm) {
+            (Some(Busy::RemoveKey), _) => "Removing…",
+            (_, Some(Busy::RemoveKey)) => "Confirm: remove key",
+            _ => "Remove key",
+        },
+    )
+    .ghost()
+    .icon(Icon::Trash)
+    .disabled(busy.is_some())
+    .on_click(cx.listener(|model, _, _, cx| model.remove_key(cx)));
+    let done = Button::new("licence-done", "Done")
+        .primary()
+        .on_click(cx.listener(|model, _, window, cx| model.close_licence_sheet(window, cx)));
+    let spacer = || div().flex_1().into_any_element();
+    let once = "A one-time purchase in the Voltrus console, not a subscription. A key unlocks \
+                one Mac at a time; activating needs the internet once.";
+
+    match (sheet, licensing.licence) {
+        (Sheet::Unlock, Licence::NotStarted) => (
+            vec![
+                buy(false).into_any_element(),
+                spacer(),
+                Button::new("licence-trial", "Start free trial")
+                    .primary()
+                    .icon(Icon::Play)
+                    .disabled(busy.is_some())
+                    .on_click(cx.listener(|model, _, _, cx| model.buy(Busy::Trial, cx)))
+                    .into_any_element(),
+            ],
+            Some(
+                "The trial needs no account and no payment. The licence is a one-time purchase, \
+                 not a subscription.",
+            ),
+        ),
+        (Sheet::Unlock, Licence::Trial { .. } | Licence::Expired) => {
+            (vec![spacer(), buy(true).into_any_element()], Some(once))
+        }
+        (Sheet::About, Licence::NotStarted | Licence::Trial { .. } | Licence::Expired) => (
+            vec![
+                spacer(),
+                Button::new("licence-open-unlock", "Unlock…")
+                    .icon(Icon::LockOpen)
+                    .on_click(cx.listener(|model, _, _, cx| {
+                        model.open_licence_sheet(Sheet::Unlock, cx);
+                    }))
+                    .into_any_element(),
+                done.into_any_element(),
+            ],
+            None,
+        ),
+        (_, Licence::Unlocked) => (
+            vec![remove.into_any_element(), spacer(), done.into_any_element()],
+            Some("Removing the key frees it to activate on another Mac."),
+        ),
+        _ => (vec![spacer(), done.into_any_element()], None),
+    }
+}
+
+fn footer_frame(
+    buttons: Vec<AnyElement>,
+    fine_print: Option<&'static str>,
+    sheet: Sheet,
+    licence: Licence,
+    theme: &Theme,
+    cx: &mut Context<AppModel>,
+) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -496,8 +647,8 @@ fn footer(model: &AppModel, sheet: Sheet, cx: &mut Context<AppModel>) -> AnyElem
                     this.child(div().flex_1().min_w_0().child(text))
                 })
                 .when(fine_print.is_none(), |this| this.child(div().flex_1()))
-                .child(hint("↵", primary_hint(sheet, licence), &theme, cx))
-                .child(hint("esc", "close", &theme, cx)),
+                .child(hint("↵", primary_hint(sheet, licence), theme, cx))
+                .child(hint("esc", "close", theme, cx)),
         )
         .into_any_element()
 }

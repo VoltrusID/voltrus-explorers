@@ -1,6 +1,6 @@
 [package]
 name = "vt-store"
-description = "Voltrus Tools licensing without UI: the App Store trial and unlock"
+description = "Voltrus Tools licensing without UI: the 14-day trial, the App Store unlock and licence keys"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,10 +14,18 @@ publish.workspace = true
 # (source and GitHub builds) everything is unlocked and nothing is sold. The
 # trial's clock floor and start are also kept in the Keychain.
 store = ["dep:security-framework"]
+# Direct download (Developer ID DMG): the same 14-day trial, started and kept
+# on this Mac (licence.json plus the Keychain marks), then a one-time licence
+# key bought in the Voltrus console and activated against the download worker
+# (src/license.rs). Exclusive with `store`.
+license = ["dep:security-framework", "dep:reqwest", "dep:tokio", "dep:uuid"]
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"], optional = true }
+tokio = { workspace = true, optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3", optional = true }
@@ -27,6 +35,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+tokio.workspace = true
 
 [lints]
 workspace = true
