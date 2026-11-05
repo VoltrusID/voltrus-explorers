@@ -167,7 +167,7 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                     this.child(
                         div()
                             .flex()
-                            .items_center()
+                            .items_start()
                             .gap(SPACE_4)
                             .mx(SPACE_8)
                             .mb(SPACE_6)
@@ -188,7 +188,9 @@ pub fn render(model: &AppModel, cx: &mut Context<AppModel>) -> AnyElement {
                                 ICON_MD,
                                 color,
                             ))
-                            .child(message.clone()),
+                            // A bare text child gets no width to wrap at and runs past the box; the
+                            // flex_1 + min_w_0 container lets long messages wrap inside it.
+                            .child(div().flex_1().min_w_0().child(message.clone())),
                     )
                 })
                 .child(footer(model, sheet, cx)),

@@ -8548,7 +8548,7 @@ dependencies = [
 
 [[package]]
 name = "vt-app"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "async-channel 2.5.0",
  "gpui",
@@ -8561,7 +8561,7 @@ dependencies = [
 
 [[package]]
 name = "vt-app-core"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "dirs 6.0.0",
  "regex",
@@ -8574,7 +8574,7 @@ dependencies = [
 
 [[package]]
 name = "vt-engine"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "async-channel 2.5.0",
  "async-nats",
@@ -8608,7 +8608,7 @@ dependencies = [
 
 [[package]]
 name = "vt-protocol"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -8616,7 +8616,7 @@ dependencies = [
 
 [[package]]
 name = "vt-store"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "reqwest",
  "security-framework",
@@ -8629,7 +8629,7 @@ dependencies = [
 
 [[package]]
 name = "vt-ui"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "gpui",
  "unicode-segmentation",
