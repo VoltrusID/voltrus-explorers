@@ -163,6 +163,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # Only these apps ship on iOS. The others were removed from App Store Connect or never had an iOS build (docs/release.md).
+      - name: Refuse iOS build of Mac-only apps
+        if: inputs.app != 'modbus-poll' && inputs.app != 'bacnet-explorer'
+        env:
+          APP: ${{ inputs.app }}
+        run: |
+          echo "::error::$APP does not ship on iOS. Untick ios (only modbus-poll and bacnet-explorer build for iOS)."
+          exit 1
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Rust target and XcodeGen

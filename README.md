@@ -217,10 +217,10 @@ apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/cnc-explorer      Tauri app (macOS), MTConnect and FANUC FOCAS client and simulators
 apps/secsgem-explorer  Tauri app (macOS), SECS/GEM host and equipment simulator over HSMS
-apps/s7-explorer       Tauri app, also builds for iOS (scripts/build-ios.sh)
+apps/s7-explorer       Tauri app (macOS), Siemens S7 client and PLC simulator
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
-apps/opcua-explorer    Tauri app, also builds for iOS (scripts/build-ios.sh)
+apps/opcua-explorer    Tauri app (macOS), OPC UA client and server
 crates/mt-protocol     shared protocol client traits
 crates/mt-bacnet       BACnet/IP client, discovery, COV, trends, schedules
 crates/mt-enip         EtherNet/IP and CIP client, discovery, server, simulator
