@@ -1,8 +1,7 @@
 {
   "license": {
     "server": "https://dl-voltrus-tools.voltrus.id",
-    "buy_url": "https://console.voltrus.id/app/catalog",
-    "price": "$49",
-    "todo": "TODO(polar product id): buy_url is the console catalog until the Polar product exists; then set it to https://console.voltrus.id/checkout/p/<polar product id>, like the explorer apps' store.json."
+    "buy_url": "https://console.voltrus.id/checkout/p/6d83af93-bc3a-41dc-af90-51a907270790",
+    "price": "$49"
   }
 }

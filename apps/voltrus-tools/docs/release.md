@@ -274,12 +274,12 @@ it, once per launch, and the blocking `Keys` front the app calls from its backgr
 compiled into the app:
 
 ```json
-{ "license": { "server": "https://dl-voltrus-tools.voltrus.id", "buy_url": "https://console.voltrus.id/app/catalog", "price": "$49" } }
+{ "license": { "server": "https://dl-voltrus-tools.voltrus.id", "buy_url": "https://console.voltrus.id/checkout/p/6d83af93-bc3a-41dc-af90-51a907270790", "price": "$49" } }
 ```
 
-**TODO(polar product id):** the Polar product doesn't exist yet, so `buy_url` is the console catalog. Once it exists,
-set `buy_url` to `https://console.voltrus.id/checkout/p/<polar product id>` (as in the explorer apps' `store.json`)
-and drop the file's `todo` note.
+The Polar product is `6d83af93-bc3a-41dc-af90-51a907270790` (USD 49, licence-key benefit `VOLTRUS-TOOLS`
+`4f7e744a-77ed-47c2-babc-31b5dde7379b`, one activation, movable); the console's `VoltrusToolsLicence` accepts only that
+benefit and `VLT-` licences of the `voltrus-tools` app.
 
 ### Sandbox and signing
 
