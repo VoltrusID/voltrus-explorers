@@ -204,10 +204,13 @@ mod client {
     }
 
     /// One file per item in a private folder, where there's no Keychain.
+    /// macOS uses the Keychain, so there this is only used by the tests.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub struct FileSecrets {
         dir: PathBuf,
     }
 
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     impl FileSecrets {
         pub fn new(dir: impl Into<PathBuf>) -> Self {
             Self { dir: dir.into() }
