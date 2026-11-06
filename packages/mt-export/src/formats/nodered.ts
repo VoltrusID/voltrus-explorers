@@ -61,7 +61,7 @@ const RUSTRED_FUNCTION = {
   holding: "readHoldingRegisters",
   input: "readInputRegisters",
 } as const;
-const RUSTRED_TYPE: Record<string, string> = { uint16: "uint16", int16: "int16", int32: "int32", float32: "float", float64: "double" };
+const RUSTRED_TYPE: Record<string, string> = { uint16: "uint16", int16: "int16", int32: "int32", uint32: "uint32", float32: "float", float64: "double" };
 const CONTRIB_TYPE = { coil: "Coil", discrete: "Input", holding: "HoldingRegister", input: "InputRegister" } as const;
 
 /** Function node body: names every value of one read, decoding registers when `raw`. */
@@ -76,15 +76,16 @@ function functionBody(read: Read, wordOrder: ModbusTagList["source"]["wordOrder"
     lines.push("const values = {};", "specs.forEach(([n, scale], i) => { values[n] = msg.payload[i] * scale; });");
   } else {
     lines.push(`const specs = ${JSON.stringify(read.tags.map((t) => [t.name, t.type, t.scale]))};`);
-    lines.push(`const width = { uint16: 1, int16: 1, int32: 2, float32: 2, float64: 4 };`);
+    lines.push(`const width = { uint16: 1, int16: 1, int32: 2, uint32: 2, float32: 2, float64: 4 };`);
     lines.push("const values = {};", "let at = 0;");
     lines.push("for (const [name, type, scale] of specs) {", "  let words = msg.payload.slice(at, at + width[type]);", "  at += width[type];");
-    if (wordOrder === "little") lines.push("  words = words.reverse();");
-    if (wordOrder === "swapped") lines.push("  words = words.map((w) => ((w & 0xff) << 8) | (w >> 8));");
+    if (wordOrder === "little" || wordOrder === "reversed") lines.push("  words = words.reverse();");
+    if (wordOrder === "swapped" || wordOrder === "reversed") lines.push("  words = words.map((w) => ((w & 0xff) << 8) | (w >> 8));");
     lines.push(
       "  const view = new DataView(new ArrayBuffer(8));",
       "  words.forEach((w, i) => view.setUint16(i * 2, w));",
       "  const raw = type === 'uint16' ? view.getUint16(0) : type === 'int16' ? view.getInt16(0) : type === 'int32' ? view.getInt32(0)",
+      "    : type === 'uint32' ? view.getUint32(0)",
       "    : type === 'float32' ? view.getFloat32(0) : view.getFloat64(0);",
       "  values[name] = raw * scale;",
       "}",

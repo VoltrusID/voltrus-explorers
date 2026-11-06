@@ -6,9 +6,9 @@
 export type Protocol = "modbus" | "bacnet";
 
 export type ModbusArea = "holding" | "input" | "coil" | "discrete";
-export type ModbusType = "bool" | "uint16" | "int16" | "int32" | "float32" | "float64";
-/** How a 32/64-bit value is laid out over registers, as in Modbus Poll: AB CD, CD AB, BA DC. */
-export type WordOrder = "big" | "little" | "swapped";
+export type ModbusType = "bool" | "uint16" | "int16" | "int32" | "uint32" | "float32" | "float64";
+/** How a 32/64-bit value is laid out over registers, as in Modbus Poll: AB CD, CD AB, BA DC, DC BA. */
+export type WordOrder = "big" | "little" | "swapped" | "reversed";
 
 export interface ModbusSource {
   /** Device name, used for the device node, folder or file name. */

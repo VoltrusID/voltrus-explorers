@@ -1,4 +1,4 @@
-import type { ExportFormat, ModbusTag, TagList } from "../model";
+import type { ExportFormat, ModbusTag, ModbusTagList, TagList } from "../model";
 import { fileStem, slug, toJson } from "../util";
 
 /**
@@ -17,6 +17,18 @@ import { fileStem, slug, toJson } from "../util";
  * `port`, `device_instance`, `interval_ms`) plus `objects`, each a `CreateBacnetObjectRequest` (`object_type` as analogInput
  * and so on, `object_instance`, `property`, `name`) for `POST /api/v1/bacnet/devices/{id}/objects` (src/models/bacnet_types.rs).
  */
+
+/**
+ * The SCADA and the gateway take register types int16 | uint16 | int32 | float32 | float64 and word orders big | little |
+ * swapped. A uint32 tag or the DC BA order is written as is, with a warning, so the import fails loudly instead of reading
+ * wrong values.
+ */
+function unsupported(list: ModbusTagList, product: string): string[] {
+  const warnings: string[] = [];
+  if (list.tags.some((t) => t.type === "uint32")) warnings.push(`${product} has no uint32 register type yet: change those tags to int32 (values above 2147483647 then read negative) or remove them before importing.`);
+  if (list.source.wordOrder === "reversed") warnings.push(`${product} has no DC BA word order yet: 32 and 64-bit values from this device will not import.`);
+  return warnings;
+}
 
 export const voltrusScadaFormat: ExportFormat = {
   id: "voltrus-scada",
@@ -44,6 +56,7 @@ export const voltrusScadaFormat: ExportFormat = {
       name: t.name, register_area: t.area, offset: t.address, register_type: t.type === "bool" ? "uint16" : t.type, scale: t.scale,
     }));
     if (s.transport === "rtu") warnings.push("The SCADA polls Modbus TCP only. Put the IP address of a serial gateway in the device after import.");
+    warnings.push(...unsupported(list, "The SCADA"));
     const body = { id: slug(s.name, "modbus_device"), name: s.name, ip: s.host, port: s.port, unit_id: s.unitId, interval_ms: s.pollMs, endianness: s.wordOrder, registers };
     return { fileName: `${fileStem(s.name)}-voltrus-device.json`, content: toJson(body), warnings };
   },
@@ -76,6 +89,7 @@ export const voltrusGatewayFormat: ExportFormat = {
     }
     const s = list.source;
     if (s.transport === "rtu") warnings.push("The gateway's Modbus adapter connects over TCP only. Use the IP address of a serial gateway.");
+    warnings.push(...unsupported(list, "The gateway"));
     const tags = list.tags.map((t) => ({
       modbus: { name: t.name, address: t.address, regType: t.type === "bool" ? "uint16" : t.type, scale: t.scale, registerArea: t.area },
     }));

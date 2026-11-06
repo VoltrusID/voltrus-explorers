@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatValue, displayAddr, extractRaw, extractError } from "../utils/format";
+import { formatValue, displayAddr, extractRaw, extractError, registerBits } from "../utils/format";
 
 describe("formatValue", () => {
   it("returns '---' for NaN", () => {
@@ -58,13 +58,89 @@ describe("formatValue", () => {
     expect(result).toMatch(/^0x[0-9A-F]{8}$/);
   });
 
-  it("formats float64 hex with 8 chars", () => {
-    const result = formatValue(100, "float64", "hex");
-    expect(result).toMatch(/^0x[0-9A-F]{8}$/);
+  it("formats float64 hex as its 64 IEEE 754 bits", () => {
+    expect(formatValue(100, "float64", "hex")).toBe("0x4059000000000000");
+  });
+
+  it("formats float32 hex and binary as its IEEE 754 bits, not the integer part", () => {
+    // 220.5f32 = 0x435C8000
+    expect(formatValue(220.5, "float32", "hex")).toBe("0x435C8000");
+    expect(formatValue(220.5, "float32", "bin")).toBe("01000011010111001000000000000000");
+  });
+
+  it("formats uint32 above the int32 range in hex and decimal", () => {
+    expect(formatValue(4275878552, "uint32", "hex")).toBe("0xFEDCBA98");
+    expect(formatValue(4275878552, "uint32", "dec")).toBe("4275878552");
+    expect(formatValue(4275878552, "uint32", "bin")).toHaveLength(32);
+  });
+
+  it("formats a negative int16 in hex as two's complement", () => {
+    expect(formatValue(-2, "int16", "hex")).toBe("0xFFFE");
   });
 
   it("formats uint16 max hex", () => {
     expect(formatValue(65535, "uint16", "hex")).toBe("0xFFFF");
+  });
+});
+
+describe("formatValue: ASCII", () => {
+  it("shows two characters per register, high byte first", () => {
+    // 0x4142 = "AB"
+    expect(formatValue(0x4142, "uint16", "ascii")).toBe('"AB"');
+  });
+
+  it("shows four characters for a 32-bit value", () => {
+    // 0x54454D50 = "TEMP"
+    expect(formatValue(0x54454d50, "uint32", "ascii")).toBe('"TEMP"');
+    expect(formatValue(0x54454d50, "int32", "ascii")).toBe('"TEMP"');
+  });
+
+  it("marks bytes outside printable ASCII", () => {
+    expect(formatValue(0x4100, "uint16", "ascii")).toBe('"A·"');
+    expect(formatValue(0, "uint16", "ascii")).toBe('"··"');
+  });
+
+  it("reads a negative int16 as its register bytes", () => {
+    // -1 = 0xFFFF
+    expect(formatValue(-1, "int16", "ascii")).toBe('"··"');
+  });
+
+  it("shows eight characters for a float64", () => {
+    expect(formatValue(100, "float64", "ascii")).toHaveLength(10);
+  });
+});
+
+describe("formatValue: BCD", () => {
+  it("reads one decimal digit per nibble", () => {
+    expect(formatValue(0x1234, "uint16", "bcd")).toBe("1234");
+    expect(formatValue(0x0042, "uint16", "bcd")).toBe("42");
+    expect(formatValue(0, "uint16", "bcd")).toBe("0");
+  });
+
+  it("reads eight digits from a 32-bit value", () => {
+    expect(formatValue(0x20261106, "uint32", "bcd")).toBe("20261106");
+    expect(formatValue(0x00009999, "int32", "bcd")).toBe("9999");
+  });
+
+  it("says when a nibble is not a decimal digit", () => {
+    expect(formatValue(0x12ab, "uint16", "bcd")).toBe("not BCD");
+    expect(formatValue(-1, "int16", "bcd")).toBe("not BCD");
+  });
+});
+
+describe("registerBits", () => {
+  it("gives the width of each type", () => {
+    expect(registerBits(1, "uint16").width).toBe(16);
+    expect(registerBits(1, "int16").width).toBe(16);
+    expect(registerBits(1, "int32").width).toBe(32);
+    expect(registerBits(1, "uint32").width).toBe(32);
+    expect(registerBits(1, "float32").width).toBe(32);
+    expect(registerBits(1, "float64").width).toBe(64);
+  });
+
+  it("gives IEEE 754 bits for floats", () => {
+    expect(registerBits(1.5, "float64").bits).toBe(0x3ff8000000000000n);
+    expect(registerBits(-2, "float32").bits).toBe(0xc0000000n);
   });
 });
 

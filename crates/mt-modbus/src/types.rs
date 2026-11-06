@@ -92,6 +92,8 @@ pub enum ModbusValue {
     Int16(i16),
     /// 32-bit integer composed from two registers.
     Int32(i32),
+    /// Unsigned 32-bit integer composed from two registers.
+    Uint32(u32),
     /// 32-bit IEEE 754 float composed from two registers.
     Float32(f32),
     /// Scaled f64 value (typical output from reading with scale factor).
@@ -108,6 +110,7 @@ impl ModbusValue {
             ModbusValue::Uint16(v) => *v as f64,
             ModbusValue::Int16(v) => *v as f64,
             ModbusValue::Int32(v) => *v as f64,
+            ModbusValue::Uint32(v) => *v as f64,
             ModbusValue::Float32(v) => *v as f64,
             ModbusValue::Float64(v) => *v,
             ModbusValue::Failed(_) => f64::NAN,
@@ -123,6 +126,7 @@ pub enum RegisterType {
     #[default]
     Uint16,
     Int32,
+    Uint32,
     Float32,
     Float64,
 }
@@ -132,7 +136,7 @@ impl RegisterType {
     pub fn word_count(self) -> usize {
         match self {
             RegisterType::Int16 | RegisterType::Uint16 => 1,
-            RegisterType::Int32 | RegisterType::Float32 => 2,
+            RegisterType::Int32 | RegisterType::Uint32 | RegisterType::Float32 => 2,
             RegisterType::Float64 => 4,
         }
     }
@@ -151,6 +155,9 @@ impl RegisterType {
 ///   reversed; the two bytes inside each register stay as they are.
 /// * `Swapped` ("BA DC" / "BA DC FE HG"): the two bytes inside each register
 ///   are swapped; the order of the registers is unchanged.
+/// * `Reversed` ("DC BA" / "HG FE DC BA"): the order of the registers is
+///   reversed *and* the two bytes inside each register are swapped, so the
+///   value arrives least significant byte first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Endianness {
@@ -158,6 +165,7 @@ pub enum Endianness {
     Big,
     Little,
     Swapped,
+    Reversed,
 }
 
 /// Convert the `N` registers as they appear on the wire into most-significant-first registers.
@@ -168,6 +176,7 @@ fn wire_to_canonical<const N: usize>(words: &[u16], endianness: &Endianness) -> 
             Endianness::Big => words[i],
             Endianness::Little => words[N - 1 - i],
             Endianness::Swapped => words[i].swap_bytes(),
+            Endianness::Reversed => words[N - 1 - i].swap_bytes(),
         };
     }
     canonical
@@ -180,6 +189,7 @@ fn canonical_to_wire<const N: usize>(canonical: [u16; N], endianness: &Endiannes
             Endianness::Big => canonical[i],
             Endianness::Little => canonical[N - 1 - i],
             Endianness::Swapped => canonical[i].swap_bytes(),
+            Endianness::Reversed => canonical[N - 1 - i].swap_bytes(),
         })
         .collect()
 }
@@ -210,6 +220,7 @@ pub fn parse_register(words: &[u16], reg_type: &RegisterType, endianness: &Endia
         RegisterType::Uint16 => words[0] as f64,
         RegisterType::Int16 => (words[0] as i16) as f64,
         RegisterType::Int32 => join32(wire_to_canonical::<2>(words, endianness)) as i32 as f64,
+        RegisterType::Uint32 => join32(wire_to_canonical::<2>(words, endianness)) as f64,
         RegisterType::Float32 => {
             f32::from_bits(join32(wire_to_canonical::<2>(words, endianness))) as f64
         }
@@ -238,6 +249,7 @@ pub fn check_writable(value: f64, reg_type: &RegisterType) -> Result<(), String>
         RegisterType::Uint16 => integer_in(0.0, u16::MAX as f64, "uint16"),
         RegisterType::Int16 => integer_in(i16::MIN as f64, i16::MAX as f64, "int16"),
         RegisterType::Int32 => integer_in(i32::MIN as f64, i32::MAX as f64, "int32"),
+        RegisterType::Uint32 => integer_in(0.0, u32::MAX as f64, "uint32"),
         RegisterType::Float32 => {
             if value.abs() > f32::MAX as f64 {
                 Err(format!("{value} is outside the float32 range"))
@@ -256,6 +268,7 @@ pub fn value_to_words(value: f64, reg_type: &RegisterType, endianness: &Endianne
         RegisterType::Uint16 => vec![value as u16],
         RegisterType::Int16 => vec![(value as i16) as u16],
         RegisterType::Int32 => canonical_to_wire(split32((value as i32) as u32), endianness),
+        RegisterType::Uint32 => canonical_to_wire(split32(value as u32), endianness),
         RegisterType::Float32 => canonical_to_wire(split32((value as f32).to_bits()), endianness),
         RegisterType::Float64 => canonical_to_wire(split64(value.to_bits()), endianness),
     }
@@ -364,7 +377,7 @@ mod tests {
             .collect()
     }
 
-    const ALL: [Endianness; 3] = [Endianness::Big, Endianness::Little, Endianness::Swapped];
+    const ALL: [Endianness; 4] = [Endianness::Big, Endianness::Little, Endianness::Swapped, Endianness::Reversed];
 
     // ── 16-bit ──
 
@@ -391,6 +404,8 @@ mod tests {
             (Endianness::Little, [0x03, 0x04, 0x80, 0x00, 0x43, 0x5C]),
             // BA DC: registers 0x5C43 0x0080
             (Endianness::Swapped, [0x03, 0x04, 0x5C, 0x43, 0x00, 0x80]),
+            // DC BA: registers 0x0080 0x5C43
+            (Endianness::Reversed, [0x03, 0x04, 0x00, 0x80, 0x5C, 0x43]),
         ];
         for (e, pdu) in cases {
             let words = registers_from_pdu(&pdu);
@@ -406,6 +421,7 @@ mod tests {
             (Endianness::Big, [0x03, 0x04, 0x12, 0x34, 0x56, 0x78]),
             (Endianness::Little, [0x03, 0x04, 0x56, 0x78, 0x12, 0x34]),
             (Endianness::Swapped, [0x03, 0x04, 0x34, 0x12, 0x78, 0x56]),
+            (Endianness::Reversed, [0x03, 0x04, 0x78, 0x56, 0x34, 0x12]),
         ];
         for (e, pdu) in cases {
             let words = registers_from_pdu(&pdu);
@@ -421,12 +437,37 @@ mod tests {
             (Endianness::Big, [0x03, 0x04, 0xFF, 0xFF, 0xFF, 0xFE]),
             (Endianness::Little, [0x03, 0x04, 0xFF, 0xFE, 0xFF, 0xFF]),
             (Endianness::Swapped, [0x03, 0x04, 0xFF, 0xFF, 0xFE, 0xFF]),
+            (Endianness::Reversed, [0x03, 0x04, 0xFE, 0xFF, 0xFF, 0xFF]),
         ];
         for (e, pdu) in cases {
             let words = registers_from_pdu(&pdu);
             assert_eq!(parse_register(&words, &RegisterType::Int32, &e), -2.0, "{e:?}");
             assert_eq!(value_to_words(-2.0, &RegisterType::Int32, &e), words, "{e:?}");
         }
+    }
+
+    #[test]
+    fn uint32_above_i32_max_all_word_orders() {
+        // 0xFEDCBA98 = 4275878552 (negative as int32) -> A=FE B=DC C=BA D=98
+        let cases = [
+            (Endianness::Big, [0x03, 0x04, 0xFE, 0xDC, 0xBA, 0x98]),
+            (Endianness::Little, [0x03, 0x04, 0xBA, 0x98, 0xFE, 0xDC]),
+            (Endianness::Swapped, [0x03, 0x04, 0xDC, 0xFE, 0x98, 0xBA]),
+            (Endianness::Reversed, [0x03, 0x04, 0x98, 0xBA, 0xDC, 0xFE]),
+        ];
+        for (e, pdu) in cases {
+            let words = registers_from_pdu(&pdu);
+            assert_eq!(parse_register(&words, &RegisterType::Uint32, &e), 4275878552.0, "{e:?}");
+            assert_eq!(parse_register(&words, &RegisterType::Int32, &e), -19088744.0, "{e:?}");
+            assert_eq!(value_to_words(4275878552.0, &RegisterType::Uint32, &e), words, "{e:?}");
+        }
+    }
+
+    #[test]
+    fn reversed_word_order_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&Endianness::Reversed).unwrap(), "\"reversed\"");
+        assert_eq!(serde_json::from_str::<Endianness>("\"reversed\"").unwrap(), Endianness::Reversed);
+        assert_eq!(serde_json::to_string(&RegisterType::Uint32).unwrap(), "\"uint32\"");
     }
 
     // ── 64-bit: FC03 response `03 08 <8 data bytes>` ──
@@ -449,6 +490,11 @@ mod tests {
             (
                 Endianness::Swapped,
                 [0x03, 0x08, 0x09, 0x40, 0xFB, 0x21, 0x44, 0x54, 0x18, 0x2D],
+            ),
+            // HG FE DC BA (least significant byte first)
+            (
+                Endianness::Reversed,
+                [0x03, 0x08, 0x18, 0x2D, 0x44, 0x54, 0xFB, 0x21, 0x09, 0x40],
             ),
         ];
         for (e, pdu) in cases {
@@ -506,6 +552,8 @@ mod tests {
         assert!(check_writable(-1.0, &RegisterType::Uint16).is_err());
         assert!(check_writable(-32769.0, &RegisterType::Int16).is_err());
         assert!(check_writable(2147483648.0, &RegisterType::Int32).is_err());
+        assert!(check_writable(-1.0, &RegisterType::Uint32).is_err());
+        assert!(check_writable(4294967296.0, &RegisterType::Uint32).is_err());
         assert!(check_writable(1e39, &RegisterType::Float32).is_err());
         assert!(check_writable(f64::NAN, &RegisterType::Float64).is_err());
         assert!(check_writable(f64::INFINITY, &RegisterType::Float64).is_err());
@@ -513,6 +561,7 @@ mod tests {
         assert!(check_writable(65535.0, &RegisterType::Uint16).is_ok());
         assert!(check_writable(-32768.0, &RegisterType::Int16).is_ok());
         assert!(check_writable(-2147483648.0, &RegisterType::Int32).is_ok());
+        assert!(check_writable(4294967295.0, &RegisterType::Uint32).is_ok());
         assert!(check_writable(3.5, &RegisterType::Float32).is_ok());
         assert!(check_writable(1e300, &RegisterType::Float64).is_ok());
     }

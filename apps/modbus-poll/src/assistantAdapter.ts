@@ -1,6 +1,7 @@
 // Modbus Poll's side of the Assistant: what the app tells it about the session, and how its proposed blocks
 // become ReadBlocks. Pure functions; the component (components/AssistantHost.tsx) wires them to the store.
 import type { AssistantBlock, AssistantContext, WordOrder } from "@mactools/ui";
+import { ENDIAN_OPTS } from "./constants";
 import { isBitArea, typeStep, validateBlock } from "./helpers";
 import type { ReadBlock } from "./types";
 
@@ -84,6 +85,6 @@ export function addedMessage(added: ReadBlock[], skipped: string[], order: WordO
   if (skipped.length > 0) parts.push(`Left out: ${skipped.join("; ")}.`);
   if (added.some((b) => b.scale !== undefined))
     parts.push("Modbus Poll shows raw values: apply the manual's scale factors yourself.");
-  if (order && order !== currentOrder) parts.push(`Set the word order to ${order === "little" ? "CD AB" : "BA DC"} in the connection settings.`);
+  if (order && order !== currentOrder) parts.push(`Set the word order to ${ENDIAN_OPTS.find((e) => e.value === order)?.label ?? order} in the connection settings.`);
   return parts.join(" ");
 }

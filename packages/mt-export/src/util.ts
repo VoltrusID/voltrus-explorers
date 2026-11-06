@@ -26,7 +26,10 @@ export function fileStem(s: string, fallback = "tags"): string {
 }
 
 /** Registers one value of `type` occupies. */
-export const typeWidth = (t: ModbusType): number => (t === "float64" ? 4 : t === "float32" || t === "int32" ? 2 : 1);
+export const typeWidth = (t: ModbusType): number => (t === "float64" ? 4 : t === "float32" || t === "int32" || t === "uint32" ? 2 : 1);
+
+/** A value spread over more than one register, so the word order matters. */
+export const isWide = (t: ModbusType): boolean => typeWidth(t) > 1;
 
 export const isBitArea = (a: ModbusArea): boolean => a === "coil" || a === "discrete";
 

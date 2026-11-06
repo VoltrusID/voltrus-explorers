@@ -1,7 +1,7 @@
-import type { ReadBlock } from "./types";
+import type { DisplayFormat, ReadBlock } from "./types";
 
 export const AREAS = ["holding", "input", "coil", "discrete"];
-export const TYPES = ["uint16", "int16", "int32", "float32", "float64"];
+export const TYPES = ["uint16", "int16", "int32", "uint32", "float32", "float64"];
 /**
  * What a fresh install polls: ten holding registers from address 0. It is deliberately generic: nearly every device answers
  * it (the old default was a PM5560 map at 2999..3034, which any other device rejects with "Illegal Data Address"). The
@@ -22,15 +22,25 @@ export const TYPE_HINTS: Record<string, string> = {
   uint16: "1 register, 0 to 65535",
   int16: "1 register, signed",
   int32: "2 registers, signed",
+  uint32: "2 registers, 0 to 4294967295",
   float32: "2 registers, IEEE 754 single",
   float64: "4 registers, IEEE 754 double",
 };
 /** Select value for the in-app virtual RTU slave (a PTY, not a path on disk). */
 export const VIRTUAL_PORT = "__virtual__";
+/** How values are shown. Hex, binary, ASCII and BCD read the register bits (a float's IEEE 754 bits). */
+export const FORMAT_OPTS: { value: DisplayFormat; label: string; hint: string }[] = [
+  { value: "dec", label: "Decimal", hint: "The value of the register type" },
+  { value: "hex", label: "Hexadecimal", hint: "Register bits in hex" },
+  { value: "bin", label: "Binary", hint: "Register bits, one digit per bit" },
+  { value: "ascii", label: "ASCII", hint: "Two characters per register, high byte first" },
+  { value: "bcd", label: "BCD", hint: "One decimal digit per 4 bits" },
+];
 export const ENDIAN_OPTS: { value: string; label: string; hint: string }[] = [
   { value: "big", label: "AB CD", hint: "High word first (the Modbus standard)" },
   { value: "little", label: "CD AB", hint: "Low word first (word swap)" },
   { value: "swapped", label: "BA DC", hint: "Bytes swapped inside each word" },
+  { value: "reversed", label: "DC BA", hint: "Low word first, bytes swapped (least significant byte first)" },
 ];
 
 export const sidebarStyle: React.CSSProperties = {

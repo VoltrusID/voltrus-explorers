@@ -69,6 +69,7 @@ const NUMERIC_WRITE_TYPES = [
   { value: "uint16", label: "UInt16" },
   { value: "int16", label: "Int16" },
   { value: "int32", label: "Int32" },
+  { value: "uint32", label: "UInt32" },
   { value: "float32", label: "Float32" },
   { value: "float64", label: "Float64" },
 ];

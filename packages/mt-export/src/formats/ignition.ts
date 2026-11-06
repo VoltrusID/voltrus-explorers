@@ -1,5 +1,5 @@
 import type { BacnetObjectType, ExportFormat, ModbusTag, TagList } from "../model";
-import { fileStem, toJson } from "../util";
+import { fileStem, isWide, toJson } from "../util";
 
 /**
  * Ignition (Inductive Automation) tag import JSON, 8.x.
@@ -13,7 +13,7 @@ import { fileStem, toJson } from "../util";
  * - `dataType` strings Int2, Int4, Float4, Float8, Boolean:
  *   https://www.docs.inductiveautomation.com/docs/8.1/platform/tags/tag-data-types
  * - Modbus item paths `[Device]<unit>.<designator><address>`: designators HR/IR (signed 16-bit), HRUS/IRUS (unsigned 16),
- *   HRI/IRI (32-bit), HRF/IRF (float), HRD/IRD (double), C (coil), DI (discrete input). Addresses are 1-based (HR1 is
+ *   HRI/IRI (32-bit), HRUI/IRUI (unsigned 32-bit), HRF/IRF (float), HRD/IRD (double), C (coil), DI (discrete input). Addresses are 1-based (HR1 is
  *   holding register 0, "equivalent to 40001") unless the device has Zero-based Addressing ticked. The unit id goes in front.
  *   https://www.docs.inductiveautomation.com/docs/8.1/ignition-modules/opc-ua/opc-ua-drivers/modbus/modbus-addressing
  * - Device settings "Reverse Word Order" and "Zero-based Addressing" live on the device, not the tag:
@@ -43,6 +43,9 @@ function modbusDesignator(t: ModbusTag): { designator: string; dataType: string 
       return { designator: `${reg}US`, dataType: "Int4" };
     case "int32":
       return { designator: `${reg}I`, dataType: "Int4" };
+    case "uint32":
+      // Int4 holds -2147483648..2147483647, so an unsigned 32-bit value needs the next size up.
+      return { designator: `${reg}UI`, dataType: "Int8" };
     case "float32":
       return { designator: `${reg}F`, dataType: "Float4" };
     case "float64":
@@ -125,11 +128,11 @@ export const ignitionFormat: ExportFormat = {
       };
     });
     if (s.transport === "rtu") warnings.push("Ignition's Modbus driver talks Modbus TCP. Reach an RTU device through a serial gateway and point the Ignition device at the gateway.");
-    if (s.wordOrder !== "big" && list.tags.some((t) => t.type === "int32" || t.type === "float32" || t.type === "float64")) {
+    if (s.wordOrder !== "big" && list.tags.some((t) => isWide(t.type))) {
       warnings.push(
         s.wordOrder === "little"
           ? "Tick Reverse Word Order on the Ignition device: this device sends the low word first (CD AB)."
-          : "Ignition has no setting for bytes swapped inside each word (BA DC); 32 and 64-bit values will read wrong.",
+          : `Ignition has no setting for bytes swapped inside each word (${s.wordOrder === "reversed" ? "DC BA" : "BA DC"}); 32 and 64-bit values will read wrong.`,
       );
     }
     warnings.push(`Name the Ignition device "${device}", or edit the [${device}] part of each OPC item path. Leave Zero-based Addressing unticked.`);
