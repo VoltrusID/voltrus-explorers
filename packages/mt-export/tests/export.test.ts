@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { exportTags, FORMATS, formatsFor, groupReads, reference6 } from "../src";
-import type { BacnetTagList, ExportOptions, FormatId, ModbusTagList, TagList } from "../src";
+import type { BacnetTagList, ExportOptions, FormatId, ModbusTagList, TagList, WordOrder } from "../src";
 import { BACNET_LIST, MODBUS_HIGH, MODBUS_LIST, MODBUS_LITTLE, MODBUS_RTU } from "./fixtures";
 import { expectGolden } from "./golden";
 
@@ -249,21 +249,22 @@ describe("flows", () => {
     const msg = { payload } as Record<string, any>;
     return new Function("msg", node.func)(msg).payload as Record<string, number>;
   };
-  const words = (type: "float32" | "int32" | "int16" | "uint16" | "float64", value: number, order: "big" | "little" | "swapped") => {
+  const words = (type: "float32" | "int32" | "uint32" | "int16" | "uint16" | "float64", value: number, order: WordOrder) => {
     const buf = new DataView(new ArrayBuffer(8));
     let n = 1;
     if (type === "float32") { buf.setFloat32(0, value); n = 2; }
     else if (type === "int32") { buf.setInt32(0, value); n = 2; }
+    else if (type === "uint32") { buf.setUint32(0, value); n = 2; }
     else if (type === "int16") buf.setInt16(0, value);
     else if (type === "uint16") buf.setUint16(0, value);
     else { buf.setFloat64(0, value); n = 4; }
     let w = Array.from({ length: n }, (_, i) => buf.getUint16(i * 2));
-    if (order === "little") w = w.reverse();
-    if (order === "swapped") w = w.map((x) => ((x & 0xff) << 8) | (x >> 8));
+    if (order === "little" || order === "reversed") w = w.reverse();
+    if (order === "swapped" || order === "reversed") w = w.map((x) => ((x & 0xff) << 8) | (x >> 8));
     return w;
   };
 
-  for (const order of ["big", "little", "swapped"] as const) {
+  for (const order of ["big", "little", "swapped", "reversed"] as const) {
     it(`node-red function decodes ${order} word order`, () => {
       const list: ModbusTagList = {
         ...MODBUS_LIST,
@@ -293,6 +294,8 @@ describe("flows", () => {
       expect(run(flow("nodered", s).find((n) => n.type === "function")!, [...words("int16", -5, order), ...words("int16", 300, order)])).toEqual({ i: -5, j: 300 });
       const u: ModbusTagList = { ...list, tags: [{ name: "u", area: "input", address: 0, type: "uint16", scale: 1, writable: false }] };
       expect(run(flow("nodered", u).find((n) => n.type === "function")!, words("uint16", 65000, order))).toEqual({ u: 65000 });
+      const u32: ModbusTagList = { ...list, tags: [{ name: "w", area: "input", address: 0, type: "uint32", scale: 1, writable: false }] };
+      expect(run(flow("nodered", u32).find((n) => n.type === "function")!, words("uint32", 4275878552, order))).toEqual({ w: 4275878552 });
     });
   }
 
@@ -304,6 +307,55 @@ describe("flows", () => {
   it("rustred typed function applies the scale", () => {
     const fn = flow("rustred").find((n) => n.type === "function" && String(n.name).includes("Temperature_20"))!;
     expect(run(fn, [215])).toEqual({ Temperature_20: 21.5 });
+  });
+});
+
+describe("uint32 and DC BA", () => {
+  const list: ModbusTagList = {
+    ...MODBUS_LIST,
+    source: { ...MODBUS_LIST.source, wordOrder: "reversed" },
+    tags: [
+      { name: "energy", area: "input", address: 0, type: "uint32", scale: 1, writable: false },
+      { name: "status", area: "holding", address: 2, type: "uint16", scale: 1, writable: true },
+    ],
+  };
+
+  it("Kepware reads uint32 as DWord and explains the DC BA device settings", () => {
+    const out = exportTags("kepware", list);
+    expect(out.content.split("\n")[1]).toContain(",DWord,");
+    expect(out.warnings.join(" ")).toContain("DC BA");
+    expect(out.warnings.join(" ")).toContain("switch on First Word Low");
+  });
+
+  it("Ignition reads uint32 as an unsigned 32-bit designator held in Int8", () => {
+    const out = exportTags("ignition", list);
+    const tag = JSON.parse(out.content).tags[0].tags.find((t: Record<string, unknown>) => t.name === "energy");
+    expect(tag.dataType).toBe("Int8");
+    expect(String(tag.opcItemPath)).toMatch(/IRUI1$/);
+    expect(out.warnings.join(" ")).toContain("DC BA");
+  });
+
+  it("Home Assistant swaps words and bytes for DC BA", () => {
+    const yaml = exportTags("homeassistant", list).content;
+    expect(yaml).toContain("data_type: uint32");
+    expect(yaml).toContain("swap: word_byte");
+    expect(yaml).toContain("swap: byte");
+  });
+
+  it("generic CSV gives uint32 a width of two registers", () => {
+    const row = exportTags("csv", list).content.split("\n")[1];
+    expect(row).toContain(",2,uint32,reversed,");
+  });
+
+  it("Voltrus formats keep the values and warn that the SCADA and gateway lack them", () => {
+    for (const id of ["voltrus-scada", "voltrus-gateway"] as const) {
+      const out = exportTags(id, list);
+      expect(out.content).toContain("uint32");
+      expect(out.content).toContain("reversed");
+      expect(out.warnings.some((w) => w.includes("uint32"))).toBe(true);
+      expect(out.warnings.some((w) => w.includes("DC BA"))).toBe(true);
+    }
+    expect(exportTags("voltrus-scada", MODBUS_LIST).warnings.some((w) => w.includes("uint32") || w.includes("DC BA"))).toBe(false);
   });
 });
 

@@ -51,8 +51,8 @@ shadcn/ui-style popover instead (`desktopSelect.tsx`, Radix): a `Select` for up 
 searchable `Combobox` above that or whenever there is a footer action. The same file family holds `Popover` and `DropdownMenu`
 (`popover.tsx`, `dropdownMenu.tsx`), which replace every hand-rolled menu; styles live in `overlay.css`. Used for: profiles, device templates, update speed, register
 type and area, serial settings, bus-scan area, the write dialog's data type, BACnet simulation templates, the Connect share
-target, the connection picker, the read-block picker and (phone only) value format and word order, which are segmented controls on
-the desktop.
+target, the connection picker, the read-block picker, Modbus Poll's value format (Decimal, Hexadecimal, Binary, ASCII, BCD) and
+(phone only) word order, which is a segmented control on the desktop.
 
 ## S7 Explorer
 

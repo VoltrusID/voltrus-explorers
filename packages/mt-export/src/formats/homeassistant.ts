@@ -1,5 +1,5 @@
 import type { ExportFormat, ModbusTag, ModbusTagList, TagList } from "../model";
-import { fileStem, slug } from "../util";
+import { fileStem, isWide, slug } from "../util";
 
 /**
  * Home Assistant `modbus:` YAML for configuration.yaml. Reference:
@@ -9,7 +9,7 @@ import { fileStem, slug } from "../util";
  *   `stopbits`, `port`. `timeout` is in seconds.
  * - Entities: `address` is 0-based, which is what Modbus Poll holds. `device_address` is the unit id (`slave` is the old name).
  *   `scan_interval` is whole seconds. `precision` defaults to 0, so float sensors need it set or they round to integers.
- * - Sensors: `input_type` holding or input; `data_type` int16, uint16, int32, float32, float64 (`count` is worked out for
+ * - Sensors: `input_type` holding or input; `data_type` int16, uint16, int32, uint32, float32, float64 (`count` is worked out for
  *   these); `swap` is `byte` (AB -> BA) or `word` (ABCD -> CDAB, not valid for 16-bit types); `scale`, `offset`.
  * - Binary sensors: `input_type` coil or discrete_input.
  */
@@ -19,9 +19,10 @@ const q = (s: string): string => JSON.stringify(s);
 function sensor(t: ModbusTag, s: ModbusTagList["source"], hub: string): string[] {
   const lines = [`      - name: ${q(t.name)}`, `        unique_id: ${q(`${hub}_${slug(t.name, "tag")}`)}`, `        address: ${t.address}`];
   lines.push(`        device_address: ${s.unitId}`, `        input_type: ${t.area}`, `        data_type: ${t.type}`);
-  const wide = t.type === "int32" || t.type === "float32" || t.type === "float64";
+  const wide = isWide(t.type);
   if (wide && s.wordOrder === "little") lines.push("        swap: word");
   if (s.wordOrder === "swapped") lines.push("        swap: byte");
+  if (s.wordOrder === "reversed") lines.push(wide ? "        swap: word_byte" : "        swap: byte");
   if (t.scale !== 1) lines.push(`        scale: ${t.scale}`);
   const decimals = t.type === "float32" || t.type === "float64" ? 3 : Math.max(0, (String(t.scale).split(".")[1] ?? "").length);
   lines.push(`        precision: ${decimals}`);

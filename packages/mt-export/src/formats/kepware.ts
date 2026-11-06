@@ -1,6 +1,6 @@
 import type { BacnetObjectType, BacnetTag, ExportFormat, ModbusTag, TagList } from "../model";
 import { reference6 } from "../modbusAddress";
-import { csvLine, fileStem } from "../util";
+import { csvLine, fileStem, isWide } from "../util";
 
 /**
  * Kepware (PTC KEPServerEX / Kepware Server) tag CSV for a Modbus TCP/IP Ethernet device or a BACnet/IP device.
@@ -41,6 +41,7 @@ function dataType(t: ModbusTag): string {
   switch (t.type) {
     case "int16": return "Short";
     case "int32": return "Long";
+    case "uint32": return "DWord";
     case "float32": return "Float";
     case "float64": return "Double";
     default: return "Word";
@@ -112,11 +113,13 @@ export const kepwareFormat: ExportFormat = {
       ]);
     });
     if (s.transport === "rtu") warnings.push("Import these tags under a Modbus RTU Serial device, or use a Modbus TCP gateway.");
-    const wide = list.tags.some((t) => t.type === "int32" || t.type === "float32" || t.type === "float64");
+    const wide = list.tags.some((t) => isWide(t.type));
     if (wide && s.wordOrder === "big") {
       warnings.push("Device settings: switch off First Word Low in 32-Bit Data Types (and First DWord Low in 64-Bit Data Types). This device sends the high word first (AB CD).");
     } else if (wide && s.wordOrder === "swapped") {
       warnings.push("Device settings: switch off First Word Low in 32-Bit Data Types (and First DWord Low in 64-Bit Data Types) and switch off Modbus Byte Order. This device sends the high word first with the bytes swapped inside each register (BA DC).");
+    } else if (wide && s.wordOrder === "reversed") {
+      warnings.push("Device settings: switch on First Word Low in 32-Bit Data Types (and First DWord Low in 64-Bit Data Types) and switch off Modbus Byte Order. This device sends the low word first with the bytes swapped inside each register (DC BA).");
     }
     warnings.push("Kepware reads the unit id and the port from the device, not the tag file: set Unit ID " + s.unitId + " and Port " + s.port + " on the device.");
     return { fileName: `${fileStem(s.name)}-kepware-tags.csv`, content: [csvLine(HEADER), ...rows].join("\n") + "\n", warnings };

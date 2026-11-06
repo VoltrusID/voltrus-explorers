@@ -16,7 +16,7 @@ export interface ExportConnection {
   endianness: string;
 }
 
-const wordOrder = (e: string): WordOrder => (e === "little" || e === "swapped" ? e : "big");
+const wordOrder = (e: string): WordOrder => (e === "little" || e === "swapped" || e === "reversed" ? e : "big");
 
 /**
  * What the app polls, as an export tag list: one tag per displayed value (`Voltage_3001`), with the 0-based wire address

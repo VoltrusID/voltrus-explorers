@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ConnectionForm, Badge, Button, Field, IconButton, ProBadge, Section, Segmented, SheetSelect, useIsPhone, useProStatus } from "@mactools/ui";
 import { ChevronDown, ChevronUp, FileDown, Pencil, Radar, RefreshCw, ScanSearch, Square, X } from "lucide-react";
 import { SaveProfileAsInput } from "../SaveProfileAsInput";
-import { ENDIAN_OPTS, VIRTUAL_PORT } from "../constants";
+import { ENDIAN_OPTS, FORMAT_OPTS, VIRTUAL_PORT } from "../constants";
 import { useStore } from "../store";
 
 const BAUD_PRESETS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
@@ -339,7 +339,7 @@ export function MasterSidebar({
                   sheetTitle="Value format"
                   value={displayFormat}
                   onChange={setDisplayFormat}
-                  options={[{ value: "dec", label: "Decimal" }, { value: "hex", label: "Hexadecimal" }, { value: "bin", label: "Binary" }]}
+                  options={FORMAT_OPTS}
                 />
               </Field>
               <Field label="Word order" hint={protocol.connected ? "Disconnect to change the word order." : undefined}>
@@ -355,17 +355,12 @@ export function MasterSidebar({
           ) : (
             <>
               <Field stacked label="Value format">
-                <Segmented
-                  label="Value format"
-                  block
-                  size="sm"
+                <SheetSelect
+                  sheetTitle="Value format"
+                  aria-label="Value format"
                   value={displayFormat}
-                  onChange={(v) => setDisplayFormat(v)}
-                  options={[
-                    { value: "dec", label: "Dec" },
-                    { value: "hex", label: "Hex" },
-                    { value: "bin", label: "Bin" },
-                  ]}
+                  onChange={setDisplayFormat}
+                  options={FORMAT_OPTS}
                 />
               </Field>
               <Field stacked label="Word order">

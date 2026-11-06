@@ -168,6 +168,11 @@ describe("addedMessage", () => {
   it("does not ask for a word order change the connection already has", () => {
     expect(addedMessage(added, [], "little", "little")).toBe("Added 1 block.");
   });
+
+  it("names the proposed word order, including AB CD when the connection uses DC BA", () => {
+    expect(addedMessage(added, [], "big", "reversed")).toContain("Set the word order to AB CD");
+    expect(addedMessage(added, [], "swapped", "big")).toContain("Set the word order to BA DC");
+  });
 });
 
 describe("sessionConfig", () => {

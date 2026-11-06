@@ -1,6 +1,6 @@
 import type { BacnetTag, ExportFormat, ModbusTag, TagList } from "../model";
 import { READ_FUNCTION, reference6 } from "../modbusAddress";
-import { csvLine, fileStem } from "../util";
+import { csvLine, fileStem, typeWidth } from "../util";
 
 const MODBUS_HEADER = [
   "name", "device", "host", "port", "unit_id", "area", "function_code", "address", "reference",
@@ -28,7 +28,7 @@ export const csvFormat: ExportFormat = {
       const rows = list.tags.map((t: ModbusTag) =>
         csvLine([
           t.name, s.name, s.host, s.port, s.unitId, t.area, READ_FUNCTION[t.area], t.address, reference6(t.area, t.address),
-          t.type === "float64" ? 4 : t.type === "float32" || t.type === "int32" ? 2 : 1, t.type, s.wordOrder, t.scale,
+          typeWidth(t.type), t.type, s.wordOrder, t.scale,
           t.unit ?? "", t.writable ? "read-write" : "read-only", t.description ?? "",
         ]),
       );

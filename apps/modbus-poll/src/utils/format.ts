@@ -20,13 +20,52 @@ export function explainModbusError(message: string): string {
   });
 }
 
+/**
+ * The bits a decoded value came from, most significant first (the word order is already undone by the backend), and how
+ * many there are: 16 for one register, 32 for int32/uint32/float32, 64 for float64. Floats give their IEEE 754 bits.
+ */
+export function registerBits(raw: number, type: string): { bits: bigint; width: 16 | 32 | 64 } {
+  const view = new DataView(new ArrayBuffer(8));
+  switch (type) {
+    case "float64":
+      view.setFloat64(0, raw);
+      return { bits: view.getBigUint64(0), width: 64 };
+    case "float32":
+      view.setFloat32(0, raw);
+      return { bits: BigInt(view.getUint32(0)), width: 32 };
+    case "int32":
+    case "uint32":
+      return { bits: BigInt((raw | 0) >>> 0), width: 32 };
+    default:
+      return { bits: BigInt((raw | 0) & 0xffff), width: 16 };
+  }
+}
+
+/** Two characters per register, high byte first; bytes outside printable ASCII show as "·". */
+function asciiText(bits: bigint, width: number): string {
+  let text = "";
+  for (let shift = width - 8; shift >= 0; shift -= 8) {
+    const byte = Number((bits >> BigInt(shift)) & 0xffn);
+    text += byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "·";
+  }
+  return `"${text}"`;
+}
+
+/** Packed BCD: one decimal digit per nibble (0x1234 is 1234). A nibble above 9 is not BCD. */
+function bcdText(bits: bigint, width: number): string {
+  const digits = bits.toString(16).padStart(width / 4, "0");
+  return /[a-f]/.test(digits) ? "not BCD" : digits.replace(/^0+(?=\d)/, "");
+}
+
 export function formatValue(raw: number, type: string, displayFormat: DisplayFormat): string {
   if (isNaN(raw)) return "---";
-  const is64 = type === "float64";
+  if (displayFormat === "dec") return raw % 1 !== 0 ? raw.toPrecision(type === "float64" ? 15 : 4) : raw.toString();
+  const { bits, width } = registerBits(raw, type);
   switch (displayFormat) {
-    case "hex": return "0x" + (is64 ? ((raw | 0) >>> 0).toString(16).toUpperCase().padStart(8, "0") : (type === "float32" || type === "int32" ? ((raw | 0) >>> 0).toString(16).toUpperCase().padStart(8, "0") : ((raw | 0) & 0xFFFF).toString(16).toUpperCase().padStart(4, "0")));
-    case "bin": return (is64 ? ((raw | 0) >>> 0).toString(2).padStart(32, "0") : type === "float32" || type === "int32" ? ((raw | 0) >>> 0).toString(2).padStart(32, "0") : ((raw | 0) & 0xFFFF).toString(2).padStart(16, "0"));
-    default: return raw % 1 !== 0 ? raw.toPrecision(is64 ? 15 : 4) : raw.toString();
+    case "hex": return "0x" + bits.toString(16).toUpperCase().padStart(width / 4, "0");
+    case "bin": return bits.toString(2).padStart(width, "0");
+    case "ascii": return asciiText(bits, width);
+    case "bcd": return bcdText(bits, width);
   }
 }
 

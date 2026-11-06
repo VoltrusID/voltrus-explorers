@@ -3,7 +3,7 @@ import { AREAS, TYPES } from "./constants";
 
 /** Registers one value of `type` occupies. */
 export const typeStep = (t: string) =>
-  t === "float64" ? 4 : t === "float32" || t === "int32" ? 2 : 1;
+  t === "float64" ? 4 : t === "float32" || t === "int32" || t === "uint32" ? 2 : 1;
 
 /** Coil and discrete-input blocks address single bits; they have no register type. */
 export const isBitArea = (area: string) => area === "coil" || area === "discrete";

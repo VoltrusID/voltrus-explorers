@@ -781,6 +781,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uint32_round_trips_with_reversed_word_order() {
+        let (state, _shutdown, client) = slave_and_client(1, Endianness::Reversed).await;
+        let t = tag("u32", 20, RegisterType::Uint32, "holding");
+        client.write(&t, ModbusValue::Float64(4275878552.0)).await.unwrap();
+        // 0xFEDCBA98 -> DC BA: 0x98BA 0xDCFE
+        assert_eq!(&state.lock().unwrap().registers[20..22], &[0x98BA, 0xDCFE]);
+        let values = client.read(&[t]).await.unwrap();
+        assert_eq!(values[0].as_f64(), 4275878552.0);
+    }
+
+    #[tokio::test]
     async fn exception_on_one_group_is_reported_per_tag_and_others_survive() {
         let (state, _shutdown, client) = slave_and_client(1, Endianness::Big).await;
         state.lock().unwrap().registers[0] = 42;

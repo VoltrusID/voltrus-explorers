@@ -25,7 +25,7 @@ export interface SlaveLogEvent {
   message: string;
 }
 
-export type DisplayFormat = "dec" | "hex" | "bin";
+export type DisplayFormat = "dec" | "hex" | "bin" | "ascii" | "bcd";
 
 export interface ConnProfile {
   name: string;
