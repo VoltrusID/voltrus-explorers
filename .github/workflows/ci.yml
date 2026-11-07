@@ -133,11 +133,15 @@ jobs:
         run: scripts/build-macos.sh ${{ matrix.app }} unsigned
 
       # The App Store variant links StoreKit through Swift (tauri-plugin-iap); compile it for both slices
-      # so a break shows up here instead of in the release job.
+      # so a break shows up here instead of in the release job. One target at a time: with both in one cargo run,
+      # the plugin's build script runs for both slices at once and each regenerates Swift into the same registry
+      # source dir, so swiftc fails with "input file ... was modified during the build" on a cold cache.
       - name: Check App Store variant (store feature)
         run: |
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
-          cargo check -p "$crate" --features store --target aarch64-apple-darwin --target x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo check -p "$crate" --features store --target "$target"
+          done
 
       # These apps ship for iPhone/iPad too (the release job builds the IPA). Compile the device target here so a
       # break in the mobile entry point or an iOS-only dependency shows up in the pull request.
