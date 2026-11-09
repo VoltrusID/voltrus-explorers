@@ -14,3 +14,5 @@ build-ios/
 *.mobileprovision
 .env
 marketing/screenshots/*/out/
+__pycache__/
+*.py[cod]
