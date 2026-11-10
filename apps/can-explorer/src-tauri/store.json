@@ -1,0 +1,12 @@
+{
+  "pro_product_id": "com.joyodigitama.canexplorer.pro",
+  "free_since": {
+    "macos_version": "1.0.0",
+    "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-can-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca",
+    "price": "$39.99"
+  }
+}

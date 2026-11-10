@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "CAN Explorer",
+  "version": "1.0.0",
+  "identifier": "com.joyodigitama.can-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "CAN Explorer",
+        "width": 1320,
+        "height": 840,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "CAN and CAN FD bus monitor, DBC decoder and simulator",
+    "longDescription": "Connect to a CAN or CAN FD bus through a USB SLCAN adapter (CANable, CANUSB, USBtin and compatibles) or Linux SocketCAN: watch every identifier with its rate and changing bytes, a scrolling trace, DBC decoding of messages and signals, J1939, CANopen and OBD-II labels, and send frames. Pro adds periodic transmit, the DBC signal editor, live signal trends, trace recording and replay, and a built-in simulated machine on a virtual bus.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

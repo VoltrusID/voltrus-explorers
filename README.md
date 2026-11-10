@@ -16,6 +16,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **OPC UA Explorer** | Run a local OPC UA server with device templates, or connect to any OPC UA server to browse the address space, read values, subscribe, trend and write | Free download ([DMG](https://dl-opcua-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/opcua-explorer/)); Pro by licence key, USD 29.99 ([buy in the console](https://console.voltrus.id/checkout/p/857662be-6d8b-401b-90f6-7e14aaa19b4c)) |
 | **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Free download ([DMG](https://dl-cnc-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/cnc-explorer/)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/6f42df6e-6dd2-46f1-af23-72d2e074534c)) |
 | **SECS/GEM Explorer** | GEM host for semiconductor and electronics equipment over HSMS (establish communications, status variables, equipment constants, reports and events, alarms, remote commands, process programs, terminal, SML message log; Beta), with a built-in equipment simulator | Free download ([DMG](https://dl-secsgem-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/a7bfae63-8d11-4e19-bae7-f7b1b41cade4)) |
+| **CAN Explorer** | CAN and CAN FD bus monitor through USB SLCAN adapters (CANable, CANUSB, USBtin) or Linux SocketCAN: per-ID monitor with rates and changing bytes, trace, DBC decoding, J1939, CANopen and OBD-II labels, send frames; built-in genset simulator on a virtual bus | Free download ([DMG](https://dl-can-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -29,9 +30,9 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor, BLE Inspector, CNC Explorer and SECS/GEM Explorer are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer and CAN Explorer are not on the App Store or GitHub Releases. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
-Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
+Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer), [CAN Explorer](#can-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
 
 ## Free and Pro (App Store and licence-key builds)
 
@@ -109,6 +110,21 @@ The procedure for the visit, with the checklist, is in [docs/focas-field-test.md
 CNC Explorer is an independent tool. FANUC and FOCAS are trademarks of FANUC CORPORATION, and MTConnect is a
 registered trademark of AMT - The Association For Manufacturing Technology; it is not affiliated with or endorsed by
 either.
+
+### CAN Explorer
+
+Free to download as a notarized DMG (direct link: `https://dl-can-explorer.voltrus.id/latest`), no sign-in needed. Pro is a
+one-time licence key (USD 39.99, one Mac) bought through Polar in the console, activated in Info like the other direct apps.
+Builds from source have everything.
+
+| CAN Explorer | |
+| --- | --- |
+| Free | Connect to one bus: SLCAN adapter on a serial port (CANable and CANable 2 with slcan firmware, Lawicel CANUSB and CAN232, USBtin and compatibles; 10 kbit/s to 1 Mbit/s, CAN FD data rates on adapters that have them, listen-only), Linux SocketCAN, or the in-app virtual bus. Monitor with one row per identifier (count, period, bytes that changed), trace of the last 20000 frames with filter, DBC decoding (Intel and Motorola, signed, float, multiplexed, value tables), J1939 / CANopen / OBD-II labels, send single frames (form or cansend syntax), open candump logs, bus load estimate, log export, 1 saved interface profile |
+| Pro | Cyclic transmit, sending a DBC message by signal values, live signal trends, recording to a candump file, trace export (candump and CSV), replay of candump logs (speed, loop, ID filter), bus simulator (J1939 engine ECU, generator controller, multiplexed pump drive, CANopen I/O node with SDO answers, OBD-II), unlimited profiles |
+
+On macOS the adapters that work are those that show up as a serial port and speak SLCAN; PEAK, Kvaser and Vector interfaces need their vendors'
+drivers and are not supported. SocketCAN is Linux only. The app uses [`mt-can`](crates/mt-can) (pure Rust, no vendor library).
+CANopen is a registered trademark of CAN in Automation e.V.; CAN Explorer is not affiliated with or endorsed by CiA, SAE or the adapter makers.
 
 ### SECS/GEM Explorer
 
@@ -189,7 +205,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem, dev:can
 ```
 
 Universal release build (unsigned):
@@ -199,7 +215,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
 The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
@@ -217,6 +233,7 @@ apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/cnc-explorer      Tauri app (macOS), MTConnect and FANUC FOCAS client and simulators
 apps/secsgem-explorer  Tauri app (macOS), SECS/GEM host and equipment simulator over HSMS
+apps/can-explorer      Tauri app (macOS; also runs on Linux with SocketCAN), CAN / CAN FD monitor, DBC decoder, simulator
 apps/s7-explorer       Tauri app (macOS), Siemens S7 client and PLC simulator
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
 apps/mqtt-explorer     Tauri app (MQTT client + embedded broker)
@@ -238,6 +255,7 @@ crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-mtconnect    MTConnect agent client (probe, current, sample, stream, assets), agent simulator and SHDR adapter
 crates/focas-proto     FANUC FOCAS/Ethernet client, CNC simulator, probe and frame capture/replay (pure Rust, Beta); vendored from opex-flow, see scripts/sync-focas-proto.sh
 crates/mt-secsgem      SECS/GEM host and equipment simulator: HSMS, SECS-II, GEM (pure Rust, Beta)
+crates/mt-can          CAN / CAN FD: SLCAN adapters, Linux SocketCAN, virtual bus, DBC, candump logs, J1939/CANopen/OBD-II labels, simulator
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding
 crates/mt-opcua        OPC UA client (browse, read, write, subscriptions), server and simulator, certificate store
