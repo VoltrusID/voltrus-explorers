@@ -683,8 +683,8 @@ function App() {
         <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.55 }}>
           <p style={{ margin: 0 }}>
             FX2 boards have no firmware of their own: it is loaded into the chip each time the board is plugged in. This app uses fx2lafw, the open firmware of the sigrok project
-            ({firmware?.licence ?? "GPL-2.0-or-later"}). It is not part of the app. Use a copy installed on this computer, download the official {firmware?.release} release from
-            sigrok.org, or choose a .fw file.
+            ({firmware?.licence ?? "GPL-2.0-or-later"}), and ships the official {firmware?.release} images. It is a separate program that runs on the board, not part of the app. To
+            use another version, download it from sigrok.org or choose a .fw file.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {firmware?.files.map(([name, found]) => (
@@ -699,13 +699,16 @@ function App() {
           </div>
           {firmware?.userFile && <span style={hint}>Chosen file (used for every board): {firmware.userFile}</span>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Button variant="primary" disabled={downloading} onClick={() => void downloadFirmware()}>{downloading ? "Downloading…" : "Download from sigrok.org"}</Button>
+            <Button disabled={downloading} onClick={() => void downloadFirmware()}>{downloading ? "Downloading…" : "Download from sigrok.org"}</Button>
             <Button onClick={() => void chooseFirmware()}>Choose a .fw file…</Button>
             {firmware?.userFile && <Button variant="ghost" onClick={async () => setFirmware(await invoke<FirmwareStatus>("la_firmware_choose", { path: null }))}>Forget chosen file</Button>}
           </div>
           <span style={hint}>
-            The download fetches {firmware?.downloadUrl} once, checks its SHA-256, and keeps the images with their licence in {firmware?.appDir ?? "the app's data folder"}. Source code:{" "}
-            <a href="#" onClick={(e) => { e.preventDefault(); if (firmware) void invoke("open_url", { url: firmware.sourceUrl }); }}>{firmware?.sourceUrl}</a>.
+            Source code of the bundled firmware:{" "}
+            <a href="#" onClick={(e) => { e.preventDefault(); if (firmware) void invoke("open_url", { url: firmware.mirrorSourceUrl }); }}>{firmware?.mirrorSourceUrl}</a>
+            {" "}(also at sigrok.org). For three years after we last distribute it, JoyoDigitama will send a copy of that source on request at no more than the cost of doing so:
+            support@voltrus.id. Its licence texts are next to the images{firmware?.bundledDir ? ` in ${firmware.bundledDir}` : ""}. The download fetches {firmware?.downloadUrl} once,
+            checks its SHA-256, and keeps the images with their licence in {firmware?.appDir ?? "the app's data folder"}.
           </span>
         </div>
       </Dialog>
@@ -731,8 +734,8 @@ function App() {
             <ProAboutRow />
           </div>
           <p style={{ margin: "0 0 12px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
-            FX2 boards run fx2lafw, sigrok's open firmware (GPL-2.0-or-later), which the app loads from your computer or downloads from sigrok.org on request; no sigrok software is
-            part of the app. Modbus is a trademark of Schneider Electric, and Saleae, Cypress and Microchip are their owners' trademarks; this app is not affiliated with or endorsed
+            FX2 boards run fx2lafw, sigrok's open firmware (GPL-2.0-or-later). The app ships its unmodified images and uploads them to the board; its source is offered under
+            Device, Firmware. No sigrok software is part of the app itself. Modbus is a trademark of Schneider Electric, and Saleae, Cypress and Microchip are their owners' trademarks; this app is not affiliated with or endorsed
             by any of them.
           </p>
           <span style={{ color: "var(--text-muted)" }}>Part of the </span>

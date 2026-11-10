@@ -136,6 +136,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let fw_dir = app.path().app_data_dir().ok().map(|d| d.join("firmware").join(format!("fx2lafw-{}", mt_logic::fx2::firmware::RELEASE)));
+            // fx2lafw images shipped in the bundle (Resources/firmware on macOS); see FIRMWARE.md.
+            let bundled_fw = app.path().resource_dir().ok().map(|d| d.join("firmware").join(format!("fx2lafw-{}", mt_logic::fx2::firmware::RELEASE)));
             let usb: Option<Arc<dyn mt_logic::fx2::UsbBackend>> = Some(Arc::new(mt_logic::fx2::nusb_backend::NusbBackend));
             app.manage(Arc::new(Core::new(
                 Arc::new(move |event, payload| {
@@ -143,6 +145,7 @@ pub fn run() {
                 }),
                 usb,
                 fw_dir,
+                bundled_fw,
             )));
             Ok(())
         })

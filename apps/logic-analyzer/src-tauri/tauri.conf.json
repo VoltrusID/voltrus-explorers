@@ -50,6 +50,9 @@
       "entitlements": "entitlements.plist",
       "providerShortName": "JoyoDigitama",
       "minimumSystemVersion": "13.0"
+    },
+    "resources": {
+      "firmware/fx2lafw-0.1.7/": "firmware/fx2lafw-0.1.7/"
     }
   }
 }

@@ -80,9 +80,10 @@ Sample rates are 20 kHz to 24 MHz: 48 MHz or 30 MHz divided by `delay + 1`, with
 suggests a lower rate. Memory stays bounded: the driver keeps about 300 ms of transfers queued,
 and the capture is capped at its length (at most 512 Mi samples).
 
-The firmware is **not** included. Device → Firmware… finds an installed copy, downloads the
-official 0.1.7 release from sigrok.org when you ask (with SHA-256 checks), or uses a `.fw` file
-you choose. See [FIRMWARE.md](FIRMWARE.md).
+The direct-download app **bundles** the official fx2lafw 0.1.7 images with their GPL/LGPL licence
+texts and a source offer (the source is mirrored on `dl-logic-analyzer.voltrus.id`). Device →
+Firmware… shows which image each board will get, and can also download a release from sigrok.org
+or use a `.fw` file you choose. See [FIRMWARE.md](FIRMWARE.md).
 
 ### Linux: USB permissions (udev)
 
@@ -104,13 +105,15 @@ sigrok's own `60-libsigrok.rules` is installed, it already covers these boards.
 
 ### macOS and Windows
 
-macOS needs no driver; the sandboxed build has `com.apple.security.device.usb`. On Windows the
+macOS needs no driver; the build has `com.apple.security.device.usb`. It is sold as a direct
+download only (no Mac App Store build, because of the bundled GPL firmware). On Windows the
 board needs the WinUSB driver (Zadig), as for PulseView. Windows builds are not part of this
 first pass.
 
 ## Free and Pro (licence-key builds)
 
-A first proposal; the owner decides.
+USD 39.99 one-time, one Mac, movable (Polar product `3233bac5-95dd-4f7d-9186-06d45c6bfa2a`,
+benefit `VOLTRUS-LOGIC`); agreed by the owner on 2026-11-11.
 
 | | |
 | --- | --- |

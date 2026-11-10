@@ -77,10 +77,13 @@ pub struct FirmwareStatus {
     /// Per board firmware file: where it was found, if anywhere.
     pub files: Vec<(String, Option<FoundFirmware>)>,
     pub app_dir: Option<String>,
+    pub bundled_dir: Option<String>,
     pub user_file: Option<String>,
     pub release: &'static str,
     pub licence: &'static str,
     pub source_url: &'static str,
+    /// Our copy of the source, offered with the bundled images.
+    pub mirror_source_url: &'static str,
     pub download_url: &'static str,
 }
 
@@ -107,8 +110,8 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 impl Core {
-    pub fn new(emit: Emit, usb: Option<Arc<dyn UsbBackend>>, app_fw_dir: Option<PathBuf>) -> Self {
-        let fw = FirmwareDirs { user_file: None, app_dir: app_fw_dir, system_dirs: firmware::system_dirs() };
+    pub fn new(emit: Emit, usb: Option<Arc<dyn UsbBackend>>, app_fw_dir: Option<PathBuf>, bundled_fw_dir: Option<PathBuf>) -> Self {
+        let fw = FirmwareDirs { user_file: None, app_dir: app_fw_dir, bundled_dir: bundled_fw_dir, system_dirs: firmware::system_dirs() };
         Self { emit, usb, fw: Mutex::new(fw), capture: Mutex::new(None), decoders: Mutex::new(HashMap::new()), running: Mutex::new(None) }
     }
 
@@ -136,10 +139,12 @@ impl Core {
         FirmwareStatus {
             files: names.into_iter().map(|n| (n.to_string(), fw.find(n))).collect(),
             app_dir: fw.app_dir.as_ref().map(|p| p.display().to_string()),
+            bundled_dir: fw.bundled_dir.as_ref().map(|p| p.display().to_string()),
             user_file: fw.user_file.as_ref().map(|p| p.display().to_string()),
             release: firmware::RELEASE,
             licence: firmware::LICENCE,
             source_url: firmware::SOURCE_URL,
+            mirror_source_url: firmware::MIRROR_SOURCE_URL,
             download_url: firmware::TARBALL_URL,
         }
     }
@@ -404,7 +409,7 @@ mod tests {
     fn core(usb: Option<Arc<dyn UsbBackend>>) -> (Arc<Core>, Events) {
         let ev: Events = Arc::default();
         let e = ev.clone();
-        let c = Arc::new(Core::new(Arc::new(move |n: &str, v| e.lock().unwrap().push((n.to_string(), v))), usb, None));
+        let c = Arc::new(Core::new(Arc::new(move |n: &str, v| e.lock().unwrap().push((n.to_string(), v))), usb, None, None));
         (c, ev)
     }
 
@@ -538,5 +543,26 @@ mod tests {
         assert_eq!((w[0].start, w[0].end, w[0].level), (0, 6, Level::Error));
         assert_eq!(w[1].text, "x");
         assert_eq!(window(&all, 150, 160, 1.0).len(), 1);
+    }
+
+    /// The images shipped in the bundle are byte-identical to sigrok's 0.1.7 release, cover every
+    /// board, and travel with their licences and the source offer.
+    #[test]
+    fn bundled_firmware_is_the_official_release() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("firmware").join(format!("fx2lafw-{}", firmware::RELEASE));
+        for (name, _) in firmware::KNOWN {
+            let b = std::fs::read(dir.join(name)).unwrap();
+            assert_eq!(firmware::verify(name, &b), firmware::Verified::Official, "{name}");
+        }
+        for b in fx2::BOARDS {
+            assert!(dir.join(b.firmware).exists(), "{} has no bundled firmware", b.firmware);
+        }
+        for f in ["COPYING", "COPYING.LESSER", "README"] {
+            assert!(dir.join(f).exists(), "{f}");
+        }
+        let src = std::fs::read_to_string(dir.join("SOURCE.txt")).unwrap();
+        assert!(src.contains(firmware::MIRROR_SOURCE_URL) && src.contains(firmware::SOURCE_SHA256) && src.contains(firmware::TARBALL_SHA256));
+        let fw = FirmwareDirs { bundled_dir: Some(dir), ..Default::default() };
+        assert_eq!(fw.find("fx2lafw-saleae-logic.fw").unwrap().source, "bundled with the app");
     }
 }

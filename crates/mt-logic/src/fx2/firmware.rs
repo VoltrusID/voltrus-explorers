@@ -1,6 +1,7 @@
-//! Finding the fx2lafw firmware. The app does **not** ship it (it is GPL-2.0-or-later; see
-//! `apps/logic-analyzer/FIRMWARE.md`). It is taken, in order, from a file the user chose, the app's
-//! own firmware folder (filled by an explicit "Download from sigrok.org" click), or a sigrok
+//! Finding the fx2lafw firmware (GPL-2.0-or-later; see `apps/logic-analyzer/FIRMWARE.md`). The
+//! direct-download app bundles the official 0.1.7 images with their licences and a source offer.
+//! A firmware is taken, in order, from a file the user chose, the app's own firmware folder (filled
+//! by an explicit "Download from sigrok.org" click), the images bundled with the app, or a sigrok
 //! firmware folder installed on the system (a sigrok-firmware-fx2lafw package, or PulseView).
 //!
 //! Images of the official 0.1.7 release are checked against their published SHA-256; any other
@@ -17,6 +18,9 @@ pub const RELEASE: &str = "0.1.7";
 pub const TARBALL_URL: &str = "https://sigrok.org/download/binary/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-bin-0.1.7.tar.gz";
 pub const TARBALL_SHA256: &str = "c876fd075549e7783a6d5bfc8d99a695cfc583ddbcea0217d8e3f9351d1723af";
 pub const SOURCE_URL: &str = "https://sigrok.org/download/source/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-0.1.7.tar.gz";
+/// Our copy of the source, which the bundled images point to (GPLv2 section 3).
+pub const MIRROR_SOURCE_URL: &str = "https://dl-logic-analyzer.voltrus.id/releases/source/sigrok-firmware-fx2lafw-0.1.7.tar.gz";
+pub const SOURCE_SHA256: &str = "a3f440d6a852a46e2c5d199fc1c8e4dacd006bc04e0d5576298ee55d056ace3b";
 pub const LICENCE: &str = "GPL-2.0-or-later (parts LGPL-2.1-or-later)";
 
 /// SHA-256 of the 8-bit logic analyzer images in the 0.1.7 binary release.
@@ -96,6 +100,8 @@ pub struct FirmwareDirs {
     pub user_file: Option<PathBuf>,
     /// The app's firmware folder (downloads go here).
     pub app_dir: Option<PathBuf>,
+    /// The images shipped inside the app bundle.
+    pub bundled_dir: Option<PathBuf>,
     pub system_dirs: Vec<PathBuf>,
 }
 
@@ -132,7 +138,12 @@ impl FirmwareDirs {
         {
             return Some(FoundFirmware { name: name.into(), path: f.display().to_string(), verified: verify(name, &b), source: "chosen file" });
         }
-        let dirs = self.app_dir.iter().map(|d| (d.clone(), "app folder")).chain(self.system_dirs.iter().map(|d| (d.clone(), "installed sigrok firmware")));
+        let dirs = self
+            .app_dir
+            .iter()
+            .map(|d| (d.clone(), "app folder"))
+            .chain(self.bundled_dir.iter().map(|d| (d.clone(), "bundled with the app")))
+            .chain(self.system_dirs.iter().map(|d| (d.clone(), "installed sigrok firmware")));
         for (d, source) in dirs {
             let p = d.join(name);
             if let Ok(b) = std::fs::read(&p)
@@ -191,7 +202,7 @@ fn unpack(tar_gz: &[u8], dir: &Path) -> Result<Vec<String>> {
     }
     std::fs::write(
         dir.join("SOURCE.txt"),
-        format!("fx2lafw {RELEASE}, {LICENCE}.\nBinary release: {TARBALL_URL}\nCorresponding source: {SOURCE_URL}\nDownloaded by Voltrus Logic Analyzer at the user's request.\n"),
+        format!("fx2lafw {RELEASE}, {LICENCE}.\nBinary release: {TARBALL_URL}\nCorresponding source: {SOURCE_URL}\nAlso at: {MIRROR_SOURCE_URL}\nDownloaded by Voltrus Logic Analyzer at the user's request.\n"),
     )?;
     installed.sort();
     Ok(installed)
@@ -237,12 +248,15 @@ mod tests {
     #[test]
     fn search_order() {
         let base = std::env::temp_dir().join(format!("mt-logic-fw-order-{}", std::process::id()));
-        let (app, sys) = (base.join("app"), base.join("sys"));
-        std::fs::create_dir_all(&app).unwrap();
-        std::fs::create_dir_all(&sys).unwrap();
+        let (app, bundled, sys) = (base.join("app"), base.join("bundled"), base.join("sys"));
+        for d in [&app, &bundled, &sys] {
+            std::fs::create_dir_all(d).unwrap();
+        }
         std::fs::write(sys.join("fx2lafw-saleae-logic.fw"), [2, 0, 0]).unwrap();
-        let dirs = FirmwareDirs { user_file: None, app_dir: Some(app.clone()), system_dirs: vec![sys.clone()] };
+        let dirs = FirmwareDirs { user_file: None, app_dir: Some(app.clone()), bundled_dir: Some(bundled.clone()), system_dirs: vec![sys.clone()] };
         assert_eq!(dirs.find("fx2lafw-saleae-logic.fw").unwrap().source, "installed sigrok firmware");
+        std::fs::write(bundled.join("fx2lafw-saleae-logic.fw"), [2, 0, 2]).unwrap();
+        assert_eq!(dirs.find("fx2lafw-saleae-logic.fw").unwrap().source, "bundled with the app");
         std::fs::write(app.join("fx2lafw-saleae-logic.fw"), [2, 0, 1]).unwrap();
         assert_eq!(dirs.load("fx2lafw-saleae-logic.fw").unwrap(), vec![2, 0, 1]);
         let user = base.join("mine.fw");

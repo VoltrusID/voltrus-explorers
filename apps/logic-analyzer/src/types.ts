@@ -144,10 +144,12 @@ export interface FoundFirmware {
 export interface FirmwareStatus {
   files: [string, FoundFirmware | null][];
   appDir: string | null;
+  bundledDir: string | null;
   userFile: string | null;
   release: string;
   licence: string;
   sourceUrl: string;
+  mirrorSourceUrl: string;
   downloadUrl: string;
 }
 
