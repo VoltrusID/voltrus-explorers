@@ -151,6 +151,7 @@
       "dependencies": {
         "@mactools/ui": "workspace:*",
         "@tauri-apps/api": "^2",
+        "@tauri-apps/plugin-dialog": "^2",
         "lucide-react": "1.21.0",
         "react": "19.2.6",
         "react-dom": "19.2.6",
