@@ -6,6 +6,7 @@ import { frameInOf, type TxItem } from "./can";
 import { card, hint, row, type AddLog, type RequirePro } from "./ui";
 
 interface Props {
+  pro: boolean;
   items: TxItem[];
   setItems: (items: TxItem[]) => void;
   /** Keys of the items sending cyclically. */
@@ -19,7 +20,7 @@ interface Props {
 let seq = 0;
 const newKey = () => `tx-${Date.now().toString(36)}-${seq++}`;
 
-export default function TransmitView({ items, setItems, running, setRunning, canSend, requirePro, addLog }: Props) {
+export default function TransmitView({ pro, items, setItems, running, setRunning, canSend, requirePro, addLog }: Props) {
   const [quick, setQuick] = useState("7DF#02010D0000000000");
   const [error, setError] = useState<string | null>(null);
 
@@ -83,7 +84,7 @@ export default function TransmitView({ items, setItems, running, setRunning, can
       <div style={{ ...card, display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 200 }}>
         <div style={row}>
           <strong style={{ fontSize: "var(--fs-sm)" }}>Transmit list</strong>
-          <span style={hint}>Send once is free; cyclic sending is <ProBadge /></span>
+          {!pro && <span style={hint}>Sending once is free. Cyclic sending needs Pro <ProBadge /></span>}
           <span style={{ flex: 1 }} />
           {running.size > 0 && (
             <Button size="sm" variant="danger" icon={<Square size={14} strokeWidth={1.75} />} onClick={() => { for (const k of running) void stop(k); }}>

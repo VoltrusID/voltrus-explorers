@@ -450,6 +450,8 @@ impl Core {
         let repeat = req.repeat;
         let task = tokio::spawn(async move {
             let mut pass = 0u64;
+            // Progress goes to the UI four times a second and at the end of every pass.
+            let mut last_progress = tokio::time::Instant::now();
             loop {
                 let start = tokio::time::Instant::now();
                 for (i, r) in recs.iter().enumerate() {
@@ -459,11 +461,15 @@ impl Core {
                         emit("can-replay", json!({ "done": true, "error": e.to_string() }));
                         return;
                     }
-                    if i % 200 == 0 {
-                        emit("can-replay", json!({ "done": false, "pos": i, "total": n, "pass": pass }));
+                    if last_progress.elapsed() >= Duration::from_millis(250) {
+                        last_progress = tokio::time::Instant::now();
+                        emit("can-replay", json!({ "done": false, "pos": i + 1, "total": n, "pass": pass }));
                     }
                 }
                 pass += 1;
+                if repeat {
+                    emit("can-replay", json!({ "done": false, "pos": n, "total": n, "pass": pass - 1 }));
+                }
                 if !repeat {
                     break;
                 }

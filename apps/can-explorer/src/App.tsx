@@ -132,7 +132,7 @@ function App() {
         if (!pausedRef.current) setTrace((prev) => pushCapped(prev, frames, TRACE_MAX));
         setLatest((prev) => {
           let next: Map<string, FrameView> | null = null;
-          for (const f of frames) if (f.msg && f.dir === "rx") { next ??= new Map(prev); next.set(f.msg, f); }
+          for (const f of frames) if (f.msg) { next ??= new Map(prev); next.set(f.msg, f); }
           return next ?? prev;
         });
         if (trendRef.current.size > 0) {
@@ -660,7 +660,7 @@ function App() {
       )}
       {tab === "transmit" && (
         connected ? (
-          <TransmitView items={txItems} setItems={setTxItems} running={txRunning} setRunning={setTxRunning} canSend={canSend} requirePro={requirePro} addLog={addLog} />
+          <TransmitView pro={pro} items={txItems} setItems={setTxItems} running={txRunning} setRunning={setTxRunning} canSend={canSend} requirePro={requirePro} addLog={addLog} />
         ) : <EmptyState title="Not connected" description="Connect to a bus to send frames." />
       )}
       {tab === "signals" && (

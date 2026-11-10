@@ -161,7 +161,10 @@ pub fn describe(frame: &CanFrame, layer: Layer) -> Option<String> {
             match frame.id {
                 0x7DF => Some(format!("OBD-II request (all ECUs){}", obd_pid(&frame.data, false))),
                 0x7E0..=0x7E7 => Some(format!("OBD-II request to ECU {}{}", frame.id - 0x7E0, obd_pid(&frame.data, false))),
-                0x7E8..=0x7EF => Some(format!("OBD-II response from ECU {}{}", frame.id - 0x7E8, obd_pid(&frame.data, true))),
+                0x7E8..=0x7EF => {
+                    let value = obd_value(&frame.data).map(|(_, v, u)| format!(" = {} {u}", (v * 10.0).round() / 10.0)).unwrap_or_default();
+                    Some(format!("OBD-II response from ECU {}{}{value}", frame.id - 0x7E8, obd_pid(&frame.data, true)))
+                }
                 _ => None,
             }
         }
@@ -241,6 +244,10 @@ mod tests {
         let req = CanFrame::new(0x7DF, &[2, 1, 0x0C, 0, 0, 0, 0, 0]).unwrap();
         assert_eq!(describe(&req, Layer::Obd2).unwrap(), "OBD-II request (all ECUs): engine speed");
         let rsp = [4, 0x41, 0x0C, 0x1A, 0xF8, 0, 0, 0];
+        assert_eq!(
+            describe(&CanFrame::new(0x7E8, &rsp).unwrap(), Layer::Obd2).unwrap(),
+            "OBD-II response from ECU 0: engine speed = 1726 rpm"
+        );
         assert_eq!(obd_value(&rsp), Some(("engine speed", 1726.0, "rpm")));
     }
 }
