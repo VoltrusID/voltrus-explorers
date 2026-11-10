@@ -62,9 +62,9 @@ case "$APP" in
     DB_ID="10bb22f1-210e-4d20-b0ae-557ccb980cdc"
     NAME_RE='can[ _.-]*explorer' ;;
   logic-analyzer)
-    # TODO(owner): create the dl-logic-analyzer worker, R2 bucket and D1 database, then fill DB_ID.
     PRODUCT="Voltrus Logic Analyzer"; BASE="https://dl-logic-analyzer.voltrus.id"
-    BUCKET="logic-analyzer-releases"; DB="logic-analyzer-releases-db"; DB_ID=""
+    BUCKET="logic-analyzer-releases"; DB="logic-analyzer-releases-db"
+    DB_ID="1afeb2c1-525b-4834-b3f1-0bc441182717"
     NAME_RE='logic[ _.-]*analyzer' ;;
   mqtt-explorer)
     PRODUCT="MQTT Explorer"; BASE="https://dl-mqtt-explorer.voltrus.id"
