@@ -14,8 +14,9 @@ JoyoDigitama the rights below.
    perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable patent license to make, have
    made, use, offer to sell, sell, import, and otherwise transfer Your Contribution, where the patent
    claims are ones You can license and are infringed by Your Contribution alone or combined with the
-   project. If anyone sues You alleging the project infringes a patent, the patent licenses You
-   granted for that Contribution end on the date that suit is filed.
+   project. If anyone files a patent lawsuit (including a cross-claim or counterclaim) alleging that
+   Your Contribution, or the project it is part of, infringes a patent, the patent licenses granted to
+   that party under this agreement for that Contribution end on the date that suit is filed.
 3. **Your representations.** You confirm that (a) the Contribution is Your original work and You have the
    legal right to grant these licenses; (b) if Your employer or anyone else has rights in it, You have
    permission or a waiver from them; (c) if Your Contribution includes third-party material, You will say
@@ -23,6 +24,10 @@ JoyoDigitama the rights below.
 4. **No warranty.** You provide Your Contribution "as is", without warranties of any kind, except as stated in
    section 3. You are not obliged to provide support.
 5. **No obligation.** JoyoDigitama is not required to use Your Contribution.
+
+**Contributing as an employee.** If Your employer may own work You do (many employment contracts say
+so), get written permission from them before You contribute, as section 3(b) requires, or ask them to
+sign a corporate CLA by emailing support@voltrus.id.
 
 To sign, comment on Your pull request with:
 
