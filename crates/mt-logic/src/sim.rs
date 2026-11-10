@@ -432,8 +432,8 @@ mod tests {
         let f: Vec<_> = r.frames.iter().map(|f| (f.id, f.error.clone())).collect();
         let good = r.frames.iter().filter(|f| f.error.is_none()).count();
         assert_eq!(good, 7, "{f:x?}");
-        assert!(r.frames.iter().any(|f| f.error.as_deref() == Some("Error flag in end of frame") || f.error.as_deref() == Some("No ACK")), "{f:x?}");
-        assert!(r.frames.iter().any(|f| f.id == 0x186 && !f.crc_ok), "{f:x?}");
+        assert!(r.frames.iter().any(|f| f.id == 0x18FF5021 && f.error.as_deref() == Some("No ACK, error flag follows")), "{f:x?}");
+        assert!(r.frames.iter().any(|f| f.id == 0x186 && !f.crc_ok && f.header_ok), "{f:x?}");
         assert!(r.frames.iter().any(|f| f.id == 0x285 && f.rtr));
     }
 

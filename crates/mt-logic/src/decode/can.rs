@@ -171,6 +171,8 @@ pub struct CanBitFrame {
     pub stuff_bits: u32,
     /// The frame ended in an error flag (6 or more dominant bits).
     pub error_frame: bool,
+    /// Identifier, format and DLC were read before any error.
+    pub header_ok: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -289,6 +291,7 @@ fn read_frame(r: &mut Reader, ann: &mut Vec<Annotation>) -> Option<(CanBitFrame,
         error: None,
         stuff_bits: 0,
         error_frame: false,
+        header_ok: false,
     };
     let fail = |frame: &mut CanBitFrame, ann: &mut Vec<Annotation>, r: &Reader, at: u64, msg: String, flag: bool| {
         let end = if flag {
@@ -354,6 +357,7 @@ fn read_frame(r: &mut Reader, ann: &mut Vec<Annotation>) -> Option<(CanBitFrame,
                 frame.id = if ide { field(1, 11) << 18 | field(14, 18) } else { field(1, 11) };
                 frame.rtr = if ide { bits[32] } else { bits[12] };
                 frame.dlc = field(header - 4, 4) as u8;
+                frame.header_ok = true;
                 let data_bits = if frame.rtr { 0 } else { frame.dlc.min(8) as usize * 8 };
                 total = Some(header + data_bits + 15);
                 // Field annotations for the header.
@@ -439,8 +443,16 @@ fn read_frame(r: &mut Reader, ann: &mut Vec<Annotation>) -> Option<(CanBitFrame,
         if !b {
             // A dominant bit in EOF: an error flag from a node that saw a problem (missing ACK,
             // CRC error), or an overload frame on the last bit.
-            let msg = if i == 6 { "Overload or error flag in the last EOF bit" } else { "Error flag in end of frame" };
-            let end = fail(&mut frame, ann, r, s, msg.into(), true);
+            let msg = if !frame.crc_ok {
+                "CRC error, error flag follows".to_string()
+            } else if !frame.acked {
+                "No ACK, error flag follows".to_string()
+            } else if i == 6 {
+                "Overload or error flag in the last EOF bit".to_string()
+            } else {
+                "Error flag in end of frame".to_string()
+            };
+            let end = fail(&mut frame, ann, r, s, msg, true);
             frame.end = end;
             return Some((frame, end));
         }
@@ -478,12 +490,12 @@ pub fn output(cap: &Capture, r: &CanResult) -> DecodeOutput {
     for f in &frames {
         let lvl = match f.error.as_deref() {
             None => Level::Info,
-            Some("No ACK") => Level::Warning,
+            Some(e) if e.starts_with("No ACK") => Level::Warning,
             Some(e) if e.starts_with("CAN FD") => Level::Warning,
             Some(_) => Level::Error,
         };
         let text = match &f.error {
-            Some(e) if f.error_frame || e.starts_with("CAN FD") || e.starts_with("Stuff") => e.clone(),
+            Some(e) if !f.header_ok => e.clone(),
             Some(e) => format!("{} — {e}", frame_text(f)),
             None => frame_text(f),
         };
@@ -495,10 +507,10 @@ pub fn output(cap: &Capture, r: &CanResult) -> DecodeOutput {
         .map(|f| TableRow {
             start: f.start,
             end: f.end,
-            level: if f.error.is_none() { Level::Data } else if f.error.as_deref() == Some("No ACK") { Level::Warning } else { Level::Error },
+            level: if f.error.is_none() { Level::Data } else if f.error.as_deref().is_some_and(|e| e.starts_with("No ACK")) { Level::Warning } else { Level::Error },
             cells: vec![
                 time_cell(cap, f.start),
-                if f.error_frame || f.error.as_deref().is_some_and(|e| e.starts_with("CAN FD") || e.starts_with("Stuff")) {
+                if !f.header_ok {
                     "—".into()
                 } else if f.extended {
                     format!("0x{:08X}", f.id)
