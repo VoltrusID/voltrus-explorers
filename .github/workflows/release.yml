@@ -24,7 +24,7 @@ on:
       app:
         description: App
         type: choice
-        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, secsgem-explorer, voltrus-tools]
+        options: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, secsgem-explorer, can-explorer, voltrus-tools]
       appstore:
         description: Mac App Store .pkg
         type: boolean
@@ -77,7 +77,7 @@ jobs:
 
       # Apps that sell Pro by licence key are distributed from the Voltrus console and landing page only.
       - name: Refuse GitHub release of direct-licence apps
-        if: inputs.github_release && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer' || inputs.app == 'mqtt-explorer' || inputs.app == 'nats-explorer' || inputs.app == 'opcua-explorer' || inputs.app == 's7-explorer')
+        if: inputs.github_release && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer' || inputs.app == 'can-explorer' || inputs.app == 'mqtt-explorer' || inputs.app == 'nats-explorer' || inputs.app == 'opcua-explorer' || inputs.app == 's7-explorer')
         run: |
           echo "::error::$APP is distributed through the Voltrus console and voltrus.id, not GitHub Releases. Untick github_release; publish the DMG with scripts/publish-direct.sh (docs/release.md)."
           exit 1
@@ -126,7 +126,7 @@ jobs:
         run: find build -name '*.pkg' -o -name '*.dmg' | xargs shasum -a 256 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Direct-download publish command
-        if: inputs.dmg && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer' || inputs.app == 'mqtt-explorer' || inputs.app == 'nats-explorer' || inputs.app == 'opcua-explorer' || inputs.app == 's7-explorer')
+        if: inputs.dmg && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer' || inputs.app == 'can-explorer' || inputs.app == 'mqtt-explorer' || inputs.app == 'nats-explorer' || inputs.app == 'opcua-explorer' || inputs.app == 's7-explorer')
         run: |
           version="$(python3 -c "import json; print(json.load(open('apps/$APP/src-tauri/tauri.conf.json'))['version'])")"
           echo "Publish to the download worker (run locally, with your Cloudflare login): \`scripts/publish-direct.sh $APP $version --run $GITHUB_RUN_ID\`" | tee -a "$GITHUB_STEP_SUMMARY"
