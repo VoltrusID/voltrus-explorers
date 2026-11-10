@@ -159,6 +159,13 @@ The App Store products below stay unused for these eight apps.
 | CNC Explorer | `com.joyodigitama.cncexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build) |
 | SECS/GEM Explorer | `com.joyodigitama.secsgemexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only, Beta) |
 | CAN Explorer | `com.joyodigitama.canexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only) |
+| Voltrus Logic Analyzer | `com.joyodigitama.logicanalyzer.pro` | not released; planned as a direct licence-key app like the others (price, product and worker still to be decided) |
+
+Voltrus Logic Analyzer (`apps/logic-analyzer`) is scaffolded as a licence-key app but **not set up for sale**: no
+Polar product, no console entrypoint and no `dl-logic-analyzer` worker exist. `store.json` points at
+`https://dl-logic-analyzer.voltrus.id` and a placeholder checkout URL, and `scripts/publish-direct.sh logic-analyzer`
+refuses to run until its `DB_ID` is filled in. Its DMG needs `com.apple.security.device.usb` (FX2 boards). The
+fx2lafw firmware is not bundled; see `apps/logic-analyzer/FIRMWARE.md`.
 
 SECS/GEM Explorer's download worker (`secsgem-explorer-updates`, R2 `secsgem-explorer-releases`, D1
 `secsgem-explorer-releases-db` `2e0b346e-3f23-4be2-a766-376da02407cc`) lives in the MacTools repo next to the other three.
