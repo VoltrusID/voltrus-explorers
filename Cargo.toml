@@ -27,6 +27,7 @@ members = [
     "apps/cnc-explorer/src-tauri",
     "apps/secsgem-explorer/src-tauri",
     "apps/can-explorer/src-tauri",
+    "apps/logic-analyzer/src-tauri",
     "apps/s7-explorer/src-tauri",
     "apps/enip-explorer/src-tauri",
     "apps/serial-monitor/src-tauri",

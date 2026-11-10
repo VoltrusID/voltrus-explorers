@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "Voltrus Logic Analyzer",
+  "version": "1.0.0",
+  "identifier": "com.joyodigitama.logic-analyzer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Voltrus Logic Analyzer",
+        "width": 1400,
+        "height": 880,
+        "minWidth": 980,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "Logic analyzer for FX2 USB boards with Modbus RTU, CAN, SPI, I2C and UART decoding",
+    "longDescription": "Capture 8 logic channels from an inexpensive Cypress FX2 USB logic analyzer (the 24 MHz 8-channel boards) and decode what the wires carry: Modbus RTU on RS-485 with request and response pairing and timing, CAN at bit level, SPI with MCP2515 decoding, I2C and UART. Zoom to single samples, measure with cursors, trigger on edges and patterns, and open sigrok captures. A built-in simulator generates industrial signals when no board is attached.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

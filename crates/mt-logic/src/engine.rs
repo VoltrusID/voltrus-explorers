@@ -74,7 +74,8 @@ pub fn run(stream: &mut dyn SampleStream, settings: &CaptureSettings, channels: 
     let pre = if trig.is_immediate() { 0 } else { (settings.samples as f64 * settings.pre_trigger) as usize };
     let mut ring: VecDeque<u8> = VecDeque::with_capacity(pre.max(1));
     let mut data: Vec<u8> = Vec::new();
-    let mut triggered: Option<u64> = None;
+    // Where the trigger fired in `data` (`Some(None)` once recording without a trigger mark).
+    let mut triggered: Option<Option<u64>> = None;
     let mut chunk = Vec::with_capacity(1 << 16);
     let rate = settings.sample_rate;
     let finish = |data: Vec<u8>, t: Option<u64>| Capture::new(rate, channels.clone(), data).with_trigger(t);
@@ -82,7 +83,7 @@ pub fn run(stream: &mut dyn SampleStream, settings: &CaptureSettings, channels: 
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(match triggered {
-                Some(t) => finish(data, Some(t)),
+                Some(t) => finish(data, t),
                 None => finish(ring.into_iter().collect(), None),
             });
         }
@@ -101,7 +102,7 @@ pub fn run(stream: &mut dyn SampleStream, settings: &CaptureSettings, channels: 
                         ring.extend(&head[head.len() - take..]);
                     }
                     data.extend(ring.drain(..));
-                    triggered = (!trig.is_immediate()).then_some(data.len() as u64);
+                    triggered = Some((!trig.is_immediate()).then_some(data.len() as u64));
                     rest = &rest[i..];
                 }
                 None => {
@@ -124,7 +125,7 @@ pub fn run(stream: &mut dyn SampleStream, settings: &CaptureSettings, channels: 
         data.extend_from_slice(&rest[..rest.len().min(room)]);
         progress(Progress { phase: Phase::Recording, samples: data.len() as u64, total: settings.samples });
         if data.len() >= total || !more {
-            return Ok(finish(data, triggered));
+            return Ok(finish(data, triggered.flatten()));
         }
     }
 }
@@ -228,6 +229,22 @@ mod tests {
         .unwrap();
         assert_eq!(c.trigger, None);
         assert_eq!(c.len(), 200);
+    }
+
+    #[test]
+    fn stop_while_recording_without_trigger_keeps_samples() {
+        let mut s = BufferStream::new(vec![1; 100], 1000, 50, true);
+        let stop = AtomicBool::new(false);
+        let mut n = 0;
+        let c = run(&mut s, &settings(1_000_000, Trigger::None, 0.0), default_channels(8), &stop, &mut |_| {
+            n += 1;
+            if n == 3 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap();
+        assert_eq!(c.len(), 150);
+        assert_eq!(c.trigger, None);
     }
 
     #[test]

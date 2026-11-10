@@ -1,0 +1,12 @@
+{
+  "pro_product_id": "com.joyodigitama.logicanalyzer.pro",
+  "free_since": {
+    "macos_version": "1.0.0",
+    "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-logic-analyzer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout?product=logic-analyzer",
+    "price": "$39.99"
+  }
+}
