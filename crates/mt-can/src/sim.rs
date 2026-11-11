@@ -24,7 +24,7 @@ NS_ :
 
 BS_:
 
-BU_: ECU GEN PUMP IO Tester
+BU_: ECU GEN PUMP IO BMS Tester
 
 BO_ 2364539904 EEC1: 8 ECU
  SG_ EngTorqueMode : 0|4@1+ (1,0) [0|15] "" Tester
@@ -80,12 +80,98 @@ CM_ BO_ 2566843904 "J1939 PGN 65262 Engine Temperature 1.";
 CM_ BO_ 2566844160 "J1939 PGN 65263 Engine Fluid Level/Pressure 1.";
 CM_ BO_ 2566841600 "J1939 PGN 65253 Engine Hours.";
 CM_ BO_ 2566834688 "J1939 PGN 65226 DM1, single-frame form with one trouble code.";
+CM_ BO_ 1184 "Battery pack (CAN FD, 64 bytes, bit rate switch). CellPage selects which 16 of the 64 cell voltages the frame carries.";
 CM_ BO_ 1040 "Cooling pump drive. Mode 0: speed and flow, mode 1: motor temperature and fault code.";
 CM_ BO_ 1296 "Send this to the simulator to set the pump speed.";
+BO_ 1184 BatteryPackFD: 64 BMS
+ SG_ CellPage M : 0|8@1+ (1,0) [0|3] "" Tester
+ SG_ PackVoltage : 8|16@1+ (0.01,0) [0|655.35] "V" Tester
+ SG_ PackCurrent : 24|16@1- (0.1,0) [-3276.8|3276.7] "A" Tester
+ SG_ SOC : 40|8@1+ (0.5,0) [0|100] "%" Tester
+ SG_ SOH : 48|8@1+ (0.5,0) [0|100] "%" Tester
+ SG_ TempMin : 56|8@1+ (1,-40) [-40|215] "degC" Tester
+ SG_ TempMax : 64|8@1+ (1,-40) [-40|215] "degC" Tester
+ SG_ CellVoltMin : 72|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ CellVoltMax : 88|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ PackState : 104|4@1+ (1,0) [0|15] "" Tester
+ SG_ BalancingActive : 108|1@1+ (1,0) [0|1] "" Tester
+ SG_ ContactorClosed : 109|1@1+ (1,0) [0|1] "" Tester
+ SG_ CellMinIndex : 112|8@1+ (1,0) [1|64] "" Tester
+ SG_ CellMaxIndex : 120|8@1+ (1,0) [1|64] "" Tester
+ SG_ InsulationRes : 128|16@1+ (1,0) [0|65535] "kOhm" Tester
+ SG_ Cell01 m0 : 192|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell02 m0 : 208|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell03 m0 : 224|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell04 m0 : 240|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell05 m0 : 256|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell06 m0 : 272|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell07 m0 : 288|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell08 m0 : 304|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell09 m0 : 320|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell10 m0 : 336|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell11 m0 : 352|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell12 m0 : 368|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell13 m0 : 384|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell14 m0 : 400|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell15 m0 : 416|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell16 m0 : 432|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell17 m1 : 192|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell18 m1 : 208|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell19 m1 : 224|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell20 m1 : 240|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell21 m1 : 256|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell22 m1 : 272|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell23 m1 : 288|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell24 m1 : 304|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell25 m1 : 320|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell26 m1 : 336|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell27 m1 : 352|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell28 m1 : 368|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell29 m1 : 384|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell30 m1 : 400|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell31 m1 : 416|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell32 m1 : 432|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell33 m2 : 192|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell34 m2 : 208|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell35 m2 : 224|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell36 m2 : 240|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell37 m2 : 256|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell38 m2 : 272|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell39 m2 : 288|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell40 m2 : 304|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell41 m2 : 320|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell42 m2 : 336|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell43 m2 : 352|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell44 m2 : 368|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell45 m2 : 384|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell46 m2 : 400|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell47 m2 : 416|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell48 m2 : 432|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell49 m3 : 192|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell50 m3 : 208|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell51 m3 : 224|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell52 m3 : 240|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell53 m3 : 256|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell54 m3 : 272|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell55 m3 : 288|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell56 m3 : 304|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell57 m3 : 320|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell58 m3 : 336|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell59 m3 : 352|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell60 m3 : 368|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell61 m3 : 384|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell62 m3 : 400|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell63 m3 : 416|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ Cell64 m3 : 432|16@1+ (0.001,0) [0|65.535] "V" Tester
+
 CM_ BO_ 1297 "Send this to the simulator to set the engine throttle.";
 CM_ SG_ 2364539904 EngineSpeed "Actual engine speed.";
 CM_ SG_ 801 Breaker "Generator breaker position.";
 BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535;
+BA_DEF_ BO_ "VFrameFormat" ENUM "StandardCAN","ExtendedCAN","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","StandardCAN_FD","ExtendedCAN_FD";
+BA_DEF_ BO_ "CANFD_BRS" ENUM "0","1";
+BA_DEF_DEF_ "VFrameFormat" "StandardCAN";
+BA_DEF_DEF_ "CANFD_BRS" "0";
 BA_ "GenMsgCycleTime" BO_ 2364539904 20;
 BA_ "GenMsgCycleTime" BO_ 2566843904 1000;
 BA_ "GenMsgCycleTime" BO_ 2566844160 500;
@@ -94,10 +180,14 @@ BA_ "GenMsgCycleTime" BO_ 2566834688 1000;
 BA_ "GenMsgCycleTime" BO_ 801 100;
 BA_ "GenMsgCycleTime" BO_ 802 100;
 BA_ "GenMsgCycleTime" BO_ 1040 50;
+BA_ "GenMsgCycleTime" BO_ 1184 100;
+BA_ "VFrameFormat" BO_ 1184 14;
+BA_ "CANFD_BRS" BO_ 1184 1;
 VAL_ 2364539904 EngTorqueMode 0 "Low idle governor" 1 "Accelerator pedal" 2 "Cruise control" 3 "PTO governor" 15 "Not available" ;
 VAL_ 801 Breaker 0 "Open" 1 "Closed" 2 "Tripped" 3 "Not available" ;
 VAL_ 801 GenState 0 "Stopped" 1 "Starting" 2 "Warm-up" 3 "Running" 4 "Cool-down" 5 "Fault" ;
 VAL_ 1040 Mode 0 "Process data" 1 "Diagnostics" ;
+VAL_ 1184 PackState 0 "Standby" 1 "Charging" 2 "Discharging" 3 "Fault" ;
 "#;
 
 /// CANopen node id of the simulated I/O module.
@@ -126,6 +216,14 @@ pub struct SimState {
     pub frequency: f64,
     pub pump_speed: f64,
     pub hours: f64,
+    /// Send the CAN FD battery pack message (BatteryPackFD, 0x4A0).
+    pub fd_battery: bool,
+    /// Battery state of charge, %.
+    pub soc: f64,
+    /// Battery current, A: positive charging.
+    pub pack_current: f64,
+    pub pack_voltage: f64,
+    pub pack_temp: f64,
 }
 
 impl Default for SimState {
@@ -146,6 +244,11 @@ impl Default for SimState {
             frequency: 0.0,
             pump_speed: 0.0,
             hours: 1234.5,
+            fd_battery: true,
+            soc: 62.0,
+            pack_current: 0.0,
+            pack_voltage: 0.0,
+            pack_temp: 24.0,
         }
     }
 }
@@ -160,6 +263,7 @@ pub enum SimAction {
     SetPump { enabled: bool, setpoint: f64 },
     SetFault { active: bool },
     SetRate { rate: f64 },
+    SetFdBattery { enabled: bool },
 }
 
 pub struct Simulator {
@@ -194,6 +298,7 @@ impl Simulator {
             }
             SimAction::SetFault { active } => s.fault = active,
             SimAction::SetRate { rate } => s.rate = rate.clamp(0.1, 10.0),
+            SimAction::SetFdBattery { enabled } => s.fd_battery = enabled,
         }
     }
 
@@ -209,6 +314,13 @@ impl Drop for Simulator {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+/// Which page the multiplexed messages send next.
+#[derive(Default)]
+struct Pages {
+    pump: u8,
+    cells: usize,
 }
 
 struct Schedule {
@@ -230,7 +342,7 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
 
     let tick = Duration::from_millis(5);
     let mut clock_ms: u64 = 0;
-    let mut pump_page = 0u8;
+    let mut pages = Pages::default();
     let mut timer = tokio::time::interval(tick);
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Boot-up message of the CANopen node.
@@ -257,7 +369,7 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
                     for e in sched.iter_mut() {
                         if clock_ms >= e.next_ms {
                             e.next_ms = clock_ms + ((e.period_ms as f64 / rate).max(1.0) as u64);
-                            if let Some(f) = build(&dbc, &e.name, &s, &mut pump_page) {
+                            if let Some(f) = build(&dbc, &e.name, &s, &mut pages) {
                                 out.push(f);
                             }
                         }
@@ -294,9 +406,34 @@ fn physics(s: &mut SimState, dt: f64) {
     if s.running {
         s.hours += dt / 3600.0;
     }
+    // Battery: charged from the generator while it runs on load, discharged otherwise. 100 Ah, 64 NMC cells.
+    let target_a = if s.running && s.breaker_closed { 12.0 + s.throttle * 0.4 } else { -18.0 };
+    approach(&mut s.pack_current, target_a, 1.0, dt);
+    // Sped up 60x so the state of charge visibly moves.
+    s.soc = (s.soc + s.pack_current * dt * 60.0 / 3600.0).clamp(5.0, 98.0);
+    if s.soc >= 98.0 && s.pack_current > 0.0 || s.soc <= 5.0 && s.pack_current < 0.0 {
+        s.pack_current = 0.0;
+    }
+    s.pack_voltage = cell_volts(s.soc) * BATTERY_CELLS as f64 + s.pack_current * 0.02;
+    approach(&mut s.pack_temp, 24.0 + s.pack_current.abs() * 0.15, 0.05, dt);
 }
 
-fn build(dbc: &Dbc, name: &str, s: &SimState, pump_page: &mut u8) -> Option<CanFrame> {
+/// Cells in the simulated pack.
+pub const BATTERY_CELLS: usize = 64;
+
+/// Open-circuit cell voltage of an NMC cell at a state of charge (rough, monotonic).
+fn cell_volts(soc: f64) -> f64 {
+    3.3 + 0.9 * (soc / 100.0) - 0.08 * (1.0 - soc / 100.0).powi(3)
+}
+
+/// Voltage of cell `i` (0-based): the pack voltage per cell with a fixed spread of a few mV.
+fn cell_voltage(s: &SimState, i: usize) -> f64 {
+    let base = s.pack_voltage / BATTERY_CELLS as f64;
+    base + ((i as f64 * 2.399).sin() * 0.006) + ((i as f64 * 0.731).cos() * 0.003)
+}
+
+fn build(dbc: &Dbc, name: &str, s: &SimState, pages: &mut Pages) -> Option<CanFrame> {
+    let pump_page = &mut pages.pump;
     let wobble = |amp: f64| (s.hours * 3600.0 * 7.0).sin() * amp;
     let values: Vec<(&str, f64)> = match name {
         "EEC1" => vec![
@@ -333,6 +470,42 @@ fn build(dbc: &Dbc, name: &str, s: &SimState, pump_page: &mut u8) -> Option<CanF
             } else {
                 vec![("Mode", 1.0), ("MotorTemp", 35.0 + s.pump_speed * 0.01), ("FaultCode", 0.0)]
             }
+        }
+        "BatteryPackFD" => {
+            if !s.fd_battery {
+                return None;
+            }
+            let page = pages.cells;
+            pages.cells = (pages.cells + 1) % 4;
+            let cells: Vec<f64> = (0..BATTERY_CELLS).map(|i| cell_voltage(s, i)).collect();
+            let (imin, vmin) = cells.iter().enumerate().fold((0, f64::MAX), |a, (i, v)| if *v < a.1 { (i, *v) } else { a });
+            let (imax, vmax) = cells.iter().enumerate().fold((0, f64::MIN), |a, (i, v)| if *v > a.1 { (i, *v) } else { a });
+            let state = if s.pack_current > 0.5 { 1.0 } else if s.pack_current < -0.5 { 2.0 } else { 0.0 };
+            let mut v = vec![
+                ("CellPage", page as f64),
+                ("PackVoltage", s.pack_voltage),
+                ("PackCurrent", s.pack_current),
+                ("SOC", s.soc),
+                ("SOH", 96.5),
+                ("TempMin", s.pack_temp - 1.5),
+                ("TempMax", s.pack_temp + 2.0),
+                ("CellVoltMin", vmin),
+                ("CellVoltMax", vmax),
+                ("PackState", state),
+                ("BalancingActive", if vmax - vmin > 0.012 && s.pack_current > 0.0 { 1.0 } else { 0.0 }),
+                ("ContactorClosed", 1.0),
+                ("CellMinIndex", (imin + 1) as f64),
+                ("CellMaxIndex", (imax + 1) as f64),
+                ("InsulationRes", 4800.0),
+            ];
+            let names: Vec<String> = (0..16).map(|k| format!("Cell{:02}", page * 16 + k + 1)).collect();
+            let mut map: std::collections::HashMap<String, f64> = v.drain(..).map(|(k, x)| (k.to_string(), x)).collect();
+            for (k, n) in names.into_iter().enumerate() {
+                map.insert(n, cells[page * 16 + k]);
+            }
+            let msg = dbc.message_by_name(name)?;
+            let data = encode_message(msg, &map, None).ok()?;
+            return CanFrame::fd(msg.id, msg.extended, msg.brs, &data).ok();
         }
         "heartbeat" => return CanFrame::new(0x700 + CANOPEN_NODE as u32, &[0x05]).ok(),
         "tpdo1" => {
@@ -432,10 +605,66 @@ mod tests {
     #[test]
     fn built_in_dbc_parses() {
         let d = Dbc::parse(SIM_DBC).unwrap();
-        assert_eq!(d.messages.len(), 10);
+        assert_eq!(d.messages.len(), 11);
+        let b = d.message_by_name("BatteryPackFD").unwrap();
+        assert_eq!((b.id, b.extended, b.size, b.fd, b.brs, b.cycle_ms), (0x4A0, false, 64, true, true, Some(100)));
+        assert_eq!(b.signals.len(), 15 + BATTERY_CELLS);
+        // The classic messages stay classic.
+        assert!(!d.message_by_name("EEC1").unwrap().fd);
+        assert!(!d.message_by_name("PumpDrive").unwrap().brs);
         assert!(d.message(0x0CF0_0400, true).is_some());
         assert_eq!(d.message(0x18FE_EE00, true).unwrap().name, "ET1");
         assert_eq!(d.message_by_name("PumpDrive").unwrap().cycle_ms, Some(50));
+    }
+
+    #[tokio::test]
+    async fn fd_battery_pack_frames_and_toggle() {
+        let bus = VirtualBus::new();
+        let sim = Simulator::start(&bus);
+        let mut me = bus.attach();
+        let mut ev = me.take_events().unwrap();
+        let dbc = Dbc::parse(SIM_DBC).unwrap();
+        let mut pages = std::collections::BTreeSet::new();
+        let mut classic_eec1 = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while tokio::time::Instant::now() < deadline && (pages.len() < 4 || !classic_eec1) {
+            let Ok(Some(BusEvent::Frame(f))) = tokio::time::timeout(Duration::from_millis(500), ev.recv()).await else { continue };
+            if f.frame.extended && f.frame.id == 0x0CF0_0400 {
+                assert!(!f.frame.fd, "J1939 traffic stays classic CAN");
+                classic_eec1 = true;
+            }
+            if !f.frame.extended && f.frame.id == 0x4A0 {
+                assert!(f.frame.fd && f.frame.brs && f.frame.data.len() == 64);
+                let (m, v) = dbc.decode(&f.frame).unwrap();
+                assert_eq!(m.name, "BatteryPackFD");
+                let get = |n: &str| v.iter().find(|s| s.name == n).map(|s| s.value);
+                let page = get("CellPage").unwrap() as usize;
+                let pack = get("PackVoltage").unwrap();
+                assert!((200.0..300.0).contains(&pack), "pack voltage {pack}");
+                assert!((0.0..=100.0).contains(&get("SOC").unwrap()));
+                // This page's 16 cells decode, and only those.
+                let cells: Vec<f64> = (0..16).map(|k| get(&format!("Cell{:02}", page * 16 + k + 1)).unwrap()).collect();
+                assert!(cells.iter().all(|c| (3.0..4.4).contains(c)), "{cells:?}");
+                assert!(get(&format!("Cell{:02}", ((page + 1) % 4) * 16 + 1)).is_none());
+                let min = get("CellVoltMin").unwrap();
+                assert!(cells.iter().all(|c| *c >= min - 0.0011));
+                pages.insert(page);
+            }
+        }
+        assert_eq!(pages.len(), 4, "all four cell pages went out: {pages:?}");
+        assert!(classic_eec1);
+
+        sim.apply(SimAction::SetFdBattery { enabled: false }).await;
+        assert!(!sim.state().await.fd_battery);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        while ev.try_recv().is_ok() {}
+        let quiet_until = tokio::time::Instant::now() + Duration::from_millis(400);
+        while let Ok(Some(e)) = tokio::time::timeout_at(quiet_until, ev.recv()).await {
+            if let BusEvent::Frame(f) = e {
+                assert!(f.frame.id != 0x4A0 || f.frame.extended, "battery frame sent while switched off");
+            }
+        }
+        sim.stop().await;
     }
 
     #[tokio::test]
