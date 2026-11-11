@@ -58,12 +58,12 @@ export function frameProblem(f: FrameIn): string | null {
   return null;
 }
 
-/** cansend syntax: `123#DEADBEEF`, `123#R`, `123##1AABB`. */
-export function cansendText(f: { id: number; ext: boolean; rtr: boolean; fd: boolean; brs: boolean; data: number[]; dlc?: number }): string {
+/** cansend syntax: `123#DEADBEEF`, `123#R`, `123##1AABB` (CAN FD flags digit: 1 = bit rate switch, 2 = error state indicator). */
+export function cansendText(f: { id: number; ext: boolean; rtr: boolean; fd: boolean; brs: boolean; esi?: boolean; data: number[]; dlc?: number }): string {
   const id = idText(f.id, f.ext);
   const d = f.data.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join("");
   if (f.rtr) return `${id}#R${f.dlc ? f.dlc : ""}`;
-  if (f.fd) return `${id}##${f.brs ? 1 : 0}${d}`;
+  if (f.fd) return `${id}##${(f.brs ? 1 : 0) | (f.esi ? 2 : 0)}${d}`;
   return `${id}#${d}`;
 }
 
@@ -75,6 +75,8 @@ export interface MonitorRow {
   ext: boolean;
   dir: Dir;
   fd: boolean;
+  brs: boolean;
+  esi: boolean;
   rtr: boolean;
   dlc: number;
   count: number;
@@ -97,7 +99,7 @@ export function foldMonitor(rows: Map<string, MonitorRow>, frames: FrameView[]):
     const r = rows.get(key);
     if (!r) {
       rows.set(key, {
-        key, id: f.id, ext: f.ext, dir: f.dir, fd: f.fd, rtr: f.rtr, dlc: f.dlc, count: 1, firstTs: f.ts, lastTs: f.ts, periodMs: null,
+        key, id: f.id, ext: f.ext, dir: f.dir, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, dlc: f.dlc, count: 1, firstTs: f.ts, lastTs: f.ts, periodMs: null,
         data: f.data, changedAt: f.data.map(() => f.ts), msg: f.msg, sigs: f.sigs, label: f.label,
       });
       continue;
@@ -105,7 +107,7 @@ export function foldMonitor(rows: Map<string, MonitorRow>, frames: FrameView[]):
     const dt = (f.ts - r.lastTs) / 1000;
     if (dt >= 0) r.periodMs = r.periodMs == null ? dt : r.periodMs * 0.8 + dt * 0.2;
     const changedAt = f.data.map((b, i) => (r.data[i] !== b ? f.ts : (r.changedAt[i] ?? f.ts)));
-    Object.assign(r, { count: r.count + 1, lastTs: f.ts, data: f.data, changedAt, dlc: f.dlc, fd: f.fd, rtr: f.rtr, msg: f.msg, sigs: f.sigs, label: f.label });
+    Object.assign(r, { count: r.count + 1, lastTs: f.ts, data: f.data, changedAt, dlc: f.dlc, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, msg: f.msg, sigs: f.sigs, label: f.label });
   }
   return frames.length > 0;
 }

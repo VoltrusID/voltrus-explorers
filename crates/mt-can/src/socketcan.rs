@@ -21,6 +21,7 @@ const CAN_ERR_FLAG: u32 = 0x2000_0000;
 const CAN_EFF_MASK: u32 = 0x1FFF_FFFF;
 const CAN_SFF_MASK: u32 = 0x7FF;
 const CANFD_BRS: u8 = 0x01;
+const CANFD_ESI: u8 = 0x02;
 const CANFD_FDF: u8 = 0x04;
 const CAN_MTU: usize = 16;
 const CANFD_MTU: usize = 72;
@@ -132,13 +133,13 @@ fn from_kernel(f: &CanFdFrame, n: usize) -> Option<BusEvent> {
     let id = if extended { f.can_id & CAN_EFF_MASK } else { f.can_id & CAN_SFF_MASK };
     let frame = if n == CANFD_MTU {
         let len = (f.len as usize).min(64);
-        CanFrame { id, extended, rtr: false, fd: true, brs: f.flags & CANFD_BRS != 0, data: f.data[..len].to_vec(), rtr_len: 0 }
+        CanFrame { id, extended, rtr: false, fd: true, brs: f.flags & CANFD_BRS != 0, esi: f.flags & CANFD_ESI != 0, data: f.data[..len].to_vec(), rtr_len: 0 }
     } else if n == CAN_MTU {
         let len = (f.len as usize).min(8);
         if f.can_id & CAN_RTR_FLAG != 0 {
-            CanFrame { id, extended, rtr: true, fd: false, brs: false, data: Vec::new(), rtr_len: len as u8 }
+            CanFrame { id, extended, rtr: true, fd: false, brs: false, esi: false, data: Vec::new(), rtr_len: len as u8 }
         } else {
-            CanFrame { id, extended, rtr: false, fd: false, brs: false, data: f.data[..len].to_vec(), rtr_len: 0 }
+            CanFrame { id, extended, rtr: false, fd: false, brs: false, esi: false, data: f.data[..len].to_vec(), rtr_len: 0 }
         }
     } else {
         return Some(BusEvent::Error(format!("short read from the CAN socket ({n} bytes)")));
@@ -221,6 +222,15 @@ mod tests {
         k.can_id = 0x1234 | CAN_EFF_FLAG | CAN_RTR_FLAG;
         let Some(BusEvent::Frame(f)) = from_kernel(&k, CAN_MTU) else { panic!() };
         assert!(f.frame.rtr && f.frame.extended && f.frame.rtr_len == 2);
+        let mut fd = CanFdFrame { can_id: 0x201, len: 64, flags: CANFD_FDF | CANFD_BRS, res0: 0, res1: 0, data: [0x5A; 64] };
+        let Some(BusEvent::Frame(f)) = from_kernel(&fd, CANFD_MTU) else { panic!() };
+        assert!(f.frame.fd && f.frame.brs && !f.frame.esi && f.frame.data.len() == 64 && f.frame.dlc() == 15);
+        fd.can_id = 0x1234_5678 | CAN_EFF_FLAG;
+        fd.len = 20;
+        fd.flags = CANFD_FDF | CANFD_ESI;
+        let Some(BusEvent::Frame(f)) = from_kernel(&fd, CANFD_MTU) else { panic!() };
+        assert!(f.frame.extended && f.frame.id == 0x1234_5678 && !f.frame.brs && f.frame.esi && f.frame.data.len() == 20);
+        assert!(matches!(from_kernel(&fd, 40), Some(BusEvent::Error(_))));
         k.can_id = CAN_ERR_FLAG | 0x40;
         assert_eq!(from_kernel(&k, CAN_MTU), Some(BusEvent::Error("error frame: bus off".into())));
     }

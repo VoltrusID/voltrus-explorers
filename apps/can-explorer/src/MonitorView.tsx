@@ -62,7 +62,7 @@ export default function MonitorView({ rows, filter, onClear, trending, onToggleT
             <tr>
               <th style={{ ...th, width: 24 }} />
               <th style={{ ...th, width: 92 }}>ID</th>
-              <th style={{ ...th, width: 40 }} />
+              <th style={{ ...th, width: 64 }} />
               <th style={{ ...th, width: 36 }}>DLC</th>
               <th style={th}>Data</th>
               <th style={{ ...th, width: 80, textAlign: "right" }}>Count</th>
@@ -81,7 +81,8 @@ export default function MonitorView({ rows, filter, onClear, trending, onToggleT
                   <td className="mono">{idText(r.id, r.ext)}</td>
                   <td>
                     {r.dir === "tx" ? <Badge tone="accent">TX</Badge> : null}
-                    {r.fd ? <Badge tone="neutral">FD</Badge> : null}
+                    {r.fd ? <Badge tone="info" title={r.brs ? "CAN FD, bit rate switch: the data phase ran at the data rate" : "CAN FD, no bit rate switch"}>{r.brs ? "FD·BRS" : "FD"}</Badge> : null}
+                    {r.esi ? <Badge tone="warn" title="Error state indicator: the sender was error passive">ESI</Badge> : null}
                     {r.rtr ? <Badge tone="warn">RTR</Badge> : null}
                   </td>
                   <td className="mono">{r.dlc}</td>

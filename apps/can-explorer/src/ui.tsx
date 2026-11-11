@@ -38,8 +38,10 @@ export function Locked({ feature, requirePro, description }: { feature: string; 
 
 /** Data bytes, the ones that changed in the last second highlighted. */
 export function Bytes({ data, changedAt, now }: { data: number[]; changedAt?: number[]; now?: number }) {
+  // CAN FD payloads (up to 64 bytes) wrap into lines of 16; classic frames stay on one line.
+  const wrap = data.length > 16;
   return (
-    <span className="mono" style={{ whiteSpace: "nowrap" }}>
+    <span className="mono" style={wrap ? { display: "inline-flex", flexWrap: "wrap", rowGap: 1, maxWidth: "calc(16 * (2ch + 6px))" } : { whiteSpace: "nowrap" }}>
       {data.map((b, i) => {
         const age = changedAt && now ? (now - (changedAt[i] ?? 0)) / 1e6 : Infinity;
         const hot = age < 1;

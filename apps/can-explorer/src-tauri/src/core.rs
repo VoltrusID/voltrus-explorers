@@ -40,6 +40,9 @@ pub struct FrameView {
     pub rtr: bool,
     pub fd: bool,
     pub brs: bool,
+    /// CAN FD error state indicator (the sender was error passive).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub esi: bool,
     pub dlc: u8,
     pub data: Vec<u8>,
     /// DBC message name.
@@ -66,6 +69,7 @@ fn view(f: &TimedFrame, dbc: Option<&Dbc>, layer: Layer) -> FrameView {
         rtr: f.frame.rtr,
         fd: f.frame.fd,
         brs: f.frame.brs,
+        esi: f.frame.esi,
         dlc: f.frame.dlc(),
         data: f.frame.data.clone(),
         msg,
@@ -123,6 +127,8 @@ pub struct DbcMessageView {
     pub size: u16,
     pub transmitter: String,
     pub cycle_ms: Option<u32>,
+    pub fd: bool,
+    pub brs: bool,
     pub comment: String,
     pub signals: Vec<DbcSignalView>,
 }
@@ -153,6 +159,8 @@ fn dbc_view(name: &str, d: &Dbc) -> DbcView {
                 size: m.size,
                 transmitter: m.transmitter.clone(),
                 cycle_ms: m.cycle_ms,
+                fd: m.fd,
+                brs: m.brs,
                 comment: m.comment.clone(),
                 signals: m
                     .signals
@@ -203,7 +211,7 @@ pub struct FrameIn {
 impl FrameIn {
     pub fn frame(&self) -> Result<CanFrame, String> {
         let data = mt_can::frame::parse_hex_bytes(&self.data).map_err(es)?;
-        let f = CanFrame { id: self.id, extended: self.ext, rtr: self.rtr, fd: self.fd, brs: self.brs, data, rtr_len: self.rtr_len };
+        let f = CanFrame { id: self.id, extended: self.ext, rtr: self.rtr, fd: self.fd, brs: self.brs, esi: false, data, rtr_len: self.rtr_len };
         f.validate().map_err(es)?;
         Ok(f)
     }
@@ -409,8 +417,9 @@ impl Core {
         let (_, d) = s.dbc.as_ref().ok_or("No DBC file is loaded.")?;
         let m = d.message_by_name(&message).ok_or_else(|| format!("{message} is not in the DBC file."))?;
         let data = encode_message(m, &values, None).map_err(es)?;
-        let fd = data.len() > 8;
-        let frame = CanFrame { id: m.id, extended: m.extended, rtr: false, fd, brs: false, data, rtr_len: 0 };
+        // The DBC's frame format (VFrameFormat, CANFD_BRS); anything over 8 bytes is FD regardless.
+        let fd = m.fd || data.len() > 8;
+        let frame = CanFrame { id: m.id, extended: m.extended, rtr: false, fd, brs: fd && m.brs, esi: false, data, rtr_len: 0 };
         frame.validate().map_err(es)?;
         Ok(view(&TimedFrame { ts_us: now_us(), dir: Direction::Tx, frame }, Some(d), s.layer))
     }
@@ -671,10 +680,56 @@ mod tests {
         let v = core.dbc_encode("ThrottleCommand".into(), [("Throttle".to_string(), 50.0)].into_iter().collect()).await.unwrap();
         assert_eq!(v.id, 0x511);
         assert_eq!(v.data[0], 100);
+        assert!(!v.fd && !v.brs, "classic DBC messages stay classic");
         let bad = FrameIn { id: 0x900, ext: false, rtr: false, fd: false, brs: false, data: "".into(), rtr_len: 0 };
         assert!(core.send(bad).await.is_err());
         core.disconnect().await;
         assert!(core.send_text("1#00".into()).await.is_err());
         drop(got);
+    }
+
+    /// CAN FD end to end on the virtual bus: the yocto image's can-demo telemetry (64 bytes, BRS) in,
+    /// decoded with its DBC; an FD message encoded from the DBC goes out as FD with BRS.
+    #[tokio::test]
+    async fn fd_frames_decode_and_encode() {
+        let (emit, got) = sink();
+        let core = Core::new(emit);
+        let other = core.vbus.attach();
+        core.connect(InterfaceConfig::Virtual).await.unwrap();
+        let dbc = core.dbc_load("can-demo.dbc".into(), include_str!("../../../../crates/mt-can/tests/fixtures/can-demo.dbc").into()).await.unwrap();
+        let ping = dbc.messages.iter().find(|m| m.name == "HostFdPing").unwrap();
+        assert!(ping.fd && ping.brs && ping.size == 64);
+
+        let mut data = vec![0u8; 64];
+        data[0] = 0x2A;
+        data[4..8].copy_from_slice(b"FDT1");
+        for (i, b) in data[32..].iter_mut().enumerate() {
+            *b = 0x2A + i as u8;
+        }
+        let mut f = CanFrame::fd(0x201, false, true, &data).unwrap();
+        f.esi = true;
+        other.send(f).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        {
+            let events = got.lock().unwrap();
+            let fr = events
+                .iter()
+                .filter(|(e, _)| e == "can-frames")
+                .flat_map(|(_, p)| p["frames"].as_array().unwrap().iter())
+                .find(|f| f["id"] == 0x201)
+                .expect("the FD frame reached the UI");
+            assert_eq!((fr["fd"].as_bool(), fr["brs"].as_bool(), fr["esi"].as_bool()), (Some(true), Some(true), Some(true)));
+            assert_eq!(fr["dlc"], 15);
+            assert_eq!(fr["data"].as_array().unwrap().len(), 64);
+            assert_eq!(fr["msg"], "EdgeTelemetryFd");
+            let sig = |n: &str| fr["sigs"].as_array().unwrap().iter().find(|s| s[0] == n).map(|s| s[1].as_f64().unwrap());
+            assert_eq!((sig("Seq"), sig("PatternFirst"), sig("PatternLast")), (Some(42.0), Some(42.0), Some(73.0)));
+        }
+
+        let v = core.dbc_encode("HostFdPing".into(), [("Count".to_string(), 5.0)].into_iter().collect()).await.unwrap();
+        assert!(v.fd && v.brs && v.data.len() == 64 && v.dlc == 15);
+        let hb = core.dbc_encode("HostPing".into(), HashMap::new()).await.unwrap();
+        assert!(!hb.fd && !hb.brs);
+        core.disconnect().await;
     }
 }

@@ -115,7 +115,7 @@ pub fn decode_line(line: &str) -> Result<Reply, CanError> {
             let rest = &line[2 + id_len..];
             if rtr {
                 // Some firmware appends a timestamp (4 hex digits) to every frame.
-                let f = CanFrame { id, extended, rtr: true, fd: false, brs: false, data: Vec::new(), rtr_len: dlc };
+                let f = CanFrame { id, extended, rtr: true, fd: false, brs: false, esi: false, data: Vec::new(), rtr_len: dlc };
                 f.validate()?;
                 return Ok(Reply::Frame(f));
             }
@@ -127,7 +127,7 @@ pub fn decode_line(line: &str) -> Result<Reply, CanError> {
             for i in 0..len {
                 data.push(u8::from_str_radix(&rest[i * 2..i * 2 + 2], 16).map_err(|_| bad("bad data byte"))?);
             }
-            let f = CanFrame { id, extended, rtr: false, fd, brs, data, rtr_len: 0 };
+            let f = CanFrame { id, extended, rtr: false, fd, brs, esi: false, data, rtr_len: 0 };
             f.validate()?;
             Ok(Reply::Frame(f))
         }

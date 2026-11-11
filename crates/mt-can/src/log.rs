@@ -25,14 +25,16 @@ pub fn candump_frame(f: &CanFrame) -> String {
     }
     let data: String = f.data.iter().map(|b| format!("{b:02X}")).collect();
     if f.fd {
-        let flags = if f.brs { 1 } else { 0 };
+        // The flags nibble is the kernel's: 1 = bit rate switch, 2 = error state indicator.
+        let flags = f.brs as u8 | (f.esi as u8) << 1;
         format!("{id}##{flags:X}{data}")
     } else {
         format!("{id}#{data}")
     }
 }
 
-/// Parses cansend syntax: `123#DEADBEEF`, `1F334455#11.22`, `123#R`, `123#R3`, `123##1AABB`.
+/// Parses cansend syntax: `123#DEADBEEF`, `1F334455#11.22`, `123#R`, `123#R3`, `123##1AABB`
+/// (CAN FD: the digit after `##` holds the flags, 1 = bit rate switch, 2 = error state indicator).
 /// Three hex digits or fewer is an 11-bit identifier, eight is 29-bit (as cansend decides).
 pub fn parse_frame(text: &str) -> Result<CanFrame, CanError> {
     let text = text.trim();
@@ -47,7 +49,9 @@ pub fn parse_frame(text: &str) -> Result<CanFrame, CanError> {
         let mut chars = fd.chars();
         let flags = chars.next().and_then(|c| c.to_digit(16)).ok_or_else(|| bad("CAN FD frames need a flags digit after ##"))?;
         let data = parse_hex_bytes(chars.as_str())?;
-        return CanFrame::fd(id, extended, flags & 1 != 0, &data);
+        let mut f = CanFrame::fd(id, extended, flags & 1 != 0, &data)?;
+        f.esi = flags & 2 != 0;
+        return Ok(f);
     }
     if let Some(r) = rest.strip_prefix('R').or_else(|| rest.strip_prefix('r')) {
         let len = if r.is_empty() { 0 } else { r.parse::<u8>().map_err(|_| bad("remote length must be 0 to 8"))? };
@@ -137,7 +141,12 @@ mod tests {
         assert!(parse_frame("123#123").is_err());
         assert!(parse_frame("800#00").is_err());
         assert!(parse_frame("123456789#00").is_err());
-        for f in ["123#DEADBEEF", "12345678#R", "123#R3", "123##0", "001##1" ] {
+        let esi = parse_frame("123##3").unwrap();
+        assert!(esi.fd && esi.brs && esi.esi && esi.data.is_empty());
+        assert!(!parse_frame("123##1").unwrap().esi);
+        assert!(parse_frame("123##").is_err());
+        assert!(parse_frame("123##1AABBCCDDEEFF001122").is_err(), "9 bytes is not an FD length");
+        for f in ["123#DEADBEEF", "12345678#R", "123#R3", "123##0", "001##1", "123##2", "1ABCDEF0##3"] {
             assert_eq!(candump_frame(&parse_frame(f).unwrap()), f);
         }
     }
@@ -161,6 +170,21 @@ mod tests {
         assert!(matches!(e, CanError::Log { line: 2, .. }));
         assert_eq!(parse_candump("(1.5) vcan0 1#").unwrap()[0].ts_us, 1_500_000);
         assert!(parse_candump("(x.1) can0 1#").is_err());
+    }
+
+    #[test]
+    fn candump_fd_64_bytes() {
+        // A line as the yocto image's can-demo telemetry shows up in `candump -l` on the host.
+        let data: String = (0..64).map(|i| format!("{:02X}", i as u8)).collect();
+        let line = format!("(1762851234.000100) vcan0 201##1{data}");
+        let r = &parse_candump(&line).unwrap()[0];
+        assert!(r.frame.fd && r.frame.brs && !r.frame.esi);
+        assert_eq!(r.frame.data.len(), 64);
+        assert_eq!(r.frame.dlc(), 15);
+        assert_eq!(candump_line(&TimedFrame { ts_us: r.ts_us, dir: Direction::Rx, frame: r.frame.clone() }, "vcan0"), line);
+        let row = csv_row(&TimedFrame { ts_us: r.ts_us, dir: Direction::Rx, frame: r.frame.clone() }, r.ts_us);
+        assert!(row.starts_with("0.000000,rx,201,0,1,1,0,15,00 01 02 "), "{row}");
+        assert!(row.ends_with(" 3E 3F"));
     }
 
     #[test]

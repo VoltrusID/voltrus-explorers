@@ -69,6 +69,12 @@ pub struct Message {
     pub comment: String,
     /// `GenMsgCycleTime`, when the file has one.
     pub cycle_ms: Option<u32>,
+    /// Sent as CAN FD: `VFrameFormat` is `StandardCAN_FD` / `ExtendedCAN_FD`, or the message is longer than 8 bytes.
+    #[serde(default)]
+    pub fd: bool,
+    /// CAN FD with bit rate switch (`CANFD_BRS`, or its `BA_DEF_DEF_` default).
+    #[serde(default)]
+    pub brs: bool,
 }
 
 impl Message {
@@ -515,6 +521,15 @@ impl Parser {
     }
 
     /// Skips to just after the next `;`.
+    /// An attribute value: a number or a quoted string.
+    fn attr_value(&mut self) -> Result<AttrValue, CanError> {
+        match self.next() {
+            Some(Tok::Num(n)) => Ok(AttrValue { number: n.parse().ok(), text: None }),
+            Some(Tok::Str(t)) => Ok(AttrValue { number: None, text: Some(t) }),
+            other => self.fail(format!("expected an attribute value, found {}", show(other.as_ref()))),
+        }
+    }
+
     fn skip_statement(&mut self) {
         while let Some(t) = self.next() {
             if t == Tok::Punct(';') {
@@ -538,6 +553,11 @@ impl Parser {
         let mut tables: Vec<(u32, String, Vec<(i64, String)>)> = Vec::new();
         let mut valtypes: Vec<(u32, String, u64)> = Vec::new();
         let mut cycles: Vec<(u32, u32)> = Vec::new();
+        // `VFrameFormat` and `CANFD_BRS` per message, and their defaults.
+        let mut formats: Vec<(u32, u64)> = Vec::new();
+        let mut brs_attrs: Vec<(u32, bool)> = Vec::new();
+        let mut default_fd = false;
+        let mut default_brs = false;
         let mut current: Option<usize> = None;
 
         while let Some(tok) = self.peek().cloned() {
@@ -589,6 +609,8 @@ impl Parser {
                         signals: Vec::new(),
                         comment: String::new(),
                         cycle_ms: None,
+                        fd: false,
+                        brs: false,
                     });
                     current = Some(dbc.messages.len() - 1);
                 }
@@ -662,6 +684,22 @@ impl Parser {
                         if v > 0.0 {
                             cycles.push((id, v as u32));
                         }
+                    } else if (attr == "VFrameFormat" || attr == "CANFD_BRS") && on_msg {
+                        self.pos += 1;
+                        let id = self.integer()? as u32;
+                        let v = self.attr_value()?;
+                        self.punct(';')?;
+                        if attr == "VFrameFormat" {
+                            // Vector's enum: 0 StandardCAN, 1 ExtendedCAN, 14 StandardCAN_FD, 15 ExtendedCAN_FD.
+                            if let Some(n) = v.number {
+                                formats.push((id, n as u64));
+                            } else if let Some(t) = v.text {
+                                formats.push((id, if t.ends_with("_FD") { 14 } else { 0 }));
+                            }
+                        } else {
+                            // Enum "0","1": index 1 (or the text "1") is on.
+                            brs_attrs.push((id, v.number.map(|n| n != 0.0).or(v.text.map(|t| t == "1")).unwrap_or(false)));
+                        }
                     } else {
                         self.skip_statement();
                     }
@@ -669,6 +707,21 @@ impl Parser {
                 "BS_" => {
                     self.pos += 1;
                     self.skip_line(line);
+                }
+                "BA_DEF_DEF_" => {
+                    self.pos += 1;
+                    let attr = self.string()?;
+                    let v = self.attr_value()?;
+                    if matches!(self.peek(), Some(Tok::Punct(';'))) {
+                        self.pos += 1;
+                    }
+                    match attr.as_str() {
+                        "VFrameFormat" => {
+                            default_fd = v.text.is_some_and(|t| t.ends_with("_FD")) || v.number.is_some_and(|n| n >= 14.0);
+                        }
+                        "CANFD_BRS" => default_brs = v.text.map(|t| t == "1").or(v.number.map(|n| n != 0.0)).unwrap_or(false),
+                        _ => dbc.skipped += 1,
+                    }
                 }
                 "VERSION_" | "NS_" => self.skip_line(line),
                 k if k.ends_with('_') => {
@@ -722,6 +775,24 @@ impl Parser {
             if let Some(m) = find(&mut dbc, raw) {
                 dbc.messages[m].cycle_ms = Some(ms);
             }
+        }
+        for m in &mut dbc.messages {
+            m.fd = default_fd || m.size > 8;
+            m.brs = default_brs;
+        }
+        for (raw, format) in formats {
+            if let Some(m) = find(&mut dbc, raw) {
+                let msg = &mut dbc.messages[m];
+                msg.fd = format >= 14 || msg.size > 8;
+            }
+        }
+        for (raw, on) in brs_attrs {
+            if let Some(m) = find(&mut dbc, raw) {
+                dbc.messages[m].brs = on;
+            }
+        }
+        for m in &mut dbc.messages {
+            m.brs &= m.fd;
         }
         dbc.index();
         Ok(dbc)
@@ -806,6 +877,11 @@ impl Parser {
             values: Vec::new(),
         })
     }
+}
+
+struct AttrValue {
+    number: Option<f64>,
+    text: Option<String>,
 }
 
 fn show(t: Option<&Tok>) -> String {
@@ -950,6 +1026,73 @@ SIG_VALTYPE_ 2566844158 Temp : 1;
         let data = encode_message(dg, &vals, None).unwrap();
         assert_eq!(&data[..2], &[1, 80]);
         assert!(encode_message(m, &[("Nope".to_string(), 1.0)].into_iter().collect(), None).is_err());
+    }
+
+    /// CAN FD layouts: multiplexed and Motorola signals past byte 8, and the frame format attributes.
+    const FD_DBC: &str = r#"
+BO_ 2147484160 FdMux: 64 BMS
+ SG_ Page M : 0|8@1+ (1,0) [0|255] "" Tester
+ SG_ CellV12 m0 : 384|16@1+ (0.001,0) [0|65.535] "V" Tester
+ SG_ CellT40 m1 : 504|8@1- (1,-40) [-168|87] "degC" Tester
+ SG_ PackCurrent : 79|16@0- (0.1,0) [-3276.8|3276.7] "A" Tester
+BO_ 300 ShortFd: 8 BMS
+ SG_ X : 0|8@1+ (1,0) [0|255] "" Tester
+BO_ 301 SlowFd: 12 BMS
+ SG_ Y : 88|8@1+ (1,0) [0|255] "" Tester
+BO_ 302 Classic: 8 BMS
+ SG_ Z : 0|8@1+ (1,0) [0|255] "" Tester
+BA_DEF_ BO_ "VFrameFormat" ENUM "StandardCAN","ExtendedCAN","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","StandardCAN_FD","ExtendedCAN_FD";
+BA_DEF_ BO_ "CANFD_BRS" ENUM "0","1";
+BA_DEF_DEF_ "VFrameFormat" "StandardCAN";
+BA_DEF_DEF_ "CANFD_BRS" "0";
+BA_DEF_DEF_ "BusType" "CAN FD";
+BA_ "VFrameFormat" BO_ 2147484160 15;
+BA_ "CANFD_BRS" BO_ 2147484160 1;
+BA_ "VFrameFormat" BO_ 300 14;
+BA_ "CANFD_BRS" BO_ 302 1;
+"#;
+
+    #[test]
+    fn fd_frame_formats() {
+        let d = Dbc::parse(FD_DBC).unwrap();
+        let m = |n: &str| d.message_by_name(n).unwrap();
+        assert!(m("FdMux").fd && m("FdMux").brs && m("FdMux").extended);
+        // VFrameFormat makes an 8-byte message FD; a 12-byte one is FD without it.
+        assert!(m("ShortFd").fd && !m("ShortFd").brs);
+        assert!(m("SlowFd").fd && !m("SlowFd").brs);
+        // BRS on a classic message means nothing.
+        assert!(!m("Classic").fd && !m("Classic").brs);
+        // The unknown BA_DEF_DEF_ is counted as skipped, the two it understands are not.
+        assert_eq!(d.skipped, 3);
+        // A file with no attributes at all: classic unless longer than 8 bytes.
+        let plain = Dbc::parse("BO_ 1 A: 8 X\nBO_ 2 B: 64 X\n").unwrap();
+        assert!(!plain.messages[0].fd && plain.messages[1].fd && !plain.messages[1].brs);
+    }
+
+    #[test]
+    fn fd_signals_past_byte_8() {
+        let d = Dbc::parse(FD_DBC).unwrap();
+        let mut data = vec![0u8; 64];
+        data[48..50].copy_from_slice(&3456u16.to_le_bytes()); // CellV12 = 3.456 V
+        data[63] = 65; // CellT40 = 25 degC (page 1 only)
+        let cur: i16 = -1234; // Motorola, MSB at bit 79 (byte 9): bytes 9-10 big-endian.
+        data[9..11].copy_from_slice(&cur.to_be_bytes());
+        let f = CanFrame::fd(0x200, true, true, &data).unwrap();
+        let (m, v) = d.decode(&f).unwrap();
+        assert_eq!(m.name, "FdMux");
+        let get = |v: &[SignalValue], n: &str| v.iter().find(|s| s.name == n).map(|s| s.value);
+        assert_eq!(get(&v, "CellV12"), Some(3.456));
+        assert_eq!(get(&v, "CellT40"), None);
+        assert!((get(&v, "PackCurrent").unwrap() + 123.4).abs() < 1e-9);
+        data[0] = 1;
+        let (_, v) = d.decode(&CanFrame::fd(0x200, true, true, &data).unwrap()).unwrap();
+        assert_eq!((get(&v, "CellV12"), get(&v, "CellT40")), (None, Some(25.0)));
+        // Encoding the page-1 signals writes byte 63 and leaves the page-0 cell alone.
+        let msg = d.message_by_name("FdMux").unwrap();
+        let vals: HashMap<String, f64> = [("Page".to_string(), 1.0), ("CellT40".to_string(), -10.0), ("CellV12".to_string(), 4.0)].into_iter().collect();
+        let enc = encode_message(msg, &vals, None).unwrap();
+        assert_eq!(enc.len(), 64);
+        assert_eq!((enc[0], enc[63], enc[48], enc[49]), (1, 30, 0, 0));
     }
 
     #[test]

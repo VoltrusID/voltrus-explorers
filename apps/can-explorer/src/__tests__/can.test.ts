@@ -41,11 +41,24 @@ describe("identifiers and data", () => {
     expect(cansendText(frame(0x123, [0xde, 0xad], 0))).toBe("123#DEAD");
     expect(cansendText(frame(0x123, [], 0, { rtr: true, dlc: 8 }))).toBe("123#R8");
     expect(cansendText(frame(0x10, [0xaa], 0, { fd: true, brs: true }))).toBe("010##1AA");
+    expect(cansendText(frame(0x10, [], 0, { fd: true, brs: true, esi: true }))).toBe("010##3");
+    expect(cansendText(frame(0x10, [], 0, { fd: true, esi: true }))).toBe("010##2");
+    const fd64 = Array.from({ length: 64 }, (_, i) => i);
+    const line = candumpLine(frame(0x201, fd64, 1_762_851_234_000_100, { fd: true, brs: true, dlc: 15 }), "vcan0");
+    expect(line).toBe(`(1762851234.000100) vcan0 201##1${fd64.map((b) => b.toString(16).toUpperCase().padStart(2, "0")).join("")}`);
     expect(candumpLine(frame(0x18fef100, [1], 1_699_999_999_000_042), "can0")).toBe("(1699999999.000042) can0 18FEF100#01");
   });
 });
 
 describe("monitor", () => {
+  it("carries the CAN FD flags of the latest frame", () => {
+    const rows = new Map<string, MonitorRow>();
+    foldMonitor(rows, [frame(0x201, Array(64).fill(0), 10, { fd: true, brs: true, dlc: 15 })]);
+    expect(rows.get("s513")).toMatchObject({ fd: true, brs: true, esi: false, dlc: 15 });
+    foldMonitor(rows, [frame(0x201, Array(64).fill(1), 20, { fd: true, brs: false, esi: true, dlc: 15 })]);
+    expect(rows.get("s513")).toMatchObject({ brs: false, esi: true, count: 2 });
+    expect(rows.get("s513")!.changedAt.every((t) => t === 20)).toBe(true);
+  });
   it("keeps one row per identifier with period and changed bytes", () => {
     const rows = new Map<string, MonitorRow>();
     foldMonitor(rows, [frame(0x100, [1, 2], 1_000_000), frame(0x100, [1, 3], 1_010_000), frame(0x100, [1, 3], 1_020_000)]);

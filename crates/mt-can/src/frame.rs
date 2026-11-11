@@ -28,6 +28,10 @@ pub struct CanFrame {
     /// CAN FD bit rate switch.
     #[serde(default)]
     pub brs: bool,
+    /// CAN FD error state indicator: the sender was error passive. Set by the controller on received
+    /// frames; this crate never asks a controller to transmit it.
+    #[serde(default)]
+    pub esi: bool,
     #[serde(default)]
     pub data: Vec<u8>,
     /// Requested length of a remote frame.
@@ -44,6 +48,7 @@ impl CanFrame {
             rtr: false,
             fd: false,
             brs: false,
+            esi: false,
             data: data.to_vec(),
             rtr_len: 0,
         };
@@ -53,19 +58,19 @@ impl CanFrame {
 
     /// A classic data frame with an explicit identifier length.
     pub fn with_ext(id: u32, extended: bool, data: &[u8]) -> Result<Self, CanError> {
-        let f = CanFrame { id, extended, rtr: false, fd: false, brs: false, data: data.to_vec(), rtr_len: 0 };
+        let f = CanFrame { id, extended, rtr: false, fd: false, brs: false, esi: false, data: data.to_vec(), rtr_len: 0 };
         f.validate()?;
         Ok(f)
     }
 
     pub fn remote(id: u32, extended: bool, len: u8) -> Result<Self, CanError> {
-        let f = CanFrame { id, extended, rtr: true, fd: false, brs: false, data: Vec::new(), rtr_len: len };
+        let f = CanFrame { id, extended, rtr: true, fd: false, brs: false, esi: false, data: Vec::new(), rtr_len: len };
         f.validate()?;
         Ok(f)
     }
 
     pub fn fd(id: u32, extended: bool, brs: bool, data: &[u8]) -> Result<Self, CanError> {
-        let f = CanFrame { id, extended, rtr: false, fd: true, brs, data: data.to_vec(), rtr_len: 0 };
+        let f = CanFrame { id, extended, rtr: false, fd: true, brs, esi: false, data: data.to_vec(), rtr_len: 0 };
         f.validate()?;
         Ok(f)
     }
@@ -92,6 +97,9 @@ impl CanFrame {
         } else {
             if self.brs {
                 return Err(CanError::Frame("bit rate switch needs a CAN FD frame".into()));
+            }
+            if self.esi {
+                return Err(CanError::Frame("the error state indicator needs a CAN FD frame".into()));
             }
             if self.data.len() > 8 {
                 return Err(CanError::Frame(format!("a classic CAN frame carries at most 8 bytes, not {}", self.data.len())));
@@ -227,11 +235,42 @@ mod tests {
 
     #[test]
     fn dlc_mapping() {
-        assert_eq!(len_to_dlc(8), Some(8));
-        assert_eq!(len_to_dlc(12), Some(9));
-        assert_eq!(len_to_dlc(64), Some(15));
-        assert_eq!(len_to_dlc(9), None);
-        assert_eq!(dlc_to_len(13), 32);
+        let lens = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64];
+        for (dlc, len) in lens.into_iter().enumerate() {
+            assert_eq!(dlc_to_len(dlc as u8), len);
+            assert_eq!(len_to_dlc(len), Some(dlc as u8));
+            assert_eq!(CanFrame::fd(0x200, false, true, &vec![0; len]).unwrap().dlc(), dlc as u8);
+        }
+        for len in (9..64).filter(|l| !lens.contains(l)) {
+            assert_eq!(len_to_dlc(len), None, "{len}");
+            assert!(CanFrame::fd(0x200, false, false, &vec![0; len]).is_err(), "{len}");
+        }
+        assert_eq!(len_to_dlc(65), None);
+        // Only the low nibble is a DLC.
+        assert_eq!(dlc_to_len(0x1F), 64);
+    }
+
+    #[test]
+    fn fd_flags() {
+        let mut f = CanFrame::fd(0x123, false, false, &[0; 64]).unwrap();
+        f.esi = true;
+        assert!(f.validate().is_ok());
+        let mut c = CanFrame::new(0x123, &[1]).unwrap();
+        c.esi = true;
+        assert!(c.validate().is_err());
+        assert!(CanFrame { brs: true, ..CanFrame::new(0x123, &[1]).unwrap() }.validate().is_err());
+        assert!(CanFrame { rtr: true, ..CanFrame::fd(0x123, false, false, &[]).unwrap() }.validate().is_err());
+        // Frames serialised before `esi` existed still read back.
+        let old: CanFrame = serde_json::from_str(r#"{"id":1,"extended":false,"fd":true,"brs":true,"data":[1,2]}"#).unwrap();
+        assert!(old.fd && old.brs && !old.esi);
+    }
+
+    #[test]
+    fn wire_bits_fd() {
+        let slow = CanFrame::fd(0x200, false, false, &[0; 64]).unwrap();
+        let fast = CanFrame::fd(0x200, false, true, &[0; 64]).unwrap();
+        assert!(fast.wire_bits(4.0) < slow.wire_bits(4.0) / 2.0);
+        assert_eq!(slow.wire_bits(4.0), slow.wire_bits(1.0));
     }
 
     #[test]
