@@ -176,11 +176,12 @@ Voltrus Logic Analyzer's download worker (`logic-analyzer-updates`, R2 `logic-an
 `logic-analyzer-releases-db` `1afeb2c1-525b-4834-b3f1-0bc441182717`) lives in the MacTools repo next to the others. Its
 Polar product is `3233bac5-95dd-4f7d-9186-06d45c6bfa2a` (licence-key benefit `VOLTRUS-LOGIC`,
 `e034fc3b-6df2-4320-bb14-c196e29873ce`, one activation); the console licence entrypoint is `LogicAnalyzerLicence`
-(voltrus-console migration `0067_logic_analyzer.sql`, product hidden until the first DMG: flip `active` as for the
-others). The DMG needs `com.apple.security.device.usb` (FX2 boards). It is a direct download only (no App Store build)
+(voltrus-console migration `0067_logic_analyzer.sql`). 1.0.0 was published on 2026-11-11 (Release run 42939557815,
+DMG sha256 `720e45e6…62f041`) and the console product was switched on the same day. The DMG needs `com.apple.security.device.usb` (FX2 boards). It is a direct download only (no App Store build)
 and bundles the GPL-2.0+ fx2lafw firmware; the matching source must stay downloadable at
 `https://dl-logic-analyzer.voltrus.id/releases/source/sigrok-firmware-fx2lafw-0.1.7.tar.gz` for three years after the
-last DMG that bundles it (`apps/logic-analyzer/FIRMWARE.md`).
+last DMG that bundles it (`apps/logic-analyzer/FIRMWARE.md`); the R2 lock rule `gpl-source-keep` retains
+`source/` indefinitely.
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.
