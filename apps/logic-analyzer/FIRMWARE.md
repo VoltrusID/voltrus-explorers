@@ -78,7 +78,10 @@ Store build for now) and to bundle the firmware in it. What that takes, and wher
   carries a three-year written offer (support@voltrus.id). The app's Device → Firmware dialog shows
   the same link and offer, and the About box points to it. **Keep that file in the bucket for at
   least three years after the last DMG that bundles 0.1.7**, and upload the matching source before
-  shipping any other fx2lafw version.
+  shipping any other fx2lafw version. The bucket has an R2 lock rule, `gpl-source-keep`, that
+  retains everything under `source/` indefinitely (set 2026-11-11), so the file cannot be deleted
+  by accident; removing it takes deleting that rule first (`wrangler r2 bucket lock list
+  logic-analyzer-releases`).
 - **Order of use.** A file the user chose, then a copy the user downloaded into the app's data
   folder, then the bundled images, then a sigrok install on the system. The "Download from
   sigrok.org" and "Choose a .fw file" options stay, for newer releases or the user's own build.
