@@ -20,6 +20,20 @@ pub struct CanConfig {
     /// Dominant is high (a non-inverting probe on CAN_H through a comparator, for instance).
     #[serde(default)]
     pub inverted: bool,
+    /// A DBC file whose message and signal names label the frames (CAN Explorer link), or
+    /// `builtin:can-explorer-sim` for CAN Explorer's simulator DBC. Read by the app, not here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dbc: Option<String>,
+    /// A candump log of the same bus (recorded by CAN Explorer) to compare the frames with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+    /// How far apart a wire frame and its log record may be once the clocks are aligned.
+    #[serde(default = "log_window")]
+    pub log_window_ms: f64,
+}
+
+fn log_window() -> f64 {
+    2.0
 }
 
 fn sp() -> f64 {
@@ -28,7 +42,7 @@ fn sp() -> f64 {
 
 impl Default for CanConfig {
     fn default() -> Self {
-        Self { channel: 0, bitrate: 500_000.0, sample_point: 0.75, inverted: false }
+        Self { channel: 0, bitrate: 500_000.0, sample_point: 0.75, inverted: false, dbc: None, log: None, log_window_ms: log_window() }
     }
 }
 
@@ -553,7 +567,7 @@ mod tests {
     }
 
     fn cfg() -> CanConfig {
-        CanConfig { channel: 0, bitrate: BR, sample_point: 0.75, inverted: false }
+        CanConfig { channel: 0, bitrate: BR, ..Default::default() }
     }
 
     #[test]

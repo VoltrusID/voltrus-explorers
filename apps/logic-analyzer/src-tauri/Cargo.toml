@@ -17,7 +17,8 @@ license = ["mt-store/license"]
 tauri-build = { workspace = true }
 
 [dependencies]
-mt-logic = { path = "../../../crates/mt-logic" }
+mt-logic = { path = "../../../crates/mt-logic", features = ["can-link"] }
+mt-can = { path = "../../../crates/mt-can" }
 mt-store = { path = "../../../crates/mt-store" }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }

@@ -118,31 +118,38 @@ benefit `VOLTRUS-LOGIC`); agreed by the owner on 2026-11-11.
 | | |
 | --- | --- |
 | Free | Simulator, FX2 capture up to 2 M samples at any rate, edge triggers, waveform with cursors and measurements, UART, Modbus RTU (with the protocol table), SPI and I2C decoders, open .vla and .sr, save .vla |
-| Pro | CAN decoder, MCP2515 decoding, pattern triggers, captures up to 512 Mi samples, protocol table CSV export, .sr and VCD export |
+| Pro | CAN decoder and its CAN Explorer link, MCP2515 decoding, pattern triggers, captures up to 512 Mi samples, protocol table CSV export, .sr and VCD export |
 
-## Later: link with CAN Explorer (design note, not built)
+## Link with CAN Explorer
 
-The goal is that a CAN frame in Logic Analyzer and the same frame in CAN Explorer point at each
-other. That gives two views of one bus: the electrical one (bit timing, stuffing, error flags) and
-the message one (DBC signals, J1939/CANopen names).
+A CAN frame here and the same frame in CAN Explorer point at each other: the electrical view of
+the bus (bit timing, stuffing, error flags) next to the message view (DBC signals, J1939/CANopen
+names). The code is `mt_logic::can_link` (feature `can-link`, which pulls in `mt-can`), so the
+two apps share CAN Explorer's frame type, DBC parser and candump reader and writer.
 
-- **Shared types.** `mt-logic`'s `CanBitFrame` (id, extended, rtr, dlc, data) maps 1:1 onto
-  `mt_can::CanFrame`. Put a `From` impl in a small bridge module behind a feature, so neither
-  crate depends on the other by default.
-- **DBC in the logic analyzer.** Load a DBC (reusing `mt_can::dbc`) into the CAN decoder's
-  settings. The Frames row then shows message and signal names (`EEC1 EngineSpeed=1500 rpm`) and
-  the table gains a signal column.
-- **Export and import.** Export the decoded frames as a candump log with the capture's timestamps
-  (`mt_can::log` already writes it), which CAN Explorer opens in Replay/Trace. The reverse is a
-  candump from CAN Explorer opened here as an overlay: frames matched by ID and data within a
-  time window, with mismatches flagged (a frame the adapter saw but the wire did not, or the other
-  way round).
-- **Live link (later still).** When both apps run, CAN Explorer could post its frames to a local
-  socket and Logic Analyzer could arm its trigger on "next frame with ID X". That needs a
-  frame-level trigger in the capture engine, which would decode CAN while streaming (the bit
-  decoder is incremental-friendly: SOF hard-sync, then a fixed field walk).
-- **Simulator.** The CAN scenario already sends the same J1939 EEC1 engine frames as CAN
-  Explorer's genset simulator, so the demos line up.
+- **DBC names.** In the CAN decoder's settings, *CAN Explorer link → DBC* takes a `.dbc` file,
+  or *Simulator DBC* (CAN Explorer's simulator DBC, which describes this app's CAN scenario). A
+  Signals row shows `EEC1 EngineSpeed=1500 rpm …` under each frame the DBC describes, and the
+  protocol table gains Message and Signals columns.
+- **Export to CAN Explorer.** *candump for CAN Explorer* above the CAN table writes the intact
+  frames (unacknowledged ones included, error frames and damaged frames left out) as a candump
+  log. Live captures carry the wall-clock time of the capture, opened files start at 0. In CAN
+  Explorer: *Open a candump log* in the trace, or Replay it onto a bus.
+- **Compare with a CAN Explorer log.** *Compare with a candump log* takes a log of the same bus
+  that CAN Explorer recorded (or exported from its trace). The two clocks are aligned on the
+  frames both saw (each identical pair votes for an offset; the offset most frames agree on
+  wins), then every wire frame is paired one to one with the nearest identical log record within
+  the match window (2 ms by default). A *CAN Explorer log* row and a Log column show frames in
+  both, frames whose data differs ("log has 300#33, the wire 300#03"), frames only on the wire,
+  and log records the wire never carried. Records outside the captured time span are counted
+  but not flagged.
+- **Simulator.** The CAN scenario sends the same J1939 EEC1 and ET1 frames as CAN Explorer's
+  simulator, so the demos line up.
+
+Not built: a live link between the running apps (CAN Explorer posting frames to a local socket,
+the logic analyzer arming its trigger on "next frame with ID X"). It needs a frame-level trigger
+that decodes CAN while streaming; the bit decoder suits that (SOF hard-sync, then a fixed field
+walk).
 
 ## Development
 

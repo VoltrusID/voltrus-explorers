@@ -7,7 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use mt_can::dbc::Dbc;
+use mt_can::log::parse_candump;
+use mt_logic::can_link;
 use mt_logic::capture::Measurement;
+use mt_logic::decode::can::{CanBitFrame, CanConfig};
 use mt_logic::engine::{self, CaptureSettings, Phase, SampleStream};
 use mt_logic::fx2::firmware::{self, FirmwareDirs, FoundFirmware};
 use mt_logic::fx2::{self, ConnectOptions, ConnectStep, Detected, Fx2Lafw, UsbBackend};
@@ -102,6 +106,8 @@ pub struct Core {
     fw: Mutex<FirmwareDirs>,
     capture: Mutex<Option<(Arc<Capture>, String)>>,
     decoders: Mutex<HashMap<u32, Decoded>>,
+    /// Wall-clock time of the current capture's first sample (µs since the epoch), for live captures.
+    wall_start_us: Mutex<Option<u64>>,
     running: Mutex<Option<Running>>,
 }
 
@@ -112,7 +118,7 @@ fn err(e: impl std::fmt::Display) -> String {
 impl Core {
     pub fn new(emit: Emit, usb: Option<Arc<dyn UsbBackend>>, app_fw_dir: Option<PathBuf>, bundled_fw_dir: Option<PathBuf>) -> Self {
         let fw = FirmwareDirs { user_file: None, app_dir: app_fw_dir, bundled_dir: bundled_fw_dir, system_dirs: firmware::system_dirs() };
-        Self { emit, usb, fw: Mutex::new(fw), capture: Mutex::new(None), decoders: Mutex::new(HashMap::new()), running: Mutex::new(None) }
+        Self { emit, usb, fw: Mutex::new(fw), capture: Mutex::new(None), decoders: Mutex::new(HashMap::new()), wall_start_us: Mutex::new(None), running: Mutex::new(None) }
     }
 
     fn emit(&self, event: &str, v: impl Serialize) {
@@ -244,13 +250,17 @@ impl Core {
         if cap.is_empty() {
             return Err("the capture was stopped before any samples arrived".into());
         }
-        Ok(self.set_capture(cap, source))
+        let span_us = (cap.len() as f64 / cap.sample_rate as f64 * 1e6) as u64;
+        let info = self.set_capture(cap, source);
+        *self.wall_start_us.lock().unwrap() = Some(now_us().saturating_sub(span_us));
+        Ok(info)
     }
 
     /// Makes `cap` the current capture; cached decoder results are dropped (the app re-runs its stack).
     pub fn set_capture(&self, cap: Capture, source: String) -> CaptureInfo {
         let info = info_of(&cap, &source);
         *self.capture.lock().unwrap() = Some((Arc::new(cap), source));
+        *self.wall_start_us.lock().unwrap() = None;
         self.decoders.lock().unwrap().clear();
         info
     }
@@ -298,10 +308,30 @@ impl Core {
 
     pub fn decode(&self, id: u32, config: DecoderConfig) -> Result<DecoderView, String> {
         let cap = self.cap()?;
-        let out = Arc::new(config.decode(&cap)?);
+        let out = Arc::new(match config.decode_can(&cap) {
+            Some(r) => {
+                let (mut out, frames) = r?;
+                let DecoderConfig::Can(c) = &config else { unreachable!() };
+                can_extras(&mut out, &cap, &frames, c)?;
+                out
+            }
+            None => config.decode(&cap)?,
+        });
         let view = DecoderView { id, rows: out.rows.clone(), summary: out.summary.clone(), table: out.table.clone(), count: out.annotations.len() };
         self.decoders.lock().unwrap().insert(id, Decoded { config, out });
         Ok(view)
+    }
+
+    /// The frames of CAN decoder `id` as a candump log that CAN Explorer opens in Replay and Trace.
+    /// Timed from the capture's wall-clock start for live captures, from 0 for opened files.
+    pub fn export_candump(&self, id: u32, path: &Path) -> Result<usize, String> {
+        let cap = self.cap()?;
+        let config = self.decoders.lock().unwrap().get(&id).map(|d| d.config.clone()).ok_or("decoder not found")?;
+        let (_, frames) = config.decode_can(&cap).ok_or("only a CAN decoder exports a candump log")??;
+        let start = self.wall_start_us.lock().unwrap().unwrap_or(0);
+        let text = can_link::to_candump(&cap, &frames, start, "can0");
+        std::fs::write(path, &text).map_err(err)?;
+        Ok(text.lines().count())
     }
 
     pub fn remove_decoder(&self, id: u32) {
@@ -354,6 +384,32 @@ impl Core {
             }
         }
     }
+}
+
+/// The CAN Explorer link on a CAN decoder's output: DBC names, then the log comparison.
+fn can_extras(out: &mut DecodeOutput, cap: &Capture, frames: &[CanBitFrame], c: &CanConfig) -> Result<(), String> {
+    if let Some(path) = &c.dbc {
+        let text = if path == BUILTIN_SIM_DBC {
+            can_link::SIM_DBC.to_string()
+        } else {
+            std::fs::read_to_string(path).map_err(|e| format!("cannot read the DBC file {path}: {e}"))?
+        };
+        let dbc = Dbc::parse(&text).map_err(|e| format!("DBC file: {e}"))?;
+        can_link::add_signals(out, frames, &dbc);
+    }
+    if let Some(path) = &c.log {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read the log {path}: {e}"))?;
+        let log = parse_candump(&text).map_err(|e| format!("candump log: {e}"))?;
+        can_link::compare_log(out, cap, frames, &log, (c.log_window_ms * 1000.0).round().max(1.0) as i64);
+    }
+    Ok(())
+}
+
+/// `CanConfig::dbc` value that selects CAN Explorer's simulator DBC.
+pub const BUILTIN_SIM_DBC: &str = "builtin:can-explorer-sim";
+
+fn now_us() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0)
 }
 
 fn info_of(c: &Capture, source: &str) -> CaptureInfo {
@@ -564,5 +620,37 @@ mod tests {
         assert!(src.contains(firmware::MIRROR_SOURCE_URL) && src.contains(firmware::SOURCE_SHA256) && src.contains(firmware::TARBALL_SHA256));
         let fw = FirmwareDirs { bundled_dir: Some(dir), ..Default::default() };
         assert_eq!(fw.find("fx2lafw-saleae-logic.fw").unwrap().source, "bundled with the app");
+    }
+
+    /// CAN Explorer link end to end: the CAN scenario named by CAN Explorer's simulator DBC, its
+    /// frames exported as candump, and that log compared back with the capture.
+    #[test]
+    fn can_explorer_link() {
+        let (c, _) = core(None);
+        let i = sim::info(ScenarioId::CanBus);
+        c.set_capture(Capture::new(i.default_rate, i.channels.clone(), sim::render(ScenarioId::CanBus, i.default_rate)), "test".into());
+        let DecoderConfig::Can(base) = i.decoders[0].clone() else { panic!("the CAN scenario starts with a CAN decoder") };
+        let named = c.decode(1, DecoderConfig::Can(CanConfig { dbc: Some(BUILTIN_SIM_DBC.into()), ..base.clone() })).unwrap();
+        assert_eq!(named.rows[4], "Signals");
+        let t = named.table.unwrap();
+        assert!(t.rows.iter().any(|r| r.cells.contains(&"EEC1".to_string())), "{:?}", t.rows);
+
+        let dir = std::env::temp_dir().join(format!("la-can-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("bus.log");
+        let n = c.export_candump(1, &log).unwrap();
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(n, text.lines().count());
+        // 7 intact frames; the unacknowledged one ends in an error flag and the CRC error is damaged, so neither is exported.
+        assert!(n == 7 && text.lines().all(|l| l.starts_with("(0.") && l.contains(" can0 ")), "{text}");
+
+        let compared = c.decode(2, DecoderConfig::Can(CanConfig { log: Some(log.display().to_string()), ..base.clone() })).unwrap();
+        assert_eq!(compared.rows[5], "CAN Explorer log");
+        assert!(compared.summary.contains(&format!("log: {n} matched")) && !compared.summary.contains("only"), "{}", compared.summary);
+
+        let missing = c.decode(3, DecoderConfig::Can(CanConfig { dbc: Some(dir.join("nope.dbc").display().to_string()), ..base }));
+        assert!(missing.unwrap_err().contains("cannot read the DBC file"));
+        assert!(c.export_candump(99, &log).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

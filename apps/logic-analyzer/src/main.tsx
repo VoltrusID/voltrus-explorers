@@ -6,6 +6,7 @@ import "./styles.css";
 
 const PRO_FEATURES = [
   "CAN decoder at bit level: stuffing, CRC, ACK and error frames",
+  "CAN Explorer link: DBC signal names, candump export, comparison with a CAN Explorer log",
   "MCP2515 decoding of SPI transfers",
   "Pattern triggers over several channels",
   "Captures longer than 2 M samples (up to 512 Mi)",

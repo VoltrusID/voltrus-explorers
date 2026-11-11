@@ -104,6 +104,14 @@ export const DECODER_NAMES: Record<DecoderKind, string> = {
 };
 
 /** Decoders that need Pro in licence-key builds. */
+/** `CanConfig.dbc` value for CAN Explorer's simulator DBC (matches the CAN scenario). */
+export const SIM_DBC = "builtin:can-explorer-sim";
+
+/** The file name of a path, for labels. */
+export function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
 export const PRO_DECODERS: DecoderKind[] = ["can"];
 
 export function defaultDecoder(kind: DecoderKind, channels: number): DecoderConfig {
@@ -118,7 +126,7 @@ export function defaultDecoder(kind: DecoderKind, channels: number): DecoderConf
     case "i2c":
       return { kind, scl: ch(0), sda: ch(1), minPulse: 0 };
     case "can":
-      return { kind, channel: 0, bitrate: 500_000, samplePoint: 0.75, inverted: false };
+      return { kind, channel: 0, bitrate: 500_000, samplePoint: 0.75, inverted: false, logWindowMs: 2 };
   }
 }
 

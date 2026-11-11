@@ -7,6 +7,8 @@
 //! - [`synth`] and [`sim`]: waveform synthesis and the simulated device with industrial scenarios
 //! - [`fx2`]: the driver for Cypress FX2 boards running the fx2lafw firmware (USB behind a trait)
 
+#[cfg(feature = "can-link")]
+pub mod can_link;
 pub mod capture;
 pub mod decode;
 pub mod engine;

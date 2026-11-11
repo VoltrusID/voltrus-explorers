@@ -10,6 +10,8 @@ default = ["usb", "download"]
 usb = ["dep:nusb"]
 # Fetching the fx2lafw firmware from sigrok.org on the user's request.
 download = ["dep:reqwest", "dep:tar"]
+# The link with CAN Explorer: DBC signal names, candump export and log comparison (mt-can).
+can-link = ["dep:mt-can"]
 
 [dependencies]
 serde = { workspace = true }
@@ -21,3 +23,4 @@ sha2 = "0.10"
 nusb = { version = "0.2", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
 tar = { version = "0.4", optional = true }
+mt-can = { path = "../mt-can", optional = true }

@@ -88,6 +88,13 @@ async fn la_decode(core: State<'_>, id: u32, config: DecoderConfig) -> Result<De
     blocking(move || c.decode(id, config)).await
 }
 
+/// Writes the frames of a CAN decoder as a candump log for CAN Explorer. Returns the frame count.
+#[tauri::command]
+async fn la_can_export(core: State<'_>, id: u32, path: String) -> Result<usize, String> {
+    let c = core.inner().clone();
+    blocking(move || c.export_candump(id, std::path::Path::new(&path))).await
+}
+
 #[tauri::command]
 fn la_decoder_remove(core: State<'_>, id: u32) {
     core.remove_decoder(id);
@@ -153,7 +160,7 @@ pub fn run() {
             la_devices, la_firmware_status, la_firmware_choose, la_firmware_download,
             la_capture_start, la_capture_stop, la_capture_info, la_set_channels,
             la_waveform, la_edge, la_measure, la_estimate_baud,
-            la_decode, la_decoder_remove, la_annotations,
+            la_decode, la_decoder_remove, la_can_export, la_annotations,
             la_open, la_save,
             open_url,
             mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,

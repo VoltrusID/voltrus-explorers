@@ -92,11 +92,31 @@ impl DecoderConfig {
         }
     }
 
-    pub fn decode(&self, cap: &Capture) -> Result<DecodeOutput, String> {
+    fn check_channels(&self, cap: &Capture) -> Result<(), String> {
         let n = cap.channels.len().min(crate::capture::MAX_CHANNELS) as u8;
-        if let Some(bad) = self.channels().into_iter().find(|&c| c >= n) {
-            return Err(format!("channel D{bad} is not in this capture ({n} channels)"));
+        match self.channels().into_iter().find(|&c| c >= n) {
+            Some(bad) => Err(format!("channel D{bad} is not in this capture ({n} channels)")),
+            None => Ok(()),
         }
+    }
+
+    /// The CAN decoder's output together with the frames it was built from (for the CAN
+    /// Explorer link). `None` for the other decoders.
+    pub fn decode_can(&self, cap: &Capture) -> Option<Result<(DecodeOutput, Vec<can::CanBitFrame>), String>> {
+        let DecoderConfig::Can(c) = self else { return None };
+        Some((|| {
+            self.check_channels(cap)?;
+            c.validate(cap)?;
+            let r = can::decode(cap, c);
+            Ok((can::output(cap, &r), r.frames))
+        })())
+    }
+
+    pub fn decode(&self, cap: &Capture) -> Result<DecodeOutput, String> {
+        if let Some(r) = self.decode_can(cap) {
+            return r.map(|(out, _)| out);
+        }
+        self.check_channels(cap)?;
         Ok(match self {
             DecoderConfig::Uart(c) => {
                 c.validate(cap)?;
@@ -105,10 +125,7 @@ impl DecoderConfig {
             DecoderConfig::ModbusRtu(c) => modbus::output(cap, c, &modbus::decode(cap, c)?),
             DecoderConfig::Spi(c) => spi::output_with_times(cap, c, &spi::decode(cap, c)),
             DecoderConfig::I2c(c) => i2c::output(&i2c::decode(cap, c)),
-            DecoderConfig::Can(c) => {
-                c.validate(cap)?;
-                can::output(cap, &can::decode(cap, c))
-            }
+            DecoderConfig::Can(_) => unreachable!("decoded above"),
         })
     }
 }

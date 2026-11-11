@@ -78,6 +78,11 @@ export interface CanConfig {
   bitrate: number;
   samplePoint: number;
   inverted: boolean;
+  /** CAN Explorer link: a DBC file path, or "builtin:can-explorer-sim". */
+  dbc?: string | null;
+  /** CAN Explorer link: a candump log of the same bus to compare with. */
+  log?: string | null;
+  logWindowMs: number;
 }
 
 export type DecoderConfig = UartConfig | ModbusConfig | SpiConfig | I2cConfig | CanConfig;

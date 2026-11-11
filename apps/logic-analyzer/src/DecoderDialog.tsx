@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Button, Dialog, Field, ProBadge, Segmented, SheetSelect } from "@mactools/ui";
 import type { ChannelInfo, DecoderConfig, DecoderKind, Parity } from "./types";
-import { DECODER_NAMES, PRO_DECODERS, defaultDecoder } from "./logic";
+import { DECODER_NAMES, PRO_DECODERS, SIM_DBC, baseName, defaultDecoder } from "./logic";
 import { hint } from "./ui";
 
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
@@ -157,6 +158,39 @@ export default function DecoderDialog({ open, initial, channels, pro, onClose, o
             <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-sm)" }}>
               <input type="checkbox" checked={d.inverted} onChange={(e) => set({ inverted: e.target.checked })} /> Inverted (dominant high)
             </label>
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+              <strong style={{ fontSize: "var(--fs-sm)", color: "var(--text)" }}>CAN Explorer link</strong>
+              <Field label="DBC (message and signal names)">
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="mono" style={{ fontSize: 11.5, flex: 1, minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.dbc ?? undefined}>
+                    {d.dbc == null ? "None" : d.dbc === SIM_DBC ? "CAN Explorer simulator" : baseName(d.dbc)}
+                  </span>
+                  <Button size="sm" onClick={async () => {
+                    const p = await openDialog({ multiple: false, directory: false, filters: [{ name: "DBC", extensions: ["dbc"] }] });
+                    if (typeof p === "string") set({ dbc: p });
+                  }}>Choose…</Button>
+                  <Button size="sm" title="The DBC of CAN Explorer's simulator, which matches this app's CAN scenario" onClick={() => set({ dbc: SIM_DBC })}>Simulator DBC</Button>
+                  {d.dbc != null && <Button size="sm" variant="ghost" onClick={() => set({ dbc: null })}>Clear</Button>}
+                </div>
+              </Field>
+              <Field label="Compare with a candump log">
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span className="mono" style={{ fontSize: 11.5, flex: 1, minWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={d.log ?? undefined}>
+                    {d.log == null ? "None" : baseName(d.log)}
+                  </span>
+                  <Button size="sm" onClick={async () => {
+                    const p = await openDialog({ multiple: false, directory: false, filters: [{ name: "candump log", extensions: ["log", "txt"] }] });
+                    if (typeof p === "string") set({ log: p });
+                  }}>Choose…</Button>
+                  {d.log != null && <Button size="sm" variant="ghost" onClick={() => set({ log: null })}>Clear</Button>}
+                </div>
+              </Field>
+              {d.log != null && num("Match window (ms)", d.logWindowMs ?? 2, (v) => set({ logWindowMs: Math.min(Math.max(v, 0.05), 1000) }), 0.1)}
+              <span style={hint}>
+                A candump log of the same bus from CAN Explorer (its recording, or the trace exported as candump). The clocks are aligned on the frames both saw; frames only on the wire, only in the log, or with
+                different data are flagged in a "CAN Explorer log" row.
+              </span>
+            </div>
           </>
         )}
       </div>

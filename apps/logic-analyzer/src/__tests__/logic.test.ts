@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  baseName,
   clampView, cursorDelta, decoderChannels, decoderLabel, defaultDecoder, fitView, fmtRate, fmtSamples, fmtTime, makeSession, patternTrigger, readSession, sampleTime,
   tableCsv, tickStep, viewOf, zoomAt,
 } from "../logic";
@@ -95,5 +96,17 @@ describe("files", () => {
     const bad = readSession({ version: 1, decoders: [{ id: 1, config: { kind: "evil" } }, { id: 2, config: defaultDecoder("can", 8) }], cursors: ["x", 5] });
     expect(bad?.decoders.map((d) => d.id)).toEqual([2]);
     expect(bad?.cursors).toEqual([null, 5]);
+  });
+});
+
+describe("CAN Explorer link", () => {
+  it("labels DBC and log files by name on macOS, Linux and Windows paths", () => {
+    expect(baseName("/Users/a/bus/genset.dbc")).toBe("genset.dbc");
+    expect(baseName("C:\\logs\\can0.log")).toBe("can0.log");
+    expect(baseName("plain.log")).toBe("plain.log");
+  });
+  it("new CAN decoders start without a DBC or log and a 2 ms match window", () => {
+    const d = defaultDecoder("can", 2);
+    expect(d.kind === "can" && d.dbc == null && d.log == null && d.logWindowMs === 2).toBe(true);
   });
 });

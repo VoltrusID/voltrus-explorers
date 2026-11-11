@@ -73,7 +73,7 @@ pub fn info(id: ScenarioId) -> ScenarioInfo {
             min_rate: 4_000_000,
             duration: 0.01,
             channels: chans(&["CAN RX", "ECU TX"]),
-            decoders: vec![DecoderConfig::Can(CanConfig { channel: 0, bitrate: CAN_BITRATE, sample_point: 0.75, inverted: false })],
+            decoders: vec![DecoderConfig::Can(CanConfig { channel: 0, bitrate: CAN_BITRATE, ..Default::default() })],
         },
         ScenarioId::SpiMcp2515 => ScenarioInfo {
             id,
@@ -85,7 +85,7 @@ pub fn info(id: ScenarioId) -> ScenarioInfo {
             channels: chans(&["CS", "SCK", "SI (MOSI)", "SO (MISO)", "INT", "TXCAN", "RXCAN"]),
             decoders: vec![
                 DecoderConfig::Spi(SpiConfig { clk: 1, mosi: Some(2), miso: Some(3), cs: Some(0), mode: 0, word_bits: 8, lsb_first: false, cs_active_high: false, device: SpiDevice::Mcp2515 }),
-                DecoderConfig::Can(CanConfig { channel: 6, bitrate: MCP_CAN_BITRATE, sample_point: 0.75, inverted: false }),
+                DecoderConfig::Can(CanConfig { channel: 6, bitrate: MCP_CAN_BITRATE, ..Default::default() }),
             ],
         },
         ScenarioId::I2cSensors => ScenarioInfo {

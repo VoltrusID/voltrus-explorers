@@ -26,7 +26,7 @@ import {
   withUtm,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
-import { Cpu, Eye, EyeOff, FolderOpen, Maximize2, Pencil, Play, Plus, RefreshCw, Save, Square, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Cpu, Download, Eye, EyeOff, FolderOpen, Maximize2, Pencil, Play, Plus, RefreshCw, Save, Square, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import DecoderDialog from "./DecoderDialog";
 import ProtocolTable from "./ProtocolTable";
@@ -400,6 +400,17 @@ function App() {
     } catch (e) { setError(String(e)); }
   }, [info, requirePro, addLog]);
 
+  // CAN Explorer link: the decoded frames as a candump log, which CAN Explorer opens in Replay and Trace.
+  const exportCandump = useCallback(async (item: StackItem) => {
+    if (!info || item.config.kind !== "can") return;
+    try {
+      const path = await saveDialog({ defaultPath: "logic-analyzer-can.log", filters: [{ name: "candump log", extensions: ["log"] }] });
+      if (!path) return;
+      const n = await invoke<number>("la_can_export", { id: item.id, path });
+      addLog("info", `${n} CAN frames written to ${path} (candump: in CAN Explorer, "Open a candump log" in the trace, or Replay)`);
+    } catch (e) { setError(String(e)); }
+  }, [info, addLog]);
+
   const lanes: DecoderLane[] = useMemo(
     () => stack.filter((d) => !d.hidden && d.view).map((d) => ({ id: d.id, title: `${decoderLabel(d.config, channels)} — ${d.view!.summary}`, rows: d.view!.rows, revision: d.revision })),
     [stack, channels],
@@ -661,6 +672,11 @@ function App() {
                 onSelect={(i, r) => selectRow(activeTable.id, i, r)}
                 onExport={() => void exportTable(activeTable)}
                 pro={pro}
+                actions={activeTable.config.kind === "can" && (
+                  <Button size="sm" icon={<Download size={14} strokeWidth={1.75} />} title="The frames as a candump log, for CAN Explorer's Replay and Trace" onClick={() => void exportCandump(activeTable)}>
+                    candump for CAN Explorer
+                  </Button>
+                )}
               />
             ) : (
               <LogPanel entries={log} onExport={(f) => addLog("info", `Log exported to ${f}`)} onClear={() => setLog([])} exportPrefix="logic-analyzer-log" />
@@ -728,7 +744,7 @@ function App() {
             MCP2515 decoding, I2C and UART. The built-in simulator works without a board.
           </p>
           <p style={{ margin: "0 0 12px" }}>
-            Pro adds the CAN decoder, MCP2515 decoding, pattern triggers, captures over {fmtSamples(FREE_SAMPLES)} samples, protocol table CSV export and sigrok .sr and VCD export.
+            Pro adds the CAN decoder with its CAN Explorer link (DBC names, candump export, log comparison), MCP2515 decoding, pattern triggers, captures over {fmtSamples(FREE_SAMPLES)} samples, protocol table CSV export and sigrok .sr and VCD export.
           </p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
             <ProAboutRow />
