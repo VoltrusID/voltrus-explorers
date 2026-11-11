@@ -1,0 +1,23 @@
+fx2lafw 0.1.7: open firmware for Cypress EZ-USB FX2(LP) logic analyzers, from the sigrok project
+(https://sigrok.org/wiki/Fx2lafw). Licensed under the GNU General Public License, version 2 or later
+(COPYING); parts under the GNU Lesser General Public License, version 2.1 or later (COPYING.LESSER).
+
+These .fw files are the unmodified images of sigrok's binary release
+  https://sigrok.org/download/binary/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-bin-0.1.7.tar.gz
+  (SHA-256 c876fd075549e7783a6d5bfc8d99a695cfc583ddbcea0217d8e3f9351d1723af)
+They are a separate program that runs on the logic analyzer's FX2 chip. Voltrus Logic Analyzer only
+uploads them to the board over USB; they are not part of the app's code.
+
+Corresponding source code
+-------------------------
+The complete corresponding source code of these files is
+  sigrok-firmware-fx2lafw-0.1.7.tar.gz
+  (SHA-256 a3f440d6a852a46e2c5d199fc1c8e4dacd006bc04e0d5576298ee55d056ace3b)
+and can be downloaded from
+  https://dl-logic-analyzer.voltrus.id/releases/source/sigrok-firmware-fx2lafw-0.1.7.tar.gz
+  (also at https://sigrok.org/download/source/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-0.1.7.tar.gz)
+
+Written offer: for at least three years after we last distribute this firmware, JoyoDigitama
+will give anyone who asks a complete machine-readable copy of that source code, on a medium
+customarily used for software interchange, for no more than our cost of physically performing
+the distribution. Ask at support@voltrus.id.

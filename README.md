@@ -17,6 +17,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **CNC Explorer** | Monitor CNC machines: MTConnect agents (device tree, live data, conditions, trends, assets) and FANUC controllers over FOCAS/Ethernet (status, axes, program, alarms, macro variables; Beta), with built-in MTConnect agent and CNC simulators | Free download ([DMG](https://dl-cnc-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/cnc-explorer/)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/6f42df6e-6dd2-46f1-af23-72d2e074534c)) |
 | **SECS/GEM Explorer** | GEM host for semiconductor and electronics equipment over HSMS (establish communications, status variables, equipment constants, reports and events, alarms, remote commands, process programs, terminal, SML message log; Beta), with a built-in equipment simulator | Free download ([DMG](https://dl-secsgem-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/a7bfae63-8d11-4e19-bae7-f7b1b41cade4)) |
 | **CAN Explorer** | CAN and CAN FD bus monitor through USB SLCAN adapters (CANable, CANUSB, USBtin) or Linux SocketCAN: per-ID monitor with rates and changing bytes, trace, DBC decoding, J1939, CANopen and OBD-II labels, send frames; built-in genset simulator on a virtual bus | Free download ([DMG](https://dl-can-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca)) |
+| **Voltrus Logic Analyzer** | Logic analyzer for Cypress FX2 USB boards (the 24 MHz 8-channel Saleae-compatible boards): Modbus RTU on RS-485 with request/response pairing and timing, bit-level CAN (with DBC names, candump export and log comparison shared with CAN Explorer), SPI with MCP2515 decoding, I2C and UART, edge and pattern triggers, cursors, sigrok `.sr` import, with a built-in simulator. The FX2 hardware path is untested on real boards yet; see [its README](apps/logic-analyzer/README.md) | Not released yet (direct download planned) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -205,7 +206,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem, dev:can
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem, dev:can, dev:logic
 ```
 
 Universal release build (unsigned):

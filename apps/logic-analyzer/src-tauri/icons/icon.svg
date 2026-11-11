@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Voltrus Logic Analyzer: three logic traces and a cursor pair over an 8-pin probe header, in
+       the MacTools line-art style (black square, one green). -->
+  <rect width="1024" height="1024" fill="#000"/>
+  <g fill="none" stroke="#04DD3C" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M130 380 H230 V320 H330 V380 H380 V320 H560 V380 H640 V320 H700 V380 H894"/>
+    <path d="M130 520 H180 V460 H230 V520 H280 V460 H330 V520 H380 V460 H430 V520 H480 V460 H530 V520 H580 V460 H630 V520 H680 V460 H730 V520 H894"/>
+    <path d="M130 660 H300 V600 H760 V660 H894"/>
+    <line x1="230" y1="250" x2="230" y2="720" stroke-width="10" stroke-dasharray="18 22"/>
+    <line x1="640" y1="250" x2="640" y2="720" stroke-width="10" stroke-dasharray="18 22"/>
+    <rect x="240" y="790" width="544" height="110" rx="20"/>
+  </g>
+  <g fill="#04DD3C">
+    <circle cx="300" cy="845" r="18"/><circle cx="369" cy="845" r="18"/><circle cx="438" cy="845" r="18"/><circle cx="507" cy="845" r="18"/>
+    <circle cx="576" cy="845" r="18"/><circle cx="645" cy="845" r="18"/><circle cx="714" cy="845" r="18"/>
+  </g>
+  <text x="512" y="210" font-family="Plus Jakarta Sans, DejaVu Sans, sans-serif" font-weight="800" font-size="150" fill="#04DD3C" text-anchor="middle">LOGIC</text>
+</svg>

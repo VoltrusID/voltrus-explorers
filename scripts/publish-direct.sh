@@ -3,7 +3,7 @@
 #
 #   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
 #
-# <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, can-explorer, mqtt-explorer, nats-explorer, opcua-explorer, s7-explorer or voltrus-tools: they are not on GitHub Releases or the App Store; the console
+# <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mqtt-explorer, nats-explorer, opcua-explorer, s7-explorer or voltrus-tools: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
 # The DMG is the `dmg` output of the Release workflow (scripts/build-macos.sh <app> dmg --notarize, built with
 # `--features license`). It comes from, in order:
@@ -61,6 +61,11 @@ case "$APP" in
     BUCKET="can-explorer-releases"; DB="can-explorer-releases-db"
     DB_ID="10bb22f1-210e-4d20-b0ae-557ccb980cdc"
     NAME_RE='can[ _.-]*explorer' ;;
+  logic-analyzer)
+    PRODUCT="Voltrus Logic Analyzer"; BASE="https://dl-logic-analyzer.voltrus.id"
+    BUCKET="logic-analyzer-releases"; DB="logic-analyzer-releases-db"
+    DB_ID="1afeb2c1-525b-4834-b3f1-0bc441182717"
+    NAME_RE='logic[ _.-]*analyzer' ;;
   mqtt-explorer)
     PRODUCT="MQTT Explorer"; BASE="https://dl-mqtt-explorer.voltrus.id"
     BUCKET="mqtt-explorer-releases"; DB="mqtt-explorer-releases-db"; DB_ID="01f431c4-2c20-421c-b234-9007156e7d5e"
@@ -81,8 +86,12 @@ case "$APP" in
     PRODUCT="Voltrus Tools"; BASE="https://dl-voltrus-tools.voltrus.id"
     BUCKET="voltrus-tools-releases"; DB="voltrus-tools-releases-db"; DB_ID="be9c6964-9314-4e42-8e7b-993ab39da7c0"
     NAME_RE='voltrus[ _.-]*tools' ;;
-  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer | can-explorer | mqtt-explorer | nats-explorer | opcua-explorer | s7-explorer | voltrus-tools)" >&2; exit 1 ;;
+  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer | can-explorer | logic-analyzer | mqtt-explorer | nats-explorer | opcua-explorer | s7-explorer | voltrus-tools)" >&2; exit 1 ;;
 esac
+if [ -z "$DB_ID" ]; then
+  echo "$PRODUCT has no download worker yet (DB_ID is empty in this script); nothing was published." >&2
+  exit 1
+fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
