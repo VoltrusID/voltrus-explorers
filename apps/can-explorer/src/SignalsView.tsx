@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Callout, EmptyState, ProBadge } from "@mactools/ui";
 import { FileText, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { fmtNum, hex, idText } from "./can";
+import { cansendText, fmtNum, hex, idText } from "./can";
 import type { DbcMessageView, DbcView, FrameView } from "./types";
 import { card, hint, row, th, type AddLog, type RequirePro } from "./ui";
 
@@ -108,7 +108,7 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
     const f = await encode();
     if (!f) return;
     try {
-      await invoke("can_send", { frame: { id: f.id, ext: f.ext, rtr: false, fd: f.fd, brs: false, data: hex(f.data), rtrLen: 0 } });
+      await invoke("can_send", { frame: { id: f.id, ext: f.ext, rtr: false, fd: f.fd, brs: f.brs, data: hex(f.data), rtrLen: 0 } });
       addLog("tx", `${m.name}: ${hex(f.data)}`);
     } catch (e) {
       setError(String(e));
@@ -123,10 +123,14 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
           <Badge mono>{idText(m.id, m.ext)}</Badge>
           <Badge>{m.ext ? "29-bit" : "11-bit"}</Badge>
           <Badge>{m.size} bytes</Badge>
+          {m.fd && <Badge tone="info">CAN FD{m.brs ? " · BRS" : ""}</Badge>}
           {m.cycleMs != null && <Badge>every {m.cycleMs} ms</Badge>}
           {m.transmitter && <span style={hint}>from {m.transmitter}</span>}
           <span style={{ flex: 1 }} />
-          {frame ? <Badge tone="success" mono>{hex(frame.data)}</Badge> : <Badge tone="neutral">not seen on the bus</Badge>}
+          {frame ? (
+            // CAN FD payloads wrap instead of running off the card.
+            <Badge tone="success" mono style={frame.data.length > 8 ? { whiteSpace: "normal", flexBasis: "100%", lineHeight: 1.5 } : undefined}>{hex(frame.data)}</Badge>
+          ) : <Badge tone="neutral">not seen on the bus</Badge>}
         </div>
         {m.comment && <span style={hint}>{m.comment}</span>}
       </div>
@@ -175,7 +179,7 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
       <div style={row}>
         <Button onClick={() => void encode()}>Preview frame</Button>
         <Button variant="primary" icon={<Send size={14} strokeWidth={1.75} />} disabled={!canSend} onClick={() => void send()}>Send {m.name} <ProBadge /></Button>
-        {preview && <span className="mono" style={{ fontSize: "var(--fs-xs)" }}>{idText(preview.id, preview.ext)}#{hex(preview.data).replace(/ /g, "")}</span>}
+        {preview && <span className="mono" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{cansendText(preview)}</span>}
       </div>
       {error && <Callout tone="danger">{error}</Callout>}
       <span style={hint}>Values are physical (after factor and offset), rounded and clamped to what each signal can hold. For a multiplexed message, only the signals of the selected multiplexor value are written.</span>

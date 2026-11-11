@@ -42,6 +42,7 @@ pub const FEATURE_BERR_REPORTING: u32 = 1 << 12;
 const FRAME_FLAG_OVERFLOW: u8 = 1 << 0;
 const FRAME_FLAG_FD: u8 = 1 << 1;
 const FRAME_FLAG_BRS: u8 = 1 << 2;
+const FRAME_FLAG_ESI: u8 = 1 << 3;
 
 const CAN_EFF_FLAG: u32 = 0x8000_0000;
 const CAN_RTR_FLAG: u32 = 0x4000_0000;
@@ -223,13 +224,13 @@ pub fn decode_frame(b: &[u8]) -> Result<Incoming, CanError> {
     let fd = flags & FRAME_FLAG_FD != 0;
     let overflow = flags & FRAME_FLAG_OVERFLOW != 0;
     let frame = if can_id & CAN_RTR_FLAG != 0 && !fd {
-        CanFrame { id, extended, rtr: true, fd: false, brs: false, data: Vec::new(), rtr_len: dlc.min(8) }
+        CanFrame { id, extended, rtr: true, fd: false, brs: false, esi: false, data: Vec::new(), rtr_len: dlc.min(8) }
     } else {
         let len = if fd { dlc_to_len(dlc) } else { (dlc as usize).min(8) };
         if payload.len() < len {
             return Err(CanError::Adapter(format!("frame data shorter than its length ({} < {len})", payload.len())));
         }
-        CanFrame { id, extended, rtr: false, fd, brs: fd && flags & FRAME_FLAG_BRS != 0, data: payload[..len].to_vec(), rtr_len: 0 }
+        CanFrame { id, extended, rtr: false, fd, brs: fd && flags & FRAME_FLAG_BRS != 0, esi: fd && flags & FRAME_FLAG_ESI != 0, data: payload[..len].to_vec(), rtr_len: 0 }
     };
     Ok(Incoming::Rx { frame, channel, overflow })
 }

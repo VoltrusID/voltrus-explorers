@@ -10,6 +10,8 @@ export interface FrameView {
   rtr: boolean;
   fd: boolean;
   brs: boolean;
+  /** CAN FD error state indicator; only present when set. */
+  esi?: boolean;
   dlc: number;
   data: number[];
   msg?: string;
@@ -78,6 +80,9 @@ export interface DbcMessageView {
   size: number;
   transmitter: string;
   cycleMs: number | null;
+  /** Sent as CAN FD (DBC VFrameFormat, or longer than 8 bytes), with bit rate switch when `brs`. */
+  fd: boolean;
+  brs: boolean;
   comment: string;
   signals: DbcSignalView[];
 }

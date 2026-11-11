@@ -126,7 +126,7 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
             {current ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <strong style={{ fontSize: "var(--fs-sm)" }}>{current.msg ?? idText(current.id, current.ext)}</strong>
-                <span style={{ color: "var(--text-dim)" }}>{clockUs(current.ts)} · {current.dir.toUpperCase()} · {current.ext ? "29-bit" : "11-bit"}{current.fd ? ` · CAN FD${current.brs ? " BRS" : ""}` : ""}</span>
+                <span style={{ color: "var(--text-dim)" }}>{clockUs(current.ts)} · {current.dir.toUpperCase()} · {current.ext ? "29-bit" : "11-bit"}{current.fd ? ` · CAN FD${current.brs ? " BRS" : ""}${current.esi ? " ESI" : ""} · ${current.data.length} bytes` : ""}</span>
                 {current.label && <span>{current.label}</span>}
                 <span className="mono" style={{ wordBreak: "break-all" }}>{hex(current.data) || "(no data)"}</span>
                 {(current.sigs ?? []).map(([n, v, u, l]) => (
