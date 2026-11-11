@@ -636,6 +636,11 @@ mod tests {
         assert!(eec1["label"].as_str().unwrap().starts_with("PGN 61444"));
         assert!(eec1["sigs"].as_array().unwrap().iter().any(|s| s[0] == "EngineSpeed"));
         assert!(frames.iter().any(|f| f["id"] == 0x7E8));
+        // The CAN FD battery pack: 64 bytes with bit rate switch, decoded by the simulator DBC.
+        let fd = frames.iter().find(|f| f["msg"] == "BatteryPackFD").expect("BatteryPackFD decoded");
+        assert_eq!((fd["id"].as_u64(), fd["fd"].as_bool(), fd["brs"].as_bool()), (Some(0x4A0), Some(true), Some(true)));
+        assert_eq!(fd["data"].as_array().unwrap().len(), 64);
+        assert!(fd["sigs"].as_array().unwrap().iter().any(|s| s[0] == "SOC"));
         assert!(frames.iter().any(|f| f["dir"] == "tx" && f["id"] == 0x7DF));
         assert!(events.iter().any(|(e, p)| e == "can-conn" && p["state"] == "closed"));
     }

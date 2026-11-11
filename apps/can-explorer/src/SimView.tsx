@@ -71,6 +71,8 @@ export default function SimDashboard({ addLog, onConnect, connectedToVirtual }: 
         <Gauge label="Frequency" value={s.frequency} unit="Hz" digits={2} />
         <Gauge label="Load" value={s.loadKw} unit="kW" digits={1} />
         <Gauge label="Pump" value={s.pumpSpeed} unit="rpm" />
+        {s.fdBattery && <Gauge label="Battery SOC" value={s.soc} unit="%" digits={1} />}
+        {s.fdBattery && <Gauge label="Battery" value={s.packVoltage} unit={`V ${s.packCurrent >= 0 ? "+" : ""}${s.packCurrent.toFixed(1)} A`} digits={1} />}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <div style={{ ...card, flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -101,6 +103,9 @@ export default function SimDashboard({ addLog, onConnect, connectedToVirtual }: 
           <Field label={`Pump setpoint: ${s.pumpSetpoint.toFixed(0)} rpm`}>
             <input type="range" min={0} max={3000} step={10} value={s.pumpSetpoint} onChange={(e) => void act({ action: "setPump", enabled: s.pumpEnabled, setpoint: Number(e.target.value) })} />
           </Field>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-sm)" }}>
+            <input type="checkbox" checked={s.fdBattery} onChange={(e) => void act({ action: "setFdBattery", enabled: e.target.checked })} /> CAN FD battery pack (0x4A0, 64 bytes, BRS)
+          </label>
           <Field label={`Message rate: ${s.rate.toFixed(1)}x`}>
             <input type="range" min={0.1} max={10} step={0.1} value={s.rate} onChange={(e) => void act({ action: "setRate", rate: Number(e.target.value) })} />
           </Field>
@@ -111,7 +116,9 @@ export default function SimDashboard({ addLog, onConnect, connectedToVirtual }: 
         <span style={hint}>
           J1939 engine ECU (SA 00): EEC1 every 20 ms, ET1, EFL/P1, HOURS and DM1. Generator controller 0x321 and 0x322 (Motorola byte order), pump drive 0x410
           (multiplexed), CANopen I/O node 0x11 (heartbeat 0x711, TPDO1 0x191, answers SDO reads of 1000, 1017 and 1018), and OBD-II answers on 0x7E8 for
-          PIDs 00, 04, 05, 0C, 0D, 11 and 2F. Pick J1939 or CANopen as the protocol to label them, and use the simulator's DBC to decode the signals.
+          PIDs 00, 04, 05, 0C, 0D, 11 and 2F. With the CAN FD battery pack on, a BMS sends BatteryPackFD on 0x4A0 every 100 ms: a 64-byte
+          frame with bit rate switch carrying pack voltage, current, state of charge, temperatures and 16 of the 64 cell voltages (multiplexed, four
+          pages). Pick J1939 or CANopen as the protocol to label them, and use the simulator's DBC to decode the signals.
         </span>
       </div>
     </div>

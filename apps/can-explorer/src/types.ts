@@ -113,6 +113,11 @@ export interface SimState {
   frequency: number;
   pumpSpeed: number;
   hours: number;
+  fdBattery: boolean;
+  soc: number;
+  packCurrent: number;
+  packVoltage: number;
+  packTemp: number;
 }
 
 export type SimAction =
@@ -121,7 +126,8 @@ export type SimAction =
   | { action: "setBreaker"; closed: boolean }
   | { action: "setPump"; enabled: boolean; setpoint: number }
   | { action: "setFault"; active: boolean }
-  | { action: "setRate"; rate: number };
+  | { action: "setRate"; rate: number }
+  | { action: "setFdBattery"; enabled: boolean };
 
 /** A frame to send, as the Rust side takes it. */
 export interface FrameIn {
