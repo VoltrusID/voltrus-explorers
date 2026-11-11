@@ -255,6 +255,9 @@ pub fn compare_log(out: &mut DecodeOutput, cap: &Capture, frames: &[CanBitFrame]
     }
     // Unused records inside the capture: the log has a frame the wire never carried.
     let rate = cap.sample_rate as f64;
+    let mut lens: Vec<u64> = wire.iter().map(|(i, _, _)| shown[*i].end.saturating_sub(shown[*i].start)).collect();
+    lens.sort_unstable();
+    let typical_len = lens.get(lens.len() / 2).copied().unwrap_or(((window_us as f64) * rate / 1e6) as u64);
     for (k, (t, r)) in recs.iter().enumerate() {
         if used[k] {
             continue;
@@ -265,7 +268,8 @@ pub fn compare_log(out: &mut DecodeOutput, cap: &Capture, frames: &[CanBitFrame]
         }
         res.log_only += 1;
         let s = ((*t as f64) * rate / 1e6) as u64;
-        let w = ((window_us as f64) * rate / 1e6).max(1.0) as u64;
+        // About one frame long (the typical intact frame here), not the whole match window.
+        let w = typical_len.max(1);
         out.annotations.push(Annotation::new(
             ROW_LOG,
             s,
@@ -468,7 +472,9 @@ mod tests {
         assert_eq!(m[2], FrameMatch::Differs { log: "300#33".into() });
         assert_eq!(m[3], FrameMatch::WireOnly);
         let row: Vec<&Annotation> = out.annotations.iter().filter(|a| a.row == ROW_LOG).collect();
-        assert!(row.iter().any(|a| a.text == "In the log, not on the wire: 555#AA" && a.level == Level::Error));
+        let lo = row.iter().find(|a| a.text == "In the log, not on the wire: 555#AA").unwrap();
+        assert_eq!(lo.level, Level::Error);
+        assert!(lo.end - lo.start <= 1000, "about one frame wide (a 1-byte frame is ~800 samples), not the 4000-sample window");
         let t = out.table.as_ref().unwrap();
         assert_eq!(t.columns.last().unwrap(), "Log");
         assert_eq!(t.rows[2].cells.last().unwrap(), "log: 300#33");

@@ -144,7 +144,12 @@ pub fn run() {
             let handle = app.handle().clone();
             let fw_dir = app.path().app_data_dir().ok().map(|d| d.join("firmware").join(format!("fx2lafw-{}", mt_logic::fx2::firmware::RELEASE)));
             // fx2lafw images shipped in the bundle (Resources/firmware on macOS); see FIRMWARE.md.
-            let bundled_fw = app.path().resource_dir().ok().map(|d| d.join("firmware").join(format!("fx2lafw-{}", mt_logic::fx2::firmware::RELEASE)));
+            let fw_rel = std::path::Path::new("firmware").join(format!("fx2lafw-{}", mt_logic::fx2::firmware::RELEASE));
+            let mut bundled_fw = app.path().resource_dir().ok().map(|d| d.join(&fw_rel));
+            // `tauri dev` on Linux resolves resources to the packaged location; use the checkout's copy.
+            if cfg!(debug_assertions) && !bundled_fw.as_ref().is_some_and(|d| d.is_dir()) {
+                bundled_fw = Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(&fw_rel));
+            }
             let usb: Option<Arc<dyn mt_logic::fx2::UsbBackend>> = Some(Arc::new(mt_logic::fx2::nusb_backend::NusbBackend));
             app.manage(Arc::new(Core::new(
                 Arc::new(move |event, payload| {
