@@ -128,7 +128,7 @@ pub(crate) async fn endpoints(url: String) -> Result<Vec<OpcuaEndpoint>, String>
             user_tokens: endpoint.user_token_policies,
         })
         .collect();
-    endpoints.sort_by(|a, b| b.security_level.cmp(&a.security_level));
+    endpoints.sort_by_key(|a| std::cmp::Reverse(a.security_level));
     Ok(endpoints)
 }
 

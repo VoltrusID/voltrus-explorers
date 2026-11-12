@@ -166,7 +166,7 @@ pub fn entries(model: &AppModel, mode: Mode, query: &str) -> Vec<Entry> {
             search::score(query, &haystack).map(|score| (score, entry))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|a| std::cmp::Reverse(a.0));
     scored.into_iter().map(|(_, entry)| entry).collect()
 }
 
