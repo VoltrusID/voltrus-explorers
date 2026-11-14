@@ -518,6 +518,36 @@ async fn broker_publish(
     }
 }
 
+/// Ask a Sparkplug B edge node to publish its NBIRTH and DBIRTHs again
+/// (NCMD `Node Control/Rebirth = true`, QoS 0, not retained). `conn` is a
+/// client connection id, or `"broker"` to publish through the local broker.
+#[tauri::command]
+async fn sparkplug_rebirth(
+    state: tauri::State<'_, AppState>,
+    conn: String,
+    group_id: String,
+    edge_node_id: String,
+) -> Result<String, String> {
+    if [&group_id, &edge_node_id].iter().any(|s| s.is_empty() || s.contains(['/', '+', '#'])) {
+        return Err("Group and edge node ids must be plain topic levels".into());
+    }
+    let topic = mt_mqtt::sparkplug::ncmd_topic(&group_id, &edge_node_id);
+    let payload = mt_mqtt::sparkplug::rebirth_payload(now_ms() as u64);
+    if conn == "broker" {
+        let broker = state.broker.lock().await;
+        let holder = broker.as_ref().ok_or("Broker not running")?;
+        holder.state.publish_sync(&topic, &payload)?;
+        return Ok(topic);
+    }
+    let tx = state.client_tx(&conn).await?;
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    let message = MqttMessage { topic: topic.clone(), payload, qos: MqttQos::AtMostOnce, retained: false };
+    tx.send(ClientAction::Publish { message, reply: reply_tx })
+        .map_err(|_| "Client disconnected")?;
+    reply_rx.await.map_err(|_| "Client task died")??;
+    Ok(topic)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
@@ -533,7 +563,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             client_connect, client_subscribe, client_unsubscribe, client_publish, client_disconnect,
-            proto_configure, proto_inspect, decode_payloads,
+            proto_configure, proto_inspect, decode_payloads, sparkplug_rebirth,
             broker_start, broker_stop, broker_get_status, broker_get_topics, broker_get_recent, broker_publish,
             system::open_url,
             mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,

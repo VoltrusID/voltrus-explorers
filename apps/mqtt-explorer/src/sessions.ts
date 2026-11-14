@@ -2,6 +2,7 @@
 // these so several brokers can be watched at once.
 
 import type { Decoded, PayloadInfo } from "./payload";
+import { applySparkplug, EMPTY_SPARKPLUG, type SparkplugState } from "./sparkplug";
 
 export interface Subscription {
   topic: string;
@@ -53,6 +54,8 @@ export interface Session {
   messages: ClientMsg[];
   topicValues: Record<string, TopicValue>;
   blinking: Set<string>;
+  /** Sparkplug B edge nodes, devices and metrics seen on this connection. */
+  sparkplug: SparkplugState;
   form: FormSnapshot;
 }
 
@@ -84,6 +87,7 @@ export function newSession(id: string): Session {
     messages: [],
     topicValues: {},
     blinking: new Set(),
+    sparkplug: EMPTY_SPARKPLUG,
     form: { ...DEFAULT_FORM, values: { ...DEFAULT_FORM.values } },
   };
 }
@@ -110,6 +114,7 @@ export function applyMessage(s: Session, m: IncomingMessage): Session {
   return {
     ...s,
     messages: [...s.messages.slice(-(HISTORY_LIMIT - 1)), msg],
+    sparkplug: applySparkplug(s.sparkplug, topic, info.payload, info.decoded, ts),
     topicValues: {
       ...s.topicValues,
       [topic]: {
@@ -126,7 +131,7 @@ export function applyMessage(s: Session, m: IncomingMessage): Session {
 
 /** Forget received data but keep the connection. */
 export function clearData(s: Session): Session {
-  return { ...s, messages: [], topicValues: {}, blinking: new Set() };
+  return { ...s, messages: [], topicValues: {}, blinking: new Set(), sparkplug: EMPTY_SPARKPLUG };
 }
 
 /** Topics in `s` whose retained message is still on the broker as far as we know. */

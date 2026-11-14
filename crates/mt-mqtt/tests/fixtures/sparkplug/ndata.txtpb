@@ -1,0 +1,5 @@
+# spBv1.0/Plant1/NDATA/Edge1 (report by exception: aliases only)
+timestamp: 1731571201000
+seq: 2
+metrics { alias: 1 timestamp: 1731571201000 datatype: 10 double_value: 1450.5 }
+metrics { alias: 2 timestamp: 1731571201000 datatype: 11 boolean_value: true }

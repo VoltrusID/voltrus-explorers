@@ -1,0 +1,3 @@
+# spBv1.0/Plant1/NDEATH/Edge1 left over from the previous session (bdSeq 2)
+timestamp: 1731571205000
+metrics { name: "bdSeq" timestamp: 1731571205000 datatype: 4 long_value: 2 }
