@@ -1,0 +1,7 @@
+# spBv1.0/Plant1/NBIRTH/Edge1
+timestamp: 1731571200000
+seq: 0
+metrics { name: "bdSeq" timestamp: 1731571200000 datatype: 4 long_value: 3 }
+metrics { name: "Node Control/Rebirth" alias: 0 timestamp: 1731571200000 datatype: 11 boolean_value: false }
+metrics { name: "Line/Speed" alias: 1 timestamp: 1731571200000 datatype: 10 double_value: 0 }
+metrics { name: "Line/Running" alias: 2 timestamp: 1731571200000 datatype: 11 boolean_value: false }

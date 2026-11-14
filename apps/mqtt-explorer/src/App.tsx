@@ -40,6 +40,8 @@ import { messagesToCsv } from "./csv";
 import { ChartPanel } from "./ChartPanel";
 import { SeriesStore } from "./charts";
 import { DecoderDialog } from "./DecoderDialog";
+import { SparkplugPanel } from "./SparkplugPanel";
+import { applySparkplug, EMPTY_SPARKPLUG, sparkplugNodeCount, type SparkplugState } from "./sparkplug";
 import { ClearRetainedDialog, PayloadInspector } from "./Dialogs";
 import {
   formatPayload,
@@ -176,7 +178,7 @@ function App() {
   const [publishTopic, setPublishTopic] = useState("");
   const [publishPayload, setPublishPayload] = useState("");
 
-  // Numeric charts (Pro), Sparkplug B / protobuf decoding (Pro), retained clearing (Pro).
+  // Numeric charts (Pro), protobuf decoding (Pro), retained clearing (Pro). Sparkplug B decoding is free.
   const [chartStore] = useState(() => new SeriesStore());
   const proRef = useRef(pro);
   proRef.current = pro;
@@ -193,7 +195,8 @@ function App() {
   const [publishRetained, setPublishRetained] = useState(false);
 
   // Data panel view + payload rendering.
-  const [dataView, setDataView] = useState<"topics" | "tree" | "history" | "charts">("topics");
+  const [dataView, setDataView] = useState<"topics" | "tree" | "history" | "sparkplug" | "charts">("topics");
+  const [brokerSparkplug, setBrokerSparkplug] = useState<SparkplugState>(EMPTY_SPARKPLUG);
   const [payloadFormat, setPayloadFormat] = useState<PayloadFormat>("raw");
 
   // Connection-URL paste + endpoint shown in the status bar.
@@ -460,6 +463,7 @@ function App() {
         ...prev.slice(-499),
         { ...info, topic: String(event.payload.topic), retain: !!event.payload.retain, ts },
       ]);
+      setBrokerSparkplug((prev) => applySparkplug(prev, String(event.payload.topic), info.payload, info.decoded, ts));
       if (proRef.current) chartStore.ingest("broker", event.payload.topic, info.payload, info.decoded, ts);
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
@@ -765,7 +769,7 @@ function App() {
   );
 
   const openDecoders = useCallback(() => {
-    if (!requirePro("Sparkplug B and protobuf decoding")) return;
+    if (!requirePro("Protobuf decoding with your own schema")) return;
     setDecoderOpen(true);
   }, [requirePro]);
 
@@ -912,6 +916,7 @@ function App() {
       setBrokerTopics([]);
       setBlinkingTopics(new Set());
       lastTopicUpdateRef.current.clear();
+      setBrokerSparkplug(EMPTY_SPARKPLUG);
     } else {
       updateSession(active.id, clearData);
     }
@@ -920,8 +925,23 @@ function App() {
   // Text a cell or tree leaf shows in the selected payload format.
   const fmt = useCallback((info: PayloadInfo) => formatPayload(info, payloadFormat), [payloadFormat]);
 
-  // Pro-only parts of a payload are dropped before rendering for free users.
-  const visible = (info: PayloadInfo): PayloadInfo => (pro ? info : { payload: info.payload, rawHex: info.rawHex });
+  // Pro-only parts of a payload (protobuf decoding) are dropped before rendering for free users.
+  const visible = (info: PayloadInfo): PayloadInfo =>
+    pro || info.decoded?.kind === "sparkplug" ? info : { payload: info.payload, rawHex: info.rawHex };
+
+  const sparkplugState = mode === "broker" ? brokerSparkplug : active.sparkplug;
+  const handleRebirth = async (group: string, edge: string) => {
+    try {
+      const topic = await invoke<string>("sparkplug_rebirth", {
+        conn: mode === "broker" ? "broker" : active.id,
+        groupId: group,
+        edgeNodeId: edge,
+      });
+      addLog("info", `Rebirth requested on ${topic}`);
+    } catch (e) {
+      addLog("error", `Rebirth failed: ${String(e)}`);
+    }
+  };
 
   // Payload cell: formatted text, plus an inspect button when the message was decoded.
   const renderCell = useCallback((key: string, row: Record<string, unknown>) => {
@@ -1075,6 +1095,7 @@ function App() {
           { value: "topics", label: "Topics", count: dataCount },
           { value: "tree", label: "Tree", count: dataCount },
           { value: "history", label: "History", count: historyCount },
+          { value: "sparkplug", label: "Sparkplug B", count: sparkplugNodeCount(sparkplugState) },
           { value: "charts", label: <>Charts {!pro && <ProBadge />}</> },
         ]}
         trailing={
@@ -1089,16 +1110,13 @@ function App() {
                 { value: "json", label: "JSON" },
                 { value: "hex", label: "Hex" },
                 { value: "base64", label: "Base64" },
-                { value: "decoded", label: pro ? "Decoded" : "Decoded (Pro)" },
+                { value: "decoded", label: "Decoded" },
               ] satisfies SheetOption<PayloadFormat>[]}
-              onChange={(v) => {
-                if (v === "decoded" && !requirePro("Sparkplug B and protobuf decoding")) return;
-                setPayloadFormat(v);
-              }}
+              onChange={(v) => setPayloadFormat(v)}
               aria-label="Payload format"
               title="Payload format"
             />
-            <Button size="sm" variant="ghost" onClick={openDecoders} title="Sparkplug B and protobuf decoders">
+            <Button size="sm" variant="ghost" onClick={openDecoders} title="Protobuf decoding with your own .proto schema">
               Decoders {!pro && <ProBadge />}
             </Button>
             {dataView === "history" && historyCount > 0 && (
@@ -1122,14 +1140,16 @@ function App() {
             ? `Hierarchical topic tree, ${dataCount} topic${dataCount !== 1 ? "s" : ""}`
             : dataView === "history"
               ? `Message stream, ${historyCount} message${historyCount !== 1 ? "s" : ""}`
-              : "Numeric values over time"}
-        {hasDecoded && dataView !== "charts" && payloadFormat !== "decoded" &&
-          (pro
-            ? ". Sparkplug B or protobuf payloads found, choose Decoded to read them"
-            : ". Sparkplug B or protobuf payloads found, decoding is a Pro feature")}
+              : dataView === "sparkplug"
+                ? "Sparkplug B edge nodes, devices and metrics, names resolved from BIRTH aliases"
+                : "Numeric values over time"}
+        {hasDecoded && dataView !== "charts" && dataView !== "sparkplug" && payloadFormat !== "decoded" &&
+          ". Decoded payloads found, choose Decoded to read them"}
       </span>
 
-      {dataView === "charts" ? (
+      {dataView === "sparkplug" ? (
+        <SparkplugPanel state={sparkplugState} onRebirth={isConnected ? handleRebirth : undefined} />
+      ) : dataView === "charts" ? (
         <ChartPanel
           store={chartStore}
           conn={chartConn}
@@ -1893,8 +1913,8 @@ function App() {
           <p style={{ margin: "0 0 10px" }}>MQTT client, topic inspector, and local test broker in one app.</p>
           <p style={{ margin: "0 0 10px" }}>
             Connect to any MQTT broker to subscribe, publish, and watch live message streams. Pro adds an embedded
-            broker to test against, several connections at once, Sparkplug B and protobuf decoding, and charts of
-            numeric values.
+            broker to test against, several connections at once, protobuf decoding with your own schema, and charts of
+            numeric values. Sparkplug B decoding, the edge node view and Rebirth are free.
           </p>
           <p style={{ margin: "0 0 12px", color: "var(--text-muted)" }}>
             Part of the <strong style={{ color: "var(--text)" }}>Voltrus</strong> suite by JoyoDigitama

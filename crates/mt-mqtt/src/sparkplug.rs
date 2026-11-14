@@ -386,11 +386,31 @@ impl SparkplugTopic {
 // Aliases
 // ---------------------------------------------------------------------------
 
-/// Metric name/alias pairs from BIRTH messages, keyed by
-/// group/edge-node/device. DATA and CMD messages usually carry the alias only.
+/// Per-connection Sparkplug state learned from the message stream:
+///
+/// - metric name/alias pairs from BIRTH messages, keyed by
+///   group/edge-node/device (DATA and CMD messages usually carry the alias
+///   only),
+/// - the session of every edge node (bdSeq, last seq, online, born devices),
+///   used to check `seq` and `bdSeq` on each message.
 #[derive(Debug, Default)]
 pub struct SparkplugAliases {
     by_source: HashMap<String, HashMap<u64, String>>,
+    nodes: HashMap<String, NodeSession>,
+}
+
+/// What an observer knows about one edge node's current session.
+#[derive(Debug, Default)]
+struct NodeSession {
+    /// NBIRTH seen since we started listening.
+    birthed: bool,
+    online: bool,
+    /// bdSeq of the current NBIRTH.
+    bd_seq: Option<u64>,
+    /// seq of the last NBIRTH/NDATA/DBIRTH/DDATA/DDEATH.
+    last_seq: Option<u64>,
+    /// Devices with a DBIRTH and no DDEATH since the last NBIRTH.
+    devices: std::collections::HashSet<String>,
 }
 
 impl SparkplugAliases {
@@ -398,10 +418,138 @@ impl SparkplugAliases {
         Self::default()
     }
 
-    /// Forget every learned alias (for example on reconnect).
+    /// Forget every learned alias and session (for example on reconnect).
     pub fn clear(&mut self) {
         self.by_source.clear();
+        self.nodes.clear();
     }
+}
+
+/// Name of the metric that carries the birth/death sequence number.
+pub const BD_SEQ_METRIC: &str = "bdSeq";
+/// Name of the NCMD metric that asks an edge node to publish its births again.
+pub const REBIRTH_METRIC: &str = "Node Control/Rebirth";
+
+/// `bdSeq` metric of a NBIRTH/NDEATH payload, whatever integer type it uses.
+fn bd_seq_of(payload: &pb::Payload) -> Option<u64> {
+    use pb::metric::Value as V;
+    let m = payload.metrics.iter().find(|m| m.name.as_deref() == Some(BD_SEQ_METRIC))?;
+    match m.value {
+        Some(V::LongValue(v)) => Some(v),
+        Some(V::IntValue(v)) => Some(u64::from(v)),
+        _ => None,
+    }
+}
+
+/// Track the edge node session and return what looks wrong about this
+/// message, in words a person can act on. Empty when everything checks out.
+fn session_checks(topic: &SparkplugTopic, payload: &pb::Payload, state: &mut SparkplugAliases) -> Vec<String> {
+    let mut checks = Vec::new();
+    let node_key = format!("{}/{}", topic.group_id.as_deref().unwrap_or(""), topic.edge_node_id);
+    let node = state.nodes.entry(node_key).or_default();
+    let bd_seq = bd_seq_of(payload);
+    match topic.message_type.as_str() {
+        "NBIRTH" => {
+            if bd_seq.is_none() {
+                checks.push("NBIRTH has no bdSeq metric, so a host cannot match it to its NDEATH".into());
+            }
+            match payload.seq {
+                None => checks.push("NBIRTH has no seq".into()),
+                Some(s) if s > 255 => checks.push(format!("seq {s} is outside 0-255")),
+                _ => {}
+            }
+            *node = NodeSession {
+                birthed: true,
+                online: true,
+                bd_seq,
+                last_seq: payload.seq,
+                devices: Default::default(),
+            };
+        }
+        "NDEATH" => {
+            match (bd_seq, node.bd_seq) {
+                (None, _) => checks.push("NDEATH has no bdSeq metric".into()),
+                (Some(d), Some(b)) if d != b => {
+                    checks.push(format!(
+                        "NDEATH bdSeq {d} does not match the NBIRTH bdSeq {b}: it belongs to an older session and a host ignores it"
+                    ));
+                    return checks;
+                }
+                _ => {}
+            }
+            if payload.seq.is_some() {
+                checks.push("NDEATH carries a seq; it should not".into());
+            }
+            node.online = false;
+            node.last_seq = None;
+            node.devices.clear();
+        }
+        "NDATA" | "DBIRTH" | "DDATA" | "DDEATH" => {
+            if !node.birthed {
+                checks.push(
+                    "No NBIRTH seen for this edge node since you subscribed. Send a Rebirth to get its metric names and aliases"
+                        .into(),
+                );
+            } else if !node.online {
+                checks.push("Edge node is offline (NDEATH received) but still publishing".into());
+            }
+            match payload.seq {
+                None => checks.push(format!("{} has no seq", topic.message_type)),
+                Some(s) if s > 255 => checks.push(format!("seq {s} is outside 0-255")),
+                Some(s) => {
+                    if let Some(last) = node.last_seq {
+                        let expected = (last + 1) % 256;
+                        if s != expected {
+                            checks.push(format!(
+                                "seq {s}, expected {expected}: messages from this edge node were lost or arrived out of order"
+                            ));
+                        }
+                    }
+                    node.last_seq = Some(s);
+                }
+            }
+            if let Some(dev) = &topic.device_id {
+                match topic.message_type.as_str() {
+                    "DBIRTH" => {
+                        node.devices.insert(dev.clone());
+                    }
+                    "DDEATH" => {
+                        node.devices.remove(dev);
+                    }
+                    _ => {
+                        if node.birthed && !node.devices.contains(dev) {
+                            checks.push(format!("No DBIRTH seen for device {dev} in this session"));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    checks
+}
+
+/// NCMD payload that asks an edge node to publish NBIRTH and all DBIRTHs
+/// again (`Node Control/Rebirth = true`). Publish it on [`ncmd_topic`] with
+/// QoS 0 and retain off.
+pub fn rebirth_payload(timestamp_ms: u64) -> Vec<u8> {
+    pb::Payload {
+        timestamp: Some(timestamp_ms),
+        metrics: vec![pb::Metric {
+            name: Some(REBIRTH_METRIC.into()),
+            timestamp: Some(timestamp_ms),
+            datatype: Some(11),
+            value: Some(pb::metric::Value::BooleanValue(true)),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+    .encode_to_vec()
+}
+
+/// `spBv1.0/<group>/NCMD/<edge_node>`.
+pub fn ncmd_topic(group_id: &str, edge_node_id: &str) -> String {
+    format!("{NAMESPACE}/{group_id}/NCMD/{edge_node_id}")
 }
 
 // ---------------------------------------------------------------------------
@@ -722,20 +870,30 @@ pub fn decode_payload(
             .collect();
         aliases.by_source.insert(key.clone(), learned);
     }
+    let mut checks = session_checks(topic, &payload, aliases);
     let known = aliases.by_source.get(&key);
 
+    let mut unresolved = Vec::new();
     let metrics: Vec<Value> = payload
         .metrics
         .iter()
         .map(|m| {
             let resolved = if m.name.is_none() {
-                m.alias.and_then(|a| known.and_then(|k| k.get(&a))).map(String::as_str)
+                let r = m.alias.and_then(|a| known.and_then(|k| k.get(&a))).map(String::as_str);
+                if let (None, Some(a), Some(_)) = (r, m.alias, known) {
+                    unresolved.push(a);
+                }
+                r
             } else {
                 None
             };
             metric_json(m, resolved)
         })
         .collect();
+    if !unresolved.is_empty() {
+        let list: Vec<String> = unresolved.iter().map(u64::to_string).collect();
+        checks.push(format!("Alias {} not declared in the BIRTH", list.join(", ")));
+    }
 
     let mut o = Map::new();
     o.insert("topic".into(), topic.to_json());
@@ -751,7 +909,13 @@ pub fn decode_payload(
     if let Some(body) = &payload.body {
         o.insert("body".into(), json!(hex(body)));
     }
+    if let ("NBIRTH" | "NDEATH", Some(b)) = (topic.message_type.as_str(), bd_seq_of(&payload)) {
+        o.insert("bd_seq".into(), u64_json(b));
+    }
     o.insert("metrics".into(), Value::Array(metrics));
+    if !checks.is_empty() {
+        o.insert("checks".into(), json!(checks));
+    }
     Ok(Value::Object(o))
 }
 

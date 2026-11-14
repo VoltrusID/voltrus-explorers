@@ -1,0 +1,7 @@
+# spBv1.0/Plant1/DBIRTH/Edge1/Filler
+timestamp: 1731571200050
+seq: 1
+metrics { name: "Temperature" alias: 10 timestamp: 1731571200050 datatype: 9 float_value: 71.5 }
+metrics { name: "Count" alias: 11 timestamp: 1731571200050 datatype: 7 int_value: 1200 }
+metrics { name: "Mode" alias: 12 timestamp: 1731571200050 datatype: 12 string_value: "AUTO" }
+metrics { name: "Delta" alias: 13 timestamp: 1731571200050 datatype: 3 int_value: 4294967291 }

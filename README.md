@@ -191,8 +191,8 @@ says the key is no longer valid. Remove key (Info) forgets it on this device. Bu
 
 | | |
 | --- | --- |
-| Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw, JSON, Hex and Base64 payload views, one saved connection profile, communication log with CSV export |
-| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, message history export to CSV, Sparkplug B decoding (metric names resolved from BIRTH aliases) and protobuf decoding from your own .proto schema, charts of numeric topic values (plain numbers, JSON fields, Sparkplug metrics), several simultaneous client connections, bulk-clear retained messages |
+| Free | Connect with host, port, client ID, username and password (optionally over TLS), subscribe with QoS 0/1/2 and wildcards, publish (including retained), topic table, tree and message history, Raw, JSON, Hex and Base64 payload views, Sparkplug B decoding with a Sparkplug B view (edge nodes, devices and metrics with names resolved from BIRTH aliases, seq and bdSeq checks, Rebirth command), one saved connection profile, communication log with CSV export |
+| Pro | Embedded local broker (TCP, WebSocket, TLS, username/password), more than one saved connection profile, custom CA, client certificates (mTLS) and Last Will on client connections, message history export to CSV, protobuf decoding from your own .proto schema, charts of numeric topic values (plain numbers, JSON fields, Sparkplug metrics), several simultaneous client connections, bulk-clear retained messages |
 
 Version 1.2.0 is the first release, and it is free.
 | OPC UA Explorer | |

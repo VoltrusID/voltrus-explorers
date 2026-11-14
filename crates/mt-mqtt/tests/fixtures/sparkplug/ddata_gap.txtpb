@@ -1,0 +1,5 @@
+# spBv1.0/Plant1/DDATA/Edge1/Filler, seq 4 never arrived
+timestamp: 1731571204000
+seq: 5
+metrics { alias: 11 timestamp: 1731571204000 datatype: 7 int_value: 1203 }
+metrics { alias: 99 timestamp: 1731571204000 datatype: 7 int_value: 1 }
