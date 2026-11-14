@@ -3485,6 +3485,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "mc_fins_explorer"
+version = "2.0.0"
+dependencies = [
+ "mt-fins",
+ "mt-melsec",
+ "mt-store",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tokio",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3746,6 +3762,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mt-fins"
+version = "2.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "mt-logic"
 version = "2.0.0"
 dependencies = [
@@ -3759,6 +3784,15 @@ dependencies = [
  "tar",
  "thiserror 2.0.18",
  "zip",
+]
+
+[[package]]
+name = "mt-melsec"
+version = "2.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

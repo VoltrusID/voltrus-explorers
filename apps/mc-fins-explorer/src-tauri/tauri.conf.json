@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "MC-FINS Explorer",
+  "version": "1.0.0",
+  "identifier": "com.joyodigitama.mc-fins-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MC & FINS Explorer",
+        "width": 1320,
+        "height": 840,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "Mitsubishi MC protocol (SLMP) and Omron FINS tester and PLC simulator",
+    "longDescription": "Connect to Mitsubishi MELSEC PLCs over MC protocol (SLMP 3E and 4E frames, binary or ASCII, TCP or UDP) and to Omron PLCs over FINS/UDP and FINS/TCP: read devices and memory areas into a live tag table, watch a block of words, read the CPU model and status, and see every frame in the comm log. Pro adds writes, several PLCs at once, trends, tag CSV import and export, value logging, remote RUN and STOP, and a built-in MC and FINS PLC simulator. Not affiliated with or endorsed by Mitsubishi Electric or OMRON.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

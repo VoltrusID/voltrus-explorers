@@ -1,0 +1,5 @@
+@import "tailwindcss";
+@import "@mactools/ui/styles.css";
+
+.mf-grid td.mf-cell { cursor: pointer; }
+.mf-grid td.mf-cell:hover { background: var(--sunken); }
