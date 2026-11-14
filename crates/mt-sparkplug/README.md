@@ -1,8 +1,15 @@
 # mt-sparkplug
 
-Minimal Sparkplug B edge publisher (Atur issue GW-3). Publish-only: one edge
-node reports its metrics to a Sparkplug host over MQTT with the standard
-birth/death session machinery.
+Sparkplug B edge node code, in two parts:
+
+- `edge.rs` + `link.rs` (`EdgeNode`, `EdgeLink`): the full edge node used by
+  Voltrus Gateway. Devices (DBIRTH/DDATA/DDEATH), aliases, report by exception
+  with deadband and max interval, NCMD `Node Control/Rebirth`, DCMD writes,
+  primary host STATE, NDEATH Will at QoS 1. `EdgeNode` has no I/O, so it is
+  tested by decoding what it returns (`tests/edge_node.rs`). See
+  `gateway/docs/sparkplug.md`.
+- `publisher.rs` (`SparkplugPublisher`), described below: the earlier
+  node-only publisher used by the PLC runtime (Atur issue GW-3).
 
 ## Honest scope
 
@@ -12,7 +19,7 @@ Implemented:
   payloads (schema vendored at `proto/sparkplug_b.proto`, from Eclipse Tahu,
   EPL-2.0).
 - Session state machine per the Sparkplug normative statements: connect with
-  an NDEATH Will carrying the pending `bdSeq` (QoS 0, retain=false), publish
+  an NDEATH Will carrying the pending `bdSeq` (QoS 1, retain=false), publish
   NBIRTH with **all** metrics plus `bdSeq` at `seq = 0`, then NDATA with
   report-by-exception. `seq` and `bdSeq` both stay in 0..=255 and wrap at 256.
 - `bdSeq` persisted to a file, incremented on every (re)connect so hosts can
@@ -51,9 +58,9 @@ it is subscription/RTT-oriented for the explorer apps and would drag the
 embedded `rumqttd` broker into this crate. A publish-only edge node needs very
 little rumqttc directly.
 
-Two QoS details where intuition says the opposite of the spec: all non-STATE
-Sparkplug messages MUST use **QoS 0** (not 1), and the clean-session flag MUST
-be **true**. Both are pinned in `RumqttcTransport`.
+QoS details: all published non-STATE Sparkplug messages use **QoS 0**, the
+NDEATH Will is registered at **QoS 1** (Sparkplug 3.0), and the clean-session
+flag is **true**. All three are pinned in `RumqttcTransport` and `EdgeLink`.
 
 ## Integration sketch (future Linux runtime)
 
