@@ -18,7 +18,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **SECS/GEM Explorer** | GEM host for semiconductor and electronics equipment over HSMS (establish communications, status variables, equipment constants, reports and events, alarms, remote commands, process programs, terminal, SML message log; Beta), with a built-in equipment simulator | Free download ([DMG](https://dl-secsgem-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/a7bfae63-8d11-4e19-bae7-f7b1b41cade4)) |
 | **CAN Explorer** | CAN and CAN FD bus monitor through USB SLCAN adapters (CANable, CANUSB, USBtin) or Linux SocketCAN: per-ID monitor with rates and changing bytes, trace, DBC decoding, J1939, CANopen and OBD-II labels, send frames; built-in genset simulator on a virtual bus | Free download ([DMG](https://dl-can-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca)) |
 | **Voltrus Logic Analyzer** | Logic analyzer for Cypress FX2 USB boards (the 24 MHz 8-channel Saleae-compatible boards): Modbus RTU on RS-485 with request/response pairing and timing, bit-level CAN (with DBC names, candump export and log comparison shared with CAN Explorer), SPI with MCP2515 decoding, I2C and UART, edge and pattern triggers, cursors, sigrok `.sr` import, with a built-in simulator. The FX2 hardware path is untested on real boards yet; see [its README](apps/logic-analyzer/README.md) | Free download ([DMG](https://dl-logic-analyzer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/3233bac5-95dd-4f7d-9186-06d45c6bfa2a)) |
-| **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Coming soon (not released yet): free download, Pro by licence key, USD 29.99 one-time, one Mac ([voltrus.id](https://voltrus.id/mc-fins-explorer/)) |
+| **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Free download ([DMG](https://dl-mc-fins-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/mc-fins-explorer/)); Pro by licence key, USD 29.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/14f440e3-f56c-4a6e-bccf-bb8567b92ab3)) |
 | **EtherCAT Explorer** | EtherCAT network explorer for commissioning and troubleshooting, from a Mac's wired Ethernet port: every device with identity, ESC, ports, DC, AL state and AL status code, SII EEPROM, ESC registers and error counters, the CoE object dictionary with names (SDO Information), PDO mapping and live process data; built-in simulated machine (EK1100 with EL1008/EL2008/EL3102/EL4102 terminals and two CiA 402 servo drives). Not on the App Store: the App Sandbox does not allow raw Ethernet | Free download ([DMG](https://dl-ethercat-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
@@ -33,7 +33,7 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer and EtherCAT Explorer are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, MC & FINS Explorer and EtherCAT Explorer are not on the App Store or GitHub Releases. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
 Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer), [CAN Explorer](#can-explorer), [EtherCAT Explorer](#ethercat-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
 
@@ -154,8 +154,9 @@ CANopen is a registered trademark of CAN in Automation e.V.; CAN Explorer is not
 
 ### MC & FINS Explorer
 
-Not released yet. It will be a free notarized DMG (`https://dl-mc-fins-explorer.voltrus.id/latest`) with Pro as a one-time
-licence key (USD 29.99, one Mac), like the other direct apps. Builds from source have everything.
+Free to download as a notarized DMG (direct link: `https://dl-mc-fins-explorer.voltrus.id/latest`), no sign-in needed. Pro is a
+one-time licence key (USD 29.99, one Mac) bought through Polar in the console, activated in Info like the other direct apps.
+Builds from source have everything.
 
 | MC & FINS Explorer | |
 | --- | --- |
