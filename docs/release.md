@@ -160,7 +160,7 @@ The App Store products below stay unused for these eight apps.
 | SECS/GEM Explorer | `com.joyodigitama.secsgemexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only, Beta) |
 | CAN Explorer | `com.joyodigitama.canexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only) |
 | Voltrus Logic Analyzer | `com.joyodigitama.logicanalyzer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
-| MC & FINS Explorer | `com.joyodigitama.mcfinsexplorer.pro` | unused: to be sold direct by licence key, USD 29.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
+| MC & FINS Explorer | `com.joyodigitama.mcfinsexplorer.pro` | unused: sold direct by licence key, USD 29.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
 
 SECS/GEM Explorer's download worker (`secsgem-explorer-updates`, R2 `secsgem-explorer-releases`, D1
 `secsgem-explorer-releases-db` `2e0b346e-3f23-4be2-a766-376da02407cc`) lives in the MacTools repo next to the other three.
@@ -184,13 +184,13 @@ and bundles the GPL-2.0+ fx2lafw firmware; the matching source must stay downloa
 last DMG that bundles it (`apps/logic-analyzer/FIRMWARE.md`); the R2 lock rule `gpl-source-keep` retains
 `source/` indefinitely.
 
-MC & FINS Explorer (`apps/mc-fins-explorer`, bundle `MC-FINS Explorer.app`: a `&` is kept out of file names and R2 keys;
-the window title says MC & FINS Explorer) is built but not released. Before the first `dmg=true` run it needs, like CAN
-Explorer: a Polar product with a licence-key benefit (USD 29.99, one activation), its download worker in the MacTools repo
-(`mc-fins-explorer-updates`, R2 `mc-fins-explorer-releases`, D1 `mc-fins-explorer-releases-db`, `dl-mc-fins-explorer.voltrus.id`),
-a `mc-fins-explorer)` entry with the D1 id in `scripts/publish-direct.sh`, a console licence entrypoint, and `buy_url` in
-`src-tauri/store.json` set to the console checkout (it points at the landing page until then). The DMG needs no device
-entitlements (network client and server only: the simulator listens on TCP/UDP 5000 and 9600).
+MC & FINS Explorer's download worker (`mc-fins-explorer-updates`, R2 `mc-fins-explorer-releases`, D1
+`mc-fins-explorer-releases-db` `78d2979a-425d-4b0d-818d-85dabf506f69`) lives in the MacTools repo next to the others. Its
+Polar product is `14f440e3-f56c-4a6e-bccf-bb8567b92ab3` (USD 29.99, licence-key benefit `VOLTRUS-MCFINS`,
+`7957abe0-374a-4580-bd9f-9ce482c3c156`, one activation); the console licence entrypoint is `McFinsExplorerLicence`
+(voltrus-console migration `0070_mc_fins_explorer.sql`). The bundle is `MC-FINS Explorer.app` (no `&` in file names or
+R2 keys; the window title says MC & FINS Explorer). The DMG needs no device entitlements (network client and server
+only: the simulator listens on TCP/UDP 5000 and 9600).
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.
