@@ -141,6 +141,8 @@ jobs:
       # the plugin's build script runs for both slices at once and each regenerates Swift into the same registry
       # source dir, so swiftc fails with "input file ... was modified during the build" on a cold cache.
       - name: Check App Store variant (store feature)
+        # EtherCAT Explorer has no App Store build (the App Sandbox blocks the raw Ethernet it needs) and no store feature.
+        if: matrix.app != 'ethercat-explorer'
         run: |
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
