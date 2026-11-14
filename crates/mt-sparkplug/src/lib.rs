@@ -1,5 +1,11 @@
-//! Minimal Sparkplug B edge publisher.
+//! Sparkplug B edge publishers.
 //!
+//! [`EdgeNode`] (module [`edge`]) is the full edge node used by Voltrus
+//! Gateway: devices (DBIRTH/DDATA/DDEATH), aliases, report by exception,
+//! NCMD Rebirth and DCMD writes, driven over [`EdgeLink`].
+//!
+//! [`SparkplugPublisher`] below is the earlier node-only publisher used by
+//! the PLC runtime:
 //! Scope (Atur GW-3): publish-only. One edge node, one broker session:
 //! connect → NBIRTH (all metrics + `bdSeq`) → NDATA with report-by-exception
 //! → NDEATH as the MQTT Will and on graceful shutdown. No NCMD, no aliases,
@@ -11,6 +17,8 @@
 //! real transport over `rumqttc`.
 
 mod bdseq;
+pub mod edge;
+pub mod link;
 mod publisher;
 mod topic;
 mod transport;
@@ -18,6 +26,8 @@ mod value;
 
 pub mod pb;
 
+pub use edge::{CommandOutcome, DeviceWrite, EdgeNode, EdgeNodeConfig, Outgoing, SpValue};
+pub use link::{BrokerConfig, EdgeLink, LinkEvent};
 pub use pb::payload::Metric;
 pub use pb::{DataType, Payload};
 pub use publisher::{MetricSource, SparkplugConfig, SparkplugPublisher};

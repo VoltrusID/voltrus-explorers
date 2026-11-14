@@ -9,7 +9,7 @@ use crate::SparkplugError;
 /// The MQTT Will registered in the CONNECT packet.
 ///
 /// Sparkplug edge nodes register the NDEATH topic with a payload carrying the
-/// pending bdSeq (normative statements: QoS 0, retain=false).
+/// pending bdSeq (Sparkplug 3.0: QoS 1, retain=false).
 #[derive(Debug, Clone)]
 pub struct Will {
     pub topic: String,
@@ -75,7 +75,8 @@ impl MqttTransport for RumqttcTransport {
         options.set_last_will(LastWill::new(
             will.topic,
             will.payload,
-            QoS::AtMostOnce,
+            // Sparkplug 3.0: the NDEATH Will is registered at QoS 1.
+            QoS::AtLeastOnce,
             false,
         ));
 
