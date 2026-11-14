@@ -1,0 +1,11 @@
+[package]
+name = "mt-melsec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mitsubishi MELSEC MC protocol (SLMP) 3E/4E client and PLC simulator, binary and ASCII, TCP and UDP"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

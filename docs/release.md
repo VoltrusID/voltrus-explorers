@@ -160,6 +160,7 @@ The App Store products below stay unused for these eight apps.
 | SECS/GEM Explorer | `com.joyodigitama.secsgemexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only, Beta) |
 | CAN Explorer | `com.joyodigitama.canexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only) |
 | Voltrus Logic Analyzer | `com.joyodigitama.logicanalyzer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
+| MC & FINS Explorer | `com.joyodigitama.mcfinsexplorer.pro` | unused: to be sold direct by licence key, USD 29.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
 
 SECS/GEM Explorer's download worker (`secsgem-explorer-updates`, R2 `secsgem-explorer-releases`, D1
 `secsgem-explorer-releases-db` `2e0b346e-3f23-4be2-a766-376da02407cc`) lives in the MacTools repo next to the other three.
@@ -182,6 +183,14 @@ and bundles the GPL-2.0+ fx2lafw firmware; the matching source must stay downloa
 `https://dl-logic-analyzer.voltrus.id/releases/source/sigrok-firmware-fx2lafw-0.1.7.tar.gz` for three years after the
 last DMG that bundles it (`apps/logic-analyzer/FIRMWARE.md`); the R2 lock rule `gpl-source-keep` retains
 `source/` indefinitely.
+
+MC & FINS Explorer (`apps/mc-fins-explorer`, bundle `MC-FINS Explorer.app`: a `&` is kept out of file names and R2 keys;
+the window title says MC & FINS Explorer) is built but not released. Before the first `dmg=true` run it needs, like CAN
+Explorer: a Polar product with a licence-key benefit (USD 29.99, one activation), its download worker in the MacTools repo
+(`mc-fins-explorer-updates`, R2 `mc-fins-explorer-releases`, D1 `mc-fins-explorer-releases-db`, `dl-mc-fins-explorer.voltrus.id`),
+a `mc-fins-explorer)` entry with the D1 id in `scripts/publish-direct.sh`, a console licence entrypoint, and `buy_url` in
+`src-tauri/store.json` set to the console checkout (it points at the landing page until then). The DMG needs no device
+entitlements (network client and server only: the simulator listens on TCP/UDP 5000 and 9600).
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.

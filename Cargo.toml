@@ -19,6 +19,8 @@ members = [
     "crates/mt-secsgem",
     "crates/mt-can",
     "crates/mt-logic",
+    "crates/mt-melsec",
+    "crates/mt-fins",
     "apps/modbus-poll/src-tauri",
     "apps/bacnet-explorer/src-tauri",
     "apps/ble-inspector/src-tauri",
@@ -33,6 +35,7 @@ members = [
     "apps/serial-monitor/src-tauri",
     "apps/mqtt-explorer/src-tauri",
     "apps/opcua-explorer/src-tauri",
+    "apps/mc-fins-explorer/src-tauri",
 ]
 # Patched third-party crates, used through [patch.crates-io] below (not workspace members).
 exclude = ["vendor"]

@@ -1,0 +1,29 @@
+[package]
+name = "mc_fins_explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "mc_fins_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# App Store build: Pro sold as an in-app purchase (see crates/mt-store).
+store = ["mt-store/store"]
+# Direct-download build (console + landing page): Pro is sold by licence key. Exclusive with `store`.
+license = ["mt-store/license"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+mt-melsec = { path = "../../../crates/mt-melsec" }
+mt-fins = { path = "../../../crates/mt-fins" }
+mt-store = { path = "../../../crates/mt-store" }
+tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-fs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

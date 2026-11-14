@@ -18,6 +18,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **SECS/GEM Explorer** | GEM host for semiconductor and electronics equipment over HSMS (establish communications, status variables, equipment constants, reports and events, alarms, remote commands, process programs, terminal, SML message log; Beta), with a built-in equipment simulator | Free download ([DMG](https://dl-secsgem-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/a7bfae63-8d11-4e19-bae7-f7b1b41cade4)) |
 | **CAN Explorer** | CAN and CAN FD bus monitor through USB SLCAN adapters (CANable, CANUSB, USBtin) or Linux SocketCAN: per-ID monitor with rates and changing bytes, trace, DBC decoding, J1939, CANopen and OBD-II labels, send frames; built-in genset simulator on a virtual bus | Free download ([DMG](https://dl-can-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca)) |
 | **Voltrus Logic Analyzer** | Logic analyzer for Cypress FX2 USB boards (the 24 MHz 8-channel Saleae-compatible boards): Modbus RTU on RS-485 with request/response pairing and timing, bit-level CAN (with DBC names, candump export and log comparison shared with CAN Explorer), SPI with MCP2515 decoding, I2C and UART, edge and pattern triggers, cursors, sigrok `.sr` import, with a built-in simulator. The FX2 hardware path is untested on real boards yet; see [its README](apps/logic-analyzer/README.md) | Free download ([DMG](https://dl-logic-analyzer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/3233bac5-95dd-4f7d-9186-06d45c6bfa2a)) |
+| **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Coming soon (not released yet): free download, Pro by licence key, USD 29.99 one-time, one Mac ([voltrus.id](https://voltrus.id/mc-fins-explorer/)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -127,6 +128,24 @@ On macOS the adapters that work are those that show up as a serial port and spea
 drivers and are not supported. SocketCAN is Linux only. The app uses [`mt-can`](crates/mt-can) (pure Rust, no vendor library).
 CANopen is a registered trademark of CAN in Automation e.V.; CAN Explorer is not affiliated with or endorsed by CiA, SAE or the adapter makers.
 
+### MC & FINS Explorer
+
+Not released yet. It will be a free notarized DMG (`https://dl-mc-fins-explorer.voltrus.id/latest`) with Pro as a one-time
+licence key (USD 29.99, one Mac), like the other direct apps. Builds from source have everything.
+
+| MC & FINS Explorer | |
+| --- | --- |
+| Free | One PLC at a time; Mitsubishi MC protocol (3E or 4E frame, binary or ASCII, TCP or UDP, routing to other stations) or Omron FINS (UDP or TCP with the node address handshake, network/node/unit addressing); up to 10 live tags of any device or memory area and bit (`D100.F`, `CIO0.05`), data types Bool, Int16, UInt16, Int32, UInt32, Float32, BCD16 and Hex16; device monitor (a live block of up to 1024 words); CPU model (MC) or controller model, version, status and mode (FINS); comm log with every frame in hex (ASCII frames as text), a decoded summary and the end code in plain words, CSV export |
+| Pro | Unlimited tags, writes (words and bits; a bit of a Mitsubishi word device is read, changed and written back), several PLCs at once, live trends, tag list CSV import and export, value logging to CSV, remote RUN and STOP, built-in PLC simulator (an MC protocol CPU on TCP and UDP answering 3E/4E binary and ASCII, and a FINS CPU on UDP and TCP, with a packaging line and a filling machine template) |
+
+Supported: the Q-compatible MC commands (batch read and write in word and bit units, CPU model read, remote RUN/STOP) that
+Q, L, iQ-R and iQ-F (FX5) CPUs and their Ethernet modules accept; FINS memory area read/write, controller data and
+status read, RUN and STOP on CS, CJ, CP and NJ/NX CPUs. Not supported yet: the 1E frame (FX3U-ENET-ADP), MC protocol
+over serial (C24), iQ-R device extension (4-character device codes) and FINS over Host Link. 32-bit values are low word
+first, as both makers store them. The protocol code is pure Rust: [`mt-melsec`](crates/mt-melsec) and
+[`mt-fins`](crates/mt-fins). Mitsubishi Electric, MELSEC, iQ-R, iQ-F and SLMP are trademarks of Mitsubishi Electric
+Corporation; OMRON, SYSMAC and FINS of OMRON Corporation. MC & FINS Explorer is not affiliated with or endorsed by either.
+
 ### SECS/GEM Explorer
 
 Free to download as a notarized DMG (direct link: `https://dl-secsgem-explorer.voltrus.id/latest`), no sign-in needed.
@@ -206,7 +225,7 @@ Requirements: macOS 13+, Xcode command line tools, [Rust](https://rustup.rs), [B
 
 ```bash
 bun install
-bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem, dev:can, dev:logic
+bun run dev:bacnet     # or dev:modbus, dev:dnp3, dev:s7, dev:ble, dev:enip, dev:serial, dev:nats, dev:mqtt, dev:opcua, dev:cnc, dev:secsgem, dev:can, dev:logic, dev:mcfins
 ```
 
 Universal release build (unsigned):
@@ -216,7 +235,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 scripts/build-macos.sh bacnet-explorer unsigned   # -> build/bacnet-explorer/unsigned/
 ```
 
-Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
+Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-melsec -p mt-fins -p mc_fins_explorer -p mt-store -p mt-connect` and `bun run --cwd apps/cnc-explorer test`, `bun run --cwd apps/mc-fins-explorer test`, `bun run --cwd apps/secsgem-explorer test`, `bun run --cwd apps/modbus-poll test`.
 The licence-key path of `mt-store` has its own tests: `cargo test -p mt-store --features license`.
 Tests: `cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-store -p mt-serial` and
 `bun run --cwd apps/modbus-poll test` / `bun run --cwd apps/serial-monitor test`.
@@ -234,6 +253,7 @@ apps/modbus-poll       Tauri app, also builds for iOS (scripts/build-ios.sh)
 apps/dnp3-explorer     Tauri app (macOS)
 apps/cnc-explorer      Tauri app (macOS), MTConnect and FANUC FOCAS client and simulators
 apps/secsgem-explorer  Tauri app (macOS), SECS/GEM host and equipment simulator over HSMS
+apps/mc-fins-explorer  Tauri app (macOS; also runs on Linux), Mitsubishi MC protocol / SLMP and Omron FINS client and PLC simulator
 apps/can-explorer      Tauri app (macOS; also runs on Linux with SocketCAN), CAN / CAN FD monitor, DBC decoder, simulator
 apps/s7-explorer       Tauri app (macOS), Siemens S7 client and PLC simulator
 apps/ble-inspector     Tauri app (Bluetooth LE scanner and GATT inspector)
@@ -256,6 +276,8 @@ crates/mt-dnp3         DNP3 master, outstation server, simulation
 crates/mt-mtconnect    MTConnect agent client (probe, current, sample, stream, assets), agent simulator and SHDR adapter
 crates/focas-proto     FANUC FOCAS/Ethernet client, CNC simulator, probe and frame capture/replay (pure Rust, Beta); vendored from opex-flow, see scripts/sync-focas-proto.sh
 crates/mt-secsgem      SECS/GEM host and equipment simulator: HSMS, SECS-II, GEM (pure Rust, Beta)
+crates/mt-melsec       Mitsubishi MC protocol (SLMP) 3E/4E client and simulator, binary and ASCII, TCP and UDP
+crates/mt-fins         Omron FINS/UDP and FINS/TCP client and simulator
 crates/mt-can          CAN / CAN FD: SLCAN adapters, Linux SocketCAN, virtual bus, DBC, candump logs, J1939/CANopen/OBD-II labels, simulator
 crates/mt-s7           S7 (ISO-on-TCP) client and simulator server
 crates/mt-mqtt         MQTT client (rumqttc), embedded broker (rumqttd), Sparkplug B and protobuf payload decoding

@@ -16,7 +16,8 @@
     "dev:cnc": "bun --filter cnc-explorer tauri dev",
     "dev:secsgem": "bun --filter secsgem-explorer tauri dev",
     "dev:can": "bun --filter can-explorer tauri dev",
-    "dev:logic": "bun --filter logic-analyzer tauri dev"
+    "dev:logic": "bun --filter logic-analyzer tauri dev",
+    "dev:mcfins": "bun --filter mc-fins-explorer tauri dev"
   },
   "devDependencies": {
     "puppeteer-core": "^25.15.0"
