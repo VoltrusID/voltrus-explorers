@@ -40,7 +40,7 @@ jobs:
           restore-keys: cargo-test-${{ runner.os }}-
 
       - name: Crate tests
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-store -p mt-connect
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-connect
 
       # Licence-key activation of the Windows build (the logic is portable; the machine id falls back to /etc/machine-id).
       - name: Licence key tests
@@ -55,7 +55,7 @@ jobs:
 
       - name: Typecheck and build frontends
         run: |
-          for app in bacnet-explorer modbus-poll dnp3-explorer s7-explorer ble-inspector enip-explorer serial-monitor nats-explorer mqtt-explorer opcua-explorer cnc-explorer secsgem-explorer can-explorer logic-analyzer mc-fins-explorer; do
+          for app in bacnet-explorer modbus-poll dnp3-explorer s7-explorer ble-inspector enip-explorer serial-monitor nats-explorer mqtt-explorer opcua-explorer cnc-explorer secsgem-explorer can-explorer logic-analyzer mc-fins-explorer ethercat-explorer; do
             (cd "apps/$app" && bunx tsc --noEmit -p . && bun run build)
           done
 
@@ -75,6 +75,7 @@ jobs:
           bun run --cwd apps/can-explorer test
           bun run --cwd apps/logic-analyzer test
           bun run --cwd apps/mc-fins-explorer test
+          bun run --cwd apps/ethercat-explorer test
 
   # The same crate tests on a real Mac: the protocol simulators and clients talk over loopback sockets there too.
   test-macos:
@@ -96,12 +97,12 @@ jobs:
 
       - name: Crate tests
         timeout-minutes: 20
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-store -p mt-connect
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-connect
 
       - name: Licence-key tests and direct-download builds
         run: |
           cargo test -p mt-store --features license
-          cargo check -p serial_monitor -p ble_inspector -p cnc_explorer -p secsgem_explorer -p can_explorer -p logic_analyzer -p mqtt_explorer -p nats_explorer -p opcua_explorer -p s7_explorer --features license
+          cargo check -p serial_monitor -p ble_inspector -p cnc_explorer -p secsgem_explorer -p can_explorer -p logic_analyzer -p ethercat_explorer -p mqtt_explorer -p nats_explorer -p opcua_explorer -p s7_explorer --features license
 
   macos:
     runs-on: macos-15
@@ -109,7 +110,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mc-fins-explorer]
+        app: [bacnet-explorer, modbus-poll, dnp3-explorer, s7-explorer, ble-inspector, enip-explorer, serial-monitor, nats-explorer, mqtt-explorer, opcua-explorer, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mc-fins-explorer, ethercat-explorer]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -140,6 +141,8 @@ jobs:
       # the plugin's build script runs for both slices at once and each regenerates Swift into the same registry
       # source dir, so swiftc fails with "input file ... was modified during the build" on a cold cache.
       - name: Check App Store variant (store feature)
+        # EtherCAT Explorer has no App Store build (the App Sandbox blocks the raw Ethernet it needs) and no store feature.
+        if: matrix.app != 'ethercat-explorer'
         run: |
           crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
           for target in aarch64-apple-darwin x86_64-apple-darwin; do

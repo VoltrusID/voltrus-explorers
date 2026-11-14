@@ -1,0 +1,19 @@
+[package]
+name = "mt-ethercat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EtherCAT for the explorer: frame and SII codecs, CoE mailbox (SDO and SDO Info), a simulated segment of EtherCAT devices, and a master session on EtherCrab"
+
+[dependencies]
+ethercrab = { version = "0.7.1", default-features = false, features = ["std"] }
+async-io = "2"
+futures-lite = "2"
+tokio = { workspace = true }
+serde = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["net"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

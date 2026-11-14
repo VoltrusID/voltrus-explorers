@@ -40,7 +40,7 @@ always increase.
     identifier, packs a `.pkg` signed with the Mac Installer identity, then validates it against App Store Connect
     (or uploads it with `upload=true`).
   - `dmg`: signs with Developer ID (hardened runtime), packs and signs the DMG, notarizes it with `notarytool`
-    (API key) and staples it. Apps with a `license` feature in `src-tauri/Cargo.toml` (Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, Logic Analyzer)
+    (API key) and staples it. Apps with a `license` feature in `src-tauri/Cargo.toml` (Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, Logic Analyzer, EtherCAT Explorer)
     are built with `--features license` (Pro by licence key, see below); every other app's DMG has everything unlocked.
 - iOS: `apps/<app>/scripts/build-ios.sh` (always `--features store`) for the selected app, with Tauri's manual signing
   (`IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`). The profile is made for the bundle id in the
@@ -70,7 +70,7 @@ the user starts server mode).
 
 ## Pro (in-app purchase and licence key)
 
-**Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, Logic Analyzer, MQTT Explorer, NATS Explorer, OPC UA Explorer and S7 Explorer are distributed through the Voltrus console and landing page only.**
+**Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, Logic Analyzer, EtherCAT Explorer, MQTT Explorer, NATS Explorer, OPC UA Explorer and S7 Explorer are distributed through the Voltrus console and landing page only.**
 Apple rejected Serial Monitor and BLE Inspector under guideline 4.3 (Spam) and those App Store submissions were withdrawn;
 CNC Explorer and SECS/GEM Explorer are sold direct from the start. They are not on GitHub Releases either:
 the notarized DMG is free for anyone to download, without signing in, from `https://dl-serial-monitor.voltrus.id/latest`
@@ -109,7 +109,7 @@ Release one of them:
 - `crates/mt-store` with `--features license` (exclusive with `store` and `keys`): Pro is a licence key activated against the
   app's download worker, the same `POST /license/activate` and `/license/validate` service the older MacTools builds
   used (`license` section of `src-tauri/store.json`: `server`, `buy_url`, `price`). Keys are Polar licence keys or
-  console `VLT-XXXXX-XXXXX-XXXXX` licences (app slugs `serial-terminal`, `ble-inspector`, `mactools`; CNC Explorer uses Polar keys `VOLTRUS-CNC-...`; SECS/GEM Explorer will use Polar keys of its own product; CAN Explorer uses `VOLTRUS-CAN-...`; Logic Analyzer uses `VOLTRUS-LOGIC-...`).
+  console `VLT-XXXXX-XXXXX-XXXXX` licences (app slugs `serial-terminal`, `ble-inspector`, `mactools`; CNC Explorer uses Polar keys `VOLTRUS-CNC-...`; SECS/GEM Explorer will use Polar keys of its own product; CAN Explorer uses `VOLTRUS-CAN-...`; Logic Analyzer uses `VOLTRUS-LOGIC-...`; EtherCAT Explorer uses `VOLTRUS-ETHERCAT-...`).
 - The key, its activation id and a per-device id are kept in the macOS Keychain (the app's own generic-password items,
   sandbox-safe); other platforms use files under the app data directory. The key is validated once per launch.
   An unreachable server, a 5xx or an unreadable answer keeps Pro (a paying user is never locked out offline); only
@@ -161,6 +161,7 @@ The App Store products below stay unused for these eight apps.
 | CAN Explorer | `com.joyodigitama.canexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; macOS only) |
 | Voltrus Logic Analyzer | `com.joyodigitama.logicanalyzer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
 | MC & FINS Explorer | `com.joyodigitama.mcfinsexplorer.pro` | unused: sold direct by licence key, USD 29.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build planned) |
+| EtherCAT Explorer | `com.joyodigitama.ethercatexplorer.pro` | unused: sold direct by licence key, USD 39.99 (`free_since` is `1.0.0`, ignored by the direct build; no App Store build possible) |
 
 SECS/GEM Explorer's download worker (`secsgem-explorer-updates`, R2 `secsgem-explorer-releases`, D1
 `secsgem-explorer-releases-db` `2e0b346e-3f23-4be2-a766-376da02407cc`) lives in the MacTools repo next to the other three.
@@ -191,6 +192,13 @@ Polar product is `14f440e3-f56c-4a6e-bccf-bb8567b92ab3` (USD 29.99, licence-key 
 (voltrus-console migration `0070_mc_fins_explorer.sql`). The bundle is `MC-FINS Explorer.app` (no `&` in file names or
 R2 keys; the window title says MC & FINS Explorer). The DMG needs no device entitlements (network client and server
 only: the simulator listens on TCP/UDP 5000 and 9600).
+
+EtherCAT Explorer's download worker (`ethercat-explorer-updates`, R2 `ethercat-explorer-releases`, D1
+`ethercat-explorer-releases-db` `6ca6c99d-b55c-4cf7-9173-ee66a7dfbe86`) lives in the MacTools repo next to the others. Its
+Polar product is `0e3a1912-178a-42ac-9d1c-23af2b1f0c22` (licence-key benefit `VOLTRUS-ETHERCAT`,
+`59cb2ac1-903d-4ecf-9fa5-c4f313fa38d0`, one activation); the console licence entrypoint is `EthercatExplorerLicence`
+(voltrus-console migration `0069_ethercat_explorer.sql`). The DMG has no App Sandbox (no `com.apple.security.app-sandbox`
+in `entitlements.plist`, on purpose): the app opens `/dev/bpf*` for raw Ethernet, which a sandboxed app cannot, so there is no App Store build.
 
 - Only App Store builds (`--features store`) and the licence-key DMGs (`--features license`) lock Pro features; source,
   CI builds and the DMGs of the other apps have everything unlocked.

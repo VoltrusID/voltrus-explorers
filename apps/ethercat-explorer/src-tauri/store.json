@@ -1,0 +1,12 @@
+{
+  "pro_product_id": "com.joyodigitama.ethercatexplorer.pro",
+  "free_since": {
+    "macos_version": "1.0.0",
+    "ios_build": null
+  },
+  "license": {
+    "server": "https://dl-ethercat-explorer.voltrus.id",
+    "buy_url": "https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22",
+    "price": "$39.99"
+  }
+}

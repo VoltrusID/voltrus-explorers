@@ -3,7 +3,7 @@
 #
 #   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
 #
-# <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mc-fins-explorer, mqtt-explorer, nats-explorer, opcua-explorer, s7-explorer or voltrus-tools: they are not on GitHub Releases or the App Store; the console
+# <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mc-fins-explorer, ethercat-explorer, mqtt-explorer, nats-explorer, opcua-explorer, s7-explorer or voltrus-tools: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
 # The DMG is the `dmg` output of the Release workflow (scripts/build-macos.sh <app> dmg --notarize, built with
 # `--features license`). It comes from, in order:
@@ -71,6 +71,11 @@ case "$APP" in
     BUCKET="mc-fins-explorer-releases"; DB="mc-fins-explorer-releases-db"
     DB_ID="78d2979a-425d-4b0d-818d-85dabf506f69"
     NAME_RE='mc[ _.&-]*fins' ;;
+  ethercat-explorer)
+    PRODUCT="EtherCAT Explorer"; BASE="https://dl-ethercat-explorer.voltrus.id"
+    BUCKET="ethercat-explorer-releases"; DB="ethercat-explorer-releases-db"
+    DB_ID="6ca6c99d-b55c-4cf7-9173-ee66a7dfbe86"
+    NAME_RE='ether[ _.-]*cat[ _.-]*explorer' ;;
   mqtt-explorer)
     PRODUCT="MQTT Explorer"; BASE="https://dl-mqtt-explorer.voltrus.id"
     BUCKET="mqtt-explorer-releases"; DB="mqtt-explorer-releases-db"; DB_ID="01f431c4-2c20-421c-b234-9007156e7d5e"
@@ -91,7 +96,7 @@ case "$APP" in
     PRODUCT="Voltrus Tools"; BASE="https://dl-voltrus-tools.voltrus.id"
     BUCKET="voltrus-tools-releases"; DB="voltrus-tools-releases-db"; DB_ID="be9c6964-9314-4e42-8e7b-993ab39da7c0"
     NAME_RE='voltrus[ _.-]*tools' ;;
-  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer | can-explorer | logic-analyzer | mc-fins-explorer | mqtt-explorer | nats-explorer | opcua-explorer | s7-explorer | voltrus-tools)" >&2; exit 1 ;;
+  *) echo "not a direct-download app: $APP (serial-monitor | ble-inspector | cnc-explorer | secsgem-explorer | can-explorer | logic-analyzer | mc-fins-explorer | ethercat-explorer | mqtt-explorer | nats-explorer | opcua-explorer | s7-explorer | voltrus-tools)" >&2; exit 1 ;;
 esac
 if [ -z "$DB_ID" ]; then
   echo "$PRODUCT has no download worker yet (DB_ID is empty in this script); nothing was published." >&2

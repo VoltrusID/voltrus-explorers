@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
+  "productName": "EtherCAT Explorer",
+  "version": "1.0.0",
+  "identifier": "com.joyodigitama.ethercat-explorer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "EtherCAT Explorer",
+        "width": 1360,
+        "height": 860,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 13
+        },
+        "acceptFirstMouse": true,
+        "minWidth": 1024,
+        "minHeight": 680
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2026 JoyoDigitama. Licensed under GPL-3.0-or-later.",
+    "shortDescription": "EtherCAT network explorer, device diagnostics and simulator",
+    "longDescription": "Scan an EtherCAT network from a Mac's Ethernet port (USB or Thunderbolt adapters work): every device with its identity, ESC, ports and topology, AL state and status codes, SII EEPROM contents, ESC registers with error counters, the CoE object dictionary with names (SDO Information) and SDO reads, PDO mapping, and live inputs in SAFE-OP. Pro adds OP with output writes, SDO writes, register writes and counter resets, live trends, EEPROM backup and frame capture export. A built-in simulated machine (EK1100 coupler, digital and analog terminals, two CiA 402 servo drives) works with no hardware.",
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "providerShortName": "JoyoDigitama",
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

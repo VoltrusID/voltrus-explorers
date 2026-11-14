@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- EtherCAT Explorer: one frame running out through a line of devices and back through them (processing on the
+       fly), in the MacTools line-art style (black square, one green). -->
+  <rect width="1024" height="1024" fill="#000"/>
+  <g fill="none" stroke="#04DD3C" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <!-- devices -->
+    <rect x="150" y="560" width="170" height="250" rx="22"/>
+    <rect x="427" y="560" width="170" height="250" rx="22"/>
+    <rect x="704" y="560" width="170" height="250" rx="22"/>
+    <!-- outgoing path through every device -->
+    <path d="M96 640 H900"/>
+    <!-- turn-around at the last device and the way back -->
+    <path d="M900 640 Q960 640 960 685 Q960 730 900 730 H96" stroke-width="14"/>
+    <!-- the frame riding the line -->
+    <rect x="236" y="606" width="96" height="68" rx="10" fill="#04DD3C"/>
+  </g>
+  <text x="512" y="400" font-family="Plus Jakarta Sans, DejaVu Sans, sans-serif" font-weight="800" font-size="190" fill="#04DD3C" text-anchor="middle">ECAT</text>
+</svg>
