@@ -19,6 +19,7 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **CAN Explorer** | CAN and CAN FD bus monitor through USB SLCAN adapters (CANable, CANUSB, USBtin) or Linux SocketCAN: per-ID monitor with rates and changing bytes, trace, DBC decoding, J1939, CANopen and OBD-II labels, send frames; built-in genset simulator on a virtual bus | Free download ([DMG](https://dl-can-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/5c939561-9bf7-49f2-80f7-b99a82e212ca)) |
 | **Voltrus Logic Analyzer** | Logic analyzer for Cypress FX2 USB boards (the 24 MHz 8-channel Saleae-compatible boards): Modbus RTU on RS-485 with request/response pairing and timing, bit-level CAN (with DBC names, candump export and log comparison shared with CAN Explorer), SPI with MCP2515 decoding, I2C and UART, edge and pattern triggers, cursors, sigrok `.sr` import, with a built-in simulator. The FX2 hardware path is untested on real boards yet; see [its README](apps/logic-analyzer/README.md) | Free download ([DMG](https://dl-logic-analyzer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/3233bac5-95dd-4f7d-9186-06d45c6bfa2a)) |
 | **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Coming soon (not released yet): free download, Pro by licence key, USD 29.99 one-time, one Mac ([voltrus.id](https://voltrus.id/mc-fins-explorer/)) |
+| **EtherCAT Explorer** | EtherCAT network explorer for commissioning and troubleshooting, from a Mac's wired Ethernet port: every device with identity, ESC, ports, DC, AL state and AL status code, SII EEPROM, ESC registers and error counters, the CoE object dictionary with names (SDO Information), PDO mapping and live process data; built-in simulated machine (EK1100 with EL1008/EL2008/EL3102/EL4102 terminals and two CiA 402 servo drives). Not on the App Store: the App Sandbox does not allow raw Ethernet | Free download ([DMG](https://dl-ethercat-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22)) |
 
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
 one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
@@ -32,9 +33,9 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer and CAN Explorer are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer and EtherCAT Explorer are not on the App Store or GitHub Releases. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
-Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer), [CAN Explorer](#can-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
+Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer), [CAN Explorer](#can-explorer), [EtherCAT Explorer](#ethercat-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
 
 ## Free and Pro (App Store and licence-key builds)
 
@@ -112,6 +113,29 @@ The procedure for the visit, with the checklist, is in [docs/focas-field-test.md
 CNC Explorer is an independent tool. FANUC and FOCAS are trademarks of FANUC CORPORATION, and MTConnect is a
 registered trademark of AMT - The Association For Manufacturing Technology; it is not affiliated with or endorsed by
 either.
+
+### EtherCAT Explorer
+
+Free to download as a notarized DMG (direct link: `https://dl-ethercat-explorer.voltrus.id/latest`), no sign-in needed. Pro is a
+licence key, USD 39.99 one-time for one Mac, bought in the [Voltrus Console](https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22).
+It is a direct download only: EtherCAT frames are raw Ethernet (EtherType 0x88A4), which macOS
+gives through `/dev/bpf*`, and a sandboxed App Store app cannot open those. On a Mac, BPF is for administrators until
+access is granted; the app grants it once with an administrator password (until restart), or Wireshark's ChmodBPF
+does it at every start. On Linux the binary needs `CAP_NET_RAW` (`sudo setcap cap_net_raw,cap_net_admin=eip`).
+Builds from source have everything.
+
+| EtherCAT Explorer | |
+| --- | --- |
+| Free | Scan a network from a wired port or start the simulator; device list in cable order with identity, ESC type, ports, DC support and propagation delay, AL state and status code; INIT, PRE-OP and SAFE-OP for all devices or one (stepping through each state on the way up); SII EEPROM view; ESC registers with decoded meanings, sync managers, FMMUs and error counters; CoE object dictionary with names and SDO reads; PDO mapping from CoE or the EEPROM; live inputs; frame capture on the simulator; log |
+| Pro | OP with output writes, SDO writes, register writes and error counter resets, live trends of any process data entry, EEPROM backup to `.bin`, captured frames as `.pcap` for Wireshark, device list CSV |
+
+The master is [EtherCrab](https://github.com/ethercrab-rs/ethercrab) (MIT/Apache-2.0); the SII parser, CoE mailbox
+client (SDO with segmented transfers, SDO Information) and the register-level simulator are in
+[`mt-ethercat`](crates/mt-ethercat), which tests the simulator against EtherCrab and the parser against EEPROM dumps of
+real devices. Connecting makes the computer the EtherCAT master, so use it on a line without a running PLC.
+EtherCAT® is a registered trademark and patented technology, licensed by Beckhoff Automation GmbH, Germany. The
+simulator imitates Beckhoff terminals by their published identities; EtherCAT Explorer is not affiliated with or
+endorsed by Beckhoff or the EtherCAT Technology Group.
 
 ### CAN Explorer
 
