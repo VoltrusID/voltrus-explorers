@@ -118,6 +118,16 @@ impl SpValue {
         })
     }
 
+    /// Equality that treats NaN as equal to NaN of the same type, so a
+    /// value stuck at NaN is not republished on every sample.
+    fn same(&self, other: &SpValue) -> bool {
+        match (self, other) {
+            (SpValue::Float(a), SpValue::Float(b)) => a == b || (a.is_nan() && b.is_nan()),
+            (SpValue::Double(a), SpValue::Double(b)) => a == b || (a.is_nan() && b.is_nan()),
+            _ => self == other,
+        }
+    }
+
     fn as_f64(&self) -> Option<f64> {
         Some(match self {
             SpValue::Int8(v) => f64::from(*v),
@@ -492,7 +502,7 @@ impl EdgeNode {
             let Some(v) = &m.value else { continue };
             let send = match &m.last_sent {
                 None => true,
-                Some(last) if last == v => false,
+                Some(last) if last.same(v) => false,
                 Some(last) => match (v.as_f64(), last.as_f64()) {
                     (Some(a), Some(b)) if (a - b).abs() < deadband => {
                         max_interval > 0 && now_ms.saturating_sub(m.last_sent_ms) >= max_interval

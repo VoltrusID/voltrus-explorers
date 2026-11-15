@@ -331,3 +331,28 @@ fn spvalue_round_trips_through_the_wire() {
         assert_eq!(back, Some(v));
     }
 }
+
+#[test]
+fn nan_is_not_republished_on_every_sample() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut n = node(&dir);
+    n.open_session(1_000).unwrap();
+    let nan = |t: u64, n: &mut EdgeNode| {
+        n.update_device(
+            "Filler",
+            0.0,
+            vec![("Speed".into(), Some(SpValue::Double(f64::NAN)))],
+            t,
+        )
+    };
+    assert_eq!(nan(1_100, &mut n).len(), 1, "DBIRTH");
+    assert!(nan(1_200, &mut n).is_empty(), "NaN after NaN is no change");
+    let out = n.update_device(
+        "Filler",
+        0.0,
+        vec![("Speed".into(), Some(SpValue::Double(5.0)))],
+        1_300,
+    );
+    assert_eq!(out.len(), 1);
+    assert!(out[0].topic.ends_with("/DDATA/Gateway1/Filler"));
+}
