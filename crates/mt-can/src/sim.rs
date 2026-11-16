@@ -275,7 +275,12 @@ pub struct Simulator {
 impl Simulator {
     /// Attaches the simulator to `bus` and starts sending.
     pub fn start(bus: &VirtualBus) -> Simulator {
-        let mut handle = bus.attach();
+        Self::start_on(bus.attach())
+    }
+
+    /// Runs the simulator on an open bus: a virtual bus node, or a SocketCAN interface such as `vcan0` so that other
+    /// programs on the machine (and CAN Explorer connected to the same interface) see its frames.
+    pub fn start_on(mut handle: CanHandle) -> Simulator {
         let events = handle.take_events().expect("fresh handle");
         let state = Arc::new(Mutex::new(SimState::default()));
         let task = tokio::spawn(run(handle.sender(), events, state.clone()));
@@ -341,7 +346,10 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
     sched.push(Schedule { name: "tpdo1".into(), period_ms: 200, next_ms: 0 });
 
     let tick = Duration::from_millis(5);
-    let mut clock_ms: u64 = 0;
+    // Message times come from the wall clock, not from counting ticks: a busy process skips ticks, and counting them
+    // slowed every message rate down with it.
+    let started = tokio::time::Instant::now();
+    let mut last = started;
     let mut pages = Pages::default();
     let mut timer = tokio::time::interval(tick);
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -360,11 +368,14 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
                 Some(_) => {}
             },
             _ = timer.tick() => {
-                clock_ms += tick.as_millis() as u64;
+                let now = tokio::time::Instant::now();
+                let clock_ms = now.duration_since(started).as_millis() as u64;
+                let dt = now.duration_since(last).as_secs_f64().min(1.0);
+                last = now;
                 let mut out = Vec::new();
                 {
                     let mut s = state.lock().await;
-                    physics(&mut s, tick.as_secs_f64());
+                    physics(&mut s, dt);
                     let rate = s.rate;
                     for e in sched.iter_mut() {
                         if clock_ms >= e.next_ms {

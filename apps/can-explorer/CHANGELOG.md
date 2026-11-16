@@ -1,5 +1,16 @@
 # CAN Explorer changelog
 
+## 1.1.1 (2026-11-16)
+
+- **Simulator on SocketCAN (Linux).** The simulator can run on a SocketCAN interface such as `vcan0` instead of the in-app
+  virtual bus (Simulator, Run on), so candump or your own code on the same machine sees its frames too.
+- **Steady simulator rates.** Message times follow the clock. They used to count timer ticks, so a busy machine slowed every
+  message down (0x4A0 every 200 ms instead of 100 ms).
+- **Signals tab and multiplexed messages.** The table keeps the last value of every page of a multiplexed message, so all 64
+  cell voltages of the battery pack show at once instead of the 16 of the latest frame.
+- **CAN FD payloads in the Signals header** are shown 16 bytes a line under the message details instead of in one long badge,
+  and the send editor starts from rounded values (3.917, not 3.9170000000000).
+
 ## 1.1.0 (2026-11-11)
 
 CAN FD, all the way through.

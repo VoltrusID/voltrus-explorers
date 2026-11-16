@@ -108,8 +108,8 @@ async fn replay_stop(core: State<'_>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn sim_start(core: State<'_>) -> Result<(), String> {
-    core.sim_start().await
+async fn sim_start(core: State<'_>, ifname: Option<String>) -> Result<(), String> {
+    core.sim_start(ifname).await
 }
 
 #[tauri::command]

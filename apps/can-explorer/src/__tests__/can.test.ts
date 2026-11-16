@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FREE_PROFILE_LIMIT, IFACE_DEFAULTS, PROFILES_KEY, TX_DEFAULTS, TX_KEY, cansendText, candumpLine, configOf, foldMonitor, frameInOf, frameProblem,
   idText, ifaceProblem, loadProfiles, loadTxList, needsPro, normalizeProfile, parseData, parseFilter, parseId, periodText, pushCapped,
-  saveProfiles, sortMonitor, traceCsv, type MonitorRow, type Profile,
+  saveProfiles, sortMonitor, traceCsv, type MonitorRow, type Profile, mergeLatest,
 } from "../can";
 import type { FrameView } from "../types";
 
@@ -88,6 +88,17 @@ describe("filter", () => {
     expect(hide(f(0x711, undefined, "Heartbeat node 17: operational"))).toBe(false);
     expect(hide(f(0x191))).toBe(true);
     expect(parseFilter("  ")(f(1))).toBe(true);
+  });
+});
+
+describe("signals tab", () => {
+  it("keeps the other pages of a multiplexed message", () => {
+    const p0 = frame(0x4a0, [0], 1, { msg: "BatteryPackFD", sigs: [["CellPage", 0, "", null], ["SOC", 70, "%", null], ["Cell01", 3.9, "V", null]] });
+    const p1 = frame(0x4a0, [1], 2, { msg: "BatteryPackFD", sigs: [["CellPage", 1, "", null], ["SOC", 71, "%", null], ["Cell17", 3.8, "V", null]] });
+    const m = mergeLatest(p0, p1);
+    expect(m.ts).toBe(2);
+    expect(Object.fromEntries(m.sigs!.map(([n, v]) => [n, v]))).toEqual({ CellPage: 1, SOC: 71, Cell17: 3.8, Cell01: 3.9 });
+    expect(mergeLatest(undefined, p1)).toBe(p1);
   });
 });
 

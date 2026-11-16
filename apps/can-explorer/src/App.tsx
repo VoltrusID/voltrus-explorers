@@ -39,7 +39,7 @@ import TraceView from "./TraceView";
 import TransmitView from "./TransmitView";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
 import {
-  BITRATES, DATA_BITRATES, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
+  BITRATES, DATA_BITRATES, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
   pushCapped, rateText, sameIface, saveProfiles, saveTxList, toCandump, traceCsv, type IfaceForm, type MonitorRow, type Profile, type TxItem,
 } from "./can";
 import type { ConnInfo, DbcView, FrameView, GsUsbDevice, Layer, PortInfo, Stats } from "./types";
@@ -79,6 +79,8 @@ function App() {
   const [gsDevices, setGsDevices] = useState<GsUsbDevice[]>([]);
   const [conn, setConn] = useState<ConnInfo | null>(null);
   const [connVirtual, setConnVirtual] = useState(false);
+  /** SocketCAN interface the app is connected to, if any. */
+  const [connIfname, setConnIfname] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
 
@@ -109,6 +111,9 @@ function App() {
 
   // Simulator
   const [simRunning, setSimRunning] = useState(false);
+  /** Where the simulator runs: "" for the virtual bus, else a SocketCAN interface (Linux). */
+  const [simBus, setSimBus] = useState("");
+  const [simOn, setSimOn] = useState("");
 
   // Trend: key `Message.Signal`
   const [trend, setTrend] = useState<Map<string, TrendSeries>>(new Map());
@@ -132,7 +137,7 @@ function App() {
         if (!pausedRef.current) setTrace((prev) => pushCapped(prev, frames, TRACE_MAX));
         setLatest((prev) => {
           let next: Map<string, FrameView> | null = null;
-          for (const f of frames) if (f.msg) { next ??= new Map(prev); next.set(f.msg, f); }
+          for (const f of frames) if (f.msg) { next ??= new Map(prev); next.set(f.msg, mergeLatest(next.get(f.msg), f)); }
           return next ?? prev;
         });
         if (trendRef.current.size > 0) {
@@ -161,6 +166,7 @@ function App() {
       listen<{ state: "closed"; reason: string | null }>("can-conn", (e) => {
         setConn(null);
         setConnVirtual(false);
+    setConnIfname(null);
         setTxRunning(new Set());
         if (e.payload.reason) {
           setError(e.payload.reason);
@@ -226,6 +232,7 @@ function App() {
       clearData();
       setConn(info);
       setConnVirtual(f.kind === "virtual");
+      setConnIfname(f.kind === "socketcan" ? f.ifname.trim() : null);
       setStats(null);
       noteDeviceSuccess();
     } catch (e) {
@@ -241,6 +248,7 @@ function App() {
     try { await invoke("can_disconnect"); } catch { /* not connected */ }
     setConn(null);
     setConnVirtual(false);
+    setConnIfname(null);
     setTxRunning(new Set());
   }, []);
 
@@ -285,8 +293,13 @@ function App() {
   // ── Simulator ──
   const startSim = useCallback(async () => {
     if (!requirePro("The bus simulator")) return false;
-    try { await invoke("sim_start"); setSimRunning(true); return true; } catch (e) { setError(String(e)); return false; }
-  }, [requirePro]);
+    try {
+      await invoke("sim_start", { ifname: simBus || null });
+      setSimOn(simBus);
+      setSimRunning(true);
+      return true;
+    } catch (e) { setError(String(e)); return false; }
+  }, [requirePro, simBus]);
 
   const stopSim = useCallback(async () => {
     await invoke("sim_stop");
@@ -295,7 +308,7 @@ function App() {
 
   const monitorSim = useCallback(async () => {
     if (!simRunning && !(await startSim())) return;
-    const f: IfaceForm = { ...form, kind: "virtual" };
+    const f: IfaceForm = simOn ? { ...form, kind: "socketcan", ifname: simOn } : { ...form, kind: "virtual" };
     setForm(f);
     setActiveProfile(null);
     if (!dbc) await loadSimDbc();
@@ -303,7 +316,7 @@ function App() {
     setMode("bus");
     setTab("monitor");
     await connectWith(f);
-  }, [simRunning, startSim, form, dbc, loadSimDbc, layer, changeLayer, connectWith]);
+  }, [simRunning, startSim, simOn, form, dbc, loadSimDbc, layer, changeLayer, connectWith]);
 
   // ── Trace files ──
   const exportTrace = useCallback(async (kind: "candump" | "csv", frames: FrameView[]) => {
@@ -555,16 +568,25 @@ function App() {
     </>
   );
 
+  const monitoringSim = simOn ? connIfname === simOn : connVirtual;
   const simSidebar = (
     <Section title="Bus simulator" meta={simRunning ? <StatusDot tone="success" label="Running" /> : undefined}>
       <span style={hint}>
-        A diesel genset on the virtual bus: a J1939 engine ECU, a generator controller, a multiplexed pump drive, a CANopen I/O node and OBD-II answers. The made-up
-        signals are described by the simulator's DBC.
+        A diesel genset on the virtual bus: a J1939 engine ECU, a generator controller, a multiplexed pump drive, a CANopen I/O node, OBD-II answers and a CAN FD
+        battery pack. The made-up signals are described by the simulator's DBC.
       </span>
+      {socketcan.length > 0 && (
+        <Field label="Run on">
+          <SheetSelect aria-label="Simulator bus" sheetTitle="Simulator bus" value={simRunning ? simOn : simBus} disabled={simRunning}
+            options={[{ value: "", label: "Virtual bus (in the app)" }, ...socketcan.map((s) => ({ value: s, label: `SocketCAN ${s}` }))]}
+            onChange={(v) => setSimBus(String(v))} />
+        </Field>
+      )}
+      {socketcan.length > 0 && <span style={hint}>On a SocketCAN interface such as vcan0, other programs (candump, your own code) see the simulator too.</span>}
       {simRunning ? (
         <>
-          <Button variant="primary" block icon={<Cable size={14} strokeWidth={1.75} />} disabled={connVirtual} onClick={() => void monitorSim()}>
-            {connVirtual ? "Monitoring the virtual bus" : "Monitor it"}
+          <Button variant="primary" block icon={<Cable size={14} strokeWidth={1.75} />} disabled={monitoringSim} onClick={() => void monitorSim()}>
+            {monitoringSim ? `Monitoring ${simOn ? `SocketCAN ${simOn}` : "the virtual bus"}` : "Monitor it"}
           </Button>
           <Button variant="danger" block icon={<Square size={14} strokeWidth={1.75} />} onClick={() => void stopSim()}>Stop simulator</Button>
         </>
@@ -671,7 +693,7 @@ function App() {
   );
 
   const simMain = simRunning ? (
-    <SimDashboard addLog={addLog} onConnect={() => void monitorSim()} connectedToVirtual={connVirtual} />
+    <SimDashboard addLog={addLog} onConnect={() => void monitorSim()} connectedToVirtual={monitoringSim} busName={simOn ? `SocketCAN ${simOn}` : "the virtual bus"} />
   ) : (
     <EmptyState
       icon={<Cable size={20} strokeWidth={1.75} />}

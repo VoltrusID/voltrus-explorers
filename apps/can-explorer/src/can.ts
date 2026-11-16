@@ -185,6 +185,17 @@ export function traceCsv(frames: FrameView[]): string {
   );
 }
 
+/**
+ * The latest frame of a message for the Signals tab, keeping the last value of multiplexed signals the new frame does not
+ * carry (another page of the same message), so every page shows at once.
+ */
+export function mergeLatest(prev: FrameView | undefined, next: FrameView): FrameView {
+  if (!prev?.sigs || !next.sigs) return next;
+  const have = new Set(next.sigs.map(([n]) => n));
+  const kept = prev.sigs.filter(([n]) => !have.has(n));
+  return kept.length === 0 ? next : { ...next, sigs: [...next.sigs, ...kept] };
+}
+
 export function fmtNum(v: number): string {
   if (!Number.isFinite(v)) return String(v);
   if (Number.isInteger(v)) return String(v);

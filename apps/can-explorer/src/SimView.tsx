@@ -10,6 +10,8 @@ interface Props {
   /** Connect the app to the virtual bus (and load the simulator DBC). */
   onConnect: () => void;
   connectedToVirtual: boolean;
+  /** Where the simulator runs, for the status badge. */
+  busName?: string;
 }
 
 function Gauge({ label, value, unit, digits = 0 }: { label: string; value: number; unit: string; digits?: number }) {
@@ -21,7 +23,7 @@ function Gauge({ label, value, unit, digits = 0 }: { label: string; value: numbe
   );
 }
 
-export default function SimDashboard({ addLog, onConnect, connectedToVirtual }: Props) {
+export default function SimDashboard({ addLog, onConnect, connectedToVirtual, busName = "the virtual bus" }: Props) {
   const [s, setS] = useState<SimState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,7 +58,7 @@ export default function SimDashboard({ addLog, onConnect, connectedToVirtual }: 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, overflow: "auto", flex: 1, minHeight: 0 }}>
       <div style={row}>
-        <Badge tone="success">Running on the virtual bus</Badge>
+        <Badge tone="success">Running on {busName}</Badge>
         <Badge tone={s.running ? "success" : "neutral"}>{s.running ? "Engine running" : "Engine stopped"}</Badge>
         {s.fault && <Badge tone="danger">DM1 fault active</Badge>}
         <span style={hint}>{s.sent.toLocaleString()} frames sent</span>
