@@ -4,7 +4,7 @@ import { FileText, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cansendText, fmtNum, hex, idText } from "./can";
 import type { DbcMessageView, DbcView, FrameView } from "./types";
-import { card, hint, row, th, type AddLog, type RequirePro } from "./ui";
+import { Bytes, card, hint, row, th, type AddLog, type RequirePro } from "./ui";
 
 interface Props {
   dbc: DbcView | null;
@@ -81,7 +81,7 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
 
   // Start the editor from the live values (or the signal minimum).
   useEffect(() => {
-    setDraft(Object.fromEntries(m.signals.map((s) => [s.name, String(values.get(s.name)?.v ?? Math.max(s.min, Math.min(s.max, 0)))])));
+    setDraft(Object.fromEntries(m.signals.map((s) => [s.name, fmtNum(values.get(s.name)?.v ?? Math.max(s.min, Math.min(s.max, 0)))])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.name]);
 
@@ -128,10 +128,13 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
           {m.transmitter && <span style={hint}>from {m.transmitter}</span>}
           <span style={{ flex: 1 }} />
           {frame ? (
-            // CAN FD payloads wrap instead of running off the card.
-            <Badge tone="success" mono style={frame.data.length > 8 ? { whiteSpace: "normal", flexBasis: "100%", lineHeight: 1.5 } : undefined}>{hex(frame.data)}</Badge>
+            frame.data.length > 8 ? <Badge tone="success">on the bus</Badge> : <Badge tone="success" mono>{hex(frame.data)}</Badge>
           ) : <Badge tone="neutral">not seen on the bus</Badge>}
         </div>
+        {/* CAN FD payloads: 16 bytes a line under the header instead of one long badge. */}
+        {frame && frame.data.length > 8 && (
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--accent-text)", lineHeight: 1.6 }}><Bytes data={frame.data} /></div>
+        )}
         {m.comment && <span style={hint}>{m.comment}</span>}
       </div>
       <div style={{ ...card, padding: 0, overflow: "auto" }}>

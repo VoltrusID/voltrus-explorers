@@ -497,11 +497,22 @@ impl Core {
 
     // ── Simulator ──
 
-    pub async fn sim_start(&self) -> Result<(), String> {
+    /// Starts the simulator on the virtual bus, or on a SocketCAN interface (Linux) when `ifname` is given.
+    pub async fn sim_start(&self, ifname: Option<String>) -> Result<(), String> {
         let mut s = self.sim.lock().await;
         if s.is_none() {
-            *s = Some(Simulator::start(&self.vbus));
-            self.log("info", "Simulator started on the virtual bus");
+            match ifname.filter(|n| !n.trim().is_empty()) {
+                None => {
+                    *s = Some(Simulator::start(&self.vbus));
+                    self.log("info", "Simulator started on the virtual bus");
+                }
+                Some(ifname) => {
+                    let cfg = InterfaceConfig::Socketcan { ifname: ifname.trim().to_string() };
+                    let handle = mt_can::open(&cfg, &self.vbus).await.map_err(es)?;
+                    *s = Some(Simulator::start_on(handle));
+                    self.log("info", format!("Simulator started on SocketCAN {}", ifname.trim()));
+                }
+            }
         }
         Ok(())
     }
@@ -616,7 +627,7 @@ mod tests {
     async fn virtual_bus_with_simulator_and_dbc() {
         let (emit, got) = sink();
         let core = Core::new(emit);
-        core.sim_start().await.unwrap();
+        core.sim_start(None).await.unwrap();
         let info = core.connect(InterfaceConfig::Virtual).await.unwrap();
         assert!(info.can_send);
         core.dbc_load_sim().await.unwrap();
