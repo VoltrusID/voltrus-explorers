@@ -225,6 +225,10 @@ pub fn entitlement(
     }
 }
 
+/// Event carrying a [`StoreStatus`] that changed without the frontend asking: the background licence check of a launch
+/// found the saved key refused (`keys` and `license` builds).
+pub const STATUS_EVENT: &str = "store-status";
+
 /// Registers the store configuration (the StoreKit plugin in store builds, the licence client in licence builds).
 pub fn setup<R: tauri::Runtime>(builder: tauri::Builder<R>, config_json: &str) -> tauri::Builder<R> {
     let config: StoreConfig = serde_json::from_str(config_json).expect("invalid store.json");
@@ -284,7 +288,7 @@ mod commands {
     use super::{ProReason, StoreStatus, key};
     use key::KeyConfig;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use tauri::{AppHandle, State};
+    use tauri::{AppHandle, Emitter, Manager, State};
 
     fn status(app: &AppHandle, cfg: &KeyConfig) -> Result<StoreStatus, String> {
         let activation = key::read_activation(&key::license_dir(app)?);
@@ -301,9 +305,11 @@ mod commands {
         })
     }
 
-    /// First status of a launch: ask the server whether this PC still holds the licence. A definitive "no" (the
-    /// licence was moved to another device, refunded or expired) removes the stored activation, so Pro locks
-    /// again. Offline or any other non-answer changes nothing, which keeps the app usable without internet.
+    /// First status of a launch: answer from the stored activation at once, and ask the server in the background
+    /// whether this PC still holds the licence. A definitive "no" (the licence was moved to another device, refunded
+    /// or expired) removes the stored activation, so Pro locks again, and the new status goes out as the
+    /// `store-status` event. Offline or any other non-answer changes nothing, which keeps the app usable without
+    /// internet.
     static CHECKED: AtomicBool = AtomicBool::new(false);
 
     #[tauri::command]
@@ -311,9 +317,24 @@ mod commands {
         let dir = key::license_dir(&app)?;
         if !CHECKED.swap(true, Ordering::Relaxed) {
             if let Some(activation) = key::read_activation(&dir) {
-                if let key::Standing::Gone(_) = key::validate(&cfg, &activation, &app.package_info().version.to_string()).await {
-                    key::remove_activation(&dir)?;
-                }
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let cfg = handle.state::<KeyConfig>();
+                    let version = handle.package_info().version.to_string();
+                    if let key::Standing::Gone(_) = key::validate(&cfg, &activation, &version).await {
+                        // A key activated while the server was asked is a different activation: keep it.
+                        if key::read_activation(&dir).as_ref() != Some(&activation) {
+                            return;
+                        }
+                        if let Err(e) = key::remove_activation(&dir) {
+                            eprintln!("licence: {e}");
+                            return;
+                        }
+                        if let Ok(s) = status(&handle, &cfg) {
+                            let _ = handle.emit(super::STATUS_EVENT, s);
+                        }
+                    }
+                });
             }
         }
         status(&app, &cfg)
@@ -442,7 +463,7 @@ mod commands {
 mod commands {
     use super::license::{Entitlement, Slot};
     use super::{ProReason, StoreStatus};
-    use tauri::{AppHandle, State};
+    use tauri::{AppHandle, Emitter, Manager, State};
 
     /// A licence-key DMG is not an App Store build (`store: false`: no sandbox, so the virtual port and the source
     /// link stay), but the frontend gets the same key flow as the Windows build: `activation` and `buy_url`.
@@ -457,9 +478,19 @@ mod commands {
         }
     }
 
+    /// Answers from the saved key at once and checks it with the server in the background (once per launch). When
+    /// the server refuses it, the new status goes out as the `store-status` event.
     #[tauri::command]
     pub async fn store_status(app: AppHandle, slot: State<'_, Slot>) -> Result<StoreStatus, String> {
         let e = slot.licence(&app).await?.status().await;
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let slot = handle.state::<Slot>();
+            let Ok(licence) = slot.licence(&handle).await else { return };
+            if let Some(e) = licence.revalidate().await {
+                let _ = handle.emit(super::STATUS_EVENT, status_of(&slot, e));
+            }
+        });
         Ok(status_of(&slot, e))
     }
 

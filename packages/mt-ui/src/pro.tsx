@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Check, ExternalLink, KeyRound, Sparkles } from "lucide-react";
 import { openExternal } from "./links";
 import { Badge, Button, Callout, Dialog, Field } from "./primitives";
@@ -18,7 +19,7 @@ export interface StoreStatus {
 }
 
 interface ProContextValue {
-  /** `null` until the first status arrives; Pro features stay locked meanwhile. */
+  /** The last status this device had until the backend answers (`null` on a first launch: Pro stays locked meanwhile). */
   status: StoreStatus | null;
   pro: boolean;
   /** True when Pro is unlocked; otherwise opens the upsell for `feature` and returns false. */
@@ -29,6 +30,37 @@ interface ProContextValue {
 }
 
 const ProContext = createContext<ProContextValue | null>(null);
+
+/** Event the backend sends when the status changes on its own (mt-store `STATUS_EVENT`). */
+const STATUS_EVENT = "store-status";
+const CACHE_KEY = "mt-store-status";
+
+function isStatus(v: unknown): v is StoreStatus {
+  if (!v || typeof v !== "object") return false;
+  const s = v as Record<string, unknown>;
+  return typeof s.store === "boolean" && typeof s.pro === "boolean" && typeof s.reason === "string";
+}
+
+/**
+ * The last status the backend gave, so the first frames of a launch show what this device had (a licensed user does not
+ * see Pro locked while the backend answers). The backend's answer replaces it a moment later.
+ */
+export function readCachedStatus(storage: Pick<Storage, "getItem"> | undefined = globalThis.localStorage): StoreStatus | null {
+  try {
+    const v: unknown = JSON.parse(storage?.getItem(CACHE_KEY) ?? "null");
+    return isStatus(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeCachedStatus(status: StoreStatus, storage: Pick<Storage, "setItem"> | undefined = globalThis.localStorage) {
+  try {
+    storage?.setItem(CACHE_KEY, JSON.stringify(status));
+  } catch {
+    // Storage full or unavailable: the next launch just waits for the backend.
+  }
+}
 
 export function useProStatus(): ProContextValue {
   const ctx = useContext(ProContext);
@@ -44,7 +76,11 @@ export interface ProProviderProps {
 }
 
 export function ProProvider({ appName, features, children }: ProProviderProps) {
-  const [status, setStatus] = useState<StoreStatus | null>(null);
+  const [status, setStatusState] = useState<StoreStatus | null>(readCachedStatus);
+  const setStatus = useCallback((next: StoreStatus) => {
+    setStatusState(next);
+    writeCachedStatus(next);
+  }, []);
   const [upsell, setUpsell] = useState<{ feature?: string } | null>(null);
   const [busy, setBusy] = useState<"purchase" | "restore" | "activate" | null>(null);
   const [keyInput, setKeyInput] = useState("");
@@ -53,14 +89,28 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
   const device = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent) ? "Mac" : "PC";
 
   useEffect(() => {
-    invoke<StoreStatus>("store_status")
-      .then(setStatus)
+    let live = true;
+    let unlisten: (() => void) | null = null;
+    // The status answers from the stored activation without waiting for the licence server; the server check of a
+    // launch runs in the background and sends `store-status` only if it took Pro away. Listen first, so that event
+    // cannot come before the listener.
+    listen<StoreStatus>(STATUS_EVENT, (e) => { if (live) setStatus(e.payload); })
+      .then((un) => { if (live) unlisten = un; else un(); })
+      .catch(() => { /* no event bridge (tests, a browser preview) */ })
+      .then(() => invoke<StoreStatus>("store_status"))
+      .then((s) => { if (live) setStatus(s); })
       .catch((e) => {
-        // Store build whose StoreKit query failed: stay on the free tier; purchase/restore still work.
-        setStatus({ store: true, pro: false, reason: "none", price: null });
+        if (!live) return;
         setError(String(e));
+        // Keep a status this device already had (the last answer is the offline truth); without one, stay on the
+        // free tier (store build whose StoreKit query failed: purchase/restore still work).
+        setStatusState((prev) => prev ?? { store: true, pro: false, reason: "none", price: null });
       });
-  }, []);
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, [setStatus]);
   const pro = status?.pro ?? false;
 
   const openUpsell = useCallback((feature?: string) => {
@@ -124,7 +174,7 @@ export function ProProvider({ appName, features, children }: ProProviderProps) {
 
   const value = useMemo(
     () => ({ status, pro, requirePro, openUpsell, applyStatus: setStatus }),
-    [status, pro, requirePro, openUpsell],
+    [status, pro, requirePro, openUpsell, setStatus],
   );
 
   return (

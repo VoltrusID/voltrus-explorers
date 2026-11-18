@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Callout, Field, IconButton, ProBadge } from "@mactools/ui";
 import { Play, Plus, Send, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { frameInOf, type TxItem } from "./can";
+import { countProblem, cyclicText, defaultRtrLen, frameInOf, periodProblem, type TxItem } from "./can";
 import { card, hint, row, type AddLog, type RequirePro } from "./ui";
 
 interface Props {
@@ -38,10 +38,12 @@ export default function TransmitView({ pro, items, setItems, running, setRunning
     setError(null);
     const f = frameInOf(t);
     if (typeof f === "string") { setError(`${t.name || t.id}: ${f}`); return; }
+    const problem = periodProblem(t.periodMs) ?? countProblem(t.count);
+    if (problem) { setError(`${t.name || t.id}: ${problem}`); return; }
     try {
-      await invoke("can_periodic_start", { key: t.key, frame: f, periodMs: Math.max(1, Math.round(t.periodMs)), count: null });
+      await invoke("can_periodic_start", { key: t.key, frame: f, periodMs: t.periodMs, count: t.count ? t.count : null });
       setRunning((prev) => new Set(prev).add(t.key));
-      addLog("info", `Sending ${t.id} every ${t.periodMs} ms`);
+      addLog("info", `Sending ${t.id} ${cyclicText(t)}`);
     } catch (e) {
       setError(String(e));
     }
@@ -108,6 +110,7 @@ export default function TransmitView({ pro, items, setItems, running, setRunning
                 <th>Data (hex)</th>
                 <th style={{ width: 120 }}>Flags</th>
                 <th style={{ width: 96 }}>Period (ms)</th>
+                <th style={{ width: 96 }} title="Cyclic sending stops after this many frames; empty sends until stopped.">Count</th>
                 <th style={{ width: 200 }} />
               </tr>
             </thead>
@@ -115,33 +118,93 @@ export default function TransmitView({ pro, items, setItems, running, setRunning
               {items.map((t) => {
                 const on = running.has(t.key);
                 const problem = frameInOf(t);
+                const cyclicProblem = periodProblem(t.periodMs) ?? countProblem(t.count);
                 return (
                   <tr key={t.key}>
                     <td><input className="vt-input" aria-label="Name" value={t.name} placeholder="Name" onChange={(e) => update(t.key, { name: e.target.value })} disabled={on} /></td>
                     <td><input className="vt-input vt-input--mono" aria-label="Identifier" value={t.id} onChange={(e) => update(t.key, { id: e.target.value })} disabled={on} /></td>
                     <td>
-                      <input className="vt-input vt-input--mono" aria-label="Data" value={t.data} disabled={on || t.rtr} onChange={(e) => update(t.key, { data: e.target.value })} />
+                      {t.rtr ? (
+                        <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-xs)" }}>
+                          DLC
+                          <input
+                            className="vt-input vt-input--mono"
+                            type="number"
+                            min={0}
+                            max={8}
+                            aria-label="Data length code of the remote frame"
+                            value={t.rtrLen ?? defaultRtrLen(t.data)}
+                            disabled={on}
+                            onChange={(e) => update(t.key, { rtrLen: e.target.value === "" ? 0 : Number(e.target.value) })}
+                            style={{ width: 64 }}
+                          />
+                        </label>
+                      ) : (
+                        <input className="vt-input vt-input--mono" aria-label="Data" value={t.data} disabled={on} onChange={(e) => update(t.key, { data: e.target.value })} />
+                      )}
                       {typeof problem === "string" && <div style={{ ...hint, color: "var(--danger-text, var(--danger))" }}>{problem}</div>}
                     </td>
                     <td style={{ fontSize: "var(--fs-xs)" }}>
                       <label style={{ marginRight: 6 }}><input type="checkbox" checked={t.fd} disabled={on} onChange={(e) => update(t.key, { fd: e.target.checked, brs: e.target.checked && t.brs, rtr: false })} /> FD</label>
                       <label style={{ marginRight: 6 }}><input type="checkbox" checked={t.brs} disabled={on || !t.fd} onChange={(e) => update(t.key, { brs: e.target.checked })} /> BRS</label>
-                      <label><input type="checkbox" checked={t.rtr} disabled={on || t.fd} onChange={(e) => update(t.key, { rtr: e.target.checked })} /> RTR</label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={t.rtr}
+                          disabled={on || t.fd}
+                          onChange={(e) => update(t.key, e.target.checked ? { rtr: true, rtrLen: t.rtrLen ?? defaultRtrLen(t.data) } : { rtr: false })}
+                        /> RTR
+                      </label>
                     </td>
-                    <td><input className="vt-input vt-input--mono" type="number" min={1} aria-label="Period in milliseconds" value={t.periodMs} disabled={on} onChange={(e) => update(t.key, { periodMs: Number(e.target.value) })} /></td>
+                    <td>
+                      <input
+                        className="vt-input vt-input--mono"
+                        type="number"
+                        min={1}
+                        step={1}
+                        aria-label="Period in milliseconds"
+                        aria-invalid={periodProblem(t.periodMs) ? true : undefined}
+                        value={Number.isFinite(t.periodMs) ? t.periodMs : ""}
+                        disabled={on}
+                        onChange={(e) => update(t.key, { periodMs: e.target.value === "" ? Number.NaN : Number(e.target.value) })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        className="vt-input vt-input--mono"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="∞"
+                        aria-label="Frames to send, empty for until stopped"
+                        aria-invalid={countProblem(t.count) ? true : undefined}
+                        value={t.count ? t.count : ""}
+                        disabled={on}
+                        onChange={(e) => update(t.key, { count: e.target.value === "" ? undefined : Number(e.target.value) })}
+                      />
+                    </td>
                     <td>
                       <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
                         <Button size="sm" icon={<Send size={13} strokeWidth={1.75} />} disabled={!canSend || typeof problem === "string"} onClick={() => void sendOnce(t)}>Send</Button>
                         {on ? (
                           <Button size="sm" variant="danger" icon={<Square size={13} strokeWidth={1.75} />} onClick={() => void stop(t.key)}>Stop</Button>
                         ) : (
-                          <Button size="sm" icon={<Play size={13} strokeWidth={1.75} />} disabled={!canSend || typeof problem === "string"} onClick={() => void start(t)}>Cyclic</Button>
+                          <Button
+                            size="sm"
+                            icon={<Play size={13} strokeWidth={1.75} />}
+                            disabled={!canSend || typeof problem === "string" || cyclicProblem !== null}
+                            title={cyclicProblem ?? undefined}
+                            onClick={() => void start(t)}
+                          >
+                            Cyclic
+                          </Button>
                         )}
                         <IconButton label="Remove" disabled={on} onClick={() => setItems(items.filter((x) => x.key !== t.key))}>
                           <Trash2 size={14} strokeWidth={1.75} />
                         </IconButton>
                       </div>
-                      {on && <Badge tone="success">every {t.periodMs} ms</Badge>}
+                      {on && <Badge tone="success">{cyclicText(t)}</Badge>}
+                      {!on && cyclicProblem && <div role="alert" style={{ ...hint, color: "var(--danger-text, var(--danger))" }}>{cyclicProblem}</div>}
                     </td>
                   </tr>
                 );
