@@ -15,7 +15,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 mt-import = { path = "../mt-import" }
-mt-plc-runtime = { path = "../mt-plc-runtime" }
+mt-plc-runtime = { path = "../mt-plc-runtime", default-features = false }
 mt-plc-types = { path = "../mt-plc-types" }
 mt-stc = { path = "../mt-stc" }
 serde = { workspace = true }
