@@ -65,7 +65,8 @@ function importedRows(ids: TraceIdView[]): Map<string, MonitorRow> {
     const key = keyOf(f.id, f.ext) + (f.dir === "tx" ? ":tx" : "");
     rows.set(key, {
       key, id: f.id, ext: f.ext, dir: f.dir, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, dlc: f.dlc, count: r.count, firstTs: r.firstTs, lastTs: f.ts,
-      periodMs: r.periodMs, data: f.data, changedAt: r.changedAt, msg: f.msg, sigs: f.sigs, label: f.label,
+      periodMs: r.periodMs, data: f.data, changedAt: r.changedAt, lastChange: Math.max(r.firstTs, ...r.changedAt), winTs: f.ts, winN: 0,
+      msg: f.msg, sigs: f.sigs, label: f.label,
     });
   }
   return rows;
