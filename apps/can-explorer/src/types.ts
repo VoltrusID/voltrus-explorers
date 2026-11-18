@@ -28,6 +28,14 @@ export interface Stats {
   rxPerSec: number;
   txPerSec: number;
   load: number | null;
+  /** Controller error state and counters, once the adapter has reported them. */
+  busState?: BusStatus | null;
+}
+
+export interface BusStatus {
+  state: "error-active" | "error-warning" | "error-passive" | "bus-off";
+  txErrors: number | null;
+  rxErrors: number | null;
 }
 
 export interface ConnInfo {
@@ -144,4 +152,35 @@ export interface FrameIn {
 export interface ReplayInfo {
   frames: number;
   durationS: number;
+  /** What was skipped or made up while reading the log. */
+  notes?: string[];
+}
+
+/** A trace file opened in the backend (`trace_open`); its frames come a page at a time (`trace_page`). */
+export interface TraceInfo {
+  name: string;
+  frames: number;
+  format: string;
+  firstTs: number;
+  lastTs: number;
+  notes: string[];
+}
+
+/** One identifier of an opened trace (`trace_ids`), for the Monitor. */
+export interface TraceIdView {
+  last: FrameView;
+  count: number;
+  firstTs: number;
+  periodMs: number | null;
+  changedAt: number[];
+}
+
+/** `can-record`: a recording ended. */
+export interface RecordEvent {
+  state: "stopped";
+  path: string;
+  frames: number;
+  /** "stopped" (asked), "disconnected", "closed" (the bus went away), "error", "restarted". */
+  reason: string | null;
+  error: string | null;
 }

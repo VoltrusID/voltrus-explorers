@@ -1,7 +1,7 @@
 #!/bin/bash
 # Publish the notarized Developer ID DMG of a direct-download app to its download worker: R2 bucket + D1 releases.
 #
-#   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text"] [--dry-run]
+#   scripts/publish-direct.sh <app> <version> [--run <run-id> | <path-to.dmg>] [--notes "text" | --notes-file f] [--dry-run]
 #
 # <app> is serial-monitor, ble-inspector, cnc-explorer, secsgem-explorer, can-explorer, logic-analyzer, mc-fins-explorer, ethercat-explorer, mqtt-explorer, nats-explorer, opcua-explorer, s7-explorer or voltrus-tools: they are not on GitHub Releases or the App Store; the console
 # (console.voltrus.id) and voltrus.id link https://dl-<app>.voltrus.id/latest, which this script feeds.
@@ -15,12 +15,16 @@
 # the legacy MacTools release.sh: the DMG lands in the app's R2 bucket under its file name, `releases` gets the
 # version row (appcast), and `release_files` gets darwin-aarch64 and darwin-x86_64 rows (the DMG is universal),
 # which is what /latest and /downloads of the worker serve. Publishing a version again replaces its rows.
+# Apps that update themselves (src-tauri/tauri.updater.conf.json, docs/updates.md) also get their signed update package
+# (<Name>-<version>-universal.app.tar.gz + .sig, next to the DMG) uploaded and recorded as darwin-aarch64-update and
+# darwin-x86_64-update rows with the signature, which the worker's /update/darwin/<arch>/<version> feed serves; the
+# script refuses to publish such an app without it. The release notes (--notes) are what the app shows as "What's new".
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="${REPO:-VoltrusID/voltrus-explorers}"
 ACCOUNT_ID="b7e6f8457bd39fa37a7eea5249799754"
-usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1; }
+usage() { sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1; }
 
 APP="${1:-}"; VERSION="${2:-}"
 [[ -n "$APP" && -n "$VERSION" ]] || usage
@@ -30,6 +34,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --run)     RUN="${2:?--run needs a run id}"; shift 2 ;;
     --notes)   NOTES="${2:?--notes needs text}"; shift 2 ;;
+    --notes-file) NOTES="$(cat "${2:?--notes-file needs a file}")"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -*)        echo "unknown option: $1" >&2; usage ;;
     *)         [[ -z "$SRC" ]] || usage; SRC="$1"; shift ;;
@@ -127,6 +132,25 @@ KEY="$(basename "$SRC")"; KEY="${KEY// /_}"
 # The worker ignores files whose name does not match this (guards against another product's file in its bucket).
 echo "$KEY" | grep -qiE "$NAME_RE" || { echo "file name $KEY must contain '$NAME_RE' or the worker will not serve it" >&2; exit 1; }
 SIZE="$(stat -f%z "$SRC" 2>/dev/null || stat -c%s "$SRC")"
+size_of() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+
+# ---- update package (apps that update themselves) -------------------------------------------------------------
+UPD=""; UKEY=""; USIG=""; USIZE=0
+if [[ -f "$ROOT/apps/$APP/src-tauri/tauri.updater.conf.json" ]]; then
+  UPD="${SRC%.dmg}.app.tar.gz"
+  [[ -f "$UPD" && -s "$UPD.sig" ]] || { echo "$PRODUCT updates itself, but $(basename "$UPD") and its .sig are not next to the DMG (build with release.yml, which signs it)" >&2; exit 1; }
+  UKEY="$(basename "$UPD")"; UKEY="${UKEY// /_}"
+  [[ "$UKEY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "unexpected characters in file name $UKEY" >&2; exit 1; }
+  USIG="$(tr -d '\n' < "$UPD.sig")"
+  [[ "$USIG" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo "$UPD.sig is not a base64 minisign signature" >&2; exit 1; }
+  USIZE="$(size_of "$UPD")"
+  if [[ "$(uname)" == Darwin ]]; then
+    step "checking the app inside the update package"
+    mkdir -p "$TMP/upd" && tar -xzf "$UPD" -C "$TMP/upd"
+    xcrun stapler validate "$TMP/upd/"*.app
+    spctl --assess --type execute --verbose=2 "$TMP/upd/"*.app
+  fi
+fi
 
 if [[ "$(uname)" == Darwin ]]; then
   step "checking notarization"
@@ -185,10 +209,19 @@ DELETE FROM release_files WHERE version = $BUILD AND platform IN ('darwin-aarch6
 INSERT INTO release_files (version, platform, filename, r2_key, size) VALUES ($BUILD, 'darwin-aarch64', '$(esc "$KEY")', '$(esc "$KEY")', $SIZE);
 INSERT INTO release_files (version, platform, filename, r2_key, size) VALUES ($BUILD, 'darwin-x86_64', '$(esc "$KEY")', '$(esc "$KEY")', $SIZE);
 EOF
+if [[ -n "$UPD" ]]; then
+  # One universal package for both architectures, like the DMG.
+  cat >> "$SQL" <<EOF
+DELETE FROM release_files WHERE version = $BUILD AND platform IN ('darwin-aarch64-update', 'darwin-x86_64-update');
+INSERT INTO release_files (version, platform, filename, r2_key, size, signature) VALUES ($BUILD, 'darwin-aarch64-update', '$(esc "$UKEY")', '$(esc "$UKEY")', $USIZE, '$USIG');
+INSERT INTO release_files (version, platform, filename, r2_key, size, signature) VALUES ($BUILD, 'darwin-x86_64-update', '$(esc "$UKEY")', '$(esc "$UKEY")', $USIZE, '$USIG');
+EOF
+fi
 
 if (( DRY )); then
   echo "dry run: $PRODUCT $VERSION, $SRC ($SIZE bytes)"
   echo "+ wrangler r2 object put $BUCKET/$KEY --file $SRC --content-type application/x-apple-diskimage --remote"
+  [[ -z "$UPD" ]] || echo "+ wrangler r2 object put $BUCKET/$UKEY --file $UPD --content-type application/gzip --remote"
   echo "+ wrangler d1 execute $DB --remote --file publish.sql:"
   cat "$SQL"
   exit 0
@@ -196,6 +229,10 @@ fi
 
 step "uploading $KEY to R2 bucket $BUCKET"
 wr r2 object put "$BUCKET/$KEY" --file "$SRC" --content-type application/x-apple-diskimage --remote
+if [[ -n "$UPD" ]]; then
+  step "uploading $UKEY to R2 bucket $BUCKET"
+  wr r2 object put "$BUCKET/$UKEY" --file "$UPD" --content-type application/gzip --remote
+fi
 
 step "recording $PRODUCT $VERSION (build $BUILD) in D1 $DB"
 wr d1 execute "$DB" --remote --file "$SQL"
@@ -207,5 +244,20 @@ echo "    /latest -> ${LOCATION:-(no redirect)}"
 if [[ "$LOCATION" != "$URL" ]]; then
   echo "!! /latest does not point at the new file yet; compare with a newer semver already in the bucket, or the worker may be cached" >&2
   exit 1
+fi
+if [[ -n "$UPD" ]]; then
+  step "checking the update feed"
+  for arch in aarch64 x86_64; do
+    FEED="$(curl -s "$BASE/update/darwin/$arch/0.0.0")"
+    echo "$FEED" | python3 -c '
+import json, sys
+f = json.load(sys.stdin)
+want_version, want_url, want_sig = sys.argv[1:4]
+assert f.get("version") == want_version, ("feed offers", f.get("version"), "expected", want_version)
+assert f.get("url") == want_url, ("feed url", f.get("url"), "expected", want_url)
+assert f.get("signature") == want_sig, "feed signature differs from the .sig"
+' "$VERSION" "$BASE/releases/$UKEY" "$USIG" || { echo "!! /update/darwin/$arch does not offer $UKEY yet" >&2; exit 1; }
+    echo "    /update/darwin/$arch -> $VERSION ($UKEY)"
+  done
 fi
 echo "published: $BASE/latest -> $KEY"

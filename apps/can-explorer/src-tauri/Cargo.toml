@@ -12,6 +12,11 @@ name = "can_explorer_lib"
 store = ["mt-store/store"]
 # Direct-download build (console + landing page): Pro is sold by licence key. Exclusive with `store`.
 license = ["mt-store/license"]
+# In-app updates of the direct-download DMG (signed feed on dl-can-explorer.voltrus.id, see crates/mt-update).
+# build-macos.sh turns it on for `dmg` builds of apps that have src-tauri/tauri.updater.conf.json. Never with `store`.
+updater = ["mt-update/updater"]
+# Test builds of the updater only (scripts/test-updater-mac.sh); never in a release.
+updater-selftest = ["updater", "mt-update/selftest"]
 
 [build-dependencies]
 tauri-build = { workspace = true }
@@ -19,6 +24,7 @@ tauri-build = { workspace = true }
 [dependencies]
 mt-can = { path = "../../../crates/mt-can" }
 mt-store = { path = "../../../crates/mt-store" }
+mt-update = { path = "../../../crates/mt-update" }
 tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-fs = { workspace = true }

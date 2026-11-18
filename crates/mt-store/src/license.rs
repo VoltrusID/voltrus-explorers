@@ -12,7 +12,8 @@
 //!
 //! The key, its activation id and the device id live in the macOS Keychain (the app's own generic-password
 //! items, sandbox-safe) or, on other platforms, in files under the app data directory. The key is validated
-//! once per launch. Only an explicit `{ "valid": false }` takes Pro away: an unreachable server, a 5xx or
+//! once per launch, in the background: the status answers from the saved key at once, so a licensed user never sees
+//! Pro locked while the server is asked. Only an explicit `{ "valid": false }` takes Pro away: an unreachable server, a 5xx or
 //! an answer that is not the worker's JSON keeps Pro, so a licensed user is never locked out offline.
 
 use std::path::PathBuf;
@@ -140,7 +141,7 @@ pub fn platform_secrets(service: &str, data_dir: PathBuf) -> Box<dyn Secrets> {
 // ---- licence client -------------------------------------------------------------------------------------------
 
 /// What is saved after a successful activation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Saved {
     key: String,
     activation_id: String,
@@ -148,8 +149,10 @@ struct Saved {
 
 #[derive(Default)]
 struct State {
-    /// The saved key has been validated (or found absent) in this process.
+    /// The saved key has been read (or found absent) in this process.
     checked: bool,
+    /// The launch check with the server has started (it runs once per process, see [`Licence::revalidate`]).
+    revalidating: bool,
     saved: Option<Saved>,
 }
 
@@ -197,17 +200,14 @@ impl Licence {
         }
     }
 
-    /// Current entitlement. The first call of a process validates the saved key with the server; later calls
-    /// answer from memory.
+    /// Current entitlement, from the saved activation: it never waits for the network, so a licensed user sees Pro
+    /// from the first frame. The server check of a launch is [`Licence::revalidate`], run in the background.
     pub async fn status(&self) -> Entitlement {
         let mut state = self.state.lock().await;
         if !state.checked {
             match self.load() {
                 Ok(saved) => {
-                    state.saved = match saved {
-                        Some(saved) => self.revalidate(saved).await,
-                        None => None,
-                    };
+                    state.saved = saved;
                     state.checked = true;
                 }
                 // Keychain unavailable: free tier for now, asked again next time.
@@ -215,6 +215,33 @@ impl Licence {
             }
         }
         entitlement(&state)
+    }
+
+    /// The launch check: asks the server whether the saved key is still good, once per process. Only an explicit
+    /// refusal removes the key (and Pro); offline or server trouble keeps it. Returns the new entitlement when it
+    /// changed, `None` otherwise (also when there is nothing to check or the check already ran). The lock is not held
+    /// across the request, and a key activated or removed meanwhile is left alone.
+    pub async fn revalidate(&self) -> Option<Entitlement> {
+        let saved = {
+            let mut state = self.state.lock().await;
+            if !state.checked || state.revalidating {
+                return None;
+            }
+            state.revalidating = true;
+            state.saved.clone()?
+        };
+        if self.still_valid(&saved).await {
+            return None;
+        }
+        let mut state = self.state.lock().await;
+        if state.saved.as_ref() != Some(&saved) {
+            return None;
+        }
+        if let Err(e) = self.secrets.delete(KEY_ITEM) {
+            eprintln!("licence: {e}");
+        }
+        state.saved = None;
+        Some(entitlement(&state))
     }
 
     /// Activates `key` on this device and saves it. With `relocate` the licence is moved here: the server
@@ -233,6 +260,8 @@ impl Licence {
                 self.store(&saved)?;
                 state.saved = Some(saved);
                 state.checked = true;
+                // The server just confirmed this key: no launch check for it.
+                state.revalidating = true;
                 Ok(entitlement(&state))
             }
             Answer::Valid(None) => Err("The licence server sent an incomplete answer. Try again.".into()),
@@ -262,8 +291,8 @@ impl Licence {
         Ok(entitlement(&state))
     }
 
-    /// Validates a saved key. Returns it while the server accepts it or cannot be asked; `None` once refused.
-    async fn revalidate(&self, saved: Saved) -> Option<Saved> {
+    /// Asks the server about a saved key: true while it accepts it or cannot be asked, false once refused.
+    async fn still_valid(&self, saved: &Saved) -> bool {
         let device_id = self.device_id().unwrap_or_default();
         let body = json!({
             "key": saved.key,
@@ -272,15 +301,7 @@ impl Licence {
             "app_version": self.app_version,
             "platform": platform(),
         });
-        match self.ask("/license/validate", &body).await {
-            Answer::Valid(_) | Answer::Unreachable => Some(saved),
-            Answer::Invalid(_) => {
-                if let Err(e) = self.secrets.delete(KEY_ITEM) {
-                    eprintln!("licence: {e}");
-                }
-                None
-            }
-        }
+        !matches!(self.ask("/license/validate", &body).await, Answer::Invalid(_))
     }
 
     async fn ask(&self, path: &str, body: &Value) -> Answer {
@@ -502,6 +523,8 @@ mod tests {
         // A fresh process finds the key in the secret store.
         let relaunched = client(&server.base, &secrets);
         assert!(relaunched.status().await.pro);
+        assert_eq!(server.count("/license/validate"), 0, "the status does not wait for the server");
+        assert_eq!(relaunched.revalidate().await, None);
         assert_eq!(server.count("/license/validate"), 1);
     }
 
@@ -602,13 +625,30 @@ mod tests {
         with_saved_key(&secrets);
         let licence = client(&server.base, &secrets);
         assert!(licence.status().await.pro);
+        assert_eq!(licence.revalidate().await, None, "nothing changed");
         let body = server.last_body();
         assert_eq!(body["key"], "VLT-AAAAA-BBBBB-CCCCC");
         assert_eq!(body["activation_id"], "act-1");
         assert_eq!(body["device_id"], "device-1");
         // Validated once per process.
+        assert_eq!(licence.revalidate().await, None);
         assert!(licence.status().await.pro);
         assert_eq!(server.count("/license/validate"), 1);
+    }
+
+    #[tokio::test]
+    async fn status_answers_from_the_saved_key_without_asking_the_server() {
+        let server = MockServer::start(|_| (200, r#"{"valid":false,"error":"License key is revoked"}"#.into())).await;
+        let secrets = MemorySecrets::default();
+        with_saved_key(&secrets);
+        let licence = client(&server.base, &secrets);
+        assert!(licence.status().await.pro, "Pro shows at once for a saved activation");
+        assert!(licence.status().await.pro);
+        assert!(server.requests.lock().unwrap().is_empty(), "the server is only asked by the background check");
+        // Before the first status, the check has nothing to compare against and does nothing.
+        let fresh = client(&server.base, &secrets);
+        assert_eq!(fresh.revalidate().await, None);
+        assert!(server.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -617,16 +657,36 @@ mod tests {
         let secrets = MemorySecrets::default();
         with_saved_key(&secrets);
         let licence = client(&server.base, &secrets);
+        assert!(licence.status().await.pro);
+        assert_eq!(licence.revalidate().await, Some(Entitlement { pro: false }));
         assert!(!licence.status().await.pro);
         assert!(secrets.get(KEY_ITEM).unwrap().is_none());
         assert!(!client(&server.base, &secrets).status().await.pro, "stays dropped after a relaunch");
     }
 
     #[tokio::test]
+    async fn a_key_activated_in_this_process_is_not_checked_again() {
+        let server = MockServer::start(|r| {
+            if r.path == "/license/validate" { (200, r#"{"valid":false,"error":"License key is revoked"}"#.into()) } else { ok_activation(r) }
+        })
+        .await;
+        let secrets = MemorySecrets::default();
+        let licence = client(&server.base, &secrets);
+        assert!(!licence.status().await.pro);
+        licence.activate("K", false).await.unwrap();
+        assert_eq!(licence.revalidate().await, None);
+        assert_eq!(server.count("/license/validate"), 0);
+        assert!(licence.status().await.pro);
+    }
+
+    #[tokio::test]
     async fn network_failure_keeps_pro() {
         let secrets = MemorySecrets::default();
         with_saved_key(&secrets);
-        assert!(client(DEAD, &secrets).status().await.pro);
+        let licence = client(DEAD, &secrets);
+        assert!(licence.status().await.pro);
+        assert_eq!(licence.revalidate().await, None);
+        assert!(licence.status().await.pro);
         assert!(secrets.get(KEY_ITEM).unwrap().is_some(), "the key survives for the next launch");
     }
 
@@ -636,7 +696,10 @@ mod tests {
             let server = MockServer::start(move |_| (status, body.into())).await;
             let secrets = MemorySecrets::default();
             with_saved_key(&secrets);
-            assert!(client(&server.base, &secrets).status().await.pro, "{status} {body}");
+            let licence = client(&server.base, &secrets);
+            assert!(licence.status().await.pro, "{status} {body}");
+            assert_eq!(licence.revalidate().await, None, "{status} {body}");
+            assert!(licence.status().await.pro, "{status} {body}");
             assert!(secrets.get(KEY_ITEM).unwrap().is_some());
         }
     }
@@ -646,6 +709,7 @@ mod tests {
         let server = MockServer::start(ok_activation).await;
         let licence = client(&server.base, &MemorySecrets::default());
         assert!(!licence.status().await.pro);
+        assert_eq!(licence.revalidate().await, None);
         assert!(server.requests.lock().unwrap().is_empty());
     }
 

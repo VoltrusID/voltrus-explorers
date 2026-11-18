@@ -9,6 +9,7 @@ members = [
     "crates/mt-enip",
     "crates/mt-nats",
     "crates/mt-store",
+    "crates/mt-update",
     "crates/mt-s7",
     "crates/mt-serial",
     "crates/mt-mqtt",

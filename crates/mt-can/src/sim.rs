@@ -75,6 +75,53 @@ BO_ 1296 PumpCommand: 8 Tester
 BO_ 1297 ThrottleCommand: 8 Tester
  SG_ Throttle : 0|8@1+ (0.5,0) [0|100] "%" ECU
 
+BO_ 0 NMT_Command: 2 Tester
+ SG_ NmtCommand : 0|8@1+ (1,0) [0|255] "" IO
+ SG_ NmtNode : 8|8@1+ (1,0) [0|127] "" IO
+
+BO_ 1809 IO_Heartbeat: 1 IO
+ SG_ NmtState : 0|7@1+ (1,0) [0|127] "" Tester
+
+BO_ 401 IO_TPDO1: 4 IO
+ SG_ DI_Running : 0|1@1+ (1,0) [0|1] "" Tester
+ SG_ DI_BreakerClosed : 1|1@1+ (1,0) [0|1] "" Tester
+ SG_ DI_Fault : 2|1@1+ (1,0) [0|1] "" Tester
+ SG_ AI_Coolant : 16|16@1+ (0.1,0) [0|6553.5] "degC" Tester
+
+BO_ 1553 IO_SDO_Request: 8 Tester
+ SG_ SdoCommand : 0|8@1+ (1,0) [0|255] "" IO
+ SG_ SdoIndex : 8|16@1+ (1,0) [0|65535] "" IO
+ SG_ SdoSubIndex : 24|8@1+ (1,0) [0|255] "" IO
+ SG_ SdoData : 32|32@1+ (1,0) [0|4294967295] "" IO
+
+BO_ 1425 IO_SDO_Response: 8 IO
+ SG_ SdoCommand : 0|8@1+ (1,0) [0|255] "" Tester
+ SG_ SdoIndex : 8|16@1+ (1,0) [0|65535] "" Tester
+ SG_ SdoSubIndex : 24|8@1+ (1,0) [0|255] "" Tester
+ SG_ SdoData : 32|32@1+ (1,0) [0|4294967295] "" Tester
+
+BO_ 2015 OBD2_Request: 8 Tester
+ SG_ ObdLength : 0|8@1+ (1,0) [0|7] "" ECU
+ SG_ ObdService : 8|8@1+ (1,0) [0|255] "" ECU
+ SG_ ObdPid : 16|8@1+ (1,0) [0|255] "" ECU
+
+BO_ 2016 OBD2_RequestEcu: 8 Tester
+ SG_ ObdLength : 0|8@1+ (1,0) [0|7] "" ECU
+ SG_ ObdService : 8|8@1+ (1,0) [0|255] "" ECU
+ SG_ ObdPid : 16|8@1+ (1,0) [0|255] "" ECU
+
+BO_ 2024 OBD2_Response: 8 ECU
+ SG_ ObdLength : 0|8@1+ (1,0) [0|7] "" Tester
+ SG_ ObdService : 8|8@1+ (1,0) [0|255] "" Tester
+ SG_ ObdPid M : 16|8@1+ (1,0) [0|255] "" Tester
+ SG_ PidsSupported_01_20 m0 : 31|32@0+ (1,0) [0|4294967295] "" Tester
+ SG_ EngineLoad m4 : 24|8@1+ (0.392157,0) [0|100] "%" Tester
+ SG_ CoolantTemp m5 : 24|8@1+ (1,-40) [-40|215] "degC" Tester
+ SG_ EngineRpm m12 : 31|16@0+ (0.25,0) [0|16383.75] "rpm" Tester
+ SG_ VehicleSpeed m13 : 24|8@1+ (1,0) [0|255] "km/h" Tester
+ SG_ ThrottlePosition m17 : 24|8@1+ (0.392157,0) [0|100] "%" Tester
+ SG_ FuelLevel m47 : 24|8@1+ (0.392157,0) [0|100] "%" Tester
+
 CM_ BO_ 2364539904 "J1939 PGN 61444 Electronic Engine Controller 1, from the engine (SA 00).";
 CM_ BO_ 2566843904 "J1939 PGN 65262 Engine Temperature 1.";
 CM_ BO_ 2566844160 "J1939 PGN 65263 Engine Fluid Level/Pressure 1.";
@@ -165,6 +212,14 @@ BO_ 1184 BatteryPackFD: 64 BMS
  SG_ Cell64 m3 : 432|16@1+ (0.001,0) [0|65.535] "V" Tester
 
 CM_ BO_ 1297 "Send this to the simulator to set the engine throttle.";
+CM_ BO_ 0 "CANopen NMT command (node 0: all nodes).";
+CM_ BO_ 1809 "CANopen heartbeat of the I/O node (node id 0x11); NmtState 0 is the boot-up message.";
+CM_ BO_ 401 "CANopen TPDO1 of the I/O node: digital inputs and the coolant temperature input.";
+CM_ BO_ 1553 "CANopen SDO request to the I/O node (expedited upload: command 0x40).";
+CM_ BO_ 1425 "CANopen SDO response of the I/O node (0x43: 4 bytes uploaded, 0x80: abort with the abort code in SdoData).";
+CM_ BO_ 2015 "OBD-II functional request (service 01 PIDs 00, 04, 05, 0C, 0D, 11, 2F are answered).";
+CM_ BO_ 2016 "OBD-II physical request to the engine ECU.";
+CM_ BO_ 2024 "OBD-II response of the engine ECU, multiplexed by PID.";
 CM_ SG_ 2364539904 EngineSpeed "Actual engine speed.";
 CM_ SG_ 801 Breaker "Generator breaker position.";
 BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535;
@@ -181,6 +236,8 @@ BA_ "GenMsgCycleTime" BO_ 801 100;
 BA_ "GenMsgCycleTime" BO_ 802 100;
 BA_ "GenMsgCycleTime" BO_ 1040 50;
 BA_ "GenMsgCycleTime" BO_ 1184 100;
+BA_ "GenMsgCycleTime" BO_ 1809 1000;
+BA_ "GenMsgCycleTime" BO_ 401 200;
 BA_ "VFrameFormat" BO_ 1184 14;
 BA_ "CANFD_BRS" BO_ 1184 1;
 VAL_ 2364539904 EngTorqueMode 0 "Low idle governor" 1 "Accelerator pedal" 2 "Cruise control" 3 "PTO governor" 15 "Not available" ;
@@ -188,6 +245,13 @@ VAL_ 801 Breaker 0 "Open" 1 "Closed" 2 "Tripped" 3 "Not available" ;
 VAL_ 801 GenState 0 "Stopped" 1 "Starting" 2 "Warm-up" 3 "Running" 4 "Cool-down" 5 "Fault" ;
 VAL_ 1040 Mode 0 "Process data" 1 "Diagnostics" ;
 VAL_ 1184 PackState 0 "Standby" 1 "Charging" 2 "Discharging" 3 "Fault" ;
+VAL_ 0 NmtCommand 1 "Start" 2 "Stop" 128 "Enter pre-operational" 129 "Reset node" 130 "Reset communication" ;
+VAL_ 1809 NmtState 0 "Boot-up" 4 "Stopped" 5 "Operational" 127 "Pre-operational" ;
+VAL_ 1553 SdoCommand 64 "Upload request" 35 "Download 4 bytes" 43 "Download 2 bytes" 47 "Download 1 byte" ;
+VAL_ 1425 SdoCommand 67 "Upload 4 bytes" 75 "Upload 2 bytes" 79 "Upload 1 byte" 96 "Download done" 128 "Abort" ;
+VAL_ 2015 ObdService 1 "Current data" 2 "Freeze frame" 3 "Trouble codes" 9 "Vehicle information" ;
+VAL_ 2016 ObdService 1 "Current data" 2 "Freeze frame" 3 "Trouble codes" 9 "Vehicle information" ;
+VAL_ 2024 ObdService 65 "Current data" 66 "Freeze frame" 67 "Trouble codes" 73 "Vehicle information" ;
 "#;
 
 /// CANopen node id of the simulated I/O module.
@@ -331,7 +395,31 @@ struct Pages {
 struct Schedule {
     name: String,
     period_ms: u64,
-    next_ms: u64,
+    /// When the message is due next, ms since the start.
+    next_ms: f64,
+}
+
+/// A message that fell this far behind its schedule (the process stalled) starts again from now
+/// instead of catching up with a burst.
+const MAX_BEHIND_MS: f64 = 1000.0;
+/// Frames of one message sent in one tick at most while catching up.
+const MAX_BURST: usize = 10;
+
+impl Schedule {
+    /// How many frames are due at `clock_ms`, moving the deadline on by one period for each: a fixed
+    /// schedule, so a late tick does not slow the average rate down.
+    fn due(&mut self, clock_ms: f64, rate: f64) -> usize {
+        let period = (self.period_ms as f64 / rate).max(1.0);
+        if clock_ms - self.next_ms > MAX_BEHIND_MS {
+            self.next_ms = clock_ms;
+        }
+        let mut n = 0;
+        while clock_ms >= self.next_ms && n < MAX_BURST {
+            self.next_ms += period;
+            n += 1;
+        }
+        n
+    }
 }
 
 async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<BusEvent>, state: Arc<Mutex<SimState>>) {
@@ -340,10 +428,8 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
         .messages
         .iter()
         .filter_map(|m| m.cycle_ms.map(|c| (m.name.as_str(), c)))
-        .map(|(n, c)| Schedule { name: n.to_string(), period_ms: c as u64, next_ms: 0 })
+        .map(|(n, c)| Schedule { name: n.to_string(), period_ms: c as u64, next_ms: 0.0 })
         .collect();
-    sched.push(Schedule { name: "heartbeat".into(), period_ms: 1000, next_ms: 0 });
-    sched.push(Schedule { name: "tpdo1".into(), period_ms: 200, next_ms: 0 });
 
     let tick = Duration::from_millis(5);
     // Message times come from the wall clock, not from counting ticks: a busy process skips ticks, and counting them
@@ -369,7 +455,7 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
             },
             _ = timer.tick() => {
                 let now = tokio::time::Instant::now();
-                let clock_ms = now.duration_since(started).as_millis() as u64;
+                let clock_ms = now.duration_since(started).as_secs_f64() * 1000.0;
                 let dt = now.duration_since(last).as_secs_f64().min(1.0);
                 last = now;
                 let mut out = Vec::new();
@@ -378,8 +464,7 @@ async fn run(tx: CanSender, mut events: tokio::sync::mpsc::UnboundedReceiver<Bus
                     physics(&mut s, dt);
                     let rate = s.rate;
                     for e in sched.iter_mut() {
-                        if clock_ms >= e.next_ms {
-                            e.next_ms = clock_ms + ((e.period_ms as f64 / rate).max(1.0) as u64);
+                        for _ in 0..e.due(clock_ms, rate) {
                             if let Some(f) = build(&dbc, &e.name, &s, &mut pages) {
                                 out.push(f);
                             }
@@ -518,8 +603,8 @@ fn build(dbc: &Dbc, name: &str, s: &SimState, pages: &mut Pages) -> Option<CanFr
             let data = encode_message(msg, &map, None).ok()?;
             return CanFrame::fd(msg.id, msg.extended, msg.brs, &data).ok();
         }
-        "heartbeat" => return CanFrame::new(0x700 + CANOPEN_NODE as u32, &[0x05]).ok(),
-        "tpdo1" => {
+        "IO_Heartbeat" => return CanFrame::new(0x700 + CANOPEN_NODE as u32, &[0x05]).ok(),
+        "IO_TPDO1" => {
             // Digital inputs (running, breaker, fault) and one analog input (coolant, 0.1 degC).
             let di = (s.running as u8) | ((s.breaker_closed as u8) << 1) | ((s.fault as u8) << 2);
             let ai = (s.coolant * 10.0).round().clamp(0.0, 65535.0) as u16;
@@ -616,7 +701,7 @@ mod tests {
     #[test]
     fn built_in_dbc_parses() {
         let d = Dbc::parse(SIM_DBC).unwrap();
-        assert_eq!(d.messages.len(), 11);
+        assert_eq!(d.messages.len(), 19);
         let b = d.message_by_name("BatteryPackFD").unwrap();
         assert_eq!((b.id, b.extended, b.size, b.fd, b.brs, b.cycle_ms), (0x4A0, false, 64, true, true, Some(100)));
         assert_eq!(b.signals.len(), 15 + BATTERY_CELLS);
@@ -715,6 +800,61 @@ mod tests {
         assert_eq!(sim.state().await.throttle, 80.0);
         sim.apply(SimAction::SetFault { active: true }).await;
         assert!(sim.state().await.fault);
+        sim.stop().await;
+    }
+
+    #[test]
+    fn schedule_keeps_the_average_rate() {
+        // 5 ms ticks that come late by up to 4 ms: a 20 ms message still goes out 50 times a second, and a 1 ms
+        // period (rate 10 on a 10 ms message) 1000 times.
+        for (period, rate, want) in [(20u64, 1.0, 50usize), (10, 10.0, 1000), (1000, 1.0, 1)] {
+            let mut e = Schedule { name: "x".into(), period_ms: period, next_ms: 0.0 };
+            let mut sent = 0;
+            let mut t = 0.0;
+            while t < 1000.0 {
+                sent += e.due(t, rate);
+                t += 5.0 + (t * 7.3).sin().abs() * 4.0;
+            }
+            assert!((sent as i64 - want as i64).abs() <= 1, "period {period} rate {rate}: {sent} sent, {want} wanted");
+        }
+        // After a stall it resumes from now instead of bursting the backlog.
+        let mut e = Schedule { name: "x".into(), period_ms: 10, next_ms: 0.0 };
+        assert_eq!(e.due(0.0, 1.0), 1);
+        assert_eq!(e.due(5000.0, 1.0), 1);
+        assert_eq!(e.due(5004.0, 1.0), 0);
+        assert_eq!(e.due(5010.0, 1.0), 1);
+    }
+
+    #[tokio::test]
+    async fn all_simulator_traffic_decodes() {
+        let bus = VirtualBus::new();
+        let sim = Simulator::start(&bus);
+        let mut me = bus.attach();
+        let mut ev = me.take_events().unwrap();
+        let dbc = Dbc::parse(SIM_DBC).unwrap();
+        for pid in [0x00u8, 0x04, 0x05, 0x0C, 0x0D, 0x11, 0x2F] {
+            me.send(CanFrame::new(0x7DF, &[2, 1, pid, 0, 0, 0, 0, 0]).unwrap()).await.unwrap();
+        }
+        me.send(CanFrame::new(0x611, &[0x40, 0x18, 0x10, 0x01, 0, 0, 0, 0]).unwrap()).await.unwrap();
+        me.send(CanFrame::new(0x000, &[0x01, 0x00]).unwrap()).await.unwrap();
+        let mut names = std::collections::BTreeSet::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1300);
+        while let Ok(Some(e)) = tokio::time::timeout_at(deadline, ev.recv()).await {
+            let BusEvent::Frame(f) = e else { continue };
+            let (m, sigs) = dbc.decode(&f.frame).unwrap_or_else(|| panic!("no DBC message for {:?}", f.frame));
+            assert!(!sigs.is_empty(), "{} decoded no signals", m.name);
+            if m.name == "OBD2_Response" && f.frame.data[2] == 0x0C {
+                let rpm = sigs.iter().find(|s| s.name == "EngineRpm").unwrap().value;
+                assert!((0.0..3000.0).contains(&rpm), "{rpm}");
+            }
+            if m.name == "IO_SDO_Response" {
+                assert_eq!(sigs.iter().find(|s| s.name == "SdoData").unwrap().value, 0x0A5A as f64);
+            }
+            names.insert(m.name.clone());
+        }
+        for n in ["IO_Heartbeat", "IO_TPDO1", "IO_SDO_Request", "IO_SDO_Response", "OBD2_Request", "OBD2_Response", "NMT_Command", "EEC1", "BatteryPackFD"] {
+            assert!(names.contains(n), "{n} not seen: {names:?}");
+        }
         sim.stop().await;
     }
 }

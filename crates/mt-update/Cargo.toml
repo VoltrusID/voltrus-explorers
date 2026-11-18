@@ -1,0 +1,22 @@
+[package]
+name = "mt-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Direct-download builds that update themselves (Tauri updater: signed .app.tar.gz from the app's download worker).
+# Never enabled for App Store builds (`store`): the App Store forbids self-updating apps.
+updater = ["dep:tauri-plugin-updater"]
+# Test builds only (scripts/test-updater-mac.sh): with MT_UPDATE_SELFTEST set, the app reports its sandbox state, a
+# Keychain item and a local-storage value on stderr, and with MT_UPDATE_SELFTEST=install it updates itself unattended.
+selftest = ["updater", "dep:security-framework"]
+
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri-plugin-updater = { version = "2", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", optional = true }

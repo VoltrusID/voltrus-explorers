@@ -118,12 +118,17 @@ jobs:
           python3 scripts/asc-profile.py MAC_APP_STORE "$bundle_id" "$serial" "$RUNNER_TEMP/mas.provisionprofile"
           MAS_PROFILE="$RUNNER_TEMP/mas.provisionprofile" scripts/build-macos.sh "$APP" appstore ${{ inputs.upload && '--upload' || '' }}
 
+      # Apps that update themselves (src-tauri/tauri.updater.conf.json) also get a signed update package next to the
+      # DMG: <Name>-<version>-universal.app.tar.gz + .sig, signed with the updater key (docs/updates.md).
       - name: Developer ID build (notarized)
         if: inputs.dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: scripts/build-macos.sh "$APP" dmg --notarize
 
       - name: Checksums
-        run: find build -name '*.pkg' -o -name '*.dmg' | xargs shasum -a 256 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: find build -name '*.pkg' -o -name '*.dmg' -o -name '*.app.tar.gz' | xargs shasum -a 256 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Direct-download publish command
         if: inputs.dmg && (inputs.app == 'serial-monitor' || inputs.app == 'ble-inspector' || inputs.app == 'cnc-explorer' || inputs.app == 'secsgem-explorer' || inputs.app == 'can-explorer' || inputs.app == 'logic-analyzer' || inputs.app == 'mc-fins-explorer' || inputs.app == 'ethercat-explorer' || inputs.app == 'mqtt-explorer' || inputs.app == 'nats-explorer' || inputs.app == 'opcua-explorer' || inputs.app == 's7-explorer')
@@ -137,6 +142,8 @@ jobs:
           path: |
             build/${{ inputs.app }}/*/*.pkg
             build/${{ inputs.app }}/*/*.dmg
+            build/${{ inputs.app }}/dmg/*.app.tar.gz
+            build/${{ inputs.app }}/dmg/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 30
 
