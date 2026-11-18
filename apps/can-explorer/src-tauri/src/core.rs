@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use mt_can::bus::rate_text;
-use mt_can::dbc::{Dbc, encode_message};
+use mt_can::dbc::{Dbc, DbcWarning, PhysValue, encode_message_values};
 use mt_can::frame::{TimedFrame, now_us};
 use mt_can::log::{LogRecord, candump_line, parse_log};
-use mt_can::protocols::{Layer, describe};
+use mt_can::protocols::{Decoder, Layer};
 use mt_can::sim::{SIM_DBC, SimAction, SimState, Simulator};
 use mt_can::{BusEvent, CanFrame, CanHandle, CanSender, Direction, InterfaceConfig, PortInfo, VirtualBus};
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,8 @@ pub struct FrameView {
     /// DBC message name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msg: Option<String>,
-    /// DBC signals: `[name, value, unit, label]`.
+    /// DBC signals: `[name, value, unit, label]`. The label is the value table text, or the exact
+    /// value when a JSON number can not carry it (`NaN`, `Inf`, integers wider than 53 bits).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sigs: Vec<(String, f64, String, Option<String>)>,
     /// J1939, CANopen or OBD-II label.
@@ -60,9 +61,10 @@ pub struct FrameView {
     pub label: Option<String>,
 }
 
-fn view(f: &TimedFrame, dbc: Option<&Dbc>, layer: Layer) -> FrameView {
+/// `protocol` keeps ISO-TP / J1939 transport state between the frames of one stream.
+fn view(f: &TimedFrame, dbc: Option<&Dbc>, layer: Layer, protocol: &mut Decoder) -> FrameView {
     let (msg, sigs) = match dbc.and_then(|d| d.decode(&f.frame)) {
-        Some((m, v)) => (Some(m.name.clone()), v.into_iter().map(|s| (s.name, s.value, s.unit, s.label)).collect()),
+        Some((m, v)) => (Some(m.name.clone()), v.into_iter().map(|s| (s.name, s.value, s.unit, s.label.or(s.text))).collect()),
         None => (None, Vec::new()),
     };
     FrameView {
@@ -78,7 +80,7 @@ fn view(f: &TimedFrame, dbc: Option<&Dbc>, layer: Layer) -> FrameView {
         data: f.frame.data.clone(),
         msg,
         sigs,
-        label: describe(&f.frame, layer),
+        label: protocol.describe(&f.frame, layer),
     }
 }
 
@@ -145,6 +147,10 @@ pub struct DbcView {
     pub nodes: Vec<String>,
     pub messages: Vec<DbcMessageView>,
     pub skipped: usize,
+    /// Statements that could not be read (skipped) and other problems, with their line.
+    pub warnings: Vec<DbcWarning>,
+    /// J1939 database: frames match messages by PGN.
+    pub j1939: bool,
 }
 
 fn dbc_view(name: &str, d: &Dbc) -> DbcView {
@@ -153,6 +159,8 @@ fn dbc_view(name: &str, d: &Dbc) -> DbcView {
         version: d.version.clone(),
         nodes: d.nodes.clone(),
         skipped: d.skipped,
+        warnings: d.warnings.clone(),
+        j1939: d.j1939,
         messages: d
             .messages
             .iter()
@@ -180,10 +188,7 @@ fn dbc_view(name: &str, d: &Dbc) -> DbcView {
                         min: s.min,
                         max: s.max,
                         unit: s.unit.clone(),
-                        multiplex: s.multiplex.as_ref().map(|m| match m {
-                            mt_can::dbc::Multiplex::Switch => "M".to_string(),
-                            mt_can::dbc::Multiplex::Value(v) => format!("m{v}"),
-                        }),
+                        multiplex: s.mux_label(),
                         comment: s.comment.clone(),
                         values: s.values.clone(),
                     })
@@ -530,6 +535,11 @@ impl Core {
         let d = mt_can::Dbc::parse(&text).map_err(es)?;
         let v = dbc_view(&name, &d);
         self.log("info", format!("Loaded {name}: {} messages, {} signals", d.messages.len(), d.signal_count()));
+        for w in &d.warnings {
+            let at = if w.line > 0 { format!(" line {}", w.line) } else { String::new() };
+            let src = if w.source.is_empty() { String::new() } else { format!(": {}", w.source) };
+            self.log("error", format!("DBC{at}: {}{src}", w.message));
+        }
         self.shared.write().await.dbc = Some((name, d));
         Ok(v)
     }
@@ -547,16 +557,17 @@ impl Core {
     }
 
     /// Builds the data of a DBC message from signal values (hex).
-    pub async fn dbc_encode(&self, message: String, values: HashMap<String, f64>) -> Result<FrameView, String> {
+    /// Values are numbers, or text for exact integers of signals wider than 53 bits.
+    pub async fn dbc_encode(&self, message: String, values: HashMap<String, PhysValue>) -> Result<FrameView, String> {
         let s = self.shared.read().await;
         let (_, d) = s.dbc.as_ref().ok_or("No DBC file is loaded.")?;
         let m = d.message_by_name(&message).ok_or_else(|| format!("{message} is not in the DBC file."))?;
-        let data = encode_message(m, &values, None).map_err(es)?;
+        let data = encode_message_values(m, &values, None).map_err(es)?;
         // The DBC's frame format (VFrameFormat, CANFD_BRS); anything over 8 bytes is FD regardless.
         let fd = m.fd || data.len() > 8;
         let frame = CanFrame { id: m.id, extended: m.extended, rtr: false, fd, brs: fd && m.brs, esi: false, data, rtr_len: 0 };
         frame.validate().map_err(es)?;
-        Ok(view(&TimedFrame { ts_us: now_us(), dir: Direction::Tx, frame }, Some(d), s.layer))
+        Ok(view(&TimedFrame { ts_us: now_us(), dir: Direction::Tx, frame }, Some(d), s.layer, &mut Decoder::new()))
     }
 
     pub async fn set_layer(&self, layer: Layer) {
@@ -569,7 +580,8 @@ impl Core {
         let log = parse_log(&text).map_err(es)?;
         let s = self.shared.read().await;
         let dbc = s.dbc.as_ref().map(|(_, d)| d);
-        Ok(log.records.iter().map(|r| view(&timed(r), dbc, s.layer)).collect())
+        let mut protocol = Decoder::new();
+        Ok(log.records.iter().map(|r| view(&timed(r), dbc, s.layer, &mut protocol)).collect())
     }
 
     // ── Opened trace files ──
@@ -599,7 +611,8 @@ impl Core {
         let s = self.shared.read().await;
         let dbc = s.dbc.as_ref().map(|(_, d)| d);
         let end = start.saturating_add(count.min(TRACE_PAGE_MAX)).min(recs.len());
-        Ok(recs[start.min(end)..end].iter().map(|r| view(&timed(r), dbc, s.layer)).collect())
+        let mut protocol = Decoder::new();
+        Ok(recs[start.min(end)..end].iter().map(|r| view(&timed(r), dbc, s.layer, &mut protocol)).collect())
     }
 
     /// One row per identifier (and direction) of the opened trace, for the Monitor.
@@ -643,7 +656,7 @@ impl Core {
                 let last = &recs[a.last];
                 let span = last.ts_us.saturating_sub(a.first_ts) as f64 / 1000.0;
                 TraceIdView {
-                    last: view(&timed(last), dbc, s.layer),
+                    last: view(&timed(last), dbc, s.layer, &mut Decoder::new()),
                     count: a.count,
                     first_ts: a.first_ts,
                     period_ms: (a.count > 1).then(|| span / (a.count - 1) as f64),
@@ -1002,6 +1015,7 @@ async fn reader(
     rates: Rates,
 ) {
     let mut batch = Batch::default();
+    let mut protocol = Decoder::new();
     let mut stats = Stats::default();
     let mut busy_s = 0.0f64;
     let (mut rx_sec, mut tx_sec) = (0u64, 0u64);
@@ -1053,7 +1067,7 @@ async fn reader(
                     let frames = {
                         let s = shared.read().await;
                         let dbc = s.dbc.as_ref().map(|(_, d)| d);
-                        frames.iter().map(|f| view(f, dbc, s.layer)).collect::<Vec<_>>()
+                        frames.iter().map(|f| view(f, dbc, s.layer, &mut protocol)).collect::<Vec<_>>()
                     };
                     emit("can-frames", json!({ "frames": frames, "dropped": dropped }));
                 }
@@ -1087,7 +1101,7 @@ async fn reader(
         let frames = {
             let s = shared.read().await;
             let dbc = s.dbc.as_ref().map(|(_, d)| d);
-            frames.iter().map(|f| view(f, dbc, s.layer)).collect::<Vec<_>>()
+            frames.iter().map(|f| view(f, dbc, s.layer, &mut protocol)).collect::<Vec<_>>()
         };
         emit("can-frames", json!({ "frames": frames, "dropped": dropped }));
     }
@@ -1182,7 +1196,7 @@ mod tests {
 
         assert!(core.dbc_encode("EEC1".into(), HashMap::new()).await.is_err());
         core.dbc_load_sim().await.unwrap();
-        let v = core.dbc_encode("ThrottleCommand".into(), [("Throttle".to_string(), 50.0)].into_iter().collect()).await.unwrap();
+        let v = core.dbc_encode("ThrottleCommand".into(), [("Throttle".to_string(), 50.0.into())].into_iter().collect()).await.unwrap();
         assert_eq!(v.id, 0x511);
         assert_eq!(v.data[0], 100);
         assert!(!v.fd && !v.brs, "classic DBC messages stay classic");
@@ -1231,7 +1245,7 @@ mod tests {
             assert_eq!((sig("Seq"), sig("PatternFirst"), sig("PatternLast")), (Some(42.0), Some(42.0), Some(73.0)));
         }
 
-        let v = core.dbc_encode("HostFdPing".into(), [("Count".to_string(), 5.0)].into_iter().collect()).await.unwrap();
+        let v = core.dbc_encode("HostFdPing".into(), [("Count".to_string(), 5.0.into())].into_iter().collect()).await.unwrap();
         assert!(v.fd && v.brs && v.data.len() == 64 && v.dlc == 15);
         let hb = core.dbc_encode("HostPing".into(), HashMap::new()).await.unwrap();
         assert!(!hb.fd && !hb.brs);
@@ -1530,5 +1544,35 @@ mod tests {
         assert_eq!((asc.format, asc.frames), ("Vector ASC", 1));
         assert_eq!(core.trace_page(0, 1).await.unwrap()[0].dir, Direction::Tx);
         assert!(core.trace_open("x".into(), "nothing here\n".into()).await.unwrap_err().contains("No frames"));
+    }
+
+    #[tokio::test]
+    async fn dbc_warnings_wide_values_and_reassembled_labels() {
+        let (emit, got) = sink();
+        let core = Core::new(emit);
+        let text = "BO_ 100 Wide: 8 A\n SG_ Counter : 0|64@1+ (1,0) [0|0] \"\" B\n SG_ Bad : 0|8@1+ (1,0 [0|1] \"\" B\n";
+        let v = core.dbc_load("wide.dbc".into(), text.into()).await.unwrap();
+        assert_eq!(v.messages[0].signals.len(), 1);
+        assert_eq!(v.warnings.len(), 1);
+        assert_eq!(v.warnings[0].line, 3);
+        // The warning reaches the communication log with its line.
+        assert!(got.lock().unwrap().iter().any(|(e, p)| e == "can-log" && p["message"].as_str().unwrap().starts_with("DBC line 3: ")));
+        // A 64-bit value goes out exactly as text and comes back the same.
+        let values = [("Counter".to_string(), PhysValue::Text("18446744073709551557".into()))].into_iter().collect();
+        let f = core.dbc_encode("Wide".into(), values).await.unwrap();
+        assert_eq!(f.data, 18446744073709551557u64.to_le_bytes());
+        assert_eq!(f.sigs[0].3.as_deref(), Some("18446744073709551557"));
+        assert!(core.dbc_load("notes.txt".into(), "just some text\n".into()).await.is_err());
+
+        // An imported trace is labelled as one stream: the VIN is reassembled.
+        core.set_layer(Layer::Obd2).await;
+        let trace = "(1.0) can0 7DF#0209020000000000\n(1.1) can0 7E8#1014490201314847\n(1.2) can0 7E0#3000000000000000\n\
+(1.3) can0 7E8#21434D3832363333\n(1.4) can0 7E8#2241303034333532\n";
+        let frames = core.decode_frames(trace.into()).await.unwrap();
+        assert_eq!(frames[1].label.as_deref(), Some("OBD-II response from ECU 0: ISO-TP first frame, 20 bytes: mode 09 PID 02 (VIN)"));
+        assert_eq!(
+            frames[4].label.as_deref(),
+            Some("OBD-II response from ECU 0: ISO-TP consecutive frame 2, complete (20 bytes): VIN 1HGCM82633A004352")
+        );
     }
 }

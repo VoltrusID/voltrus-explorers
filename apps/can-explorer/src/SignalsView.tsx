@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cansendText, fmtNum, hex, idText } from "./can";
 import type { DbcMessageView, DbcView, FrameView } from "./types";
 import { Bytes, card, hint, row, th, type AddLog, type RequirePro } from "./ui";
+import { encodeValue, exactText } from "./wide";
 
 interface Props {
   dbc: DbcView | null;
@@ -81,16 +82,21 @@ function MessageDetail({ m, frame, canSend, requirePro, addLog }: { m: DbcMessag
 
   // Start the editor from the live values (or the signal minimum).
   useEffect(() => {
-    setDraft(Object.fromEntries(m.signals.map((s) => [s.name, fmtNum(values.get(s.name)?.v ?? Math.max(s.min, Math.min(s.max, 0)))])));
+    setDraft(Object.fromEntries(m.signals.map((s) => {
+      const live = values.get(s.name);
+      return [s.name, exactText(s, live?.l) ?? fmtNum(live?.v ?? Math.max(s.min, Math.min(s.max, 0)))];
+    })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.name]);
 
   const encode = async (): Promise<FrameView | null> => {
     setError(null);
-    const vals: Record<string, number> = {};
+    // Wide (over 53-bit) integer signals go as text so every digit is encoded.
+    const vals: Record<string, number | string> = {};
     for (const [k, v] of Object.entries(draft)) {
-      const n = Number(v);
-      if (!Number.isFinite(n)) { setError(`${k}: "${v}" is not a number`); return null; }
+      const sig = m.signals.find((s) => s.name === k);
+      const n = sig ? encodeValue(sig, v) : Number.isFinite(Number(v)) ? Number(v) : null;
+      if (n === null) { setError(`${k}: "${v}" is not a number`); return null; }
       vals[k] = n;
     }
     try {
