@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { ProProvider } from "@mactools/ui";
+import { ProProvider, UpdateProvider } from "@mactools/ui";
 import "./styles.css";
 
 const PRO_FEATURES = [
@@ -18,7 +18,9 @@ const PRO_FEATURES = [
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ProProvider appName="CAN Explorer" features={PRO_FEATURES}>
-      <App />
+      <UpdateProvider appName="CAN Explorer">
+        <App />
+      </UpdateProvider>
     </ProProvider>
   </React.StrictMode>,
 );

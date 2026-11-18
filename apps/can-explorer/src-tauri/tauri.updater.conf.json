@@ -1,0 +1,10 @@
+{
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ2RkVCNzExRjExRjU2OEYKUldTUFZoL3hFYmYrMWo2Zk4wT2YxRFhXZFNCZDAxUXNkMlRJYzVEMHduTnd0V0lINUZkeHNQTisK",
+      "endpoints": [
+        "https://dl-can-explorer.voltrus.id/update/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    }
+  }
+}

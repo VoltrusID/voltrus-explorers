@@ -39,6 +39,7 @@ export {
   type TabsProps,
   type Tone,
 } from "./primitives";
+export { UpdateProvider, UpdateBanner, UpdateAboutRow, useUpdate, type UpdateInfo, type UpdateProviderProps, type UpdateBannerProps } from "./update";
 export { ProProvider, ProBadge, ProAboutRow, useProStatus, type ProProviderProps, type StoreStatus } from "./pro";
 export {
   ConnectProvider,

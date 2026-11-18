@@ -11,6 +11,11 @@
 #   appstore: "Apple Distribution" + "3rd Party Mac Developer Installer", and MAS_PROFILE = path to a
 #             MAC_APP_STORE provisioning profile for the app's bundle id (scripts/asc-profile.py).
 #   dmg:      "Developer ID Application". Apps with a `license` feature (Serial Monitor, BLE Inspector) are built with it.
+#             Apps with src-tauri/tauri.updater.conf.json and an `updater` feature (CAN Explorer) update themselves:
+#             built with `--features updater` and that config merged in, signed with src-tauri/entitlements.dmg.plist
+#             when it exists (no App Sandbox: a sandboxed app cannot replace its own bundle), and, after notarization,
+#             the stapled app is packed as <Name>-<version>-universal.app.tar.gz and signed for the Tauri updater
+#             (minisign key in TAURI_SIGNING_PRIVATE_KEY [+ _PASSWORD]; required with --notarize). See docs/updates.md.
 # --upload, --notarize and the App Store validation (when ASC_KEY_ID is set) use the App Store Connect API key:
 # ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH.
 # BUILD_NUMBER (CFBundleVersion) defaults to the Unix time, the scheme the existing App Store builds use.
@@ -49,10 +54,24 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 # `license` feature (licence key bought in the Voltrus console, see docs/release.md). Source, CI and the DMG of every
 # other app have everything unlocked.
 FEATURES=()
+DMG_FEATURES=""
+UPDATER=0
+ENTITLEMENTS="$APP_DIR/src-tauri/entitlements.plist"
 if [[ "$MODE" == appstore ]]; then
+  # Never the updater: the App Store forbids apps that update themselves.
   FEATURES=(--features store)
-elif [[ "$MODE" == dmg ]] && grep -q '^license = ' "$APP_DIR/src-tauri/Cargo.toml"; then
-  FEATURES=(--features license)
+elif [[ "$MODE" == dmg ]]; then
+  if grep -q '^license = ' "$APP_DIR/src-tauri/Cargo.toml"; then DMG_FEATURES="license"; fi
+  if [[ -f "$APP_DIR/src-tauri/tauri.updater.conf.json" ]] && grep -q '^updater = ' "$APP_DIR/src-tauri/Cargo.toml"; then
+    UPDATER=1
+    DMG_FEATURES="${DMG_FEATURES:+$DMG_FEATURES,}updater"
+    FEATURES=(--config src-tauri/tauri.updater.conf.json)
+    if [[ -f "$APP_DIR/src-tauri/entitlements.dmg.plist" ]]; then ENTITLEMENTS="$APP_DIR/src-tauri/entitlements.dmg.plist"; fi
+    if [[ "$FLAG" == --notarize && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+      echo "TAURI_SIGNING_PRIVATE_KEY is not set: the update package of $PRODUCT cannot be signed" >&2; exit 1
+    fi
+  fi
+  if [[ -n "$DMG_FEATURES" ]]; then FEATURES+=(--features "$DMG_FEATURES"); fi
 fi
 # ${a[@]+...}: macOS /bin/bash 3.2 treats an empty array as unbound under `set -u`.
 ( cd "$APP_DIR" && bun run tauri build --target universal-apple-darwin --bundles app --ci ${FEATURES[@]+"${FEATURES[@]}"} )
@@ -104,7 +123,7 @@ dmg)
   APP_ID="$(identity "Developer ID Application" codesigning)"
   [[ -n "$APP_ID" ]] || { echo "Developer ID Application identity missing" >&2; exit 1; }
   xattr -cr "$BUNDLE"
-  codesign --force --options runtime --timestamp --entitlements "$APP_DIR/src-tauri/entitlements.plist" --sign "$APP_ID" "$BUNDLE"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$APP_ID" "$BUNDLE"
   codesign --verify --strict --verbose=2 "$BUNDLE"
   DMG="$OUT/$NAME-universal.dmg"
   STAGING="$(mktemp -d)"
@@ -122,5 +141,23 @@ dmg)
     spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
   fi
   echo "==> $DMG"
+  if (( UPDATER )); then
+    # The DMG's notarization covers the app inside it; staple the ticket to the bundle too, so an update installed
+    # offline opens without asking Apple. The bundle is otherwise byte for byte the one in the DMG.
+    if [[ "$FLAG" == --notarize ]]; then
+      xcrun stapler staple "$BUNDLE"
+      spctl --assess --type execute --verbose=2 "$BUNDLE"
+    fi
+    UPD="$OUT/$NAME-universal.app.tar.gz"
+    # The Tauri updater drops the first path component and expects the .app at the top. No AppleDouble files.
+    COPYFILE_DISABLE=1 tar -czf "$UPD" -C "$OUT" "$PRODUCT.app"
+    if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+      ( cd "$APP_DIR" && bun run tauri signer sign "$UPD" ) >/dev/null
+      [[ -s "$UPD.sig" ]] || { echo "signing $UPD failed" >&2; exit 1; }
+      echo "==> $UPD (+ .sig)"
+    else
+      echo "==> $UPD (unsigned: TAURI_SIGNING_PRIVATE_KEY is not set, the updater would refuse it)"
+    fi
+  fi
   ;;
 esac

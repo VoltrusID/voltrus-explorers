@@ -18,6 +18,8 @@ import {
   StatusDot,
   Tabs,
   Toolbar,
+  UpdateAboutRow,
+  UpdateBanner,
   nextTrendColor,
   noteDeviceError,
   noteDeviceSuccess,
@@ -848,6 +850,8 @@ function App() {
         </main>
       </div>
       <StatusBar connected={connected} label={conn?.description} error={error}><BusStatus stats={connected ? stats : null} /></StatusBar>
+      {/* An open bus, recording or running simulator is never cut by an update: it installs at quit instead. */}
+      <UpdateBanner busy={connected || recording !== null || simRunning} />
 
       <Dialog open={showInfo} onClose={() => setShowInfo(false)} title="About CAN Explorer" width={460} footer={(
         <>
@@ -871,6 +875,9 @@ function App() {
           </p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
             <ProAboutRow />
+            <div style={{ marginTop: 8 }}>
+              <UpdateAboutRow />
+            </div>
           </div>
           <p style={{ margin: "0 0 12px", fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
             CAN Explorer is an independent tool. CANopen is a registered trademark of CAN in Automation e.V., J1939 is an SAE standard, and CANable, CANUSB and USBtin

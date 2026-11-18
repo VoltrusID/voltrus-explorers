@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Developer ID DMG only (scripts/build-macos.sh dmg); entitlements.plist stays the sandboxed App Store set.
+         No App Sandbox: the app updates itself in place (docs/updates.md), and a sandboxed app cannot replace its own
+         bundle. Hardened runtime stays on. Serial and USB adapters need no entitlement outside the sandbox; the
+         settings of the sandboxed 1.1.x are copied out of its container on first launch (crates/mt-update migrate). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

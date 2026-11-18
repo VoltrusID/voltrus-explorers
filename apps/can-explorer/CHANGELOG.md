@@ -1,5 +1,12 @@
 # CAN Explorer changelog
 
+## Unreleased
+
+- **Updates inside the app.** CAN Explorer checks for a new version when it starts and shows what is new; "Install and
+  restart" updates it in place. With a bus connected, a recording running or the simulator on, it installs when you quit
+  instead, so nothing is cut. About has "Check for updates". The direct download is no longer sandboxed (a sandboxed app
+  cannot replace itself); your saved profiles, transmit lists and licence carry over.
+
 ## 1.1.1 (2026-11-16)
 
 - **Simulator on SocketCAN (Linux).** The simulator can run on a SocketCAN interface such as `vcan0` instead of the in-app
