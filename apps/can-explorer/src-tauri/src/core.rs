@@ -340,6 +340,9 @@ fn finish_recording(slot: &RecorderSlot, emit: &Emit, reason: Option<&str>, erro
 /// The running replay, and what tells the UI when it ends.
 struct Replay {
     task: JoinHandle<()>,
+    /// Frames sent in the current pass, and the frame count of a pass, for the stop event.
+    pos: Arc<std::sync::atomic::AtomicUsize>,
+    total: usize,
 }
 
 pub struct Core {
@@ -692,6 +695,8 @@ impl Core {
         let duration_s = plan.duration.as_secs_f64() * speed;
         let emit = self.emit.clone();
         let repeat = req.repeat;
+        let pos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sent = pos.clone();
         let task = tokio::spawn(async move {
             let mut pass = 0u64;
             let mut last_progress = tokio::time::Instant::now();
@@ -707,6 +712,7 @@ impl Core {
                         emit("can-replay", json!({ "done": true, "error": e.to_string(), "pos": i, "total": n, "pass": pass }));
                         return;
                     }
+                    sent.store(i + 1, std::sync::atomic::Ordering::Relaxed);
                     if last_progress.elapsed() >= progress_every {
                         last_progress = tokio::time::Instant::now();
                         emit("can-replay", json!({ "done": false, "pos": i + 1, "total": n, "pass": pass }));
@@ -720,7 +726,7 @@ impl Core {
             }
             emit("can-replay", json!({ "done": true, "pos": n, "total": n, "pass": pass }));
         });
-        *self.replay.lock().await = Some(Replay { task });
+        *self.replay.lock().await = Some(Replay { task, pos, total: n });
         Ok(ReplayInfo { frames: n, duration_s, notes })
     }
 
@@ -734,7 +740,8 @@ impl Core {
             let running = !r.task.is_finished();
             r.task.abort();
             if running && let Some(reason) = reason {
-                (self.emit)("can-replay", json!({ "done": true, "stopped": reason }));
+                let pos = r.pos.load(std::sync::atomic::Ordering::Relaxed);
+                (self.emit)("can-replay", json!({ "done": true, "stopped": reason, "pos": pos, "total": r.total }));
                 if reason == "disconnected" {
                     self.log("info", "Replay stopped: the bus was disconnected");
                 }

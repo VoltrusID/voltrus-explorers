@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -149,6 +150,8 @@ function App() {
   trendRef.current = trend;
   const [trendWindow, setTrendWindow] = useState(60);
 
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => { getVersion().then(setAppVersion, () => {}); }, []);
   const addLog = useCallback((direction: LogEntry["direction"], message: string) => {
     setLog((prev) => pushCapped(prev, [{ timestamp: Date.now(), direction, message }], MAX_LOG));
   }, []);
@@ -337,12 +340,16 @@ function App() {
     const f: IfaceForm = simOn ? { ...form, kind: "socketcan", ifname: simOn } : { ...form, kind: "virtual" };
     setForm(f);
     setActiveProfile(null);
-    if (!dbc) await loadSimDbc();
+    // The simulator's traffic only decodes with its own DBC; another file would mislabel its identifiers.
+    if (dbc?.name !== "simulator.dbc") {
+      await loadSimDbc();
+      if (dbc) addLog("info", `Loaded the simulator's DBC in place of ${dbc.name}`);
+    }
     if (layer === "none") await changeLayer("j1939");
     setMode("bus");
     setTab("monitor");
     await connectWith(f);
-  }, [simRunning, startSim, simOn, form, dbc, loadSimDbc, layer, changeLayer, connectWith]);
+  }, [simRunning, startSim, simOn, form, dbc, loadSimDbc, addLog, layer, changeLayer, connectWith]);
 
   // ── Trace files ──
   const exportTrace = useCallback(async (kind: "candump" | "csv", frames: FrameView[]) => {
@@ -592,7 +599,8 @@ function App() {
             </Field>
             <span style={hint}>
               Linux only. Bring the interface up first, e.g. <span className="mono">sudo ip link set can0 up type can bitrate 500000</span>, or a virtual one with{" "}
-              <span className="mono">sudo ip link add vcan0 type vcan && sudo ip link set vcan0 up</span>.
+              <span className="mono">sudo ip link add vcan0 type vcan && sudo ip link set vcan0 up</span>. For listen only, add{" "}
+              <span className="mono">listen-only on</span> to the bit rate command.
               {socketcan.length > 0 ? ` Found: ${socketcan.join(", ")}.` : ""}
             </span>
           </>
@@ -870,7 +878,7 @@ function App() {
       )}>
         <div style={{ fontSize: "var(--fs-sm)", color: "var(--text-dim)", lineHeight: 1.6 }}>
           <p style={{ margin: "0 0 12px" }}>
-            A CAN and CAN FD bus monitor. Connect through a USB SLCAN adapter or Linux SocketCAN, watch every identifier and the trace, decode frames with a DBC file and
+            A CAN and CAN FD bus monitor. Connect through a USB adapter (SLCAN, or gs_usb for candleLight firmware) or Linux SocketCAN, watch every identifier and the trace, decode frames with a DBC file and
             label J1939, CANopen and OBD-II traffic, and send frames.
           </p>
           <p style={{ margin: "0 0 12px" }}>
@@ -878,6 +886,7 @@ function App() {
             unlimited interface profiles.
           </p>
           <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, marginBottom: 12 }}>
+            {appVersion && <div style={{ marginBottom: 8 }}>Version {appVersion}</div>}
             <ProAboutRow />
             <div style={{ marginTop: 8 }}>
               <UpdateAboutRow />

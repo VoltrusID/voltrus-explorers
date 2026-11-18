@@ -26,4 +26,11 @@ describe("replay state", () => {
     expect(s.error).toBe("the bus is closed");
     expect(s.progress?.pos).toBe(3);
   });
+  it("a replay stopped by the user says so, with how far it got", () => {
+    const running = { ...REPLAY_INITIAL, running: true, progress: { pos: 900, total: 1200, pass: 0 } };
+    const s = applyReplayEvent(running, { done: true, stopped: "stopped", pos: 935, total: 1200 });
+    expect(s.running).toBe(false);
+    expect(s.stopped).toBe("Stopped.");
+    expect(s.progress).toEqual({ pos: 935, total: 1200, pass: 0 });
+  });
 });

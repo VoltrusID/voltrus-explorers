@@ -35,11 +35,12 @@ export interface ReplayEvent {
 /** The state after a `can-replay` event. */
 export function applyReplayEvent(s: ReplayState, p: ReplayEvent): ReplayState {
   const next = { ...s };
-  if (p.total != null) next.progress = { pos: p.pos ?? 0, total: p.total, pass: p.pass };
+  if (p.total != null) next.progress = { pos: p.pos ?? 0, total: p.total, pass: p.pass ?? s.progress?.pass };
   if (p.done) {
     next.running = false;
     if (p.error) next.error = p.error;
     if (p.stopped === "disconnected") next.stopped = "Stopped: the bus was disconnected.";
+    else if (p.stopped) next.stopped = "Stopped.";
   }
   return next;
 }

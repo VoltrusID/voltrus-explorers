@@ -396,10 +396,11 @@ fn dm_text(pgn: u32, d: &[u8]) -> String {
         [lamp(6, "MIL"), lamp(4, "red stop"), lamp(2, "amber warning"), lamp(0, "protect")].into_iter().flatten().collect();
     let dtcs: Vec<String> = d[2..]
         .chunks_exact(4)
-        .filter(|c| c != &[0, 0, 0, 0] && c != &[0xFF; 4])
-        .map(|c| {
+        .filter_map(|c| {
             let spn = c[0] as u32 | (c[1] as u32) << 8 | ((c[2] >> 5) as u32) << 16;
-            format!("SPN {spn} FMI {} OC {}", c[2] & 0x1F, c[3] & 0x7F)
+            // SPN 0 is not a parameter: a DM1 with no fault carries SPN 0 (often with OC 0 or 0x7F, or all
+            // ones) as filler, which J1939-73 reads as "no DTC".
+            (spn != 0 && c != [0xFF; 4]).then(|| format!("SPN {spn} FMI {} OC {}", c[2] & 0x1F, c[3] & 0x7F))
         })
         .collect();
     let mut out = if dtcs.is_empty() { format!("no {what} DTCs") } else { format!("{} {what} DTC{}: {}", dtcs.len(), if dtcs.len() == 1 { "" } else { "s" }, dtcs.join("; ")) };
@@ -823,6 +824,9 @@ mod tests {
         assert!(describe(&dm1, Layer::J1939).unwrap().ends_with("SPN 520192 FMI 31 OC 1"));
         let none = f(0x18FE_CA00, &[0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF]);
         assert!(describe(&none, Layer::J1939).unwrap().ends_with(": no active DTCs"));
+        // The simulator's DM1 without a fault: SPN 0 with OC 127 is filler, not a DTC.
+        let quiet = f(0x18FE_CA00, &[0x3F, 0xF3, 0x00, 0x00, 0x00, 0xFF, 0x80, 0xFF]);
+        assert!(describe(&quiet, Layer::J1939).unwrap().contains(": no active DTCs"), "{:?}", describe(&quiet, Layer::J1939));
     }
 
     #[test]
