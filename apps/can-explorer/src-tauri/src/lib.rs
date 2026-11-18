@@ -87,7 +87,7 @@ async fn dbc_clear(core: State<'_>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn dbc_encode(core: State<'_>, message: String, values: HashMap<String, f64>) -> Result<FrameView, String> {
+async fn dbc_encode(core: State<'_>, message: String, values: HashMap<String, mt_can::dbc::PhysValue>) -> Result<FrameView, String> {
     core.dbc_encode(message, values).await
 }
 
