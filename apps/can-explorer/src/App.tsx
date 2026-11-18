@@ -260,7 +260,7 @@ function App() {
       const v = await invoke<DbcView>("dbc_load", { name: file.path.split(/[\\/]/).pop() ?? file.path, text: file.text });
       setDbc(v);
       setLatest(new Map());
-      if (v.skipped > 0) addLog("info", `${v.skipped} DBC statements not used (attribute definitions, environment variables, signal groups)`);
+      if (v.skipped > 0) addLog("info", `${v.skipped} DBC statements not used (value tables, environment variables, signal groups)`);
     } catch (e) {
       setError(String(e));
       addLog("error", `DBC: ${String(e)}`);
