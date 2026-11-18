@@ -50,6 +50,30 @@ describe("bus status", () => {
   });
 });
 
+describe("pro status at launch", () => {
+  it("shows the status this device had while the backend answers", async () => {
+    const { ProProvider, useProStatus } = await import("@mactools/ui");
+    const Probe = () => <span>{useProStatus().pro ? "PRO" : "LOCKED"}</span>;
+    const render = () => renderToStaticMarkup(<ProProvider appName="CAN Explorer" features={[]}><Probe /></ProProvider>);
+    const items = new Map<string, string>();
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => items.get(k) ?? null,
+      setItem: (k: string, v: string) => void items.set(k, v),
+    };
+    try {
+      expect(render()).toContain("LOCKED");
+      items.set("mt-store-status", JSON.stringify({ store: false, pro: true, reason: "key", price: null, activation: true }));
+      expect(render()).toContain("PRO");
+      items.set("mt-store-status", "{not json");
+      expect(render()).toContain("LOCKED");
+      items.set("mt-store-status", JSON.stringify({ pro: "yes" }));
+      expect(render()).toContain("LOCKED");
+    } finally {
+      delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
+  });
+});
+
 describe("signals tab", () => {
   const dbc = (extra: object, messages = 1): DbcView =>
     ({ name: "x.dbc", version: "", nodes: [], messages: Array(messages).fill({}), skipped: 0, ...extra }) as DbcView;
