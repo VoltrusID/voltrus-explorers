@@ -579,6 +579,11 @@ fn spawn_slcan<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     } else {
         "SLCAN: a sent frame is shown once it is handed to the adapter; CANable firmware does not report whether the adapter accepted it, or whether another node acknowledged it on the bus.".into()
     }));
+    if fd && fw == Firmware::Canable {
+        let _ = d.events.send(BusEvent::Error(
+            "the adapter's version answer does not name the CANable 2 firmware, so CAN FD could not be confirmed: a CANable 1 ignores the data rate and CAN FD frames without saying so".into(),
+        ));
+    }
     if listen_only && !fw.acknowledges() {
         let _ = d.events.send(BusEvent::Info("listen only: CANable silent mode (M1)".into()));
     }
@@ -921,8 +926,19 @@ mod tests {
         let e = r.err().unwrap().to_string();
         assert!(e.contains("750 kbit/s") && e.contains("no 800 kbit/s"), "{e}");
         assert_eq!(got(&lines), ["C", "V"], "nothing is configured after a refusal");
-        let (r, _) = open_emu(Emu::Canable, 500_000, Some(2_000_000), false).await;
-        assert!(r.err().unwrap().to_string().contains("does not do CAN FD"));
+        // CAN FD on a CANable that does not say it is a CANable 2: allowed, with a warning.
+        let (h, lines) = open_emu(Emu::Canable, 500_000, Some(2_000_000), false).await;
+        let mut h = h.unwrap();
+        let mut ev = h.take_events().unwrap();
+        let mut warned = false;
+        while let Ok(Some(e)) = tokio::time::timeout(Duration::from_millis(200), ev.recv()).await {
+            warned |= matches!(e, BusEvent::Error(t) if t.contains("could not be confirmed"));
+        }
+        assert!(warned);
+        h.close().await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(got(&lines), ["C", "V", "S6", "Y2", "M0", "O", "C"]);
+        // 83.3 kbit/s only when the firmware says it is a CANable 2 (a CANable 1 would silently keep its old rate).
         let (r, _) = open_emu(Emu::Canable, 83_333, None, false).await;
         assert!(r.is_err());
     }
@@ -990,14 +1006,16 @@ mod tests {
         let mut h = make(tokio::spawn(async {}));
         let mut ev = h.take_events().unwrap();
         let status = |tx: u8| BusEvent::Status(BusStatus { state: BusState::ErrorWarning, tx_errors: Some(tx), rx_errors: Some(0) });
+        // Held-back events cannot come out before a window has passed since the first was sent.
+        let t0 = Instant::now();
         for tx in [100, 104, 108] {
             let _ = d.events.send(status(tx));
         }
         assert_eq!(ev.recv().await, Some(status(100)));
-        let t0 = Instant::now();
         assert_eq!(ev.recv().await, Some(status(108)), "the latest status within the window wins");
-        assert!(t0.elapsed() >= Duration::from_millis(80));
+        assert!(t0.elapsed() >= Duration::from_millis(95));
 
+        let t0 = Instant::now();
         for i in 0..500 {
             let _ = d.events.send(BusEvent::Error(format!("e{i}")));
         }
@@ -1005,9 +1023,8 @@ mod tests {
         assert_eq!(ev.recv().await, Some(BusEvent::Error("e0".into())));
         // Frames are not held back.
         assert!(matches!(ev.recv().await, Some(BusEvent::Frame(_))));
-        let t0 = Instant::now();
         assert_eq!(ev.recv().await, Some(BusEvent::Errors { count: 499, latest: "e499".into() }));
-        assert!(t0.elapsed() >= Duration::from_millis(80));
+        assert!(t0.elapsed() >= Duration::from_millis(95));
         // The storm keeps errors to one a second.
         let _ = d.events.send(BusEvent::Error("again".into()));
         assert!(tokio::time::timeout(Duration::from_millis(500), ev.recv()).await.is_err());

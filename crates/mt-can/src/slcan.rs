@@ -31,7 +31,7 @@ pub enum Firmware {
 impl Firmware {
     pub fn name(self) -> &'static str {
         match self {
-            Firmware::Canable => "CANable slcan firmware",
+            Firmware::Canable => "CANable slcan firmware (CANable 2 not confirmed)",
             Firmware::Canable2 => "CANable 2 slcan firmware",
             Firmware::Lawicel => "Lawicel-compatible SLCAN adapter",
         }
@@ -52,12 +52,11 @@ impl Firmware {
     }
 
     /// CAN FD data bit rates and their `Y` digit. Lawicel-style adapters that do CAN FD acknowledge
-    /// `Y`, so the driver can try these and report a refusal.
+    /// `Y`, so the driver can try these and report a refusal. A CANable whose version answer does
+    /// not name the CANable 2 firmware may still be one (a fork, a local build): `Y` is allowed and
+    /// harmless on a CANable 1 (ignored, as are FD frames), and the driver warns.
     pub fn data_bitrates(self) -> &'static [(u32, char)] {
-        match self {
-            Firmware::Canable => &[],
-            Firmware::Canable2 | Firmware::Lawicel => &DATA_BITRATES,
-        }
+        &DATA_BITRATES
     }
 }
 
@@ -111,12 +110,6 @@ pub fn bitrate_command(fw: Firmware, bitrate: u32) -> Result<String, CanError> {
 
 /// `Y<n>\r` for a CAN FD data bit rate on this firmware.
 pub fn data_bitrate_command(fw: Firmware, bitrate: u32) -> Result<String, CanError> {
-    if fw.data_bitrates().is_empty() {
-        return Err(CanError::Unsupported(format!(
-            "the adapter ({}) does not do CAN FD; pick Classic CAN, or use a CANable 2",
-            fw.name()
-        )));
-    }
     fw.data_bitrates().iter().find(|(b, _)| *b == bitrate).map(|(_, c)| format!("Y{c}\r")).ok_or_else(|| {
         CanError::Unsupported(format!(
             "SLCAN has no {} CAN FD data rate; it offers {}",
@@ -385,7 +378,8 @@ mod tests {
         for bad in [1_000_000, 4_000_000, 8_000_000] {
             assert!(data_bitrate_command(Canable2, bad).unwrap_err().to_string().contains("2 Mbit/s, 5 Mbit/s"));
         }
-        assert!(data_bitrate_command(Canable, 2_000_000).unwrap_err().to_string().contains("does not do CAN FD"));
+        assert_eq!(data_bitrate_command(Canable, 5_000_000).unwrap(), "Y5\r");
+        assert!(data_bitrate_command(Canable, 4_000_000).is_err());
         assert_eq!(status_text(0x24), "error warning, error passive");
         assert_eq!(status_state(0x24), BusState::ErrorPassive);
         assert_eq!(status_state(0x04), BusState::ErrorWarning);

@@ -174,9 +174,13 @@ pub(crate) fn open(ifname: &str, description: String) -> Result<CanHandle, CanEr
                 _ = &mut d.stop => break None,
                 r = afd.readable() => {
                     let mut guard = match r { Ok(g) => g, Err(e) => break Some(e.to_string()) };
+                    // Drain what is queued (up to a batch) before polling again: one read per wakeup
+                    // falls behind a busy bus.
+                    let mut failed = None;
+                    for _ in 0..256 {
                     match guard.try_io(|inner| recv_frame(inner.as_raw_fd())) {
-                        Err(_would_block) => continue,
-                        Ok(Err(e)) => break Some(format!("read from the CAN socket failed: {e}")),
+                        Err(_would_block) => break,
+                        Ok(Err(e)) => { failed = Some(format!("read from the CAN socket failed: {e}")); break; }
                         Ok(Ok(r)) => {
                             if let Some(total) = r.dropped
                                 && total != dropped_seen
@@ -200,6 +204,10 @@ pub(crate) fn open(ifname: &str, description: String) -> Result<CanHandle, CanEr
                                 None => {}
                             }
                         }
+                    }
+                    }
+                    if let Some(f) = failed {
+                        break Some(f);
                     }
                 }
                 req = d.requests.recv() => match req {
@@ -358,6 +366,55 @@ mod tests {
         k.data[0] = b;
         // SAFETY: writes 16 bytes of a 72-byte repr(C) struct.
         unsafe { libc::write(fd.as_raw_fd(), &k as *const _ as *const libc::c_void, CAN_MTU) == CAN_MTU as isize }
+    }
+
+    /// Under load every frame either reaches the event stream or is reported as dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vcan0_under_load_nothing_is_lost_silently() {
+        let Some(ifname) = vcan0() else {
+            eprintln!("skipped: no vcan0 that is up");
+            return;
+        };
+        let mut h = open(ifname, "load".into()).unwrap();
+        let mut ev = h.take_events().unwrap();
+        let (tx, _) = open_socket(ifname).unwrap();
+        const ID: u32 = 0x5B4;
+        const N: u32 = 50_000;
+        let writer = std::thread::spawn(move || {
+            let mut sent = 0u32;
+            for i in 0..N {
+                // vcan never blocks; retry the odd EAGAIN.
+                while !send_classic(&tx, ID, i as u8) {
+                    std::thread::yield_now();
+                }
+                sent += 1;
+            }
+            // The kernel reports a loss on the next frame it queues: a trailing marker carries it.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            while !send_classic(&tx, ID + 1, 0) {
+                std::thread::yield_now();
+            }
+            sent
+        });
+        let sent = tokio::task::spawn_blocking(move || writer.join().unwrap()).await.unwrap();
+        let (mut got, mut dropped) = (0u32, 0u32);
+        // Generous: a debug build on a busy machine reads slowly, and unread frames are not lost.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        while got + dropped < sent && tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), ev.recv()).await {
+                Ok(Some(BusEvent::Frame(f))) if f.frame.id == ID => got += 1,
+                Ok(Some(BusEvent::Error(e))) | Ok(Some(BusEvent::Errors { latest: e, .. })) if e.contains("dropped") => {
+                    // "... ({total} lost since connecting)"
+                    let total = e.rsplit('(').next().and_then(|s| s.split_whitespace().next()).and_then(|n| n.parse().ok()).unwrap_or(0);
+                    dropped = dropped.max(total);
+                }
+                Ok(Some(_)) => {}
+                _ => break,
+            }
+        }
+        eprintln!("{sent} sent, {got} received, {dropped} reported dropped");
+        assert_eq!(got + dropped, sent, "frames lost without a report");
+        h.close().await;
     }
 
     #[test]
