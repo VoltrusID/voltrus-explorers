@@ -5,17 +5,20 @@
 //!
 //! Control requests set up the channel (host format, bit timing, mode); CAN frames travel over one
 //! bulk IN and one bulk OUT endpoint as `gs_host_frame` structs (12-byte header, then 8 or 64 data
-//! bytes). A frame sent by the host comes back on IN with its echo id once it is on the bus.
+//! bytes). A frame sent by the host comes back on IN with its echo id once the firmware has handed
+//! it to the CAN controller (candleLight echoes when the frame enters a transmit mailbox). The echo
+//! does not mean another node acknowledged it: alone on a bus, the controller keeps retrying and only
+//! its error counters (reported in error frames) tell.
 
 use std::time::Duration;
 
 use nusb::descriptors::TransferType;
-use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, Direction as UsbDir, In, Out, Recipient};
+use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, Direction as UsbDir, In, Out, Recipient, TransferError};
 use serde::Serialize;
 
 use crate::bus::{BusEvent, CanHandle};
 use crate::error::CanError;
-use crate::frame::{CanFrame, Direction, TimedFrame, dlc_to_len, now_us};
+use crate::frame::{BusStatus, CanFrame, Direction, TimedFrame, decode_error_frame, dlc_to_len, now_us};
 
 /// USB ids of gs_usb devices (the Linux driver's table).
 pub const DEVICE_IDS: [(u16, u16); 4] = [(0x1D50, 0x606F), (0x1209, 0x2323), (0x1CD2, 0x606F), (0x16D0, 0x10B8)];
@@ -33,9 +36,14 @@ const MODE_START: u32 = 1;
 
 pub const FEATURE_LISTEN_ONLY: u32 = 1 << 0;
 pub const FEATURE_FD: u32 = 1 << 8;
-pub const FEATURE_BT_CONST_EXT: u32 = 1 << 9;
+/// `GS_CAN_FEATURE_BT_CONST_EXT` is bit 10 (bit 9 is the LPC546xx USB quirk), as in candleLight's
+/// gs_usb.h and Linux's gs_usb driver.
+pub const FEATURE_BT_CONST_EXT: u32 = 1 << 10;
 const MODE_FLAG_LISTEN_ONLY: u32 = 1 << 0;
 const MODE_FLAG_FD: u32 = 1 << 8;
+/// Bus error reporting: one error frame per bus error. Not requested: alone on a bus the
+/// controller reports one per retry (hundreds a second). State changes and error counters still come.
+#[allow(dead_code)]
 const MODE_FLAG_BERR_REPORTING: u32 = 1 << 12;
 pub const FEATURE_BERR_REPORTING: u32 = 1 << 12;
 
@@ -49,7 +57,8 @@ const CAN_RTR_FLAG: u32 = 0x4000_0000;
 const CAN_ERR_FLAG: u32 = 0x2000_0000;
 
 const HEADER: usize = 12;
-/// Echo id of a received frame (anything else is the echo of one we sent).
+/// Echo id of a received frame (anything else is the echo of a frame we sent, returned once the
+/// firmware handed it to the controller).
 const RX_ECHO_ID: u32 = 0xFFFF_FFFF;
 const TIMEOUT: Duration = Duration::from_millis(1000);
 /// Frames sent but not yet echoed; the firmware has a small transmit queue.
@@ -124,44 +133,90 @@ impl BitTiming {
     pub fn sample_point(&self) -> f64 {
         (1 + self.prop_seg + self.phase_seg1) as f64 / self.tq() as f64
     }
+
+    /// Bit rate this timing gives from `fclk`.
+    pub fn bitrate(&self, fclk: u32) -> f64 {
+        fclk as f64 / (self.brp as f64 * self.tq() as f64)
+    }
+
+    /// Oscillator tolerance this timing allows (ISO 11898-1 / Bosch "CAN bit timing" conditions for
+    /// classic CAN): the smaller of `sjw / (20 * tq)` and `min(ps1, ps2) / (2 * (13 * tq - ps2))`.
+    pub fn tolerance(&self) -> f64 {
+        let tq = self.tq() as f64;
+        let ps1 = (self.prop_seg + self.phase_seg1) as f64;
+        let ps2 = self.phase_seg2 as f64;
+        (self.sjw as f64 / (20.0 * tq)).min(ps1.min(ps2) / (2.0 * (13.0 * tq - ps2)))
+    }
 }
 
-/// Finds an exact bit timing for `bitrate` from the adapter's clock, as close as it can to the
-/// CiA 301 sample point (87.5 % up to 800 kbit/s, 80 % at 1 Mbit/s, 75 % above for the data phase).
+/// The largest bit rate error accepted when a rate cannot be made exactly from the adapter's clock
+/// (e.g. 83.333 kbit/s); it must also stay within half the timing's oscillator tolerance.
+const MAX_RATE_ERROR: f64 = 0.005;
+
+/// Finds a bit timing for `bitrate` from the adapter's clock: exact when the clock allows it,
+/// otherwise the closest rate within [`MAX_RATE_ERROR`] and half the timing's tolerance. Sample point
+/// as close as it can to CiA 301 (87.5 % up to 800 kbit/s, 80 % at 1 Mbit/s, 75 % above, which is the
+/// data phase of CAN FD). At least 8 time quanta per bit for the nominal phase and 5 for the data
+/// phase (ISO 11898-1); the candleLight firmware itself only checks its segment and prescaler limits.
 pub fn calc_bittiming(fclk: u32, bitrate: u32, c: &TimingConst) -> Result<BitTiming, CanError> {
     if bitrate == 0 || fclk == 0 {
         return Err(CanError::Unsupported("bit rate and adapter clock must be above zero".into()));
     }
     let target = if bitrate > 1_000_000 { 0.75 } else if bitrate > 800_000 { 0.80 } else { 0.875 };
-    let mut best: Option<(f64, BitTiming)> = None;
+    let min_bit_tq = if bitrate > 1_000_000 { 5 } else { 8 };
+    let (min_tq, max_tq) = ((1 + c.tseg1_min + c.tseg2_min).max(min_bit_tq), 1 + c.tseg1_max + c.tseg2_max);
+    // (rate error, sample point error, timing)
+    let mut best: Option<(f64, f64, BitTiming)> = None;
+    let mut closest: Option<(f64, BitTiming)> = None;
     let mut brp = c.brp_min.max(1);
     while brp <= c.brp_max {
-        let div = brp as u64 * bitrate as u64;
-        if (fclk as u64).is_multiple_of(div) {
-            let tq = (fclk as u64 / div) as u32;
-            let (min_tq, max_tq) = (1 + c.tseg1_min + c.tseg2_min, 1 + c.tseg1_max + c.tseg2_max);
-            if (min_tq..=max_tq).contains(&tq) && tq >= 8 {
-                let mut tseg1 = ((target * tq as f64).round() as u32).saturating_sub(1);
-                tseg1 = tseg1.clamp(c.tseg1_min, c.tseg1_max);
-                let mut tseg2 = tq - 1 - tseg1;
-                if tseg2 < c.tseg2_min {
-                    tseg2 = c.tseg2_min;
-                    tseg1 = tq - 1 - tseg2;
+        let exact_tq = fclk as f64 / (brp as f64 * bitrate as f64);
+        for tq in [exact_tq.floor() as u32, exact_tq.ceil() as u32] {
+            if !(min_tq..=max_tq).contains(&tq) {
+                continue;
+            }
+            let mut tseg1 = ((target * tq as f64).round() as u32).saturating_sub(1);
+            tseg1 = tseg1.clamp(c.tseg1_min, c.tseg1_max);
+            let mut tseg2 = tq - 1 - tseg1;
+            if tseg2 < c.tseg2_min {
+                tseg2 = c.tseg2_min;
+                tseg1 = tq - 1 - tseg2;
+            }
+            if tseg2 > c.tseg2_max || !(c.tseg1_min..=c.tseg1_max).contains(&tseg1) || tseg1 == 0 {
+                continue;
+            }
+            let bt = BitTiming { prop_seg: 1, phase_seg1: tseg1 - 1, phase_seg2: tseg2, sjw: c.sjw_max.min(tseg2).max(1), brp };
+            let rate_err = (bt.bitrate(fclk) - bitrate as f64).abs() / bitrate as f64;
+            if closest.as_ref().is_none_or(|(e, _)| rate_err < *e) {
+                closest = Some((rate_err, bt));
+            }
+            if rate_err > 1e-9 && (rate_err > MAX_RATE_ERROR || rate_err > bt.tolerance() / 2.0) {
+                continue;
+            }
+            let sp_err = (bt.sample_point() - target).abs();
+            // Prefer the exact rate, then the closer sample point, then more quanta per bit.
+            let better = match &best {
+                None => true,
+                Some((re, se, b)) => {
+                    rate_err < re - 1e-9
+                        || ((rate_err - re).abs() <= 1e-9 && (sp_err < se - 1e-9 || ((sp_err - se).abs() <= 1e-9 && bt.tq() > b.tq())))
                 }
-                if tseg2 <= c.tseg2_max && (c.tseg1_min..=c.tseg1_max).contains(&tseg1) {
-                    let bt = BitTiming { prop_seg: 1, phase_seg1: tseg1 - 1, phase_seg2: tseg2, sjw: c.sjw_max.min(tseg2).max(1), brp };
-                    let err = (bt.sample_point() - target).abs();
-                    // Prefer the closer sample point, then more quanta per bit (finer resolution).
-                    if best.as_ref().is_none_or(|(e, b)| err < *e - 1e-9 || ((err - *e).abs() < 1e-9 && bt.tq() > b.tq())) {
-                        best = Some((err, bt));
-                    }
-                }
+            };
+            if better {
+                best = Some((rate_err, sp_err, bt));
             }
         }
         brp += c.brp_inc;
     }
-    best.map(|(_, b)| b).ok_or_else(|| {
-        CanError::Unsupported(format!("this adapter ({} MHz clock) cannot run at exactly {} bit/s", fclk as f64 / 1e6, bitrate))
+    best.map(|(_, _, b)| b).ok_or_else(|| {
+        let near = closest
+            .map(|(e, b)| format!("; the closest it gets is {:.1} kbit/s ({:.2} % off), more than CAN tolerates", b.bitrate(fclk) / 1000.0, e * 100.0))
+            .unwrap_or_default();
+        CanError::Unsupported(format!(
+            "this adapter ({} MHz clock) cannot run at {}{near}",
+            fclk as f64 / 1e6,
+            crate::bus::rate_text(bitrate)
+        ))
     })
 }
 
@@ -196,10 +251,10 @@ pub fn encode_frame(f: &CanFrame, echo_id: u32, channel: u8) -> Vec<u8> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
     Rx { frame: CanFrame, channel: u8, overflow: bool },
-    /// A frame we sent is on the bus.
+    /// The firmware handed a frame we sent to the controller (not proof that it was acknowledged).
     Echo { echo_id: u32, channel: u8 },
     /// An error frame: the Linux CAN error class bits and data.
-    Error { class: u32, data: [u8; 8] },
+    Error { class: u32, data: [u8; 8], channel: u8 },
 }
 
 pub fn decode_frame(b: &[u8]) -> Result<Incoming, CanError> {
@@ -217,7 +272,7 @@ pub fn decode_frame(b: &[u8]) -> Result<Incoming, CanError> {
         let mut data = [0u8; 8];
         let n = payload.len().min(8);
         data[..n].copy_from_slice(&payload[..n]);
-        return Ok(Incoming::Error { class: can_id & 0x1FFF_FFFF, data });
+        return Ok(Incoming::Error { class: can_id & 0x1FFF_FFFF, data, channel });
     }
     let extended = can_id & CAN_EFF_FLAG != 0;
     let id = if extended { can_id & 0x1FFF_FFFF } else { can_id & 0x7FF };
@@ -262,22 +317,6 @@ fn mode_bytes(mode: u32, flags: u32) -> [u8; 8] {
     o
 }
 
-fn error_text(class: u32) -> String {
-    const NAMES: [&str; 9] = [
-        "transmit timeout",
-        "arbitration lost",
-        "controller problem",
-        "protocol violation",
-        "transceiver status",
-        "no acknowledge",
-        "bus off",
-        "bus error",
-        "controller restarted",
-    ];
-    let parts: Vec<&str> = (0..9).filter(|b| class & (1 << b) != 0).map(|b| NAMES[b]).collect();
-    if parts.is_empty() { "error frame".into() } else { format!("error frame: {}", parts.join(", ")) }
-}
-
 // ---- USB ----------------------------------------------------------------------------------------
 
 /// A frame handed to the adapter, waiting for its echo.
@@ -292,6 +331,23 @@ pub struct GsUsbDevice {
     pub description: String,
     pub vid: u16,
     pub pid: u16,
+}
+
+/// Failed bulk transfers in a row before the adapter is taken as gone.
+const MAX_USB_ERRORS: u32 = 4;
+
+/// Counts a failed bulk transfer. `Some(reason)` when the connection should end: the adapter is
+/// unplugged, the transfer was cancelled (this driver never cancels while running, so the OS did:
+/// macOS does on unplug), or transfers keep failing.
+fn usb_failure(e: TransferError, consecutive: &mut u32) -> Option<String> {
+    *consecutive += 1;
+    match e {
+        TransferError::Disconnected | TransferError::Cancelled => Some("the adapter was unplugged".to_string()),
+        _ if *consecutive >= MAX_USB_ERRORS => {
+            Some(format!("USB transfers to the adapter failed {} times in a row (last: {e}); was it unplugged?", *consecutive))
+        }
+        _ => None,
+    }
 }
 
 fn usb_err(what: &str, e: impl std::fmt::Display) -> CanError {
@@ -406,20 +462,23 @@ pub(crate) async fn open(
         }
         flags |= MODE_FLAG_LISTEN_ONLY;
     }
-    if o.bt.feature & FEATURE_BERR_REPORTING != 0 {
-        flags |= MODE_FLAG_BERR_REPORTING;
-    }
+    // No MODE_FLAG_BERR_REPORTING (see there): state changes and error counters are reported anyway.
+    let data_timing = match data_bitrate {
+        Some(dr) => {
+            if o.bt.feature & FEATURE_FD == 0 {
+                return Err(CanError::Unsupported("this adapter does not do CAN FD (pick Classic CAN)".into()));
+            }
+            let dc = o.bt.data.unwrap_or(o.bt.nominal);
+            flags |= MODE_FLAG_FD;
+            Some(calc_bittiming(o.bt.fclk, dr, &dc)?)
+        }
+        None => None,
+    };
     // Stop the channel in case it was left running, then configure and start it.
     vendor_out(&o.iface, REQ_MODE, ch, &mode_bytes(MODE_RESET, 0)).await?;
     vendor_out(&o.iface, REQ_BITTIMING, ch, &nominal.bytes()).await?;
-    if let Some(dr) = data_bitrate {
-        if o.bt.feature & FEATURE_FD == 0 {
-            return Err(CanError::Unsupported("this adapter does not do CAN FD (pick Classic CAN)".into()));
-        }
-        let dc = o.bt.data.unwrap_or(o.bt.nominal);
-        let data = calc_bittiming(o.bt.fclk, dr, &dc)?;
+    if let Some(data) = &data_timing {
         vendor_out(&o.iface, REQ_DATA_BITTIMING, ch, &data.bytes()).await?;
-        flags |= MODE_FLAG_FD;
     }
     vendor_out(&o.iface, REQ_MODE, ch, &mode_bytes(MODE_START, flags)).await?;
 
@@ -432,21 +491,29 @@ pub(crate) async fn open(
         ep_in.submit(Buffer::new(rx_len));
     }
 
-    let (mut d, make) = crate::bus::channels(description);
+    let (mut d, make) = crate::bus::channels(description, data_bitrate.is_some());
     let fd_txt = if o.bt.feature & FEATURE_FD != 0 { ", CAN FD capable" } else { "" };
+    let timing_txt = |bt: &BitTiming, want: u32| {
+        let actual = bt.bitrate(o.bt.fclk);
+        let off = if (actual - want as f64).abs() > 0.5 { format!(" ({:.3} kbit/s)", actual / 1000.0) } else { String::new() };
+        format!("brp {} tq {} sample point {:.1}%{off}", bt.brp, bt.tq(), bt.sample_point() * 100.0)
+    };
+    let data_txt = data_timing.as_ref().zip(data_bitrate).map(|(bt, dr)| format!("; data timing {}", timing_txt(bt, dr))).unwrap_or_default();
     let _ = d.events.send(BusEvent::Info(format!(
-        "{} (firmware {}, hardware {}, {} channel(s), {} MHz clock{fd_txt}); nominal timing brp {} tq {} sample point {:.1}%",
+        "{} (firmware {}, hardware {}, {} channel(s), {} MHz clock{fd_txt}); nominal timing {}{data_txt}",
         o.product,
         o.config.sw_version,
         o.config.hw_version,
         o.config.channels,
         o.bt.fclk as f64 / 1e6,
-        nominal.brp,
-        nominal.tq(),
-        nominal.sample_point() * 100.0
+        timing_txt(&nominal, bitrate),
     )));
     let iface = o.iface.clone();
     let task = tokio::spawn(async move {
+        let mut status = BusStatus::default();
+        // Consecutive failed USB transfers; a few in a row end the connection (an unplugged adapter
+        // on macOS can report Unknown or Fault errors instead of Disconnected).
+        let mut usb_errors = 0u32;
         // echo id -> (frame, done) for frames handed to the adapter and not yet on the bus.
         let mut in_flight: Vec<Option<InFlight>> =
             (0..MAX_IN_FLIGHT).map(|_| None).collect();
@@ -473,6 +540,7 @@ pub(crate) async fn open(
                 c = ep_in.next_complete() => {
                     match c.status {
                         Ok(()) => {
+                            usb_errors = 0;
                             match decode_frame(&c.buffer[..c.actual_len]) {
                                 Ok(Incoming::Rx { frame, channel: fch, overflow }) => {
                                     if fch == channel {
@@ -482,14 +550,23 @@ pub(crate) async fn open(
                                         let _ = d.events.send(BusEvent::Frame(TimedFrame { ts_us: now_us(), dir: Direction::Rx, frame }));
                                     }
                                 }
-                                Ok(Incoming::Echo { echo_id, .. }) => {
-                                    if let Some(Some((frame, done))) = in_flight.get_mut(echo_id as usize).map(Option::take) {
+                                Ok(Incoming::Echo { echo_id, channel: ech }) => {
+                                    // Handed to the controller; acknowledgement shows only in the error counters.
+                                    if let Some(Some((frame, done))) = (ech == channel).then(|| in_flight.get_mut(echo_id as usize).map(Option::take)).flatten() {
                                         let _ = d.events.send(BusEvent::Frame(TimedFrame { ts_us: now_us(), dir: Direction::Tx, frame }));
                                         let _ = done.send(Ok(()));
                                         give_up = in_flight.iter().any(Option::is_some).then(|| tokio::time::Instant::now() + Duration::from_secs(2));
                                     }
                                 }
-                                Ok(Incoming::Error { class, .. }) => { let _ = d.events.send(BusEvent::Error(error_text(class))); }
+                                Ok(Incoming::Error { class, data, channel: ech }) => {
+                                    if ech == channel {
+                                        let e = decode_error_frame(class, &data);
+                                        if status.update(&e) {
+                                            let _ = d.events.send(BusEvent::Status(status));
+                                        }
+                                        let _ = d.events.send(BusEvent::Error(e.text));
+                                    }
+                                }
                                 Err(e) => { let _ = d.events.send(BusEvent::Error(e.to_string())); }
                             }
                             let mut buf = c.buffer;
@@ -497,34 +574,55 @@ pub(crate) async fn open(
                             buf.set_requested_len(rx_len);
                             ep_in.submit(buf);
                         }
-                        Err(nusb::transfer::TransferError::Disconnected) => break Some("the adapter was unplugged".to_string()),
                         Err(e) => {
+                            if let Some(reason) = usb_failure(e, &mut usb_errors) {
+                                break Some(reason);
+                            }
                             let _ = d.events.send(BusEvent::Error(format!("USB receive error: {e}")));
+                            // Back off before trying again: 20, 40, 80 ms ...
+                            tokio::time::sleep(Duration::from_millis(10 << usb_errors)).await;
                             ep_in.submit(Buffer::new(rx_len));
                         }
                     }
                 }
                 c = ep_out.next_complete(), if out_busy > 0 => {
                     out_busy -= 1;
-                    if let Err(e) = c.status {
-                        if matches!(e, nusb::transfer::TransferError::Disconnected) {
-                            break Some("the adapter was unplugged".to_string());
+                    match c.status {
+                        Ok(()) => usb_errors = 0,
+                        Err(e) => {
+                            if let Some(reason) = usb_failure(e, &mut usb_errors) {
+                                break Some(reason);
+                            }
+                            let _ = d.events.send(BusEvent::Error(format!("USB send error: {e}")));
                         }
-                        let _ = d.events.send(BusEvent::Error(format!("USB send error: {e}")));
                     }
                 }
                 req = d.requests.recv(), if room => match req {
                     Some(r) => queued.push_back(r),
                     None => break None,
                 },
-                // Frames the adapter never echoes (no other node acknowledges them) are given up on.
+                // Frames the adapter never echoes are given up on: its transmit mailboxes stay full when
+                // the frames ahead are not acknowledged (or the controller is bus off). Resetting the
+                // channel also stops the controller retrying them for ever.
                 _ = tokio::time::sleep_until(give_up.unwrap_or_else(tokio::time::Instant::now)), if give_up.is_some() => {
                     give_up = None;
+                    let mut n = 0;
                     for slot in in_flight.iter_mut() {
                         if let Some((_, done)) = slot.take() {
-                            let _ = done.send(Err(CanError::Adapter("no other node acknowledged the frame (is the bus connected and terminated?)".into())));
+                            n += 1;
+                            let _ = done.send(Err(CanError::Adapter(format!(
+                                "the adapter could not send the frame within 2 s (bus {}): {}",
+                                status.state.text(),
+                                crate::frame::NO_ACK_HINT
+                            ))));
                         }
                     }
+                    let _ = d.events.send(BusEvent::Error(format!(
+                        "{n} frame(s) were not sent within 2 s and the channel was restarted; {}",
+                        crate::frame::NO_ACK_HINT
+                    )));
+                    status = BusStatus::default();
+                    let _ = d.events.send(BusEvent::Status(status));
                     let _ = vendor_out(&iface, REQ_MODE, ch, &mode_bytes(MODE_RESET, 0)).await;
                     let _ = vendor_out(&iface, REQ_MODE, ch, &mode_bytes(MODE_START, flags)).await;
                 }
@@ -557,8 +655,35 @@ mod tests {
         assert_eq!((bt.brp, bt.tq(), bt.phase_seg2), (6, 16, 2));
         let d = calc_bittiming(80_000_000, 2_000_000, &G4_DATA).unwrap();
         assert_eq!(80_000_000 / (d.brp * d.tq()), 2_000_000);
-        assert!(calc_bittiming(48_000_000, 83_333, &F0).is_err());
         assert_eq!(bt.bytes()[16..20], 6u32.to_le_bytes());
+        // 83.3 kbit/s and 750 kbit/s (the CANable rates) from 48 MHz.
+        let bt = calc_bittiming(48_000_000, 83_333, &F0).unwrap();
+        assert!((bt.bitrate(48_000_000) - 83_333.3).abs() < 1.0);
+        assert!((bt.sample_point() - 0.875).abs() < 0.01);
+        let bt = calc_bittiming(48_000_000, 750_000, &F0).unwrap();
+        assert_eq!(48_000_000 / (bt.brp * bt.tq()), 750_000);
+    }
+
+    #[test]
+    fn bit_timing_at_the_edges() {
+        // 8 Mbit/s data phase from a 40 MHz FDCAN clock (STM32G0 boards): 5 quanta per bit.
+        let d = calc_bittiming(40_000_000, 8_000_000, &G4_DATA).unwrap();
+        assert_eq!((d.brp, d.tq()), (1, 5));
+        assert!((0.75..=0.80).contains(&d.sample_point()), "{}", d.sample_point());
+        // 5 Mbit/s from 80 MHz: 16 quanta, 75 %.
+        let d = calc_bittiming(80_000_000, 5_000_000, &G4_DATA).unwrap();
+        assert_eq!(d.tq() * d.brp, 16);
+        assert!((d.sample_point() - 0.75).abs() < 0.01);
+        // The nominal phase keeps at least 8 quanta.
+        assert!(calc_bittiming(40_000_000, 1_000_000, &F0).unwrap().tq() >= 8);
+        // 42 MHz STM32F4 bxCAN: 800 kbit/s cannot be made (52.5 quanta); the closest, 807.7 kbit/s,
+        // is 0.96 % off, more than the timing tolerates. The error says so.
+        let e = calc_bittiming(42_000_000, 800_000, &F0).unwrap_err().to_string();
+        assert!(e.contains("807.7 kbit/s") && e.contains("0.96 %"), "{e}");
+        for rate in [125_000, 250_000, 500_000, 1_000_000] {
+            let bt = calc_bittiming(42_000_000, rate, &F0).unwrap();
+            assert_eq!(42_000_000 / (bt.brp * bt.tq()), rate);
+        }
     }
 
     #[test]
@@ -594,14 +719,65 @@ mod tests {
         assert_eq!(frame, r);
     }
 
+    /// What candleLight's can_common.c / bxcan.c put in an error frame: echo id 0xFFFFFFFF, CAN_ERR_FLAG
+    /// plus classes, DLC 8, the channel, data[1] controller state, data[2..3] protocol, data[6..7] counters.
+    fn candle_error(class: u32, channel: u8, data: [u8; 8]) -> Vec<u8> {
+        let mut b = vec![0xFF; 4];
+        b.extend_from_slice(&(CAN_ERR_FLAG | class).to_le_bytes());
+        b.extend_from_slice(&[8, channel, 0, 0]);
+        b.extend_from_slice(&data);
+        b
+    }
+
+    #[test]
+    fn candlelight_error_frames() {
+        use crate::frame::{BusState, CAN_ERR_ACK, CAN_ERR_BUSERROR, CAN_ERR_BUSOFF, CAN_ERR_CNT, CAN_ERR_CRTL, CAN_ERR_PROT, CAN_ERR_RESTARTED};
+        let mut status = BusStatus::default();
+        let mut feed = |b: Vec<u8>| {
+            let Incoming::Error { class, data, channel } = decode_frame(&b).unwrap() else { panic!() };
+            let e = decode_error_frame(class, &data);
+            status.update(&e);
+            (e, channel, status)
+        };
+        // Alone on the bus with BERR reporting: an ACK error per retry (LEC = ACK), counters climbing.
+        let (e, ch, s) = feed(candle_error(CAN_ERR_PROT | CAN_ERR_BUSERROR | CAN_ERR_CNT | CAN_ERR_ACK, 1, [0, 0, 0, 0, 0, 0, 8, 0]));
+        assert_eq!(ch, 1);
+        assert!(e.no_ack && e.text.contains("no acknowledgement") && e.text.contains("TX errors 8, RX errors 0"), "{}", e.text);
+        assert!(e.text.contains("termination"), "{}", e.text);
+        assert_eq!((s.state, s.tx_errors, s.rx_errors), (BusState::ErrorActive, Some(8), Some(0)));
+        // State change to warning: CRTL + CNT, data[1] = TX_WARNING, plus the bus error of the moment.
+        let (e, _, s) = feed(candle_error(CAN_ERR_CRTL | CAN_ERR_CNT | CAN_ERR_PROT | CAN_ERR_BUSERROR | CAN_ERR_ACK, 0, [0, 0x08, 0, 0, 0, 0, 96, 0]));
+        assert!(e.text.contains("controller: TX error warning"), "{}", e.text);
+        assert_eq!((s.state, s.tx_errors), (BusState::ErrorWarning, Some(96)));
+        // Error passive without BERR reporting: only the state change, and a hint.
+        let (e, _, s) = feed(candle_error(CAN_ERR_CRTL | CAN_ERR_CNT, 0, [0, 0x20, 0, 0, 0, 0, 128, 0]));
+        assert!(e.text.contains("TX error passive") && e.text.contains("transmit errors are piling up"), "{}", e.text);
+        assert_eq!(s.state, BusState::ErrorPassive);
+        // A stuff error on reception (LEC = stuff), counters in data[6..7].
+        let (e, _, _) = feed(candle_error(CAN_ERR_PROT | CAN_ERR_BUSERROR | CAN_ERR_CNT, 0, [0, 0, 0x04, 0, 0, 0, 128, 1]));
+        assert!(e.text.contains("protocol violation: bit stuffing error") && !e.no_ack, "{}", e.text);
+        // A CRC error is reported as a location (data[3]).
+        let (e, _, _) = feed(candle_error(CAN_ERR_PROT | CAN_ERR_BUSERROR | CAN_ERR_CNT, 0, [0, 0, 0, 0x08, 0, 0, 128, 2]));
+        assert!(e.text.contains("at CRC sequence"), "{}", e.text);
+        // Bus off carries no data; restarted brings it back to error active.
+        let (e, _, s) = feed(candle_error(CAN_ERR_BUSOFF, 0, [0; 8]));
+        assert_eq!((e.text.as_str(), s.state), ("error frame: bus off", BusState::BusOff));
+        let (_, _, s) = feed(candle_error(CAN_ERR_PROT | CAN_ERR_BUSERROR | CAN_ERR_CNT, 0, [0, 0, 0x04, 0, 0, 0, 10, 0]));
+        assert_eq!(s.state, BusState::BusOff, "counters alone do not end bus off");
+        let (e, _, s) = feed(candle_error(CAN_ERR_RESTARTED, 0, [0; 8]));
+        assert!(e.text.contains("controller restarted"));
+        assert_eq!(s.state, BusState::ErrorActive);
+        // Back to error active after the counters fall: data[1] = CAN_ERR_CRTL_ACTIVE.
+        let (e, _, s) = feed(candle_error(CAN_ERR_CRTL | CAN_ERR_CNT, 0, [0, 0x40, 0, 0, 0, 0, 90, 0]));
+        assert!(e.text.contains("back to error active"));
+        assert_eq!((s.state, s.tx_errors), (BusState::ErrorActive, Some(90)));
+    }
+
     #[test]
     fn errors_and_short_frames() {
-        let mut b = vec![0xFF; 4];
-        b.extend_from_slice(&(CAN_ERR_FLAG | 0x40).to_le_bytes());
-        b.extend_from_slice(&[8, 0, 0, 0]);
-        b.extend_from_slice(&[0; 8]);
-        let Incoming::Error { class, .. } = decode_frame(&b).unwrap() else { panic!() };
-        assert_eq!(error_text(class), "error frame: bus off");
+        let b = candle_error(0x40, 0, [0; 8]);
+        let Incoming::Error { class, data, .. } = decode_frame(&b).unwrap() else { panic!() };
+        assert_eq!(decode_error_frame(class, &data).text, "error frame: bus off");
         assert!(decode_frame(&[0; 5]).is_err());
         let mut short = encode_frame(&CanFrame::new(1, &[1; 8]).unwrap(), 0, 0);
         short[..4].copy_from_slice(&RX_ECHO_ID.to_le_bytes());

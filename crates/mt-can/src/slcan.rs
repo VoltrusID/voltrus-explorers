@@ -3,13 +3,66 @@
 //!
 //! Frames are `t<iii><l><dd..>` (11-bit), `T<iiiiiiii><l><dd..>` (29-bit), `r`/`R` for remote frames
 //! and, on adapters with CAN FD, `d`/`D` (FD) and `b`/`B` (FD with bit rate switch), each ended by a
-//! carriage return. A bare `\r` acknowledges a command and BEL (0x07) refuses it.
+//! carriage return.
+//!
+//! Two families of firmware answer differently, so the driver asks `V` first and keeps the answer:
+//! - Lawicel style (CANUSB, CAN232, USBtin and clones) answers `V<hhhh>`, acknowledges every command
+//!   with `\r` (BEL 0x07 refuses it), confirms queued frames with `z`/`Z`, opens listen-only with `L`
+//!   and reports status flags on `F`. `S7` is 800 kbit/s.
+//! - CANable and CANable 2 slcan firmware answers `<git hash> <repository url>` and acknowledges
+//!   nothing: a refused command is silently ignored. It has no `L` (silent mode is `M1`) and no `F`,
+//!   `S7` is 750 kbit/s, CANable 2 adds `S9` (83.3 kbit/s) and only `Y2` / `Y5` as CAN FD data rates.
+//!   A bare `\r` re-runs its last command, so the driver never sends one.
 
 use crate::error::CanError;
-use crate::frame::{CanFrame, dlc_to_len, len_to_dlc};
+use crate::frame::{BusState, CanFrame, dlc_to_len, len_to_dlc};
 
-/// Nominal (arbitration) bit rates selectable with `S0`..`S8`.
-pub const BITRATES: [(u32, char); 9] = [
+/// Which SLCAN dialect an adapter speaks, from its answer to `V`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Firmware {
+    /// CANable (STM32F042, classic CAN) slcan firmware.
+    Canable,
+    /// CANable 2 (STM32G431, CAN FD) slcan firmware.
+    Canable2,
+    /// Lawicel CANUSB / CAN232, USBtin and other adapters that acknowledge commands.
+    Lawicel,
+}
+
+impl Firmware {
+    pub fn name(self) -> &'static str {
+        match self {
+            Firmware::Canable => "CANable slcan firmware",
+            Firmware::Canable2 => "CANable 2 slcan firmware",
+            Firmware::Lawicel => "Lawicel-compatible SLCAN adapter",
+        }
+    }
+
+    /// Whether the firmware answers commands with `\r` / BEL.
+    pub fn acknowledges(self) -> bool {
+        self == Firmware::Lawicel
+    }
+
+    /// Nominal bit rates and their `S` digit.
+    pub fn bitrates(self) -> &'static [(u32, char)] {
+        match self {
+            Firmware::Canable => &CANABLE_BITRATES[..9],
+            Firmware::Canable2 => &CANABLE_BITRATES,
+            Firmware::Lawicel => &LAWICEL_BITRATES,
+        }
+    }
+
+    /// CAN FD data bit rates and their `Y` digit. Lawicel-style adapters that do CAN FD acknowledge
+    /// `Y`, so the driver can try these and report a refusal.
+    pub fn data_bitrates(self) -> &'static [(u32, char)] {
+        match self {
+            Firmware::Canable => &[],
+            Firmware::Canable2 | Firmware::Lawicel => &DATA_BITRATES,
+        }
+    }
+}
+
+/// `S0`..`S8` on Lawicel, USBtin and the Linux slcan driver.
+pub const LAWICEL_BITRATES: [(u32, char); 9] = [
     (10_000, '0'),
     (20_000, '1'),
     (50_000, '2'),
@@ -21,26 +74,78 @@ pub const BITRATES: [(u32, char); 9] = [
     (1_000_000, '8'),
 ];
 
-/// CAN FD data bit rates selectable with `Y<n>` on CANable 2 style firmware.
-pub const DATA_BITRATES: [(u32, char); 5] =
-    [(1_000_000, '1'), (2_000_000, '2'), (4_000_000, '4'), (5_000_000, '5'), (8_000_000, '8')];
+/// CANable firmware (and python-can): `S7` is 750 kbit/s; CANable 2 adds `S9`, 83.3 kbit/s.
+pub const CANABLE_BITRATES: [(u32, char); 10] = [
+    (10_000, '0'),
+    (20_000, '1'),
+    (50_000, '2'),
+    (100_000, '3'),
+    (125_000, '4'),
+    (250_000, '5'),
+    (500_000, '6'),
+    (750_000, '7'),
+    (1_000_000, '8'),
+    (83_333, '9'),
+];
 
-/// `S<n>\r` for a nominal bit rate.
-pub fn bitrate_command(bitrate: u32) -> Result<String, CanError> {
-    BITRATES
-        .iter()
-        .find(|(b, _)| *b == bitrate)
-        .map(|(_, c)| format!("S{c}\r"))
-        .ok_or_else(|| CanError::Unsupported(format!("SLCAN has no {bitrate} bit/s setting (10k to 1M only)")))
+/// The only CAN FD data rates CANable 2 firmware has (`Y2`, `Y5`).
+pub const DATA_BITRATES: [(u32, char); 2] = [(2_000_000, '2'), (5_000_000, '5')];
+
+fn rate_list(t: &[(u32, char)]) -> String {
+    let mut v: Vec<u32> = t.iter().map(|(b, _)| *b).collect();
+    v.sort_unstable();
+    v.iter().map(|b| crate::bus::rate_text(*b)).collect::<Vec<_>>().join(", ")
 }
 
-/// `Y<n>\r` for a CAN FD data bit rate.
-pub fn data_bitrate_command(bitrate: u32) -> Result<String, CanError> {
-    DATA_BITRATES
-        .iter()
-        .find(|(b, _)| *b == bitrate)
-        .map(|(_, c)| format!("Y{c}\r"))
-        .ok_or_else(|| CanError::Unsupported(format!("SLCAN has no {bitrate} bit/s data rate setting")))
+/// `S<n>\r` for a nominal bit rate on this firmware.
+pub fn bitrate_command(fw: Firmware, bitrate: u32) -> Result<String, CanError> {
+    fw.bitrates().iter().find(|(b, _)| *b == bitrate).map(|(_, c)| format!("S{c}\r")).ok_or_else(|| {
+        CanError::Unsupported(format!(
+            "the adapter ({}) has no {} setting; it offers {}",
+            fw.name(),
+            crate::bus::rate_text(bitrate),
+            rate_list(fw.bitrates())
+        ))
+    })
+}
+
+/// `Y<n>\r` for a CAN FD data bit rate on this firmware.
+pub fn data_bitrate_command(fw: Firmware, bitrate: u32) -> Result<String, CanError> {
+    if fw.data_bitrates().is_empty() {
+        return Err(CanError::Unsupported(format!(
+            "the adapter ({}) does not do CAN FD; pick Classic CAN, or use a CANable 2",
+            fw.name()
+        )));
+    }
+    fw.data_bitrates().iter().find(|(b, _)| *b == bitrate).map(|(_, c)| format!("Y{c}\r")).ok_or_else(|| {
+        CanError::Unsupported(format!(
+            "SLCAN has no {} CAN FD data rate; it offers {}",
+            crate::bus::rate_text(bitrate),
+            rate_list(fw.data_bitrates())
+        ))
+    })
+}
+
+/// Recognises the answer to `V`. `None` when the line is not a version answer.
+pub fn parse_version(line: &str) -> Option<Firmware> {
+    let line = line.trim_matches(|c: char| c == '\r' || c == '\n' || c == ' ' || c == '\0');
+    let lower = line.to_ascii_lowercase();
+    // Lawicel / USBtin: `V1013`, `v0107`.
+    if line.len() == 5 && line.starts_with(['V', 'v']) && line[1..].chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Some(Firmware::Lawicel);
+    }
+    // CANable: `<git hash> <remote url>`, e.g. `a1b2c3d https://github.com/normaldotcom/canable2-fw.git`.
+    let mut words = line.split_whitespace();
+    let hash = words.next().unwrap_or("");
+    let looks_like_hash = (7..=40).contains(&hash.len()) && hash.chars().all(|c| c.is_ascii_hexdigit());
+    // `git describe` output can also be `v1.0-3-ga1b2c3d-dirty`; the second word is the remote.
+    let remote = words.next().unwrap_or("").to_ascii_lowercase();
+    let looks_like_remote = remote.contains("://") || remote.ends_with(".git") || remote.starts_with("git@");
+    if (!hash.is_empty() && (looks_like_hash && !remote.is_empty() || looks_like_remote)) || lower.contains("canable") {
+        let fd = lower.contains("canable2") || lower.contains("canable-2") || lower.contains("canable_2");
+        return Some(if fd { Firmware::Canable2 } else { Firmware::Canable });
+    }
+    None
 }
 
 /// The SLCAN line for a frame, with its `\r`.
@@ -194,6 +299,17 @@ pub fn status_text(flags: u8) -> String {
     if parts.is_empty() { "no errors".into() } else { parts.join(", ") }
 }
 
+/// The controller state the `F` flags report (they have no bus-off bit).
+pub fn status_state(flags: u8) -> BusState {
+    if flags & 0x20 != 0 {
+        BusState::ErrorPassive
+    } else if flags & 0x04 != 0 {
+        BusState::ErrorWarning
+    } else {
+        BusState::ErrorActive
+    }
+}
+
 /// Picks the DLC for a length, for callers that build frames from free text.
 pub fn dlc_for(len: usize) -> Option<u8> {
     len_to_dlc(len)
@@ -254,9 +370,37 @@ mod tests {
 
     #[test]
     fn bitrates() {
-        assert_eq!(bitrate_command(500_000).unwrap(), "S6\r");
-        assert!(bitrate_command(83_333).is_err());
-        assert_eq!(data_bitrate_command(2_000_000).unwrap(), "Y2\r");
+        use Firmware::*;
+        assert_eq!(bitrate_command(Lawicel, 500_000).unwrap(), "S6\r");
+        // S7 means different rates on the two families.
+        assert_eq!(bitrate_command(Lawicel, 800_000).unwrap(), "S7\r");
+        assert!(bitrate_command(Lawicel, 750_000).is_err());
+        assert_eq!(bitrate_command(Canable, 750_000).unwrap(), "S7\r");
+        assert!(bitrate_command(Canable, 800_000).unwrap_err().to_string().contains("750 kbit/s"));
+        assert!(bitrate_command(Canable, 83_333).is_err());
+        assert_eq!(bitrate_command(Canable2, 83_333).unwrap(), "S9\r");
+        assert!(bitrate_command(Lawicel, 83_333).is_err());
+        assert_eq!(data_bitrate_command(Canable2, 2_000_000).unwrap(), "Y2\r");
+        assert_eq!(data_bitrate_command(Canable2, 5_000_000).unwrap(), "Y5\r");
+        for bad in [1_000_000, 4_000_000, 8_000_000] {
+            assert!(data_bitrate_command(Canable2, bad).unwrap_err().to_string().contains("2 Mbit/s, 5 Mbit/s"));
+        }
+        assert!(data_bitrate_command(Canable, 2_000_000).unwrap_err().to_string().contains("does not do CAN FD"));
         assert_eq!(status_text(0x24), "error warning, error passive");
+        assert_eq!(status_state(0x24), BusState::ErrorPassive);
+        assert_eq!(status_state(0x04), BusState::ErrorWarning);
+        assert_eq!(status_state(0x80), BusState::ErrorActive);
+    }
+
+    #[test]
+    fn recognises_firmware_from_the_version_answer() {
+        assert_eq!(parse_version("V1013"), Some(Firmware::Lawicel));
+        assert_eq!(parse_version("v0107\r"), Some(Firmware::Lawicel));
+        assert_eq!(parse_version("a1b2c3d https://github.com/normaldotcom/canable-fw.git"), Some(Firmware::Canable));
+        assert_eq!(parse_version("bd4f1a2 https://github.com/normaldotcom/canable2-fw.git"), Some(Firmware::Canable2));
+        assert_eq!(parse_version("v1.0-3-gdeadbee-dirty git@github.com:me/fork.git"), Some(Firmware::Canable));
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("$GPGGA,123519,4807.038,N,01131.000,E"), None);
+        assert_eq!(parse_version("t1230"), None);
     }
 }
