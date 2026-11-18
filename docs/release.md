@@ -172,7 +172,10 @@ CAN Explorer's download worker (`can-explorer-updates`, R2 `can-explorer-release
 `10bb22f1-210e-4d20-b0ae-557ccb980cdc`) lives in the MacTools repo next to the others. Its Polar product is
 `5c939561-9bf7-49f2-80f7-b99a82e212ca` (licence-key benefit `VOLTRUS-CAN`, `c6fb8a43-eb56-4164-b2e0-3663889cc129`, one
 activation); the console licence entrypoint is `CanExplorerLicence` (voltrus-console migration `0066_can_explorer.sql`).
-The DMG needs `com.apple.security.device.serial` (SLCAN adapters) and `com.apple.security.device.usb` (gs_usb adapters).
+Up to 1.1.x the DMG was sandboxed and needed `com.apple.security.device.serial` (SLCAN adapters) and `com.apple.security.device.usb`
+(gs_usb adapters). From 1.2.0 the DMG updates itself and is signed with `src-tauri/entitlements.dmg.plist`, without the App
+Sandbox (a sandboxed app cannot replace its own bundle); its release also publishes a signed update package. See
+[updates.md](updates.md).
 
 Voltrus Logic Analyzer's download worker (`logic-analyzer-updates`, R2 `logic-analyzer-releases`, D1
 `logic-analyzer-releases-db` `1afeb2c1-525b-4834-b3f1-0bc441182717`) lives in the MacTools repo next to the others. Its

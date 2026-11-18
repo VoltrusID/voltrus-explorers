@@ -40,7 +40,7 @@ jobs:
           restore-keys: cargo-test-${{ runner.os }}-
 
       - name: Crate tests
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-connect
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-ble -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-update -p mt-connect
 
       # Licence-key activation of the Windows build (the logic is portable; the machine id falls back to /etc/machine-id).
       - name: Licence key tests
@@ -97,7 +97,7 @@ jobs:
 
       - name: Crate tests
         timeout-minutes: 20
-        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-connect
+        run: cargo test -p mt-protocol -p mt-modbus -p mt-bacnet -p mt-dnp3 -p mt-s7 -p mt-enip -p mt-serial -p mt-nats -p mt-mqtt -p mt-opcua -p mt-mtconnect -p focas-proto -p mt-secsgem -p mt-can -p mt-logic -p mt-melsec -p mt-fins -p mt-ethercat -p mt-store -p mt-update -p mt-connect
 
       - name: Licence-key tests and direct-download builds
         run: |
@@ -148,6 +148,17 @@ jobs:
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo check -p "$crate" --features store --target "$target"
           done
+
+      # Apps that update themselves (src-tauri/tauri.updater.conf.json): the DMG variant (license + updater) must build,
+      # and the App Store variant must not contain the updater (the App Store forbids self-updating apps).
+      - name: Check updater variant and its absence from the App Store variant
+        if: hashFiles(format('apps/{0}/src-tauri/tauri.updater.conf.json', matrix.app)) != ''
+        run: |
+          crate="$(echo '${{ matrix.app }}' | tr '-' '_')"
+          cargo check -p "$crate" --features license,updater --target aarch64-apple-darwin
+          if cargo tree -p "$crate" --features store --target aarch64-apple-darwin -e normal | grep -q tauri-plugin-updater; then
+            echo "::error::$crate with --features store links tauri-plugin-updater"; exit 1
+          fi
 
       # These apps ship for iPhone/iPad too (the release job builds the IPA). Compile the device target here so a
       # break in the mobile entry point or an iOS-only dependency shows up in the pull request.

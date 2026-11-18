@@ -145,7 +145,11 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 pub fn run() {
-    mt_store::setup(tauri::Builder::default(), include_str!("../store.json"))
+    let context = tauri::generate_context!();
+    // The DMG with the updater runs without the App Sandbox: bring the settings of the sandboxed 1.1.x over first.
+    #[cfg(all(target_os = "macos", feature = "updater"))]
+    mt_update::migrate::from_sandbox_container(&context.config().identifier).log();
+    mt_store::setup(mt_update::register(tauri::Builder::default()), include_str!("../store.json"))
         // Native open and save panels plus reads and writes of the paths the user picked (the only file
         // access the sandboxed build has): DBC files, trace import, export and recording.
         .plugin(tauri_plugin_dialog::init())
@@ -166,7 +170,8 @@ pub fn run() {
             open_url,
             mt_store::request_review, mt_store::store_status, mt_store::store_purchase, mt_store::store_restore,
             mt_store::store_activate, mt_store::store_deactivate,
+            mt_update::update_supported, mt_update::update_check, mt_update::update_download, mt_update::update_install, mt_update::update_open_download,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
