@@ -1,5 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { decodeText } from "./textDecode";
 
 /**
  * File access that works in the sandboxed App Store build.
@@ -35,7 +37,8 @@ export async function saveTextFile(
 }
 
 /**
- * Ask the user for a file and read it as text.
+ * Ask the user for a file and read it as text: UTF-8 when the bytes are valid UTF-8, Windows-1252
+ * otherwise (DBC files from CANdb++ and other Windows tools), so no character turns into U+FFFD.
  * Resolves with `null` if the user cancelled the panel; rejects if the file could not be read.
  */
 export async function openTextFile(
@@ -43,7 +46,11 @@ export async function openTextFile(
 ): Promise<{ path: string; text: string } | null> {
   const path = await open({ multiple: false, directory: false, filters: [filter] });
   if (!path) return null;
-  return { path, text: await readTextFile(path) };
+  // The fs plugin's `read_text_file` command returns the raw bytes (its JS wrapper decodes them as
+  // UTF-8, replacing invalid sequences); calling it directly keeps the existing
+  // `fs:allow-read-text-file` permission and lets us pick the encoding.
+  const raw = await invoke<ArrayBuffer | number[]>("plugin:fs|read_text_file", { path });
+  return { path, text: decodeText(raw instanceof ArrayBuffer ? new Uint8Array(raw) : Uint8Array.from(raw)) };
 }
 
 /**
