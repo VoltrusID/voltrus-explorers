@@ -1,0 +1,193 @@
+{
+  "name": "voltrus-plc",
+  "displayName": "Voltrus PLC – IEC 61131-3 Structured Text",
+  "description": "Free IEC 61131-3 Structured Text support: syntax highlighting, diagnostics, hover, go-to-definition, completion, compile checks and virtual-time scenario tests.",
+  "version": "0.1.0",
+  "publisher": "voltrus",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
+  "homepage": "https://voltrus.id/voltrus-plc/",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Testing"
+  ],
+  "keywords": [
+    "plc",
+    "iec 61131-3",
+    "structured text",
+    "st",
+    "iecst",
+    "automation"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.st",
+    "workspaceContains:**/*.test.yaml"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "iecst",
+        "aliases": [
+          "Structured Text",
+          "IEC 61131-3 ST",
+          "iecst"
+        ],
+        "extensions": [
+          ".st"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "iecst",
+        "scopeName": "source.iecst",
+        "path": "./syntaxes/iecst.tmLanguage.json"
+      }
+    ],
+    "yamlValidation": [
+      {
+        "fileMatch": "*.test.yaml",
+        "url": "./schemas/plc-test.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "voltrusPlc.checkWorkspace",
+        "title": "Check Workspace",
+        "category": "Voltrus PLC"
+      },
+      {
+        "command": "voltrusPlc.runTests",
+        "title": "Run Tests",
+        "category": "Voltrus PLC"
+      },
+      {
+        "command": "voltrusPlc.installToolchain",
+        "title": "Download Toolchain",
+        "category": "Voltrus PLC"
+      },
+      {
+        "command": "voltrusPlc.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "Voltrus PLC"
+      },
+      {
+        "command": "voltrusPlc.showOutput",
+        "title": "Show Output",
+        "category": "Voltrus PLC"
+      }
+    ],
+    "configuration": {
+      "title": "Voltrus PLC",
+      "properties": {
+        "voltrusPlc.lspPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the `voltrus-lsp` binary. Empty: look on `PATH`, then use a toolchain downloaded by this extension."
+        },
+        "voltrusPlc.cliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to the `voltrus-plc` CLI binary. Empty: look on `PATH`, then use a toolchain downloaded by this extension."
+        },
+        "voltrusPlc.toolchainManifestUrl": {
+          "type": "string",
+          "default": "https://dl-voltrus-plc.voltrus.id/releases/toolchain/latest.json",
+          "scope": "machine",
+          "markdownDescription": "Manifest used by **Voltrus PLC: Download Toolchain**."
+        },
+        "voltrusPlc.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the language server."
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "voltrus-plc",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "check",
+              "test"
+            ],
+            "description": "`check` compiles every .st file; `test` runs every *.test.yaml scenario."
+          },
+          "path": {
+            "type": "string",
+            "description": "Directory to check or test, relative to the workspace folder. Default: the workspace folder."
+          },
+          "junit": {
+            "type": "string",
+            "description": "test only: also write a JUnit XML report to this path."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "voltrus-plc",
+        "label": "Voltrus PLC check",
+        "owner": "voltrus-plc",
+        "source": "voltrus-plc",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+): (error|warning): (?:(?:error|warning): )?(.*?)(?: at \\d+(?:\\.\\.\\d+)?)?$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/unit/*.test.ts",
+    "test:integration": "node scripts/build.mjs && node scripts/build.mjs --integration && node dist-test/runTest.js",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "mocha": "^11.7.0",
+    "typescript": "^5.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

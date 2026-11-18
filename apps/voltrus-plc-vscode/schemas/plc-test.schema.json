@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://voltrus.id/schemas/voltrus-plc-test.schema.json",
+  "title": "Voltrus PLC scenario test (*.test.yaml)",
+  "description": "Virtual-time scenarios run by `voltrus-plc test`.",
+  "type": "object",
+  "required": ["program", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "program": {
+      "type": "string",
+      "description": "Program file under test (.st, .fbd, .ld or .sfc), relative to this YAML file.",
+      "pattern": "\\.([Ss][Tt]|[Ff][Bb][Dd]|[Ll][Dd]|[Ss][Ff][Cc])$"
+    },
+    "scan_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 10,
+      "description": "Virtual scan-cycle period in milliseconds. Every scan advances virtual time by this much."
+    },
+    "scenarios": {
+      "type": "array",
+      "description": "Independent scenarios; each one starts from a freshly initialized VM.",
+      "items": { "$ref": "#/definitions/scenario" }
+    }
+  },
+  "definitions": {
+    "scenario": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Scenario name, shown in reports and in the Testing view."
+        },
+        "given": {
+          "$ref": "#/definitions/values",
+          "description": "Variables seeded before the first scan. Values are coerced to the declared variable types (e.g. `40` into a REAL becomes 40.0)."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Ordered steps. Every step needs `set`, `advance`, or both.",
+          "items": { "$ref": "#/definitions/step" }
+        },
+        "expect": {
+          "$ref": "#/definitions/expectations",
+          "description": "Final checks, evaluated after the last step."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["set"] }, { "required": ["advance"] }],
+      "properties": {
+        "set": {
+          "$ref": "#/definitions/values",
+          "description": "Variable writes applied before this step's scans (same coercion as `given`). A set-only step runs no scan."
+        },
+        "advance": {
+          "type": "string",
+          "description": "Virtual time to run: `25scans` (exact scan count), `500ms` or `2s` (floor(ms / scan_ms) scans).",
+          "pattern": "^\\s*(?:[0-9]+\\s*[Ss][Cc][Aa][Nn][Ss]|[0-9]+(?:\\.[0-9]*)?\\s*(?:[Mm][Ss]|[Ss]))\\s*$",
+          "examples": ["1scans", "10scans", "500ms", "2s"]
+        },
+        "expect": {
+          "$ref": "#/definitions/expectations",
+          "description": "Checks evaluated right after this step's scans."
+        }
+      }
+    },
+    "values": {
+      "type": "object",
+      "description": "Variable name → value.",
+      "additionalProperties": {
+        "type": ["boolean", "number", "string"]
+      }
+    },
+    "expectations": {
+      "type": "object",
+      "description": "Variable name → matcher. `true`/`false` for BOOL, an integer for exact numeric equality, a float for a 1e-4 window, a string for STRING/enum, or `{approx, tol}`.",
+      "additionalProperties": { "$ref": "#/definitions/matcher" }
+    },
+    "matcher": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["approx"],
+          "additionalProperties": false,
+          "properties": {
+            "approx": { "type": "number", "description": "Expected numeric value." },
+            "tol": { "type": "number", "minimum": 0, "default": 0.0001, "description": "Allowed absolute difference (default 1e-4)." }
+          }
+        }
+      ]
+    }
+  }
+}

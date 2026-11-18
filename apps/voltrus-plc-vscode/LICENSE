@@ -1,0 +1,29 @@
+Voltrus PLC for Visual Studio Code: License
+
+Copyright (c) 2026 PT Joyo Digitama Solusi. All rights reserved.
+
+This extension is proprietary software. It is not open source.
+
+1. Use. You may install and use this extension, and the Voltrus PLC
+   toolchain binaries it downloads (voltrus-lsp and voltrus-plc), free of
+   charge, on any number of machines, for personal or commercial work,
+   including in continuous-integration pipelines.
+
+2. Restrictions. You may not sell, rent or sublicense the extension or the
+   toolchain, redistribute modified copies, or remove this notice. You may
+   not reverse engineer them except where applicable law permits it despite
+   this restriction.
+
+3. Your work. Programs, tests and other files you create with the extension
+   are yours. This license gives us no rights to them.
+
+4. No warranty. The extension and toolchain are provided "as is", without
+   warranty of any kind. To the extent permitted by law, PT Joyo Digitama
+   Solusi is not liable for any damages arising from their use. Control
+   programs must be validated on the target system before use on real
+   equipment.
+
+5. Changes. Later versions may come with different terms. The terms
+   shipped with a version apply to that version.
+
+Contact: https://voltrus.id
