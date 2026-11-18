@@ -39,8 +39,8 @@ import TraceView from "./TraceView";
 import TransmitView from "./TransmitView";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
 import {
-  BITRATES, DATA_BITRATES, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
-  pushCapped, rateText, sameIface, saveProfiles, saveTxList, toCandump, traceCsv, type IfaceForm, type MonitorRow, type Profile, type TxItem,
+  busStateBadge, dataRateOptions, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
+  pushCapped, rateOptions, sameIface, saveProfiles, saveTxList, toCandump, traceCsv, type IfaceForm, type MonitorRow, type Profile, type TxItem,
 } from "./can";
 import type { ConnInfo, DbcView, FrameView, GsUsbDevice, Layer, PortInfo, Stats } from "./types";
 import { hint } from "./ui";
@@ -478,16 +478,19 @@ function App() {
             </Field>
             <Field label="Bit rate">
               <SheetSelect aria-label="Bit rate" sheetTitle="Bit rate" value={String(form.bitrate)} disabled={connected}
-                options={BITRATES.map((b) => ({ value: String(b), label: rateText(b) }))} onChange={(v) => set({ bitrate: Number(v) })} />
+                options={rateOptions("slcan", form.bitrate)} onChange={(v) => set({ bitrate: Number(v) })} />
             </Field>
             <Field label="CAN FD data rate">
               <SheetSelect aria-label="CAN FD data rate" sheetTitle="CAN FD data rate" value={String(form.dataBitrate)} disabled={connected}
-                options={[{ value: "0", label: "Classic CAN (no FD)" }, ...DATA_BITRATES.map((b) => ({ value: String(b), label: rateText(b) }))]} onChange={(v) => set({ dataBitrate: Number(v) })} />
+                options={dataRateOptions("slcan", form.dataBitrate)} onChange={(v) => set({ dataBitrate: Number(v) })} />
             </Field>
             <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-sm)" }}>
               <input type="checkbox" checked={form.listenOnly} disabled={connected} onChange={(e) => set({ listenOnly: e.target.checked })} /> Listen only (no ACK, no sending)
             </label>
-            <span style={hint}>SLCAN adapters: CANable and CANable 2 (slcan firmware), Lawicel CANUSB and CAN232, USBtin and compatibles. ● marks a known CAN adapter.</span>
+            <span style={hint}>
+              SLCAN adapters: CANable and CANable 2 (slcan firmware), Lawicel CANUSB and CAN232, USBtin and compatibles. ● marks a known CAN adapter.
+              The app asks the adapter which firmware it runs and refuses settings it does not have. CAN FD needs a CANable 2.
+            </span>
           </>
         )}
         {form.kind === "gsusb" && (
@@ -510,11 +513,11 @@ function App() {
             </Field>
             <Field label="Bit rate">
               <SheetSelect aria-label="Bit rate" sheetTitle="Bit rate" value={String(form.bitrate)} disabled={connected}
-                options={BITRATES.map((b) => ({ value: String(b), label: rateText(b) }))} onChange={(v) => set({ bitrate: Number(v) })} />
+                options={rateOptions("gsusb", form.bitrate)} onChange={(v) => set({ bitrate: Number(v) })} />
             </Field>
             <Field label="CAN FD data rate">
               <SheetSelect aria-label="CAN FD data rate" sheetTitle="CAN FD data rate" value={String(form.dataBitrate)} disabled={connected}
-                options={[{ value: "0", label: "Classic CAN (no FD)" }, ...DATA_BITRATES.map((b) => ({ value: String(b), label: rateText(b) }))]} onChange={(v) => set({ dataBitrate: Number(v) })} />
+                options={dataRateOptions("gsusb", form.dataBitrate)} onChange={(v) => set({ dataBitrate: Number(v) })} />
             </Field>
             <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-sm)" }}>
               <input type="checkbox" checked={form.listenOnly} disabled={connected} onChange={(e) => set({ listenOnly: e.target.checked })} /> Listen only (no ACK, no sending)
@@ -609,6 +612,7 @@ function App() {
           </span>
           {stats.load != null && <Badge tone={stats.load > 70 ? "danger" : stats.load > 40 ? "warn" : "neutral"}>Load {stats.load.toFixed(1)}%</Badge>}
           {stats.errors > 0 && <Badge tone="danger">{stats.errors} errors</Badge>}
+          {(() => { const b = busStateBadge(stats.busState); return b && <Badge tone={b.tone} title={b.title}>{b.text}</Badge>; })()}
           {stats.dropped > 0 && <Badge tone="warn" title="Frames the screen could not keep up with; they still count in RX">{stats.dropped} not shown</Badge>}
         </>
       )}

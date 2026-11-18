@@ -28,6 +28,14 @@ export interface Stats {
   rxPerSec: number;
   txPerSec: number;
   load: number | null;
+  /** Controller error state and counters, once the adapter has reported them. */
+  busState?: BusStatus | null;
+}
+
+export interface BusStatus {
+  state: "error-active" | "error-warning" | "error-passive" | "bus-off";
+  txErrors: number | null;
+  rxErrors: number | null;
 }
 
 export interface ConnInfo {
