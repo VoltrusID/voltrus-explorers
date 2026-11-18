@@ -210,6 +210,220 @@ pub struct TimedFrame {
     pub frame: CanFrame,
 }
 
+/// Error state of a CAN controller (ISO 11898-1 fault confinement).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BusState {
+    ErrorActive,
+    ErrorWarning,
+    ErrorPassive,
+    BusOff,
+}
+
+impl BusState {
+    /// The state the error counters put a controller in (bus off is only ever reported, not derived).
+    pub fn from_counters(tx_errors: u8, rx_errors: u8) -> Self {
+        match tx_errors.max(rx_errors) {
+            0..=95 => BusState::ErrorActive,
+            96..=127 => BusState::ErrorWarning,
+            _ => BusState::ErrorPassive,
+        }
+    }
+
+    pub fn text(self) -> &'static str {
+        match self {
+            BusState::ErrorActive => "error active",
+            BusState::ErrorWarning => "error warning",
+            BusState::ErrorPassive => "error passive",
+            BusState::BusOff => "bus off",
+        }
+    }
+}
+
+/// The controller's state and, when the adapter reports them, its error counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BusStatus {
+    pub state: BusState,
+    pub tx_errors: Option<u8>,
+    pub rx_errors: Option<u8>,
+}
+
+impl Default for BusStatus {
+    fn default() -> Self {
+        BusStatus { state: BusState::ErrorActive, tx_errors: None, rx_errors: None }
+    }
+}
+
+impl BusStatus {
+    /// Folds an error frame in. Returns true when the state or the counters changed.
+    pub fn update(&mut self, e: &ErrorFrame) -> bool {
+        let before = *self;
+        if let Some((tx, rx)) = e.counters {
+            self.tx_errors = Some(tx);
+            self.rx_errors = Some(rx);
+        }
+        match (e.state, e.counters) {
+            (Some(s), _) => self.state = s,
+            // A bus error with counters and no state report: the counters tell the state, except
+            // that only an explicit report ends bus off.
+            (None, Some((tx, rx))) if self.state != BusState::BusOff => self.state = BusState::from_counters(tx, rx),
+            _ => {}
+        }
+        *self != before
+    }
+}
+
+// Linux CAN error frame classes (include/uapi/linux/can/error.h), also what gs_usb adapters send.
+pub const CAN_ERR_TX_TIMEOUT: u32 = 0x001;
+pub const CAN_ERR_LOSTARB: u32 = 0x002;
+pub const CAN_ERR_CRTL: u32 = 0x004;
+pub const CAN_ERR_PROT: u32 = 0x008;
+pub const CAN_ERR_TRX: u32 = 0x010;
+pub const CAN_ERR_ACK: u32 = 0x020;
+pub const CAN_ERR_BUSOFF: u32 = 0x040;
+pub const CAN_ERR_BUSERROR: u32 = 0x080;
+pub const CAN_ERR_RESTARTED: u32 = 0x100;
+pub const CAN_ERR_CNT: u32 = 0x200;
+
+const CRTL_TX_WARNING: u8 = 0x08;
+const CRTL_TX_PASSIVE: u8 = 0x20;
+const PROT_LOC_ACK: u8 = 0x19;
+
+/// A decoded error frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorFrame {
+    /// What happened, in words (the details `candump -e` prints).
+    pub text: String,
+    /// The controller state this frame reports, if it reports one.
+    pub state: Option<BusState>,
+    /// Transmit and receive error counters, when the frame carries them.
+    pub counters: Option<(u8, u8)>,
+    /// A frame we sent was not acknowledged by any other node.
+    pub no_ack: bool,
+}
+
+pub const NO_ACK_HINT: &str =
+    "no other node acknowledged: check the wiring, the termination (120 ohm at each end) and that every node uses the same bit rate";
+
+/// Decodes the class bits (`can_id` without the error flag) and the data of a Linux CAN error frame.
+pub fn decode_error_frame(class: u32, d: &[u8; 8]) -> ErrorFrame {
+    let mut parts: Vec<String> = Vec::new();
+    let mut state = None;
+    if class & CAN_ERR_TX_TIMEOUT != 0 {
+        parts.push("transmit timeout".into());
+    }
+    if class & CAN_ERR_LOSTARB != 0 {
+        parts.push(if d[0] != 0 { format!("arbitration lost at bit {}", d[0]) } else { "arbitration lost".into() });
+    }
+    if class & CAN_ERR_CRTL != 0 {
+        const CRTL: [(u8, &str); 7] = [
+            (0x01, "receive buffer overflow"),
+            (0x02, "transmit buffer overflow"),
+            (0x04, "RX error warning"),
+            (0x08, "TX error warning"),
+            (0x10, "RX error passive"),
+            (0x20, "TX error passive"),
+            (0x40, "back to error active"),
+        ];
+        let names: Vec<&str> = CRTL.iter().filter(|(b, _)| d[1] & b != 0).map(|(_, n)| *n).collect();
+        parts.push(if names.is_empty() { "controller problem".into() } else { format!("controller: {}", names.join(", ")) });
+        state = if d[1] & 0x30 != 0 {
+            Some(BusState::ErrorPassive)
+        } else if d[1] & 0x0C != 0 {
+            Some(BusState::ErrorWarning)
+        } else if d[1] & 0x40 != 0 {
+            Some(BusState::ErrorActive)
+        } else {
+            None
+        };
+    }
+    if class & CAN_ERR_PROT != 0 {
+        const KIND: [(u8, &str); 8] = [
+            (0x01, "single bit error"),
+            (0x02, "frame format error"),
+            (0x04, "bit stuffing error"),
+            (0x08, "unable to send a dominant bit"),
+            (0x10, "unable to send a recessive bit"),
+            (0x20, "bus overload"),
+            (0x40, "active error announcement"),
+            (0x80, "while transmitting"),
+        ];
+        let kinds: Vec<&str> = KIND.iter().filter(|(b, _)| d[2] & b != 0).map(|(_, n)| *n).collect();
+        let mut s = if kinds.is_empty() { "protocol violation".to_string() } else { format!("protocol violation: {}", kinds.join(", ")) };
+        if let Some(loc) = prot_location(d[3]) {
+            s.push_str(&format!(" at {loc}"));
+        }
+        parts.push(s);
+    }
+    if class & CAN_ERR_TRX != 0 {
+        let t = match d[4] {
+            0x04 => "CAN H wire missing",
+            0x05 => "CAN H shorted to battery",
+            0x06 => "CAN H shorted to VCC",
+            0x07 => "CAN H shorted to ground",
+            0x40 => "CAN L wire missing",
+            0x50 => "CAN L shorted to battery",
+            0x60 => "CAN L shorted to VCC",
+            0x70 => "CAN L shorted to ground",
+            0x80 => "CAN L shorted to CAN H",
+            _ => "transceiver problem",
+        };
+        parts.push(format!("transceiver: {t}"));
+    }
+    let no_ack = class & CAN_ERR_ACK != 0 || (class & CAN_ERR_PROT != 0 && d[3] == PROT_LOC_ACK);
+    if class & CAN_ERR_ACK != 0 {
+        parts.push("no acknowledgement".into());
+    }
+    if class & CAN_ERR_BUSOFF != 0 {
+        parts.push("bus off".into());
+        state = Some(BusState::BusOff);
+    }
+    if class & CAN_ERR_BUSERROR != 0 && class & CAN_ERR_PROT == 0 {
+        parts.push("bus error".into());
+    }
+    if class & CAN_ERR_RESTARTED != 0 {
+        parts.push("controller restarted".into());
+        state = Some(BusState::ErrorActive);
+    }
+    let counters = (class & CAN_ERR_CNT != 0).then_some((d[6], d[7]));
+    if let Some((tx, rx)) = counters {
+        parts.push(format!("TX errors {tx}, RX errors {rx}"));
+    }
+    let mut text = if parts.is_empty() { "error frame".to_string() } else { format!("error frame: {}", parts.join("; ")) };
+    if no_ack {
+        text.push_str(&format!(" ({NO_ACK_HINT})"));
+    } else if class & CAN_ERR_CRTL != 0 && d[1] & (CRTL_TX_WARNING | CRTL_TX_PASSIVE) != 0 {
+        text.push_str(&format!(" (transmit errors are piling up; if nothing else is on the bus, {NO_ACK_HINT})"));
+    }
+    ErrorFrame { text, state, counters, no_ack }
+}
+
+fn prot_location(loc: u8) -> Option<&'static str> {
+    Some(match loc {
+        0x03 => "start of frame",
+        0x02 => "ID bits 28-21",
+        0x06 => "ID bits 20-18",
+        0x04 => "substitute RTR",
+        0x05 => "identifier extension",
+        0x07 => "ID bits 17-13",
+        0x0F => "ID bits 12-5",
+        0x0E => "ID bits 4-0",
+        0x0C => "RTR bit",
+        0x0D => "reserved bit 1",
+        0x09 => "reserved bit 0",
+        0x0B => "data length code",
+        0x0A => "data field",
+        0x08 => "CRC sequence",
+        0x18 => "CRC delimiter",
+        0x19 => "ACK slot",
+        0x1B => "ACK delimiter",
+        0x1A => "end of frame",
+        0x12 => "intermission",
+        _ => return None,
+    })
+}
+
 pub fn now_us() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

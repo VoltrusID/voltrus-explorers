@@ -3,7 +3,7 @@ import {
   FREE_PROFILE_LIMIT, IFACE_DEFAULTS, PROFILES_KEY, TX_DEFAULTS, TX_KEY, cansendText, candumpLine, configOf, foldMonitor, frameInOf, frameProblem,
   idText, ifaceProblem, loadProfiles, loadTxList, needsPro, normalizeProfile, parseData, parseFilter, parseId, periodText, pushCapped,
   saveProfiles, sortMonitor, traceCsv, type MonitorRow, type Profile, mergeLatest, MON_ROW_H, MON_LINE_H, MON_SIG_H, countProblem, cyclicText,
-  frameFilter, monitorEvicted, monitorLayout, monitorRowHeight, parseDataPattern, parseSearch, periodProblem, sigColumns, visibleRange,
+  frameFilter, monitorEvicted, monitorLayout, monitorRowHeight, parseDataPattern, parseSearch, periodProblem, sigColumns, visibleRange, busStateBadge, dataRateOptions, rateOptions,
 } from "../can";
 import type { FrameView } from "../types";
 
@@ -316,7 +316,7 @@ describe("profiles and tiers", () => {
     saveProfiles([saved], { setItem: (k, v) => { mem[k] = v; } });
     expect(loadProfiles({ getItem: (k) => mem[k] ?? null })).toEqual([saved]);
     expect(Object.keys(mem)).toEqual([PROFILES_KEY]);
-    expect(normalizeProfile({ name: "x", bitrate: 83333, kind: "weird" })).toEqual(p("x"));
+    expect(normalizeProfile({ name: "x", bitrate: 83334, kind: "weird" })).toEqual(p("x"));
     expect(normalizeProfile({ bitrate: 500000 })).toBeNull();
     expect(loadProfiles({ getItem: () => "{oops" })).toEqual([]);
   });
@@ -334,6 +334,34 @@ describe("profiles and tiers", () => {
     expect(ifaceProblem(IFACE_DEFAULTS)).toMatch(/serial port/);
     expect(ifaceProblem({ ...IFACE_DEFAULTS, kind: "socketcan", ifname: "can0" })).toBeNull();
     expect(ifaceProblem({ ...IFACE_DEFAULTS, kind: "socketcan", ifname: "bad name" })).not.toBeNull();
+  });
+  it("offers each adapter kind only the rates it has", () => {
+    const slcan = { ...IFACE_DEFAULTS, port: "/dev/cu.usbmodem1" };
+    // CANable 2 slcan firmware: 2 and 5 Mbit/s data rates only.
+    expect(ifaceProblem({ ...slcan, dataBitrate: 2000000 })).toBeNull();
+    expect(ifaceProblem({ ...slcan, dataBitrate: 4000000 })).toMatch(/2 and 5 Mbit\/s/);
+    expect(ifaceProblem({ ...slcan, kind: "gsusb", dataBitrate: 8000000 })).toBeNull();
+    expect(dataRateOptions("slcan", 0).map((o) => o.value)).toEqual(["0", "2000000", "5000000"]);
+    const odd = dataRateOptions("slcan", 8000000);
+    expect(odd[odd.length - 1].label).toMatch(/not available/);
+    // 750k / 83.3k / 800k are labelled with the adapters that have them.
+    const labels = rateOptions("slcan", 500000).map((o) => o.label);
+    expect(labels).toContain("750 kbit/s (CANable only)");
+    expect(labels).toContain("83.3 kbit/s (CANable 2 only)");
+    expect(labels.find((l) => l.startsWith("800 kbit/s"))).toMatch(/not CANable/);
+    expect(rateOptions("gsusb", 500000).every((o) => !o.label.includes("("))).toBe(true);
+    expect(normalizeProfile({ name: "c", bitrate: 750000 })?.bitrate).toBe(750000);
+  });
+  it("shows the controller state", () => {
+    expect(busStateBadge(null)).toBeNull();
+    expect(busStateBadge({ state: "error-active", txErrors: null, rxErrors: null })).toBeNull();
+    expect(busStateBadge({ state: "error-active", txErrors: 0, rxErrors: 0 })).toBeNull();
+    expect(busStateBadge({ state: "error-active", txErrors: 8, rxErrors: 0 })?.text).toBe("TEC 8 REC 0");
+    expect(busStateBadge({ state: "error-passive", txErrors: 128, rxErrors: 0 })).toEqual({
+      text: "Error passive", tone: "danger", title: "Controller state: error passive; TX errors 128, RX errors 0",
+    });
+    expect(busStateBadge({ state: "bus-off", txErrors: null, rxErrors: null })?.tone).toBe("danger");
+    expect(busStateBadge({ state: "error-warning", txErrors: 96, rxErrors: 0 })?.tone).toBe("warn");
   });
   it("loads the transmit list with defaults", () => {
     expect(loadTxList({ getItem: () => null })).toEqual(TX_DEFAULTS);

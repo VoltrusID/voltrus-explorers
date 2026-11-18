@@ -1,4 +1,4 @@
-import type { Dir, FrameIn, FrameView, InterfaceConfig, InterfaceKind } from "./types";
+import type { BusStatus, Dir, FrameIn, FrameView, InterfaceConfig, InterfaceKind } from "./types";
 
 // ── Tiers ──
 
@@ -405,8 +405,58 @@ export function pushCapped<T>(prev: T[], items: T[], max: number): T[] {
 export const PROFILES_KEY = "can-explorer-profiles";
 export const TX_KEY = "can-explorer-tx-list";
 
-export const BITRATES = [10000, 20000, 50000, 100000, 125000, 250000, 500000, 800000, 1000000];
+/** Every nominal bit rate the connect form offers (a saved profile may hold any of them). */
+export const BITRATES = [10000, 20000, 50000, 83333, 100000, 125000, 250000, 500000, 750000, 800000, 1000000];
+/** Every CAN FD data rate the connect form offers. */
 export const DATA_BITRATES = [1000000, 2000000, 4000000, 5000000, 8000000];
+
+/**
+ * Bit rates per adapter kind, with a note when only some adapters have the rate. SLCAN firmware has a
+ * fixed table (`S0`-`S9`) and `S7` differs: 750k on CANable, 800k on Lawicel and USBtin. gs_usb
+ * computes the timing from the adapter's clock, so it takes them all.
+ */
+export const IFACE_BITRATES: Record<"slcan" | "gsusb", { rate: number; note?: string }[]> = {
+  slcan: [
+    { rate: 10000 }, { rate: 20000 }, { rate: 50000 }, { rate: 83333, note: "CANable 2 only" }, { rate: 100000 }, { rate: 125000 },
+    { rate: 250000 }, { rate: 500000 }, { rate: 750000, note: "CANable only" }, { rate: 800000, note: "Lawicel, USBtin; not CANable" },
+    { rate: 1000000 },
+  ],
+  gsusb: BITRATES.map((rate) => ({ rate })),
+};
+
+/** CAN FD data rates per adapter kind: CANable 2 slcan firmware only has 2 and 5 Mbit/s. */
+export const IFACE_DATA_BITRATES: Record<"slcan" | "gsusb", number[]> = {
+  slcan: [2000000, 5000000],
+  gsusb: DATA_BITRATES,
+};
+
+/** Status bar badge for the controller's error state; null while it is error active with no counters to show. */
+export function busStateBadge(s: BusStatus | null | undefined): { text: string; tone: "warn" | "danger" | "neutral"; title: string } | null {
+  if (!s) return null;
+  const counters = s.txErrors != null && s.rxErrors != null ? `TX errors ${s.txErrors}, RX errors ${s.rxErrors}` : "";
+  const title = `Controller state: ${s.state.replace("-", " ")}${counters ? `; ${counters}` : ""}`;
+  switch (s.state) {
+    case "bus-off": return { text: "Bus off", tone: "danger", title };
+    case "error-passive": return { text: "Error passive", tone: "danger", title };
+    case "error-warning": return { text: "Error warning", tone: "warn", title };
+    default: return counters && (s.txErrors! > 0 || s.rxErrors! > 0) ? { text: `TEC ${s.txErrors} REC ${s.rxErrors}`, tone: "neutral", title } : null;
+  }
+}
+
+const rateLabel = (b: number) => (b === 83333 ? "83.3 kbit/s" : rateText(b));
+
+/** Bit rate choices for the connect form; a saved rate this kind lacks stays listed, marked. */
+export function rateOptions(kind: "slcan" | "gsusb", current: number): { value: string; label: string }[] {
+  const opts = IFACE_BITRATES[kind].map(({ rate, note }) => ({ value: String(rate), label: note ? `${rateLabel(rate)} (${note})` : rateLabel(rate) }));
+  if (!IFACE_BITRATES[kind].some((b) => b.rate === current)) opts.push({ value: String(current), label: `${rateLabel(current)} (not available)` });
+  return opts;
+}
+
+export function dataRateOptions(kind: "slcan" | "gsusb", current: number): { value: string; label: string }[] {
+  const opts = [{ value: "0", label: "Classic CAN (no FD)" }, ...IFACE_DATA_BITRATES[kind].map((b) => ({ value: String(b), label: rateText(b) }))];
+  if (current > 0 && !IFACE_DATA_BITRATES[kind].includes(current)) opts.push({ value: String(current), label: `${rateText(current)} (not available)` });
+  return opts;
+}
 
 export interface IfaceForm {
   kind: InterfaceKind;
@@ -442,6 +492,12 @@ export function configOf(f: IfaceForm): InterfaceConfig {
 
 export function ifaceProblem(f: IfaceForm): string | null {
   if (f.kind === "slcan" && !f.port) return "Pick the adapter's serial port.";
+  if (f.kind === "slcan" || f.kind === "gsusb") {
+    if (!IFACE_BITRATES[f.kind].some((b) => b.rate === f.bitrate)) return `Pick a bit rate this adapter type offers.`;
+    if (f.dataBitrate > 0 && !IFACE_DATA_BITRATES[f.kind].includes(f.dataBitrate)) {
+      return f.kind === "slcan" ? "SLCAN adapters (CANable 2) only have 2 and 5 Mbit/s CAN FD data rates." : "Pick a CAN FD data rate this adapter type offers.";
+    }
+  }
   if (f.kind === "socketcan" && !/^[A-Za-z0-9_.-]{1,15}$/.test(f.ifname.trim())) return "Enter the interface name, e.g. can0.";
   return null;
 }

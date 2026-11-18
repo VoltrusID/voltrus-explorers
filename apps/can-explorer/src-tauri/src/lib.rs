@@ -204,6 +204,22 @@ pub fn run() {
             mt_store::store_activate, mt_store::store_deactivate,
             mt_update::update_supported, mt_update::update_check, mt_update::update_download, mt_update::update_install, mt_update::update_open_download,
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            // Leave the adapter closed when the app goes away: an SLCAN adapter left open keeps
+            // acknowledging (and a CANable keeps its channel open), a gs_usb channel keeps running.
+            tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } if label == "main" => close_bus(app),
+            tauri::RunEvent::Exit => close_bus(app),
+            _ => {}
+        });
+}
+
+/// Disconnects the bus (SLCAN `C`, gs_usb mode reset), waiting at most 3 s.
+fn close_bus(app: &tauri::AppHandle) {
+    let Some(core) = app.try_state::<Arc<Core>>() else { return };
+    let core = core.inner().clone();
+    tauri::async_runtime::block_on(async move {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), core.disconnect()).await;
+    });
 }

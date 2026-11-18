@@ -5,7 +5,6 @@ import type { DbcView, FrameView } from "../types";
 
 // The shared UI package reads `window` when it loads; these tests render to a string under Node.
 (globalThis as { window?: unknown }).window ??= globalThis;
-const { default: BusStatus } = await import("../BusStatus");
 const { default: MonitorView } = await import("../MonitorView");
 const { dbcNotes } = await import("../SignalsView");
 
@@ -30,23 +29,6 @@ describe("monitor view", () => {
     const dropped = renderToStaticMarkup(<MonitorView rows={[...rows.values()]} filter="zz" onClear={() => {}} trending={new Set()} onToggleTrend={() => {}} evicted={1234} />);
     expect(dropped).toContain("1,234 IDs not shown");
     expect(dropped).toContain("Not an identifier: zz");
-  });
-});
-
-describe("bus status", () => {
-  it("shows nothing until the driver reports health", () => {
-    expect(renderToStaticMarkup(<BusStatus stats={null} />)).toBe("");
-    expect(renderToStaticMarkup(<BusStatus stats={{ dropped: 0 }} />)).toBe("");
-  });
-  it("shows the bus state and error counters", () => {
-    const html = renderToStaticMarkup(<BusStatus stats={{ busState: "passive", txErr: 130, rxErr: 0, dropped: 0 }} />);
-    expect(html).toContain("Error passive");
-    expect(html).toContain("TEC 130 · REC 0");
-    expect(renderToStaticMarkup(<BusStatus stats={{ busState: "bus-off" }} />)).toContain("Bus off");
-    expect(renderToStaticMarkup(<BusStatus stats={{ busState: "weird" as never, rxErr: 5 }} />)).toContain("TEC – · REC 5");
-  });
-  it("shows a notShown count when the core reports it under that name", () => {
-    expect(renderToStaticMarkup(<BusStatus stats={{ notShown: 4200 }} />)).toContain("4,200 not shown");
   });
 });
 

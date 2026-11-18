@@ -96,6 +96,8 @@ pub struct Stats {
     pub tx_per_sec: f64,
     /// Estimated bus load in percent (needs a known bit rate).
     pub load: Option<f64>,
+    /// The controller's error state and counters, once the adapter has reported them.
+    pub bus_state: Option<mt_can::frame::BusStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1058,6 +1060,12 @@ async fn reader(
                         last_held = Some(e);
                     }
                 }
+                // A burst the driver collapsed: count all of them, log the latest once.
+                Some(BusEvent::Errors { count, latest }) => {
+                    stats.errors += count as u64;
+                    emit("can-log", json!({ "direction": "error", "message": format!("{latest} ({count} errors like this since the last one shown)") }));
+                }
+                Some(BusEvent::Status(s)) => stats.bus_state = Some(s),
                 Some(BusEvent::Info(i)) => emit("can-log", json!({ "direction": "info", "message": i })),
                 Some(BusEvent::Closed(reason)) => break reason,
                 None => break None,
