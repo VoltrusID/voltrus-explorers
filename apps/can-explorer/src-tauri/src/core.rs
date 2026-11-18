@@ -1,14 +1,18 @@
-//! Everything the Tauri commands do, without Tauri: the open bus, the DBC, periodic transmit,
-//! trace replay and the simulator. Frames go out to the UI in batches (`can-frames`, every 50 ms)
-//! with their DBC decoding and protocol label already attached; `can-stats` comes once a second.
+//! Everything the Tauri commands do, without Tauri: the open bus, the DBC, periodic transmit, recording,
+//! opened trace files, trace replay and the simulator. Frames go out to the UI in batches (`can-frames`,
+//! every 50 ms) with their DBC decoding and protocol label already attached; `can-stats` comes once a
+//! second. Recording happens here, from every frame the bus delivers, not from what reaches the UI.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use mt_can::bus::rate_text;
 use mt_can::dbc::{Dbc, encode_message};
 use mt_can::frame::{TimedFrame, now_us};
+use mt_can::log::{LogRecord, candump_line, parse_log};
 use mt_can::protocols::{Layer, describe};
 use mt_can::sim::{SIM_DBC, SimAction, SimState, Simulator};
 use mt_can::{BusEvent, CanFrame, CanHandle, CanSender, Direction, InterfaceConfig, PortInfo, VirtualBus};
@@ -21,8 +25,8 @@ use tokio::task::JoinHandle;
 pub type Emit = Arc<dyn Fn(&str, Json) + Send + Sync>;
 
 const BATCH_MS: u64 = 50;
-/// Frames per batch at most; above that the UI gets a "dropped" count instead (the bus is faster than
-/// the screen, and the trace keeps the newest frames).
+/// Frames per batch at most; above that the oldest frames of the batch make way and the UI gets the number it
+/// did not see (`dropped`). Recording and the counters still see every frame.
 const MAX_BATCH: usize = 2000;
 
 fn es(e: impl std::fmt::Display) -> String {
@@ -220,7 +224,7 @@ impl FrameIn {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayRequest {
-    /// candump log text.
+    /// The log's text: candump, Vector ASC, PCAN TRC or CSV.
     pub text: String,
     /// 1.0 is the recorded timing.
     pub speed: f64,
@@ -235,13 +239,54 @@ pub struct ReplayRequest {
 pub struct ReplayInfo {
     pub frames: usize,
     pub duration_s: f64,
+    /// What was skipped or made up while reading the log.
+    pub notes: Vec<String>,
 }
+
+/// An opened trace file, kept in the backend; the UI reads it a page at a time with [`Core::trace_page`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceInfo {
+    pub name: String,
+    /// Frames in the file.
+    pub frames: usize,
+    pub format: &'static str,
+    pub first_ts: u64,
+    pub last_ts: u64,
+    /// What was skipped or made up while reading the file.
+    pub notes: Vec<String>,
+}
+
+/// One identifier of an opened trace, for the Monitor: its last frame, how many there were, and when each byte last changed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceIdView {
+    pub last: FrameView,
+    pub count: u64,
+    pub first_ts: u64,
+    /// Mean period, ms; `None` for a single frame.
+    pub period_ms: Option<f64>,
+    pub changed_at: Vec<u64>,
+}
+
+/// A recording that ended.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordInfo {
+    pub path: String,
+    pub frames: u64,
+}
+
+/// Most frames [`Core::trace_page`] returns at once.
+pub const TRACE_PAGE_MAX: usize = 20_000;
 
 struct Bus {
     handle: CanHandle,
     sender: CanSender,
     reader: JoinHandle<()>,
     bitrate: Option<u32>,
+    data_bitrate: Option<u32>,
+    log_name: String,
 }
 
 #[derive(Default)]
@@ -250,13 +295,55 @@ struct Shared {
     layer: Layer,
 }
 
+/// Every frame the reader sees goes to the recording file, whatever reaches the UI.
+struct Recorder {
+    path: String,
+    iface: String,
+    out: BufWriter<File>,
+    frames: u64,
+    last_flush: Instant,
+}
+
+type RecorderSlot = Arc<StdMutex<Option<Recorder>>>;
+
+/// How often the recording file is flushed while frames come in.
+const RECORD_FLUSH: Duration = Duration::from_millis(500);
+
+impl Recorder {
+    fn write(&mut self, f: &TimedFrame) -> std::io::Result<()> {
+        self.out.write_all(candump_line(f, &self.iface).as_bytes())?;
+        self.out.write_all(b"\n")?;
+        self.frames += 1;
+        Ok(())
+    }
+}
+
+/// Ends the recording (if any): flushes the file and tells the UI with `can-record`.
+fn finish_recording(slot: &RecorderSlot, emit: &Emit, reason: Option<&str>, error: Option<String>) -> Option<RecordInfo> {
+    let mut rec = slot.lock().unwrap_or_else(|p| p.into_inner()).take()?;
+    let error = error.or_else(|| rec.out.flush().err().map(|e| e.to_string()));
+    let info = RecordInfo { path: rec.path.clone(), frames: rec.frames };
+    emit(
+        "can-record",
+        json!({ "state": "stopped", "path": info.path, "frames": info.frames, "reason": reason, "error": error }),
+    );
+    Some(info)
+}
+
+/// The running replay, and what tells the UI when it ends.
+struct Replay {
+    task: JoinHandle<()>,
+}
+
 pub struct Core {
     emit: Emit,
     vbus: VirtualBus,
     bus: Mutex<Option<Bus>>,
     shared: Arc<RwLock<Shared>>,
+    recorder: RecorderSlot,
     periodic: Mutex<HashMap<String, JoinHandle<()>>>,
-    replay: Mutex<Option<JoinHandle<()>>>,
+    replay: Mutex<Option<Replay>>,
+    trace: Mutex<Option<(String, Vec<LogRecord>)>>,
     sim: Mutex<Option<Simulator>>,
 }
 
@@ -267,8 +354,10 @@ impl Core {
             vbus: VirtualBus::new(),
             bus: Mutex::new(None),
             shared: Arc::new(RwLock::new(Shared::default())),
+            recorder: Arc::new(StdMutex::new(None)),
             periodic: Mutex::new(HashMap::new()),
             replay: Mutex::new(None),
+            trace: Mutex::new(None),
             sim: Mutex::new(None),
         }
     }
@@ -305,30 +394,40 @@ impl Core {
         self.disconnect().await;
         let mut handle = mt_can::open(&cfg, &self.vbus).await.map_err(es)?;
         let events = handle.take_events().ok_or("bus has no event stream")?;
-        let bitrate = match &cfg {
-            InterfaceConfig::Slcan { bitrate, .. } | InterfaceConfig::GsUsb { bitrate, .. } => Some(*bitrate),
-            InterfaceConfig::Virtual => Some(500_000),
-            InterfaceConfig::Socketcan { ifname } => socketcan_bitrate(ifname),
+        let (bitrate, data_bitrate) = match &cfg {
+            InterfaceConfig::Slcan { bitrate, data_bitrate, .. } | InterfaceConfig::GsUsb { bitrate, data_bitrate, .. } => {
+                (Some(*bitrate), data_bitrate.filter(|d| *d > 0))
+            }
+            // The simulator's nominal rate; its FD frames are counted at a 2 Mbit/s data phase.
+            InterfaceConfig::Virtual => (Some(500_000), Some(2_000_000)),
+            InterfaceConfig::Socketcan { ifname } => socketcan_bitrates(ifname),
         };
         let can_send =
             !matches!(cfg, InterfaceConfig::Slcan { listen_only: true, .. } | InterfaceConfig::GsUsb { listen_only: true, .. });
-        let reader = tokio::spawn(reader(events, self.emit.clone(), self.shared.clone(), bitrate));
+        let rates = Rates { nominal: bitrate, data: data_bitrate };
+        let reader = tokio::spawn(reader(events, self.emit.clone(), self.shared.clone(), self.recorder.clone(), rates));
         let sender = handle.sender();
         let description = handle.description.clone();
-        *self.bus.lock().await = Some(Bus { handle, sender, reader, bitrate });
-        let rate = bitrate.map(|b| format!(" ({})", rate_text(b))).unwrap_or_default();
+        let log_name = cfg.log_name();
+        *self.bus.lock().await = Some(Bus { handle, sender, reader, bitrate, data_bitrate, log_name: log_name.clone() });
+        let rate = match (bitrate, data_bitrate) {
+            (Some(b), Some(d)) => format!(" ({} / {} data)", rate_text(b), rate_text(d)),
+            (Some(b), None) => format!(" ({})", rate_text(b)),
+            _ => String::new(),
+        };
         self.log("info", format!("Opened {description}{rate}"));
-        Ok(ConnInfo { description, log_name: cfg.log_name(), can_send })
+        Ok(ConnInfo { description, log_name, can_send })
     }
 
     pub async fn disconnect(&self) {
         self.stop_all_periodic().await;
-        self.replay_stop().await;
+        self.stop_replay(Some("disconnected")).await;
         if let Some(b) = self.bus.lock().await.take() {
             b.handle.close().await;
             // The reader ends on `Closed`; give it a moment to flush its last batch.
             let _ = tokio::time::timeout(Duration::from_millis(200), b.reader).await;
         }
+        finish_recording(&self.recorder, &self.emit, Some("disconnected"), None);
     }
 
     async fn sender(&self) -> Result<CanSender, String> {
@@ -342,24 +441,37 @@ impl Core {
 
     /// cansend syntax: `123#DEADBEEF`.
     pub async fn send_text(&self, text: String) -> Result<(), String> {
-        let f = mt_can::log::parse_frame(&text).map_err(es)?;
+        let mut f = mt_can::log::parse_frame(&text).map_err(es)?;
+        if f.esi {
+            // The error state indicator is the controller's own state; no controller sends it on request.
+            f.esi = false;
+            self.log("info", "ESI (flag 2) is set by a controller that is error passive and cannot be sent; the frame went out without it.");
+        }
         self.sender().await?.send(f).await.map_err(es)
     }
 
-    pub async fn periodic_start(&self, key: String, frame: FrameIn, period_ms: u64, count: Option<u64>) -> Result<(), String> {
+    /// Sends `frame` every `period_ms` (at least 1 ms; fractions allowed) on a fixed schedule: each frame is due one
+    /// period after the previous one was due, not after it was sent, so the average rate holds. After a stall of
+    /// more than [`MAX_BEHIND`] the schedule restarts from now instead of sending the backlog in one burst.
+    pub async fn periodic_start(&self, key: String, frame: FrameIn, period_ms: Option<f64>, count: Option<u64>) -> Result<(), String> {
         let f = frame.frame()?;
-        if period_ms == 0 {
-            return Err("The period must be at least 1 ms.".into());
+        let period_ms = period_ms.filter(|p| p.is_finite() && *p >= 1.0 && *p <= 86_400_000.0).ok_or(
+            "The period must be a number of milliseconds, at least 1.",
+        )?;
+        if count == Some(0) {
+            return Err("The count must be at least 1.".into());
         }
         let tx = self.sender().await?;
         let emit = self.emit.clone();
         let k = key.clone();
+        let period = Duration::from_secs_f64(period_ms / 1000.0);
         let task = tokio::spawn(async move {
-            let mut t = tokio::time::interval(Duration::from_millis(period_ms));
-            t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut next = tokio::time::Instant::now();
             let mut n = 0u64;
             loop {
-                t.tick().await;
+                if next > tokio::time::Instant::now() {
+                    tokio::time::sleep_until(next).await;
+                }
                 if let Err(e) = tx.send(f.clone()).await {
                     emit("can-periodic", json!({ "key": k, "stopped": true, "error": e.to_string() }));
                     return;
@@ -368,6 +480,11 @@ impl Core {
                 if count.is_some_and(|c| n >= c) {
                     emit("can-periodic", json!({ "key": k, "stopped": true, "sent": n }));
                     return;
+                }
+                next += period;
+                let now = tokio::time::Instant::now();
+                if now > next + MAX_BEHIND.max(period * 2) {
+                    next = now;
                 }
             }
         });
@@ -387,6 +504,24 @@ impl Core {
         for (_, t) in self.periodic.lock().await.drain() {
             t.abort();
         }
+    }
+
+    // ── Recording ──
+
+    /// Records every frame of the open bus to `path` (candump log), from now until [`Core::record_stop`] or the
+    /// bus closes. The file is replaced.
+    pub async fn record_start(&self, path: String) -> Result<(), String> {
+        let iface = self.bus.lock().await.as_ref().map(|b| b.log_name.clone()).ok_or("Connect to a bus first.")?;
+        let file = File::create(&path).map_err(|e| format!("Cannot record to {path}: {e}"))?;
+        finish_recording(&self.recorder, &self.emit, Some("restarted"), None);
+        *self.recorder.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(Recorder { path, iface, out: BufWriter::with_capacity(256 * 1024, file), frames: 0, last_flush: Instant::now() });
+        Ok(())
+    }
+
+    /// Ends the recording; `None` when there was none.
+    pub async fn record_stop(&self) -> Option<RecordInfo> {
+        finish_recording(&self.recorder, &self.emit, Some("stopped"), None)
     }
 
     // ── DBC ──
@@ -428,21 +563,106 @@ impl Core {
         self.shared.write().await.layer = layer;
     }
 
-    /// Decodes frames that were recorded earlier (an imported trace) with the current DBC and layer.
+    /// Decodes a whole trace file with the current DBC and layer. Prefer [`Core::trace_open`] and
+    /// [`Core::trace_page`] for files of any size.
     pub async fn decode_frames(&self, text: String) -> Result<Vec<FrameView>, String> {
-        let recs = mt_can::log::parse_candump(&text).map_err(es)?;
+        let log = parse_log(&text).map_err(es)?;
         let s = self.shared.read().await;
         let dbc = s.dbc.as_ref().map(|(_, d)| d);
-        Ok(recs
+        Ok(log.records.iter().map(|r| view(&timed(r), dbc, s.layer)).collect())
+    }
+
+    // ── Opened trace files ──
+
+    /// Reads a trace file (candump, Vector ASC, PCAN TRC or CSV) and keeps it here; nothing is decoded until the UI
+    /// asks for a page.
+    pub async fn trace_open(&self, name: String, text: String) -> Result<TraceInfo, String> {
+        let log = parse_log(&text).map_err(es)?;
+        drop(text);
+        let notes = log.notes();
+        let info = TraceInfo {
+            name: name.clone(),
+            frames: log.records.len(),
+            format: log.format.name(),
+            first_ts: log.records.first().map(|r| r.ts_us).unwrap_or(0),
+            last_ts: log.records.last().map(|r| r.ts_us).unwrap_or(0),
+            notes,
+        };
+        *self.trace.lock().await = Some((name, log.records));
+        Ok(info)
+    }
+
+    /// Frames `start..start + count` of the opened trace, decoded with the current DBC and layer.
+    pub async fn trace_page(&self, start: usize, count: usize) -> Result<Vec<FrameView>, String> {
+        let t = self.trace.lock().await;
+        let (_, recs) = t.as_ref().ok_or("No trace file is open.")?;
+        let s = self.shared.read().await;
+        let dbc = s.dbc.as_ref().map(|(_, d)| d);
+        let end = start.saturating_add(count.min(TRACE_PAGE_MAX)).min(recs.len());
+        Ok(recs[start.min(end)..end].iter().map(|r| view(&timed(r), dbc, s.layer)).collect())
+    }
+
+    /// One row per identifier (and direction) of the opened trace, for the Monitor.
+    pub async fn trace_ids(&self) -> Result<Vec<TraceIdView>, String> {
+        let t = self.trace.lock().await;
+        let (_, recs) = t.as_ref().ok_or("No trace file is open.")?;
+        struct Acc {
+            last: usize,
+            count: u64,
+            first_ts: u64,
+            changed_at: Vec<u64>,
+        }
+        let mut by_key: HashMap<(u32, bool), Acc> = HashMap::new();
+        let mut order = Vec::new();
+        for (i, r) in recs.iter().enumerate() {
+            let key = (r.frame.key(), r.dir == Direction::Tx);
+            match by_key.get_mut(&key) {
+                None => {
+                    order.push(key);
+                    by_key.insert(key, Acc { last: i, count: 1, first_ts: r.ts_us, changed_at: vec![r.ts_us; r.frame.data.len()] });
+                }
+                Some(a) => {
+                    let prev = &recs[a.last].frame.data;
+                    a.changed_at.resize(r.frame.data.len(), r.ts_us);
+                    for (k, b) in r.frame.data.iter().enumerate() {
+                        if prev.get(k) != Some(b) {
+                            a.changed_at[k] = r.ts_us;
+                        }
+                    }
+                    a.last = i;
+                    a.count += 1;
+                }
+            }
+        }
+        let s = self.shared.read().await;
+        let dbc = s.dbc.as_ref().map(|(_, d)| d);
+        Ok(order
             .into_iter()
-            .map(|r| view(&TimedFrame { ts_us: r.ts_us, dir: Direction::Rx, frame: r.frame }, dbc, s.layer))
+            .filter_map(|k| by_key.remove(&k))
+            .map(|a| {
+                let last = &recs[a.last];
+                let span = last.ts_us.saturating_sub(a.first_ts) as f64 / 1000.0;
+                TraceIdView {
+                    last: view(&timed(last), dbc, s.layer),
+                    count: a.count,
+                    first_ts: a.first_ts,
+                    period_ms: (a.count > 1).then(|| span / (a.count - 1) as f64),
+                    changed_at: a.changed_at,
+                }
+            })
             .collect())
+    }
+
+    pub async fn trace_close(&self) {
+        *self.trace.lock().await = None;
     }
 
     // ── Replay ──
 
     pub async fn replay_start(&self, req: ReplayRequest) -> Result<ReplayInfo, String> {
-        let mut recs = mt_can::log::parse_candump(&req.text).map_err(es)?;
+        let log = parse_log(&req.text).map_err(es)?;
+        let notes = log.notes();
+        let mut recs = log.records;
         if !req.ids.is_empty() {
             recs.retain(|r| req.ids.contains(&r.frame.id));
         }
@@ -450,48 +670,60 @@ impl Core {
             return Err("The log has no frames to replay.".into());
         }
         let tx = self.sender().await?;
-        self.replay_stop().await;
-        let speed = if req.speed > 0.0 { req.speed } else { 1.0 };
-        let t0 = recs[0].ts_us;
-        let duration_s = recs.last().map(|r| r.ts_us.saturating_sub(t0)).unwrap_or(0) as f64 / 1e6;
-        let n = recs.len();
+        self.stop_replay(None).await;
+        let speed = if req.speed.is_finite() && req.speed > 0.0 { req.speed } else { 1.0 };
+        let plan = ReplayPlan::new(recs, speed);
+        let n = plan.frames.len();
+        let duration_s = plan.duration.as_secs_f64() * speed;
         let emit = self.emit.clone();
         let repeat = req.repeat;
         let task = tokio::spawn(async move {
             let mut pass = 0u64;
-            // Progress goes to the UI four times a second and at the end of every pass.
             let mut last_progress = tokio::time::Instant::now();
+            let progress_every = Duration::from_millis(250);
             loop {
                 let start = tokio::time::Instant::now();
-                for (i, r) in recs.iter().enumerate() {
-                    let at = Duration::from_micros(((r.ts_us - t0) as f64 / speed) as u64);
-                    tokio::time::sleep_until(start + at).await;
-                    if let Err(e) = tx.send(r.frame.clone()).await {
-                        emit("can-replay", json!({ "done": true, "error": e.to_string() }));
+                for (i, (at, frame)) in plan.frames.iter().enumerate() {
+                    let due = start + *at;
+                    if due > tokio::time::Instant::now() {
+                        tokio::time::sleep_until(due).await;
+                    }
+                    if let Err(e) = tx.send(frame.clone()).await {
+                        emit("can-replay", json!({ "done": true, "error": e.to_string(), "pos": i, "total": n, "pass": pass }));
                         return;
                     }
-                    if last_progress.elapsed() >= Duration::from_millis(250) {
+                    if last_progress.elapsed() >= progress_every {
                         last_progress = tokio::time::Instant::now();
                         emit("can-replay", json!({ "done": false, "pos": i + 1, "total": n, "pass": pass }));
                     }
                 }
-                pass += 1;
-                if repeat {
-                    emit("can-replay", json!({ "done": false, "pos": n, "total": n, "pass": pass - 1 }));
-                }
                 if !repeat {
                     break;
                 }
+                pass += 1;
+                tokio::time::sleep_until(start + plan.pass_len).await;
             }
-            emit("can-replay", json!({ "done": true, "pos": n, "total": n }));
+            emit("can-replay", json!({ "done": true, "pos": n, "total": n, "pass": pass }));
         });
-        *self.replay.lock().await = Some(task);
-        Ok(ReplayInfo { frames: n, duration_s })
+        *self.replay.lock().await = Some(Replay { task });
+        Ok(ReplayInfo { frames: n, duration_s, notes })
     }
 
     pub async fn replay_stop(&self) {
-        if let Some(t) = self.replay.lock().await.take() {
-            t.abort();
+        self.stop_replay(Some("stopped")).await;
+    }
+
+    /// Stops a running replay; with a reason, the UI hears about it (`can-replay` with `done` and `stopped`).
+    async fn stop_replay(&self, reason: Option<&str>) {
+        if let Some(r) = self.replay.lock().await.take() {
+            let running = !r.task.is_finished();
+            r.task.abort();
+            if running && let Some(reason) = reason {
+                (self.emit)("can-replay", json!({ "done": true, "stopped": reason }));
+                if reason == "disconnected" {
+                    self.log("info", "Replay stopped: the bus was disconnected");
+                }
+            }
         }
     }
 
@@ -541,29 +773,253 @@ impl Core {
     pub async fn bitrate(&self) -> Option<u32> {
         self.bus.lock().await.as_ref().and_then(|b| b.bitrate)
     }
+
+    pub async fn data_bitrate(&self) -> Option<u32> {
+        self.bus.lock().await.as_ref().and_then(|b| b.data_bitrate)
+    }
 }
 
-/// The nominal bit rate of a SocketCAN interface, from `ip -details` style sysfs data when present.
-fn socketcan_bitrate(ifname: &str) -> Option<u32> {
-    let out = std::process::Command::new("ip").args(["-details", "-json", "link", "show", ifname]).output().ok()?;
-    let v: Json = serde_json::from_slice(&out.stdout).ok()?;
-    v.get(0)?.get("linkinfo")?.get("info_data")?.get("bittiming")?.get("bitrate")?.as_u64().map(|b| b as u32)
+/// A cyclic frame further behind its schedule than this (the process stalled) starts again from now.
+const MAX_BEHIND: Duration = Duration::from_millis(100);
+
+/// A loop pass of a replay lasts at least this long, so a one-frame or zero-length log does not flood the bus.
+const MIN_PASS: Duration = Duration::from_millis(10);
+
+/// When each frame of a replay goes out, relative to the start of the pass.
+struct ReplayPlan {
+    frames: Vec<(Duration, CanFrame)>,
+    /// From the first to the last frame, at the replay speed.
+    duration: Duration,
+    /// From the start of one loop pass to the start of the next: the duration plus the log's mean frame spacing (so
+    /// the last and first frames are not sent back to back), at least [`MIN_PASS`].
+    pass_len: Duration,
+}
+
+impl ReplayPlan {
+    fn new(recs: Vec<LogRecord>, speed: f64) -> ReplayPlan {
+        // Times that go backwards (an unsorted or merged log) count as no wait.
+        let mut at_us = 0u64;
+        let mut prev = recs[0].ts_us;
+        let n = recs.len();
+        let frames: Vec<(Duration, CanFrame)> = recs
+            .into_iter()
+            .map(|r| {
+                at_us += r.ts_us.saturating_sub(prev);
+                prev = r.ts_us;
+                let mut f = r.frame;
+                // No controller sends the error state indicator on request.
+                f.esi = false;
+                (Duration::from_secs_f64(at_us as f64 / 1e6 / speed), f)
+            })
+            .collect();
+        let duration = frames.last().map(|f| f.0).unwrap_or_default();
+        let gap = if n > 1 { duration / (n as u32 - 1).max(1) } else { Duration::ZERO };
+        ReplayPlan { frames, duration, pass_len: (duration + gap).max(MIN_PASS) }
+    }
+}
+
+fn timed(r: &LogRecord) -> TimedFrame {
+    TimedFrame { ts_us: r.ts_us, dir: r.dir, frame: r.frame.clone() }
+}
+
+/// Nominal and data bit rates of a SocketCAN interface, from `ip -details -json link show`.
+fn socketcan_bitrates(ifname: &str) -> (Option<u32>, Option<u32>) {
+    let Ok(out) = std::process::Command::new("ip").args(["-details", "-json", "link", "show", ifname]).output() else {
+        return (None, None);
+    };
+    let v: Json = serde_json::from_slice(&out.stdout).unwrap_or(Json::Null);
+    socketcan_rates_of(&v)
+}
+
+fn socketcan_rates_of(v: &Json) -> (Option<u32>, Option<u32>) {
+    let info = &v[0]["linkinfo"]["info_data"];
+    let rate = |k: &str| info[k]["bitrate"].as_u64().filter(|b| *b > 0).map(|b| b as u32);
+    (rate("bittiming"), rate("data_bittiming"))
+}
+
+/// The bit rates the bus load is computed with.
+#[derive(Debug, Clone, Copy)]
+struct Rates {
+    nominal: Option<u32>,
+    data: Option<u32>,
+}
+
+impl Rates {
+    /// Seconds the frame occupies the bus, with the stuff bits it really has (classic CAN: exact; CAN FD: exact for the
+    /// dynamic part, fixed stuff bits for the CRC field) and the data phase at the data bit rate when BRS is set.
+    fn bus_time(&self, f: &CanFrame) -> Option<f64> {
+        let nominal = self.nominal.filter(|b| *b > 0)? as f64;
+        let (arb_bits, data_bits) = frame_bits(f);
+        let data_rate = if f.fd && f.brs { self.data.filter(|d| *d > 0).map(|d| d as f64).unwrap_or(nominal) } else { nominal };
+        Some(arb_bits / nominal + data_bits / data_rate)
+    }
+}
+
+/// Bits of a frame on the wire including stuff bits and the inter-frame space: `(at the nominal rate, at the data
+/// rate)`. The data-rate part is zero for classic frames.
+fn frame_bits(f: &CanFrame) -> (f64, f64) {
+    let mut bits: Vec<bool> = Vec::with_capacity(32 + f.data.len() * 8);
+    let push = |bits: &mut Vec<bool>, v: u32, n: u32| {
+        for i in (0..n).rev() {
+            bits.push(v >> i & 1 == 1);
+        }
+    };
+    bits.push(false); // SOF
+    if f.extended {
+        push(&mut bits, f.id >> 18, 11);
+        bits.push(true); // SRR
+        bits.push(true); // IDE
+        push(&mut bits, f.id & 0x3FFFF, 18);
+    } else {
+        push(&mut bits, f.id, 11);
+    }
+    let dlc = f.dlc() as u32;
+    if !f.fd {
+        bits.push(f.rtr); // RTR
+        if f.extended {
+            bits.extend([false, false]); // r1 r0
+        } else {
+            bits.extend([false, false]); // IDE r0
+        }
+        push(&mut bits, dlc, 4);
+        if !f.rtr {
+            for b in &f.data {
+                push(&mut bits, *b as u32, 8);
+            }
+        }
+        let crc = crc15(&bits);
+        push(&mut bits, crc as u32, 15);
+        let stuff = stuff_count(&bits);
+        // CRC delimiter, ACK slot and delimiter, EOF, intermission.
+        return ((bits.len() + stuff + 1 + 2 + 7 + 3) as f64, 0.0);
+    }
+    // CAN FD: RRS (or r1), IDE for base frames, FDF, res; then BRS, ESI, DLC, data in the data phase.
+    if f.extended {
+        bits.push(false); // r1
+    } else {
+        bits.push(false); // RRS
+        bits.push(false); // IDE
+    }
+    bits.extend([true, false]); // FDF, res
+    bits.push(f.brs);
+    let arb_len = bits.len();
+    bits.push(f.esi);
+    push(&mut bits, dlc, 4);
+    for b in &f.data {
+        push(&mut bits, *b as u32, 8);
+    }
+    let (stuff_arb, stuff_data) = stuff_split(&bits, arb_len);
+    // Stuff count (4) and CRC (17 or 21) with a fixed stuff bit before and after every 4 bits.
+    let crc_field = 4 + if f.data.len() > 16 { 21 } else { 17 };
+    let fixed = 1 + crc_field / 4;
+    let data_bits = (bits.len() - arb_len + stuff_data + crc_field + fixed) as f64;
+    // CRC delimiter, ACK slot and delimiter, EOF, intermission at the nominal rate.
+    let arb_bits = (arb_len + stuff_arb + 1 + 2 + 7 + 3) as f64;
+    (arb_bits, data_bits)
+}
+
+/// Stuff bits a transmitter inserts in `bits` (after five equal bits, one of the other value, which counts itself).
+fn stuff_count(bits: &[bool]) -> usize {
+    stuff_split(bits, bits.len()).0
+}
+
+/// Stuff bits inserted before and after position `at`.
+fn stuff_split(bits: &[bool], at: usize) -> (usize, usize) {
+    let (mut before, mut after) = (0, 0);
+    let mut run = 0;
+    let mut last = None;
+    for (i, &b) in bits.iter().enumerate() {
+        if Some(b) == last {
+            run += 1;
+        } else {
+            run = 1;
+            last = Some(b);
+        }
+        if run == 5 {
+            if i < at {
+                before += 1;
+            } else {
+                after += 1;
+            }
+            last = Some(!b);
+            run = 1;
+        }
+    }
+    (before, after)
+}
+
+/// CAN's CRC-15 (polynomial 0x4599) over the unstuffed bits from SOF to the end of the data.
+fn crc15(bits: &[bool]) -> u16 {
+    let mut crc: u16 = 0;
+    for &b in bits {
+        let next = b ^ (crc >> 14 & 1 == 1);
+        crc = (crc << 1) & 0x7FFF;
+        if next {
+            crc ^= 0x4599;
+        }
+    }
+    crc
+}
+
+/// Error-like events (error frames, overflows, refused frames) go to the log at most this often per second; the
+/// rest are summed up.
+const MAX_ERROR_LOGS_PER_SEC: u32 = 10;
+
+/// The frames for the next UI batch: the newest [`MAX_BATCH`]; older ones make way when the bus is faster than the
+/// screen, and are counted.
+#[derive(Default)]
+struct Batch {
+    frames: VecDeque<TimedFrame>,
+    dropped: u64,
+}
+
+impl Batch {
+    /// Adds a frame; true when an older one had to make way.
+    fn push(&mut self, f: TimedFrame) -> bool {
+        let full = self.frames.len() >= MAX_BATCH;
+        if full {
+            self.frames.pop_front();
+            self.dropped += 1;
+        }
+        self.frames.push_back(f);
+        full
+    }
+
+    /// The frames and how many were dropped since the last batch; `None` when there is nothing to say.
+    fn take(&mut self) -> Option<(VecDeque<TimedFrame>, u64)> {
+        if self.frames.is_empty() && self.dropped == 0 {
+            return None;
+        }
+        Some((std::mem::take(&mut self.frames), std::mem::take(&mut self.dropped)))
+    }
 }
 
 async fn reader(
     mut events: tokio::sync::mpsc::UnboundedReceiver<BusEvent>,
     emit: Emit,
     shared: Arc<RwLock<Shared>>,
-    bitrate: Option<u32>,
+    recorder: RecorderSlot,
+    rates: Rates,
 ) {
-    let mut batch: Vec<FrameView> = Vec::new();
+    let mut batch = Batch::default();
     let mut stats = Stats::default();
-    let mut dropped_in_batch = 0u64;
-    let mut bits_this_sec = 0.0f64;
+    let mut busy_s = 0.0f64;
     let (mut rx_sec, mut tx_sec) = (0u64, 0u64);
+    let (mut errors_logged, mut errors_held, mut last_held): (u32, u64, Option<String>) = (0, 0, None);
     let mut flush = tokio::time::interval(Duration::from_millis(BATCH_MS));
+    flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    flush.tick().await;
     let mut second = tokio::time::interval(Duration::from_secs(1));
     second.tick().await;
+    let record = |f: &TimedFrame| {
+        let mut slot = recorder.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(r) = slot.as_mut()
+            && let Err(e) = r.write(f)
+        {
+            drop(slot);
+            finish_recording(&recorder, &emit, Some("error"), Some(e.to_string()));
+        }
+    };
     let closed_reason: Option<String> = loop {
         tokio::select! {
             ev = events.recv() => match ev {
@@ -572,41 +1028,74 @@ async fn reader(
                         Direction::Rx => { stats.rx += 1; rx_sec += 1; }
                         Direction::Tx => { stats.tx += 1; tx_sec += 1; }
                     }
-                    bits_this_sec += f.frame.wire_bits(4.0);
-                    if batch.len() < MAX_BATCH {
-                        let s = shared.read().await;
-                        batch.push(view(&f, s.dbc.as_ref().map(|(_, d)| d), s.layer));
-                    } else {
-                        dropped_in_batch += 1;
+                    busy_s += rates.bus_time(&f.frame).unwrap_or(0.0);
+                    record(&f);
+                    if batch.push(f) {
                         stats.dropped += 1;
                     }
                 }
                 Some(BusEvent::Error(e)) => {
                     stats.errors += 1;
-                    emit("can-log", json!({ "direction": "error", "message": e }));
+                    if errors_logged < MAX_ERROR_LOGS_PER_SEC {
+                        errors_logged += 1;
+                        emit("can-log", json!({ "direction": "error", "message": e }));
+                    } else {
+                        errors_held += 1;
+                        last_held = Some(e);
+                    }
                 }
                 Some(BusEvent::Info(i)) => emit("can-log", json!({ "direction": "info", "message": i })),
                 Some(BusEvent::Closed(reason)) => break reason,
                 None => break None,
             },
             _ = flush.tick() => {
-                if !batch.is_empty() || dropped_in_batch > 0 {
-                    emit("can-frames", json!({ "frames": std::mem::take(&mut batch), "dropped": dropped_in_batch }));
-                    dropped_in_batch = 0;
+                if let Some((frames, dropped)) = batch.take() {
+                    let frames = {
+                        let s = shared.read().await;
+                        let dbc = s.dbc.as_ref().map(|(_, d)| d);
+                        frames.iter().map(|f| view(f, dbc, s.layer)).collect::<Vec<_>>()
+                    };
+                    emit("can-frames", json!({ "frames": frames, "dropped": dropped }));
+                }
+                let mut slot = recorder.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(r) = slot.as_mut()
+                    && r.last_flush.elapsed() >= RECORD_FLUSH
+                {
+                    r.last_flush = Instant::now();
+                    if let Err(e) = r.out.flush() {
+                        drop(slot);
+                        finish_recording(&recorder, &emit, Some("error"), Some(e.to_string()));
+                    }
                 }
             }
             _ = second.tick() => {
+                if errors_held > 0 {
+                    let last = last_held.take().unwrap_or_default();
+                    emit("can-log", json!({ "direction": "error", "message": format!("{errors_held} more errors in the last second (latest: {last})") }));
+                    errors_held = 0;
+                }
+                errors_logged = 0;
                 stats.rx_per_sec = rx_sec as f64;
                 stats.tx_per_sec = tx_sec as f64;
-                stats.load = bitrate.filter(|b| *b > 0).map(|b| (bits_this_sec / b as f64 * 100.0).min(100.0));
-                rx_sec = 0; tx_sec = 0; bits_this_sec = 0.0;
+                stats.load = rates.nominal.filter(|b| *b > 0).map(|_| (busy_s * 100.0).min(100.0));
+                rx_sec = 0; tx_sec = 0; busy_s = 0.0;
                 emit("can-stats", serde_json::to_value(&stats).unwrap_or(Json::Null));
             }
         }
     };
-    if !batch.is_empty() {
-        emit("can-frames", json!({ "frames": batch, "dropped": dropped_in_batch }));
+    if let Some((frames, dropped)) = batch.take() {
+        let frames = {
+            let s = shared.read().await;
+            let dbc = s.dbc.as_ref().map(|(_, d)| d);
+            frames.iter().map(|f| view(f, dbc, s.layer)).collect::<Vec<_>>()
+        };
+        emit("can-frames", json!({ "frames": frames, "dropped": dropped }));
     }
+    if errors_held > 0 {
+        emit("can-log", json!({ "direction": "error", "message": format!("{errors_held} more errors (latest: {})", last_held.unwrap_or_default()) }));
+    }
+    let reason = if closed_reason.is_some() { "closed" } else { "disconnected" };
+    finish_recording(&recorder, &emit, Some(reason), None);
     emit("can-conn", json!({ "state": "closed", "reason": closed_reason }));
 }
 
@@ -665,7 +1154,7 @@ mod tests {
         let mut ev = other.take_events().unwrap();
         core.connect(InterfaceConfig::Virtual).await.unwrap();
         let f = FrameIn { id: 0x321, ext: false, rtr: false, fd: false, brs: false, data: "01 02".into(), rtr_len: 0 };
-        core.periodic_start("a".into(), f, 10, Some(3)).await.unwrap();
+        core.periodic_start("a".into(), f, Some(10.0), Some(3)).await.unwrap();
         let mut n = 0;
         while n < 3 {
             if let Some(BusEvent::Frame(fr)) = ev.recv().await {
@@ -747,5 +1236,299 @@ mod tests {
         let hb = core.dbc_encode("HostPing".into(), HashMap::new()).await.unwrap();
         assert!(!hb.fd && !hb.brs);
         core.disconnect().await;
+    }
+
+    fn frames_of(got: &Seen) -> Vec<Json> {
+        got.lock()
+            .unwrap()
+            .iter()
+            .filter(|(e, _)| e == "can-frames")
+            .flat_map(|(_, p)| p["frames"].as_array().unwrap().clone())
+            .collect()
+    }
+
+    fn events_named(got: &Seen, name: &str) -> Vec<Json> {
+        got.lock().unwrap().iter().filter(|(e, _)| e == name).map(|(_, p)| p.clone()).collect()
+    }
+
+    fn temp_path(name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("canx-core-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name).to_string_lossy().into_owned()
+    }
+
+    /// Recording writes every frame the bus delivers, even when the UI batches drop frames, and replaces the file.
+    #[tokio::test]
+    async fn recording_keeps_every_frame() {
+        let (emit, got) = sink();
+        let core = Core::new(emit);
+        let other = core.vbus.attach();
+        core.connect(InterfaceConfig::Virtual).await.unwrap();
+        let path = temp_path("flood.log");
+        std::fs::write(&path, "old contents that must go\n".repeat(100)).unwrap();
+        core.record_start(path.clone()).await.unwrap();
+        const N: u32 = 12_000;
+        for i in 0..N {
+            other.send(CanFrame::new(0x100 + (i % 16), &i.to_le_bytes()).unwrap()).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let info = core.record_stop().await.unwrap();
+        assert_eq!(info.frames, N as u64);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("old contents"));
+        let recs = mt_can::log::parse_candump(&text).unwrap();
+        assert_eq!(recs.len(), N as usize);
+        assert!(recs.iter().enumerate().all(|(i, r)| r.frame.data == (i as u32).to_le_bytes()), "in order, none missing");
+        assert!(recs.windows(2).all(|w| w[0].ts_us <= w[1].ts_us));
+        // The UI got every frame or a count of those it did not; the newest are the ones kept.
+        let shown = frames_of(&got);
+        let dropped: u64 = events_named(&got, "can-frames").iter().map(|p| p["dropped"].as_u64().unwrap()).sum();
+        assert_eq!(shown.len() as u64 + dropped, N as u64);
+        let last = shown.last().unwrap();
+        assert_eq!(last["data"].as_array().unwrap()[0].as_u64(), Some(((N - 1) & 0xFF) as u64), "the last frame sent is shown");
+        assert!(core.record_stop().await.is_none());
+        // Disconnecting ends a recording and tells the UI; recording needs a bus.
+        core.record_start(path.clone()).await.unwrap();
+        other.send(CanFrame::new(0x1, &[1]).unwrap()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        core.disconnect().await;
+        let stopped = events_named(&got, "can-record");
+        assert_eq!(stopped.last().unwrap()["frames"], 1);
+        assert_eq!(stopped.last().unwrap()["reason"], "disconnected");
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1);
+        assert!(core.record_start(path.clone()).await.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The UI batch keeps the newest frames when it overflows.
+    #[test]
+    fn batch_overflow_drops_oldest() {
+        let mut b = Batch::default();
+        assert!(b.take().is_none());
+        let n = MAX_BATCH as u64 + 500;
+        let dropped = (0..n).filter(|i| b.push(TimedFrame { ts_us: *i, dir: Direction::Rx, frame: CanFrame::new(0x10, &[]).unwrap() })).count();
+        assert_eq!(dropped, 500);
+        let (frames, d) = b.take().unwrap();
+        assert_eq!((frames.len(), d), (MAX_BATCH, 500));
+        assert_eq!((frames[0].ts_us, frames.back().unwrap().ts_us), (500, n - 1));
+        assert!(b.take().is_none());
+    }
+
+    /// A storm of error frames gives a handful of log lines and a summary, not one event each.
+    #[tokio::test]
+    async fn error_storm_is_coalesced() {
+        let (emit, got) = sink();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let rates = Rates { nominal: None, data: None };
+        let task = tokio::spawn(reader(rx, emit, Arc::new(RwLock::new(Shared::default())), Arc::new(StdMutex::new(None)), rates));
+        for i in 0..5000 {
+            tx.send(BusEvent::Error(format!("error frame {i}"))).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        tx.send(BusEvent::Closed(None)).unwrap();
+        task.await.unwrap();
+        let logs = events_named(&got, "can-log");
+        assert!(logs.len() <= 12, "{} log events", logs.len());
+        assert!(logs.iter().any(|l| l["message"].as_str().unwrap().starts_with("4990 more errors")), "{logs:?}");
+        let stats = events_named(&got, "can-stats");
+        assert_eq!(stats.last().unwrap()["errors"], 5000);
+    }
+
+    #[test]
+    fn bus_load_bits() {
+        // Classic 8-byte frames: 111 bits plus the stuff bits they really have (0x00 data stuffs often, 0x55 never).
+        let zeros = frame_bits(&CanFrame::new(0x123, &[0; 8]).unwrap()).0;
+        let alt = frame_bits(&CanFrame::new(0x123, &[0x55; 8]).unwrap()).0;
+        assert!((111.0..=135.0).contains(&zeros) && (111.0..=135.0).contains(&alt), "{zeros} {alt}");
+        assert!(zeros > alt + 8.0, "{zeros} {alt}");
+        assert!(frame_bits(&CanFrame::new(0x1234_5678, &[0x55; 8]).unwrap()).0 > alt + 18.0);
+        assert_eq!(frame_bits(&CanFrame::remote(0x7DF, false, 8).unwrap()).1, 0.0);
+        // Stuffing: five equal bits get one of the other value, which starts the next run.
+        assert_eq!(stuff_count(&[false; 5]), 1);
+        assert_eq!(stuff_count(&[false; 9]), 1);
+        assert_eq!(stuff_count(&[false; 10]), 2);
+        assert_eq!(stuff_count(&[true, false, true, false]), 0);
+        assert_eq!(crc15(&[false; 19]), 0);
+        assert_eq!(crc15(&[true]), 0x4599);
+        // FD with BRS: the data phase at the data rate.
+        let fd = CanFrame::fd(0x4A0, false, true, &[0xA5; 64]).unwrap();
+        let (arb, data) = frame_bits(&fd);
+        assert!((25.0..40.0).contains(&arb) && (545.0..660.0).contains(&data), "{arb} {data}");
+        let with = Rates { nominal: Some(500_000), data: Some(2_000_000) }.bus_time(&fd).unwrap();
+        let without = Rates { nominal: Some(500_000), data: None }.bus_time(&fd).unwrap();
+        assert!(with < without / 3.0, "{with} {without}");
+        assert!(Rates { nominal: None, data: Some(2_000_000) }.bus_time(&fd).is_none());
+        // SocketCAN details as `ip -details -json` prints them.
+        let v: Json = serde_json::from_str(
+            r#"[{"linkinfo":{"info_data":{"bittiming":{"bitrate":500000},"data_bittiming":{"bitrate":4000000}}}}]"#,
+        )
+        .unwrap();
+        assert_eq!(socketcan_rates_of(&v), (Some(500_000), Some(4_000_000)));
+        assert_eq!(socketcan_rates_of(&json!([{"linkinfo":{"info_kind":"vcan"}}])), (None, None));
+    }
+
+    #[tokio::test]
+    async fn load_is_measured_with_the_data_rate() {
+        let (emit, got) = sink();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let rates = Rates { nominal: Some(500_000), data: Some(2_000_000) };
+        let task = tokio::spawn(reader(rx, emit, Arc::new(RwLock::new(Shared::default())), Arc::new(StdMutex::new(None)), rates));
+        let fd = CanFrame::fd(0x4A0, false, true, &[0xA5; 64]).unwrap();
+        let per = rates.bus_time(&fd).unwrap();
+        for _ in 0..1000 {
+            tx.send(BusEvent::Frame(TimedFrame { ts_us: 0, dir: Direction::Rx, frame: fd.clone() })).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        tx.send(BusEvent::Closed(None)).unwrap();
+        task.await.unwrap();
+        let stats = events_named(&got, "can-stats");
+        let load = stats.iter().filter_map(|s| s["load"].as_f64()).fold(0.0, f64::max);
+        assert!((load - per * 1000.0 * 100.0).abs() < 0.01, "load {load}, {per}");
+    }
+
+    #[tokio::test]
+    async fn replay_handles_backwards_times_and_tight_loops() {
+        let (emit, got) = sink();
+        let core = Core::new(emit);
+        let mut other = core.vbus.attach();
+        let mut ev = other.take_events().unwrap();
+        core.connect(InterfaceConfig::Virtual).await.unwrap();
+        // Unsorted: 0.5 s, then 0.1 s (backwards: no wait), then 0.9 s (0.8 s after the 0.1 s frame); at 4x.
+        let t0 = std::time::Instant::now();
+        core.replay_start(ReplayRequest {
+            text: "(1700000000.500000) can0 123#01\n(1700000000.100000) can0 123#02\n(1700000000.900000) can0 123#03\n".into(),
+            speed: 4.0,
+            repeat: false,
+            ids: vec![],
+        })
+        .await
+        .unwrap();
+        let mut seen = 0;
+        while seen < 3 {
+            match tokio::time::timeout(Duration::from_secs(3), ev.recv()).await {
+                Ok(Some(BusEvent::Frame(_))) => seen += 1,
+                Ok(Some(_)) => {}
+                _ => panic!("replay stalled after {seen} frames"),
+            }
+        }
+        let took = t0.elapsed();
+        assert!(took >= Duration::from_millis(190) && took < Duration::from_secs(2), "{took:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(events_named(&got, "can-replay").iter().any(|p| p["done"] == true && p["error"].is_null()));
+
+        // One frame on a loop: at most one pass per 10 ms, progress at most four times a second.
+        got.lock().unwrap().clear();
+        while ev.try_recv().is_ok() {}
+        core.replay_start(ReplayRequest { text: "(5.0) can0 7DF#02010C\n".into(), speed: 1.0, repeat: true, ids: vec![] }).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        core.replay_stop().await;
+        let mut sent = 0;
+        while let Ok(e) = ev.try_recv() {
+            if matches!(e, BusEvent::Frame(_)) {
+                sent += 1;
+            }
+        }
+        assert!((5..=62).contains(&sent), "{sent} frames in 600 ms");
+        let progress = events_named(&got, "can-replay");
+        assert!(progress.len() <= 5, "{} replay events", progress.len());
+        assert_eq!(progress.last().unwrap()["stopped"], "stopped");
+
+        // Disconnecting stops a replay and says so.
+        got.lock().unwrap().clear();
+        core.replay_start(ReplayRequest { text: "(1.0) can0 1#01\n(100.0) can0 1#02\n".into(), speed: 1.0, repeat: false, ids: vec![] })
+            .await
+            .unwrap();
+        core.disconnect().await;
+        let r = events_named(&got, "can-replay");
+        assert_eq!(r.last().unwrap()["stopped"], "disconnected", "{r:?}");
+        assert_eq!(r.last().unwrap()["done"], true);
+    }
+
+    #[tokio::test]
+    async fn periodic_checks_period_and_keeps_rate() {
+        let (emit, _got) = sink();
+        let core = Core::new(emit);
+        let mut other = core.vbus.attach();
+        let mut ev = other.take_events().unwrap();
+        core.connect(InterfaceConfig::Virtual).await.unwrap();
+        let f = || FrameIn { id: 0x321, ext: false, rtr: false, fd: false, brs: false, data: "01".into(), rtr_len: 0 };
+        for bad in [None, Some(0.0), Some(0.5), Some(f64::NAN), Some(-3.0)] {
+            assert!(core.periodic_start("x".into(), f(), bad, None).await.is_err(), "{bad:?}");
+        }
+        assert!(core.periodic_start("x".into(), f(), Some(5.0), Some(0)).await.is_err());
+        // 100 frames at 2 ms: a fixed schedule takes 198 ms, never less.
+        let t0 = std::time::Instant::now();
+        core.periodic_start("x".into(), f(), Some(2.0), Some(100)).await.unwrap();
+        let mut n = 0;
+        while n < 100 {
+            if let Some(BusEvent::Frame(_)) = ev.recv().await {
+                n += 1;
+            }
+        }
+        let took = t0.elapsed();
+        assert!(took >= Duration::from_millis(195) && took < Duration::from_secs(3), "{took:?}");
+        core.disconnect().await;
+    }
+
+    #[tokio::test]
+    async fn remote_and_esi_frames_from_the_ui() {
+        let (emit, got) = sink();
+        let core = Core::new(emit);
+        let mut other = core.vbus.attach();
+        let mut ev = other.take_events().unwrap();
+        core.connect(InterfaceConfig::Virtual).await.unwrap();
+        // The remote length the UI sends reaches the wire.
+        let rtr = FrameIn { id: 0x7DF, ext: false, rtr: true, fd: false, brs: false, data: "".into(), rtr_len: 8 };
+        core.send(rtr).await.unwrap();
+        // ESI cannot be sent: it goes out without it, with a note.
+        core.send_text("123##3AA".into()).await.unwrap();
+        let mut wire = Vec::new();
+        while wire.len() < 2 {
+            if let Some(BusEvent::Frame(f)) = ev.recv().await {
+                wire.push(f.frame);
+            }
+        }
+        assert!(wire[0].rtr && wire[0].rtr_len == 8 && wire[0].dlc() == 8);
+        assert!(wire[1].fd && wire[1].brs && !wire[1].esi);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(events_named(&got, "can-log").iter().any(|l| l["message"].as_str().unwrap().contains("ESI")));
+        assert!(frames_of(&got).iter().all(|f| f["esi"].is_null()), "the sent frame does not show ESI");
+        core.disconnect().await;
+    }
+
+    #[tokio::test]
+    async fn opened_traces_are_paged() {
+        let (emit, _got) = sink();
+        let core = Core::new(emit);
+        assert!(core.trace_page(0, 10).await.is_err());
+        let mut text = String::from("; a comment\n");
+        for i in 0..50_000u64 {
+            text.push_str(&format!("({}.{:06}) can0 {:03X}#{:02X}\n", 1_700_000_000 + i / 1000, (i % 1000) * 1000, 0x100 + i % 3, i % 256));
+        }
+        text.push_str("garbage\n(1.0) can0 1#0");
+        core.dbc_load_sim().await.unwrap();
+        let info = core.trace_open("big.log".into(), text).await.unwrap();
+        assert_eq!(info.frames, 50_000);
+        assert_eq!(info.format, "candump");
+        assert!(info.notes.iter().any(|n| n.contains("1 line could not be read")), "{:?}", info.notes);
+        assert!(info.notes.iter().any(|n| n.contains("cut off")), "{:?}", info.notes);
+        let page = core.trace_page(49_990, 2000).await.unwrap();
+        assert_eq!(page.len(), 10);
+        assert_eq!(page[9].id, 0x100 + 49_999 % 3);
+        assert_eq!(core.trace_page(0, 1_000_000).await.unwrap().len(), TRACE_PAGE_MAX);
+        assert!(core.trace_page(60_000, 10).await.unwrap().is_empty());
+        let ids = core.trace_ids().await.unwrap();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.iter().map(|r| r.count).sum::<u64>(), 50_000);
+        let p = ids[0].period_ms.unwrap();
+        assert!((p - 3.0).abs() < 0.01, "{p}");
+        core.trace_close().await;
+        assert!(core.trace_page(0, 1).await.is_err());
+        // Other formats, and why a file is refused.
+        let asc = "date Wed Nov 15 05:13:20.0 2023\nbase hex  timestamps absolute\n0.001 1 123 Tx d 1 05\n";
+        let asc = core.trace_open("a.asc".into(), asc.into()).await.unwrap();
+        assert_eq!((asc.format, asc.frames), ("Vector ASC", 1));
+        assert_eq!(core.trace_page(0, 1).await.unwrap()[0].dir, Direction::Tx);
+        assert!(core.trace_open("x".into(), "nothing here\n".into()).await.unwrap_err().contains("No frames"));
     }
 }

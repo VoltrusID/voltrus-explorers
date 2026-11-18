@@ -18,7 +18,6 @@ import {
   StatusDot,
   Tabs,
   Toolbar,
-  appendTextFile,
   nextTrendColor,
   noteDeviceError,
   noteDeviceSuccess,
@@ -29,20 +28,21 @@ import {
   withUtm,
 } from "@mactools/ui";
 import type { LogEntry } from "@mactools/ui";
-import { Cable, Play, Plug, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "lucide-react";
+import { Cable, ChevronLeft, ChevronRight, Play, Plug, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
 import MonitorView from "./MonitorView";
 import ReplayView from "./ReplayView";
+import { REPLAY_INITIAL, TRACE_FILE_FILTER, applyReplayEvent, type ReplayEvent, type ReplayState } from "./replay";
 import SignalsView from "./SignalsView";
 import SimDashboard from "./SimView";
 import TraceView from "./TraceView";
 import TransmitView from "./TransmitView";
 import TrendPanel, { type TrendSeries } from "./TrendPanel";
 import {
-  BITRATES, DATA_BITRATES, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
+  BITRATES, DATA_BITRATES, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, configOf, foldMonitor, ifaceProblem, keyOf, loadProfiles, loadTxList, needsPro,
   pushCapped, rateText, sameIface, saveProfiles, saveTxList, toCandump, traceCsv, type IfaceForm, type MonitorRow, type Profile, type TxItem,
 } from "./can";
-import type { ConnInfo, DbcView, FrameView, GsUsbDevice, Layer, PortInfo, Stats } from "./types";
+import type { ConnInfo, DbcView, FrameView, GsUsbDevice, Layer, PortInfo, RecordEvent, Stats, TraceIdView, TraceInfo } from "./types";
 import { hint } from "./ui";
 
 type Tab = "monitor" | "trace" | "transmit" | "signals" | "replay";
@@ -50,6 +50,22 @@ type Mode = "bus" | "simulator";
 
 const MAX_LOG = 2000;
 const LOG_FILTER = { name: "candump log", extensions: ["log", "txt", "candump"] };
+/** Frames of an opened trace file shown at once; the bar above the tabs moves through the file. */
+const IMPORT_PAGE = 10000;
+
+/** Monitor rows of an opened trace, from the backend's per-identifier summary. */
+function importedRows(ids: TraceIdView[]): Map<string, MonitorRow> {
+  const rows = new Map<string, MonitorRow>();
+  for (const r of ids) {
+    const f = r.last;
+    const key = keyOf(f.id, f.ext) + (f.dir === "tx" ? ":tx" : "");
+    rows.set(key, {
+      key, id: f.id, ext: f.ext, dir: f.dir, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, dlc: f.dlc, count: r.count, firstTs: r.firstTs, lastTs: f.ts,
+      periodMs: r.periodMs, data: f.data, changedAt: r.changedAt, msg: f.msg, sigs: f.sigs, label: f.label,
+    });
+  }
+  return rows;
+}
 const DBC_FILTER = { name: "DBC", extensions: ["dbc"] };
 
 const LAYERS: { value: Layer; label: string }[] = [
@@ -101,8 +117,16 @@ function App() {
   const [latest, setLatest] = useState<Map<string, FrameView>>(new Map());
   const [dbc, setDbc] = useState<DbcView | null>(null);
   const [layer, setLayer] = useState<Layer>("none");
-  const [recording, setRecording] = useState<string | null>(null);
-  const recordRef = useRef<{ path: string; iface: string; buf: string[] } | null>(null);
+  const [recording, setRecordingState] = useState<string | null>(null);
+  const recordingRef = useRef<string | null>(null);
+  const setRecording = useCallback((p: string | null) => { recordingRef.current = p; setRecordingState(p); }, []);
+  /** A trace file opened offline: while it is shown, live frames do not reach the Monitor and Trace (recording goes on). */
+  const [imported, setImported] = useState<{ info: TraceInfo; start: number } | null>(null);
+  const importedRef = useRef(false);
+
+  // Replay (kept here so the Replay tab shows a running replay when it is opened again)
+  const [replay, setReplay] = useState<ReplayState>(REPLAY_INITIAL);
+  const updateReplay = useCallback((patch: Partial<ReplayState>) => setReplay((s) => ({ ...s, ...patch })), []);
 
   // Transmit
   const [txItems, setTxItemsState] = useState<TxItem[]>(loadTxList);
@@ -132,9 +156,11 @@ function App() {
       listen<{ frames: FrameView[]; dropped: number }>("can-frames", (e) => {
         const { frames } = e.payload;
         if (frames.length === 0) return;
-        foldMonitor(monitorRef.current, frames);
-        setMonitorRows(Array.from(monitorRef.current.values()));
-        if (!pausedRef.current) setTrace((prev) => pushCapped(prev, frames, TRACE_MAX));
+        if (!importedRef.current) {
+          foldMonitor(monitorRef.current, frames);
+          setMonitorRows(Array.from(monitorRef.current.values()));
+          if (!pausedRef.current) setTrace((prev) => pushCapped(prev, frames, TRACE_MAX));
+        }
         setLatest((prev) => {
           let next: Map<string, FrameView> | null = null;
           for (const f of frames) if (f.msg) { next ??= new Map(prev); next.set(f.msg, mergeLatest(next.get(f.msg), f)); }
@@ -159,9 +185,16 @@ function App() {
             return changed ? next : prev;
           });
         }
-        const rec = recordRef.current;
-        if (rec) for (const f of frames) rec.buf.push(candumpLine(f, rec.iface));
       }),
+      listen<RecordEvent>("can-record", (e) => {
+        const p = e.payload;
+        if (recordingRef.current === p.path) setRecording(null);
+        const what = `${p.frames.toLocaleString()} frame${p.frames === 1 ? "" : "s"} recorded to ${p.path}`;
+        if (p.error) addLog("error", `Recording stopped: ${p.error}. ${what}`);
+        else if (p.reason === "disconnected" || p.reason === "closed") addLog("info", `Recording ended with the connection: ${what}`);
+        else addLog("info", `Recording saved: ${what}`);
+      }),
+      listen<ReplayEvent>("can-replay", (e) => setReplay((s) => applyReplayEvent(s, e.payload))),
       listen<Stats>("can-stats", (e) => setStats(e.payload)),
       listen<{ state: "closed"; reason: string | null }>("can-conn", (e) => {
         setConn(null);
@@ -180,24 +213,7 @@ function App() {
       }),
     ];
     return () => { subs.forEach((s) => s.then((un) => un())); };
-  }, [addLog, trendWindow]);
-
-  // Flush the recording buffer twice a second.
-  useEffect(() => {
-    if (!recording) return;
-    const t = setInterval(() => {
-      const rec = recordRef.current;
-      if (!rec || rec.buf.length === 0) return;
-      const text = rec.buf.join("\n") + "\n";
-      rec.buf = [];
-      appendTextFile(rec.path, text).catch((e) => {
-        addLog("error", `Recording stopped: ${String(e)}`);
-        recordRef.current = null;
-        setRecording(null);
-      });
-    }, 500);
-    return () => clearInterval(t);
-  }, [recording, addLog]);
+  }, [addLog, trendWindow, setRecording]);
 
   // ── Ports ──
   const refreshPorts = useCallback(async () => {
@@ -220,6 +236,12 @@ function App() {
     setTrace([]);
     setTraceSource(null);
     setLatest(new Map());
+    if (importedRef.current) {
+      importedRef.current = false;
+      setImported(null);
+      setPaused(false);
+      void invoke("trace_close").catch(() => undefined);
+    }
   }, []);
 
   const connectWith = useCallback(async (f: IfaceForm) => {
@@ -331,48 +353,78 @@ function App() {
     }
   }, [requirePro, conn, addLog]);
 
+  /** Shows frames `start..start + IMPORT_PAGE` of the opened file (decoded with the current DBC and layer) and its Monitor rows. */
+  const showImported = useCallback(async (info: TraceInfo, start: number) => {
+    const s = Math.max(0, Math.min(start, Math.max(0, info.frames - 1)));
+    const [frames, ids] = await Promise.all([
+      invoke<FrameView[]>("trace_page", { start: s, count: IMPORT_PAGE }),
+      invoke<TraceIdView[]>("trace_ids"),
+    ]);
+    setTrace(frames);
+    monitorRef.current = importedRows(ids);
+    setMonitorRows(Array.from(monitorRef.current.values()));
+    setImported({ info, start: s });
+  }, []);
+
   const importTrace = useCallback(async () => {
     try {
-      const file = await openTextFile(LOG_FILTER);
+      const file = await openTextFile(TRACE_FILE_FILTER);
       if (!file) return;
-      const frames = await invoke<FrameView[]>("trace_decode", { text: file.text });
+      const info = await invoke<TraceInfo>("trace_open", { name: file.path, text: file.text });
+      importedRef.current = true;
       setPaused(true);
-      setTrace(frames.slice(-TRACE_MAX));
       setTraceSource(file.path);
-      monitorRef.current = new Map();
-      foldMonitor(monitorRef.current, frames);
-      setMonitorRows(Array.from(monitorRef.current.values()));
-      addLog("info", `Opened ${frames.length} frames from ${file.path}${frames.length > TRACE_MAX ? ` (the last ${TRACE_MAX} are in the trace)` : ""}. The trace is paused; resume to see live frames again.`);
+      await showImported(info, 0);
+      const pages = info.frames > IMPORT_PAGE ? ` The trace shows ${IMPORT_PAGE.toLocaleString()} at a time; move through the file with the arrows above the tabs.` : "";
+      addLog("info", `Opened ${file.path}: ${info.frames.toLocaleString()} frames (${info.format}).${pages} Live frames are not shown until the file is closed.`);
+      for (const n of info.notes) addLog("info", n);
     } catch (e) {
       setError(String(e));
     }
-  }, [addLog]);
+  }, [addLog, showImported]);
 
+  /** Closes the opened file and goes back to live frames. */
+  const closeImport = useCallback(() => {
+    importedRef.current = false;
+    setImported(null);
+    setTraceSource(null);
+    setTrace([]);
+    monitorRef.current = new Map();
+    setMonitorRows([]);
+    setPaused(false);
+    void invoke("trace_close").catch(() => undefined);
+  }, []);
+
+  // A new DBC or protocol layer decodes the opened file again.
+  const importedNow = useRef(imported);
+  importedNow.current = imported;
+  useEffect(() => {
+    const cur = importedNow.current;
+    if (cur) void showImported(cur.info, cur.start).catch((e) => setError(String(e)));
+  }, [dbc, layer, showImported]);
+
+  // Recording happens in the backend: every frame the bus delivers goes to the file, whether or not the screen keeps up.
   const startRecording = useCallback(async () => {
     if (!requirePro("Recording to a file")) return;
+    if (!conn) { setError("Connect to a bus first; the recording takes every frame of the connection."); return; }
     const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
     const path = await pickSavePath(`can-${stamp}.log`, LOG_FILTER);
     if (!path) return;
     try {
-      recordRef.current = { path, iface: conn?.logName ?? "can0", buf: [] };
-      await appendTextFile(path, "");
+      await invoke("record_start", { path });
       setRecording(path);
-      addLog("info", `Recording every frame to ${path}`);
+      addLog("info", `Recording every frame to ${path} (the file is replaced)`);
     } catch (e) {
-      recordRef.current = null;
-      addLog("error", `Cannot record to ${path}: ${String(e)}`);
+      addLog("error", String(e));
+      setError(String(e));
     }
-  }, [requirePro, conn, addLog]);
+  }, [requirePro, conn, addLog, setRecording]);
 
   const stopRecording = useCallback(async () => {
-    const rec = recordRef.current;
-    recordRef.current = null;
+    // The backend flushes the file and answers with a `can-record` event, which logs the frame count.
+    try { await invoke("record_stop"); } catch (e) { addLog("error", String(e)); }
     setRecording(null);
-    if (rec && rec.buf.length > 0) {
-      try { await appendTextFile(rec.path, rec.buf.join("\n") + "\n"); } catch (e) { addLog("error", String(e)); }
-    }
-    if (rec) addLog("info", `Recording saved to ${rec.path}`);
-  }, [addLog]);
+  }, [addLog, setRecording]);
 
   // ── Trend ──
   const toggleTrend = useCallback((key: string, label: string) => {
@@ -626,17 +678,43 @@ function App() {
         action={
           <div style={{ display: "flex", gap: 8 }}>
             <Button variant="primary" icon={<Play size={14} strokeWidth={1.75} />} onClick={() => void monitorSim()}>Try the simulator <ProBadge /></Button>
-            <Button onClick={() => void importTrace()}>Open a candump log</Button>
+            <Button onClick={() => void importTrace()}>Open a trace file</Button>
           </div>
         }
       />
     </div>
   );
 
-  const showBusTabs = connected || trace.length > 0;
+  const showBusTabs = connected || trace.length > 0 || imported != null;
+  const importBar = imported && (() => {
+    const { info, start } = imported;
+    const end = Math.min(info.frames, start + IMPORT_PAGE);
+    const move = (to: number) => void showImported(info, to).catch((e) => setError(String(e)));
+    const paged = info.frames > IMPORT_PAGE;
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <Badge tone="neutral" title={info.name}>File: {info.name.split(/[\\/]/).pop()}</Badge>
+        <span className="mono" style={{ fontSize: "var(--fs-xs)", color: "var(--text-dim)" }}>
+          {info.frames.toLocaleString()} frames ({info.format}){paged ? ` · showing ${(start + 1).toLocaleString()}–${end.toLocaleString()}` : ""}
+        </span>
+        {paged && (
+          <>
+            <Button size="sm" variant="ghost" disabled={start === 0} onClick={() => move(0)}>First</Button>
+            <Button size="sm" variant="ghost" aria-label="Earlier frames" icon={<ChevronLeft size={14} strokeWidth={1.75} />} disabled={start === 0} onClick={() => move(start - IMPORT_PAGE)} />
+            <Button size="sm" variant="ghost" aria-label="Later frames" icon={<ChevronRight size={14} strokeWidth={1.75} />} disabled={end >= info.frames} onClick={() => move(start + IMPORT_PAGE)} />
+            <Button size="sm" variant="ghost" disabled={end >= info.frames} onClick={() => move(Math.floor((info.frames - 1) / IMPORT_PAGE) * IMPORT_PAGE)}>Last</Button>
+          </>
+        )}
+        <span style={{ flex: 1 }} />
+        {connected && <span style={{ ...hint, margin: 0 }}>Live frames are hidden while the file is open{recording ? "; recording goes on" : ""}.</span>}
+        <Button size="sm" icon={<X size={14} strokeWidth={1.75} />} onClick={closeImport}>{connected ? "Close file, show live" : "Close file"}</Button>
+      </div>
+    );
+  })();
   const busMain = !showBusTabs ? welcome : (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 8 }}>
       {header}
+      {importBar}
       {!connected && (
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <Badge tone="neutral">Not connected</Badge>
@@ -660,7 +738,7 @@ function App() {
         <MonitorView
           rows={monitorRows}
           filter={filter}
-          onClear={() => { monitorRef.current = new Map(); setMonitorRows([]); }}
+          onClear={() => { if (importedRef.current) closeImport(); else { monitorRef.current = new Map(); setMonitorRows([]); } }}
           trending={new Set(trend.keys())}
           onToggleTrend={toggleTrend}
         />
@@ -670,8 +748,8 @@ function App() {
           frames={trace}
           filter={filter}
           paused={paused}
-          onPause={(p) => { setPaused(p); if (!p && traceSource) { setTrace([]); setTraceSource(null); } }}
-          onClear={() => { setTrace([]); setTraceSource(null); }}
+          onPause={(p) => { if (!p && importedRef.current) closeImport(); else setPaused(p); }}
+          onClear={() => { if (importedRef.current) closeImport(); else { setTrace([]); setTraceSource(null); } }}
           onExport={(k, f) => void exportTrace(k, f)}
           onImport={() => void importTrace()}
           recording={recording}
@@ -688,7 +766,7 @@ function App() {
       {tab === "signals" && (
         <SignalsView dbc={dbc} latest={latest} canSend={canSend} connected={connected} requirePro={requirePro} addLog={addLog} onLoad={() => void loadDbc()} onLoadSim={() => void loadSimDbc()} />
       )}
-      {tab === "replay" && <ReplayView connected={connected} canSend={canSend} requirePro={requirePro} addLog={addLog} />}
+      {tab === "replay" && <ReplayView connected={connected} canSend={canSend} requirePro={requirePro} addLog={addLog} state={replay} update={updateReplay} />}
     </div>
   );
 
