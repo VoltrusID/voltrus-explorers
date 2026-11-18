@@ -1,2 +1,8 @@
 @import "tailwindcss";
 @import "@mactools/ui/styles.css";
+
+/* Rows of the virtual Monitor and Trace tables (absolutely positioned divs, not <tr>). */
+.can-mon-row:hover,
+.can-trace-row:hover {
+  background: var(--hover-overlay);
+}

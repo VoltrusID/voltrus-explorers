@@ -6,6 +6,27 @@ import { cansendText, fmtNum, hex, idText } from "./can";
 import type { DbcMessageView, DbcView, FrameView } from "./types";
 import { Bytes, card, hint, row, th, type AddLog, type RequirePro } from "./ui";
 
+/**
+ * What `dbc_load` may report besides the messages (optional: older backends send neither): `errors` for lines that could
+ * not be read, `warnings` for things that were read but look wrong.
+ */
+type DbcReport = DbcView & { warnings?: unknown; errors?: unknown };
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : []);
+
+/** Errors and warnings to show above the Signals tab; an empty file or a file that is not a DBC gets one as well. */
+export function dbcNotes(dbc: DbcView): { level: "error" | "warning"; text: string }[] {
+  const r = dbc as DbcReport;
+  const notes = [
+    ...strings(r.errors).map((text) => ({ level: "error" as const, text })),
+    ...strings(r.warnings).map((text) => ({ level: "warning" as const, text })),
+  ];
+  if (dbc.messages.length === 0 && notes.length === 0) {
+    notes.push({ level: "warning", text: `${dbc.name} has no messages (BO_ lines). Is it a DBC file? Nothing will be decoded with it.` });
+  }
+  return notes;
+}
+
 interface Props {
   dbc: DbcView | null;
   /** Latest decoded values per message name. */
@@ -44,7 +65,17 @@ export default function SignalsView({ dbc, latest, canSend, connected, requirePr
     );
   }
 
+  const notes = dbcNotes(dbc);
+
   return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 8 }}>
+    {notes.length > 0 && (
+      <Callout tone={notes.some((n) => n.level === "error") ? "danger" : "warn"}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 120, overflow: "auto", fontSize: "var(--fs-sm)" }}>
+          {notes.map((n, i) => <span key={i}>{n.text}</span>)}
+        </div>
+      </Callout>
+    )}
     <div style={{ display: "flex", flex: 1, minHeight: 0, gap: 8 }}>
       <div style={{ ...card, width: 270, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, padding: 8 }}>
         <input className="vt-input" placeholder="Find message or signal" aria-label="Find message or signal" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -69,6 +100,7 @@ export default function SignalsView({ dbc, latest, canSend, connected, requirePr
         </div>
       </div>
       {current && <MessageDetail key={current.name} m={current} frame={latest.get(current.name) ?? null} canSend={canSend && connected} requirePro={requirePro} addLog={addLog} />}
+    </div>
     </div>
   );
 }

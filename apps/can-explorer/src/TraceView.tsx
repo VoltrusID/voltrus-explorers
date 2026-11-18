@@ -1,7 +1,8 @@
 import { Badge, Button, EmptyState, ProBadge } from "@mactools/ui";
 import { Circle, FileDown, FileUp, List, Pause, Play, Square } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { clockUs, fmtNum, hex, idText, parseFilter } from "./can";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { clockUs, fmtNum, frameFilter, hex, idText } from "./can";
+import { FrameSearchInputs, useFrameSearch } from "./FrameSearch";
 import type { FrameView } from "./types";
 import { hint, row } from "./ui";
 
@@ -24,11 +25,11 @@ interface Props {
 
 export default function TraceView({ frames, filter, paused, onPause, onClear, onExport, onImport, recording, onRecord, onStopRecord, source }: Props) {
   const [relative, setRelative] = useState(true);
-  const [selected, setSelected] = useState<number | null>(null);
-  const shown = useMemo(() => {
-    const keep = parseFilter(filter);
-    return frames.filter(keep);
-  }, [frames, filter]);
+  // The frame itself, not its index: the index moves as old frames scroll out of the capped trace.
+  const [selected, setSelected] = useState<FrameView | null>(null);
+  const search = useFrameSearch();
+  const query = useMemo(() => frameFilter({ ids: filter, text: search.text, data: search.data }), [filter, search]);
+  const shown = useMemo(() => frames.filter(query.test), [frames, query]);
 
   // Virtual scrolling: only the rows in view are rendered.
   const scroller = useRef<HTMLDivElement>(null);
@@ -50,7 +51,7 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
   const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 10);
   const last = Math.min(shown.length, Math.ceil((scrollTop + height) / ROW_H) + 10);
   const t0 = shown[0]?.ts ?? 0;
-  const current = selected != null ? shown[selected] : null;
+  const current = selected;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, gap: 8 }}>
@@ -61,6 +62,7 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--fs-sm)" }}>
           <input type="checkbox" checked={relative} onChange={(e) => setRelative(e.target.checked)} /> Relative time
         </label>
+        <FrameSearchInputs value={search} />
         <Badge>{shown.length === frames.length ? `${frames.length} frames` : `${shown.length} of ${frames.length} frames`}</Badge>
         {source && <Badge tone="neutral" title={source}>Imported: {source.split(/[\\/]/).pop()}</Badge>}
         <span style={{ flex: 1 }} />
@@ -74,6 +76,7 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
         <Button size="sm" disabled={shown.length === 0} onClick={() => onExport("csv", shown)}>CSV <ProBadge /></Button>
         <Button size="sm" onClick={() => { onClear(); setSelected(null); }} disabled={frames.length === 0}>Clear</Button>
       </div>
+      {query.error && <span role="alert" style={{ ...hint, color: "var(--danger-text, var(--danger))" }}>{query.error}</span>}
       {frames.length === 0 ? (
         <EmptyState
           icon={<List size={20} strokeWidth={1.75} />}
@@ -97,28 +100,7 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
             <div style={{ height: shown.length * ROW_H, position: "relative" }}>
               {shown.slice(first, last).map((f, i) => {
                 const idx = first + i;
-                return (
-                  <div
-                    key={idx}
-                    className="mono"
-                    onClick={() => setSelected(idx)}
-                    style={{
-                      position: "absolute", top: idx * ROW_H, left: 0, right: 0, height: ROW_H, display: "grid", gridTemplateColumns: COLS,
-                      alignItems: "center", padding: "0 8px", fontSize: "var(--fs-xs)", cursor: "pointer", whiteSpace: "nowrap",
-                      background: idx === selected ? "var(--accent-soft, color-mix(in srgb, var(--accent) 18%, transparent))" : undefined,
-                      borderBottom: "1px solid var(--border)",
-                    }}
-                  >
-                    <span>{relative ? ((f.ts - t0) / 1e6).toFixed(6) : clockUs(f.ts)}</span>
-                    <span style={{ color: f.dir === "tx" ? "var(--accent-text)" : "var(--text-muted)" }}>{f.dir.toUpperCase()}{f.fd ? " FD" : ""}</span>
-                    <span>{idText(f.id, f.ext)}</span>
-                    <span>{f.rtr ? `R${f.dlc}` : f.dlc}</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{hex(f.data)}</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-dim)", fontFamily: "var(--font-sans, inherit)" }}>
-                      {f.msg ? `${f.msg} ` : ""}{f.label ?? ""}
-                    </span>
-                  </div>
-                );
+                return <TraceLine key={idx} f={f} top={idx * ROW_H} time={relative ? ((f.ts - t0) / 1e6).toFixed(6) : clockUs(f.ts)} selected={f === selected} onSelect={setSelected} />;
               })}
             </div>
           </div>
@@ -148,3 +130,29 @@ export default function TraceView({ frames, filter, paused, onPause, onClear, on
 }
 
 const COLS = "112px 44px 84px 40px minmax(160px, 1.2fr) minmax(120px, 1fr)";
+
+/** One frame. Memoized: while the trace follows new frames, rows that stay in view are not re-rendered. */
+const TraceLine = memo(function TraceLine({ f, top, time, selected, onSelect }: { f: FrameView; top: number; time: string; selected: boolean; onSelect: (f: FrameView) => void }) {
+  return (
+    <div
+      className="mono can-trace-row"
+      onClick={() => onSelect(f)}
+      aria-selected={selected}
+      style={{
+        position: "absolute", top, left: 0, right: 0, height: ROW_H, display: "grid", gridTemplateColumns: COLS,
+        alignItems: "center", padding: "0 8px", fontSize: "var(--fs-xs)", cursor: "pointer", whiteSpace: "nowrap",
+        background: selected ? "var(--accent-soft, color-mix(in srgb, var(--accent) 18%, transparent))" : undefined,
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <span>{time}</span>
+      <span style={{ color: f.dir === "tx" ? "var(--accent-text)" : "var(--text-muted)" }}>{f.dir.toUpperCase()}{f.fd ? " FD" : ""}</span>
+      <span>{idText(f.id, f.ext)}</span>
+      <span>{f.rtr ? `R${f.dlc}` : f.dlc}</span>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{hex(f.data)}</span>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-dim)", fontFamily: "var(--font-sans, inherit)" }}>
+        {f.msg ? `${f.msg} ` : ""}{f.label ?? ""}
+      </span>
+    </div>
+  );
+});

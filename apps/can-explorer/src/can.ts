@@ -82,32 +82,82 @@ export interface MonitorRow {
   count: number;
   firstTs: number;
   lastTs: number;
-  /** Smoothed period in ms, null after one frame. */
+  /** Estimated period in ms, null until a frame with a later timestamp. */
   periodMs: number | null;
   data: number[];
   /** When each byte last changed (µs), for highlighting. */
   changedAt: number[];
+  /** Latest of `changedAt` (µs). */
+  lastChange: number;
+  /** Start (µs) and frame count of the current period window. */
+  winTs: number;
+  winN: number;
   msg?: string;
   sigs?: FrameView["sigs"];
   label?: string;
 }
 
-/** Folds frames into the monitor table in place; returns whether anything changed. */
-export function foldMonitor(rows: Map<string, MonitorRow>, frames: FrameView[]): boolean {
+/** Unique identifiers the monitor keeps; past it the least recently seen one makes room. */
+export const MONITOR_MAX_IDS = 5000;
+
+/** The period is measured over windows of about this long (µs). */
+const PERIOD_WINDOW_US = 1_000_000;
+
+const evictions = new WeakMap<Map<string, MonitorRow>, number>();
+
+/** How many identifiers were dropped from `rows` to stay within the cap. */
+export const monitorEvicted = (rows: Map<string, MonitorRow>) => evictions.get(rows) ?? 0;
+
+/**
+ * Period estimate: frames counted over a window of about a second, divided into the time it spans. Frames sharing one
+ * timestamp (an adapter or driver that stamps a whole read at once) count as frames but add no time, so they no longer
+ * drag the period down. The first estimate comes with the first frame at a later timestamp; later estimates far from the
+ * current one (the ID was quiet, or changed rate) replace it, close ones are smoothed in.
+ */
+export function nextPeriod(r: Pick<MonitorRow, "periodMs" | "winTs" | "winN">, ts: number): Pick<MonitorRow, "periodMs" | "winTs" | "winN"> {
+  if (ts < r.winTs) return { periodMs: r.periodMs, winTs: ts, winN: 0 };
+  const winN = r.winN + 1;
+  const elapsed = ts - r.winTs;
+  if (elapsed <= 0 || (r.periodMs != null && elapsed < PERIOD_WINDOW_US)) return { periodMs: r.periodMs, winTs: r.winTs, winN };
+  const est = elapsed / winN / 1000;
+  const prev = r.periodMs;
+  const periodMs = prev == null || est > prev * 2 || est < prev / 2 ? est : prev * 0.5 + est * 0.5;
+  return { periodMs, winTs: ts, winN: 0 };
+}
+
+/**
+ * Folds frames into the monitor table; returns whether anything changed. A changed row is replaced by a new object, so
+ * unchanged rows keep their identity (and are not re-rendered), and moves to the end of the map: the first entry is
+ * always the least recently seen identifier, the one dropped when a new identifier would exceed `maxIds`.
+ */
+export function foldMonitor(rows: Map<string, MonitorRow>, frames: FrameView[], maxIds = MONITOR_MAX_IDS): boolean {
   for (const f of frames) {
     const key = keyOf(f.id, f.ext) + (f.dir === "tx" ? ":tx" : "");
     const r = rows.get(key);
     if (!r) {
+      if (rows.size >= maxIds) {
+        const oldest = rows.keys().next().value;
+        if (oldest !== undefined) {
+          rows.delete(oldest);
+          evictions.set(rows, monitorEvicted(rows) + 1);
+        }
+      }
       rows.set(key, {
         key, id: f.id, ext: f.ext, dir: f.dir, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, dlc: f.dlc, count: 1, firstTs: f.ts, lastTs: f.ts, periodMs: null,
-        data: f.data, changedAt: f.data.map(() => f.ts), msg: f.msg, sigs: f.sigs, label: f.label,
+        data: f.data, changedAt: f.data.map(() => f.ts), lastChange: f.ts, winTs: f.ts, winN: 0, msg: f.msg, sigs: f.sigs, label: f.label,
       });
       continue;
     }
-    const dt = (f.ts - r.lastTs) / 1000;
-    if (dt >= 0) r.periodMs = r.periodMs == null ? dt : r.periodMs * 0.8 + dt * 0.2;
-    const changedAt = f.data.map((b, i) => (r.data[i] !== b ? f.ts : (r.changedAt[i] ?? f.ts)));
-    Object.assign(r, { count: r.count + 1, lastTs: f.ts, data: f.data, changedAt, dlc: f.dlc, fd: f.fd, brs: f.brs, esi: !!f.esi, rtr: f.rtr, msg: f.msg, sigs: f.sigs, label: f.label });
+    let lastChange = f.data.length !== r.data.length ? f.ts : r.lastChange;
+    const changedAt = f.data.map((b, i) => {
+      if (r.data[i] !== b) { lastChange = f.ts; return f.ts; }
+      return r.changedAt[i] ?? f.ts;
+    });
+    rows.delete(key);
+    rows.set(key, {
+      ...r, ...nextPeriod(r, f.ts), count: r.count + 1, lastTs: f.ts, data: f.data, changedAt, lastChange, dlc: f.dlc, fd: f.fd, brs: f.brs,
+      esi: !!f.esi, rtr: f.rtr, msg: f.msg, sigs: f.sigs, label: f.label,
+    });
   }
   return frames.length > 0;
 }
@@ -124,35 +174,176 @@ export function sortMonitor(rows: MonitorRow[], by: MonitorSort): MonitorRow[] {
   return out;
 }
 
+// ── Monitor layout (virtual scrolling) ──
+
+/** Height of a monitor row with up to 16 data bytes, px. */
+export const MON_ROW_H = 30;
+/** Extra height per further line of 16 bytes (CAN FD), px. */
+export const MON_LINE_H = 20;
+/** Height of one line of signals under an opened row, px. */
+export const MON_SIG_H = 22;
+/** Minimum width of a signal cell, px; decides how many fit on a line. */
+export const MON_SIG_W = 240;
+
+/** Columns of the signal grid under an opened row of a table `width` px wide. */
+export const sigColumns = (width: number) => Math.max(1, Math.floor((width - 48) / MON_SIG_W));
+
+/** Height of a row, px: one line per 16 data bytes, plus its signals when open. */
+export function monitorRowHeight(r: Pick<MonitorRow, "data" | "sigs">, open: boolean, cols: number): number {
+  const lines = Math.max(1, Math.ceil(r.data.length / 16));
+  const base = MON_ROW_H + (lines - 1) * MON_LINE_H;
+  const sigs = open ? (r.sigs?.length ?? 0) : 0;
+  return sigs > 0 ? base + Math.ceil(sigs / cols) * MON_SIG_H + 6 : base;
+}
+
+/** Top offset and height of every row, and the total height. */
+export function monitorLayout(rows: MonitorRow[], isOpen: (key: string) => boolean, width: number): { tops: number[]; heights: number[]; total: number } {
+  const cols = sigColumns(width);
+  const tops = new Array<number>(rows.length);
+  const heights = new Array<number>(rows.length);
+  let y = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const h = monitorRowHeight(rows[i], isOpen(rows[i].key), cols);
+    tops[i] = y;
+    heights[i] = h;
+    y += h;
+  }
+  return { tops, heights, total: y };
+}
+
+/** Rows `[first, last)` that overlap the viewport, with `overscan` more on either side. */
+export function visibleRange(tops: number[], heights: number[], scrollTop: number, viewHeight: number, overscan = 6): [number, number] {
+  const n = tops.length;
+  if (n === 0) return [0, 0];
+  let lo = 0;
+  let hi = n - 1;
+  // First row whose bottom is below scrollTop.
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (tops[mid] + heights[mid] <= scrollTop) lo = mid + 1;
+    else hi = mid;
+  }
+  let last = lo;
+  const bottom = scrollTop + viewHeight;
+  while (last < n && tops[last] < bottom) last++;
+  return [Math.max(0, lo - overscan), Math.min(n, last + overscan)];
+}
+
 // ── Filter ──
 
+/** Placeholder and help of the identifier filter. */
+export const ID_FILTER_PLACEHOLDER = "IDs: 7E8, 700-7FF, 18FEF100, !100";
+export const ID_FILTER_HELP =
+  "Identifiers in hex, single or as ranges, separated by commas or spaces; ! in front hides them. Up to 3 digits is an 11-bit ID " +
+  "(100-1FF), 4 to 8 digits or an x at the end a 29-bit one (18FEF100, 100x, 0-FFFFx). Search message names in Search.";
+
+type IdFrame = Pick<FrameView, "id" | "ext">;
+
+export interface ParsedFilter<F> {
+  test: (f: F) => boolean;
+  /** What could not be read; those terms are left out. */
+  error: string | null;
+}
+
+/** An identifier as typed in the filter: up to 3 hex digits is 11-bit; 4 to 8 digits, above 7FF or an `x` suffix is 29-bit. */
+function filterId(t: string): { id: number; ext: boolean } | null {
+  const m = /^(?:0x)?([0-9a-f]{1,8})(x)?$/i.exec(t);
+  if (!m) return null;
+  const id = parseInt(m[1], 16);
+  if (id > 0x1fffffff) return null;
+  return { id, ext: !!m[2] || m[1].length > 3 || id > 0x7ff };
+}
+
 /**
- * Identifier filter as typed: `7E8`, `700-7FF`, `18FEF100`, a message or label word (`EEC1`,
- * `heartbeat`), several separated by commas or spaces, `!` in front to hide. Empty shows everything.
+ * Identifier filter: `7E8`, `700-7FF`, `18FEF100`, `100x`, `18FE0000-18FEFFFF`, several separated by commas or spaces,
+ * `!` in front to hide. Matches identifiers only, never names. A term is 11-bit or 29-bit by `filterId`'s rule (a range
+ * is 29-bit if either end is) and only matches identifiers of that kind. Empty shows everything.
  */
-export function parseFilter(text: string): (f: Pick<FrameView, "id" | "ext" | "msg" | "label">) => boolean {
-  const terms = text.split(/[\s,]+/).map((t) => t.trim()).filter(Boolean);
-  if (terms.length === 0) return () => true;
-  type Term = { neg: boolean; test: (f: Pick<FrameView, "id" | "ext" | "msg" | "label">) => boolean };
-  const parsed: Term[] = terms.map((raw) => {
+export function parseFilter(text: string): ParsedFilter<IdFrame> {
+  const terms = text.split(/[\s,]+/).map((t) => t.trim()).filter((t) => t && t !== "!");
+  type Term = { neg: boolean; ext: boolean; lo: number; hi: number };
+  const parsed: Term[] = [];
+  const bad: string[] = [];
+  for (const raw of terms) {
     const neg = raw.startsWith("!");
     const t = neg ? raw.slice(1) : raw;
-    const range = /^(?:0x)?([0-9a-f]{1,8})-(?:0x)?([0-9a-f]{1,8})$/i.exec(t);
-    if (range) {
-      const lo = parseInt(range[1], 16);
-      const hi = parseInt(range[2], 16);
-      return { neg, test: (f) => f.id >= Math.min(lo, hi) && f.id <= Math.max(lo, hi) };
-    }
-    const word = t.toLowerCase();
-    if (/^(?:0x)?[0-9a-f]{1,8}$/i.test(t)) {
-      const id = parseInt(t.replace(/^0x/i, ""), 16);
-      return { neg, test: (f) => f.id === id || !!f.msg?.toLowerCase().includes(word) || !!f.label?.toLowerCase().includes(word) };
-    }
-    return { neg, test: (f) => !!f.msg?.toLowerCase().includes(word) || !!f.label?.toLowerCase().includes(word) };
-  });
+    const dash = t.indexOf("-", 1);
+    const a = filterId(dash > 0 ? t.slice(0, dash) : t);
+    const b = dash > 0 ? filterId(t.slice(dash + 1)) : a;
+    if (a && b) parsed.push({ neg, ext: a.ext || b.ext, lo: Math.min(a.id, b.id), hi: Math.max(a.id, b.id) });
+    else bad.push(raw);
+  }
+  const error = bad.length === 0 ? null : `Not an identifier: ${bad.join(", ")}. The ID filter takes hex IDs and ranges; type names in Search.`;
+  if (parsed.length === 0) return { test: () => true, error };
+  const hit = (p: Term, f: IdFrame) => p.ext === f.ext && f.id >= p.lo && f.id <= p.hi;
   const pos = parsed.filter((p) => !p.neg);
   const neg = parsed.filter((p) => p.neg);
-  return (f) => (pos.length === 0 || pos.some((p) => p.test(f))) && !neg.some((p) => p.test(f));
+  return { test: (f) => (pos.length === 0 || pos.some((p) => hit(p, f))) && !neg.some((p) => hit(p, f)), error };
+}
+
+type TextFrame = Pick<FrameView, "msg" | "label">;
+
+/** Name search: words in the DBC message name or the protocol label, `!` in front to hide. Case does not matter. */
+export function parseSearch(text: string): (f: TextFrame) => boolean {
+  const words = text.split(/[\s,]+/).map((t) => t.trim().toLowerCase()).filter((t) => t && t !== "!");
+  if (words.length === 0) return () => true;
+  const has = (f: TextFrame, w: string) => !!f.msg?.toLowerCase().includes(w) || !!f.label?.toLowerCase().includes(w);
+  const pos = words.filter((w) => !w.startsWith("!"));
+  const neg = words.filter((w) => w.startsWith("!")).map((w) => w.slice(1));
+  return (f) => (pos.length === 0 || pos.some((w) => has(f, w))) && !neg.some((w) => has(f, w));
+}
+
+/**
+ * Data pattern, matched from the first byte: two hex digits per byte, `x` or `?` for a digit that may be anything:
+ * `xx 12 xx`, `01 ?F`, `xx12` (without spaces, two digits per byte). Frames shorter than the pattern do not match.
+ */
+export function parseDataPattern(text: string): ParsedFilter<Pick<FrameView, "data">> {
+  const t = text.trim();
+  if (!t) return { test: () => true, error: null };
+  const tokens = /[\s,:]/.test(t) ? t.split(/[\s,:]+/).filter(Boolean) : (t.match(/.{1,2}/g) ?? []);
+  const masks: number[] = [];
+  const values: number[] = [];
+  for (const tok of tokens) {
+    if (!/^[0-9a-fx?]{2}$/i.test(tok)) {
+      return { test: () => true, error: `Data pattern: "${tok}" is not a byte. Write two hex digits per byte, x for any digit: xx 12 xx.` };
+    }
+    let mask = 0;
+    let value = 0;
+    [...tok].forEach((c, i) => {
+      if (c === "x" || c === "X" || c === "?") return;
+      const shift = i === 0 ? 4 : 0;
+      mask |= 0xf << shift;
+      value |= parseInt(c, 16) << shift;
+    });
+    masks.push(mask);
+    values.push(value);
+  }
+  return {
+    test: (f) => {
+      if (f.data.length < masks.length) return false;
+      for (let i = 0; i < masks.length; i++) if ((f.data[i] & masks[i]) !== values[i]) return false;
+      return true;
+    },
+    error: null,
+  };
+}
+
+export interface FrameQuery {
+  /** Identifier filter (`parseFilter`). */
+  ids: string;
+  /** Name search (`parseSearch`). */
+  text: string;
+  /** Data pattern (`parseDataPattern`). */
+  data: string;
+}
+
+/** The identifier filter, the name search and the data pattern together. */
+export function frameFilter(q: FrameQuery): ParsedFilter<Pick<FrameView, "id" | "ext" | "msg" | "label" | "data">> {
+  const ids = parseFilter(q.ids);
+  const text = parseSearch(q.text);
+  const data = parseDataPattern(q.data);
+  const error = [ids.error, data.error].filter(Boolean).join(" ");
+  return { test: (f) => ids.test(f) && text(f) && data.test(f), error: error || null };
 }
 
 // ── Export ──
@@ -311,9 +502,35 @@ export interface TxItem {
   brs: boolean;
   rtr: boolean;
   data: string;
+  /** Data length code a remote frame asks for, 0 to 8. */
+  rtrLen?: number;
   /** Period for cyclic sending, ms. */
   periodMs: number;
+  /** Frames cyclic sending stops after; 0 or absent sends until stopped. */
+  count?: number;
 }
+
+/** Longest cyclic period, ms (an hour). */
+export const TX_MAX_PERIOD_MS = 3_600_000;
+
+/** Why the cyclic period cannot be used, or null. */
+export function periodProblem(ms: number): string | null {
+  if (!Number.isFinite(ms) || ms < 1) return "The period is at least 1 ms.";
+  if (!Number.isInteger(ms)) return "The period is in whole milliseconds.";
+  if (ms > TX_MAX_PERIOD_MS) return "The period is at most 3600000 ms (an hour).";
+  return null;
+}
+
+/** Why the frame count cannot be used, or null. 0 means until stopped. */
+export function countProblem(n: number | undefined): string | null {
+  if (n == null || n === 0) return null;
+  if (!Number.isInteger(n) || n < 0) return "The count is a whole number; 0 or empty sends until stopped.";
+  if (n > 1_000_000_000) return "The count is at most 1000000000.";
+  return null;
+}
+
+/** Badge text of a running cyclic item. */
+export const cyclicText = (t: Pick<TxItem, "periodMs" | "count">) => `every ${t.periodMs} ms${t.count ? `, ${t.count.toLocaleString("en-US")} frames` : ""}`;
 
 export const TX_DEFAULTS: TxItem[] = [
   { key: "obd-rpm", name: "OBD-II engine speed request", id: "7DF", fd: false, brs: false, rtr: false, data: "02 01 0C 00 00 00 00 00", periodMs: 200 },
@@ -321,10 +538,18 @@ export const TX_DEFAULTS: TxItem[] = [
   { key: "nmt-start", name: "CANopen NMT start all nodes", id: "000", fd: false, brs: false, rtr: false, data: "01 00", periodMs: 1000 },
 ];
 
-export function frameInOf(t: Pick<TxItem, "id" | "fd" | "brs" | "rtr" | "data">): FrameIn | string {
+/** The data length code to start a remote frame with: the length of the data typed so far, at most 8. */
+export function defaultRtrLen(data: string): number {
+  const d = parseData(data);
+  return typeof d === "string" ? 0 : Math.min(8, d.length);
+}
+
+export function frameInOf(t: Pick<TxItem, "id" | "fd" | "brs" | "rtr" | "data" | "rtrLen">): FrameIn | string {
   const id = parseId(t.id);
   if (typeof id === "string") return id;
-  const f: FrameIn = { id: id.id, ext: id.ext, rtr: t.rtr, fd: t.fd, brs: t.brs, data: t.rtr ? "" : t.data, rtrLen: 0 };
+  const rtrLen = t.rtr ? (t.rtrLen ?? defaultRtrLen(t.data)) : 0;
+  if (t.rtr && (!Number.isInteger(rtrLen) || rtrLen < 0 || rtrLen > 8)) return "A remote frame asks for 0 to 8 bytes.";
+  const f: FrameIn = { id: id.id, ext: id.ext, rtr: t.rtr, fd: t.fd, brs: t.brs, data: t.rtr ? "" : t.data, rtrLen };
   return frameProblem(f) ?? f;
 }
 
@@ -338,7 +563,10 @@ export function loadTxList(storage: Pick<Storage, "getItem"> = localStorage): Tx
       .filter((x) => x && typeof x === "object" && typeof x.key === "string" && typeof x.id === "string")
       .map((x) => ({
         key: x.key, name: typeof x.name === "string" ? x.name : "", id: x.id, fd: x.fd === true, brs: x.brs === true, rtr: x.rtr === true,
-        data: typeof x.data === "string" ? x.data : "", periodMs: typeof x.periodMs === "number" && x.periodMs >= 1 ? x.periodMs : 100,
+        data: typeof x.data === "string" ? x.data : "",
+        periodMs: typeof x.periodMs === "number" && periodProblem(x.periodMs) === null ? x.periodMs : 100,
+        ...(Number.isInteger(x.rtrLen) && x.rtrLen >= 0 && x.rtrLen <= 8 ? { rtrLen: x.rtrLen } : {}),
+        ...(typeof x.count === "number" && x.count > 0 && countProblem(x.count) === null ? { count: x.count } : {}),
       }));
   } catch {
     return TX_DEFAULTS;

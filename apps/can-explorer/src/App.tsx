@@ -31,6 +31,7 @@ import {
 import type { LogEntry } from "@mactools/ui";
 import { Cable, Play, Plug, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "lucide-react";
 import appIcon from "../src-tauri/icons/128x128.png";
+import BusStatus from "./BusStatus";
 import MonitorView from "./MonitorView";
 import ReplayView from "./ReplayView";
 import SignalsView from "./SignalsView";
@@ -41,6 +42,7 @@ import TrendPanel, { type TrendSeries } from "./TrendPanel";
 import {
   BITRATES, DATA_BITRATES, mergeLatest, IFACE_DEFAULTS, TRACE_MAX, candumpLine, configOf, foldMonitor, ifaceProblem, loadProfiles, loadTxList, needsPro,
   pushCapped, rateText, sameIface, saveProfiles, saveTxList, toCandump, traceCsv, type IfaceForm, type MonitorRow, type Profile, type TxItem,
+  ID_FILTER_HELP, ID_FILTER_PLACEHOLDER, monitorEvicted,
 } from "./can";
 import type { ConnInfo, DbcView, FrameView, GsUsbDevice, Layer, PortInfo, Stats } from "./types";
 import { hint } from "./ui";
@@ -613,7 +615,7 @@ function App() {
         </>
       )}
       <span style={{ flex: 1 }} />
-      <input className="vt-input vt-input--mono" aria-label="Filter" placeholder="Filter: 7E8, 700-7FF, EEC1, !100" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 240 }} />
+      <input className="vt-input vt-input--mono" aria-label="Filter" placeholder={ID_FILTER_PLACEHOLDER} title={ID_FILTER_HELP} value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 240 }} />
     </div>
   );
 
@@ -641,7 +643,7 @@ function App() {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <Badge tone="neutral">Not connected</Badge>
           <span style={{ flex: 1 }} />
-          <input className="vt-input vt-input--mono" aria-label="Filter" placeholder="Filter: 7E8, 700-7FF, EEC1, !100" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 240 }} />
+          <input className="vt-input vt-input--mono" aria-label="Filter" placeholder={ID_FILTER_PLACEHOLDER} title={ID_FILTER_HELP} value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 240 }} />
         </div>
       )}
       <Tabs
@@ -661,6 +663,7 @@ function App() {
           rows={monitorRows}
           filter={filter}
           onClear={() => { monitorRef.current = new Map(); setMonitorRows([]); }}
+          evicted={monitorEvicted(monitorRef.current)}
           trending={new Set(trend.keys())}
           onToggleTrend={toggleTrend}
         />
@@ -766,7 +769,7 @@ function App() {
           </div>
         </main>
       </div>
-      <StatusBar connected={connected} label={conn?.description} error={error} />
+      <StatusBar connected={connected} label={conn?.description} error={error}><BusStatus stats={connected ? stats : null} /></StatusBar>
 
       <Dialog open={showInfo} onClose={() => setShowInfo(false)} title="About CAN Explorer" width={460} footer={(
         <>
