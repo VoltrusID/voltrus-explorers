@@ -4,12 +4,12 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 
 | App | What it does | Get it |
 | --- | --- | --- |
-| **BACnet Explorer** | Discover BACnet/IP devices, browse objects, read/write properties, COV, trend logs, schedules, device simulator | [Mac App Store](https://apps.apple.com/app/id6789600440) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
-| **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS, iOS and Windows) | [App Store](https://apps.apple.com/app/id6767509445) · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) · [Windows](https://voltrus.id/modbus-poll/windows/) |
-| **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **BACnet Explorer** | Discover BACnet/IP devices, browse objects, read/write properties, COV, trend logs, schedules, device simulator | [Mac App Store](https://apps.apple.com/app/id6789600440) |
+| **Modbus Poll** | Modbus TCP/RTU master and slave simulator, register templates, trends, CSV logs (macOS, iOS and Windows) | [App Store](https://apps.apple.com/app/id6767509445) · Windows: [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) ([voltrus.id](https://voltrus.id/modbus-poll/windows/)) |
+| **DNP3 Explorer** | DNP3 master (connect to outstations, poll and read points, class scans, device controls) and outstation simulator with device templates | [Mac App Store](https://apps.apple.com/us/app/id6800181619?mt=12) |
 | **S7 Explorer** | Connect to S7-compatible PLCs (S7-300/400/1200/1500) over Ethernet: read and write tags, diagnostics, block manager, trends, S7 simulator | Free download ([DMG](https://dl-s7-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/s7-explorer/)); Pro by licence key, USD 29.99 ([buy in the console](https://console.voltrus.id/checkout/p/2d0fb063-5268-4a94-a22c-d0e0e5e5f193)) |
 | **BLE Inspector** | Scan Bluetooth Low Energy devices, connect, browse GATT services and characteristics, read and write values, notifications. Pro adds notify plots, value decoding, RSSI chart, write presets and macros, several notifications and devices at once, and log export | Free download ([DMG](https://dl-ble-inspector.voltrus.id/latest) · [voltrus.id](https://voltrus.id/ble-inspector/)); Pro by licence key ([buy in the console](https://console.voltrus.id/checkout?product=ble-inspector)) |
-| **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | Mac App Store · [GitHub Releases](https://github.com/VoltrusID/voltrus-explorers/releases) |
+| **EtherNet/IP Explorer** | Discover EtherNet/IP devices, browse CIP tags and objects, read tags and attributes, EDS import, implicit I/O, packet log, PLC simulator | [Mac App Store](https://apps.apple.com/us/app/id6800181315?mt=12) |
 | **Serial Monitor** | RS232/RS485 serial terminal: open a port, send and receive in HEX or ASCII, line view with live traffic table, frame simulation. Pro adds log export, send macros, repeat-send and saved profiles | Free download ([DMG](https://dl-serial-monitor.voltrus.id/latest) · [voltrus.id](https://voltrus.id/serial-terminal/)); Pro by licence key ([buy in the console](https://console.voltrus.id/checkout?product=serial-terminal)) |
 | **NATS Explorer** | NATS client (subscribe, publish, request/reply) with an embedded server, JetStream, KV and object stores, protobuf decoding | Free download ([DMG](https://dl-nats-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/nats-explorer/)); Pro by licence key, USD 29.99 ([buy in the console](https://console.voltrus.id/checkout/p/b5bea778-4f94-40cf-8bde-e3d6e5618d0c)) |
 | **MQTT Explorer** | MQTT client with topic table, tree and history, plus an embedded test broker | Free download ([DMG](https://dl-mqtt-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/mqtt-explorer/)); Pro by licence key, USD 29.99 ([buy in the console](https://console.voltrus.id/checkout/p/ce586f76-0ca2-4714-b35f-b46407bc71a4)) |
@@ -21,9 +21,25 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Free download ([DMG](https://dl-mc-fins-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/mc-fins-explorer/)); Pro by licence key, USD 29.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/14f440e3-f56c-4a6e-bccf-bb8567b92ab3)) |
 | **EtherCAT Explorer** | EtherCAT network explorer for commissioning and troubleshooting, from a Mac's wired Ethernet port: every device with identity, ESC, ports, DC, AL state and AL status code, SII EEPROM, ESC registers and error counters, the CoE object dictionary with names (SDO Information), PDO mapping and live process data; built-in simulated machine (EK1100 with EL1008/EL2008/EL3102/EL4102 terminals and two CiA 402 servo drives). Not on the App Store: the App Sandbox does not allow raw Ethernet | Free download ([DMG](https://dl-ethercat-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22)) |
 
+## Screenshots
+
+| | | |
+| --- | --- | --- |
+| **Modbus Poll** | **BACnet Explorer** | **DNP3 Explorer** |
+| ![Modbus Poll polling float32 holding registers of a power meter over Modbus TCP](docs/screenshots/modbus-poll.webp) | ![BACnet Explorer browsing an analog input's properties with a live trend of three points](docs/screenshots/bacnet-explorer.webp) | ![DNP3 Explorer polling voltage, current and energy points from an outstation](docs/screenshots/dnp3-explorer.webp) |
+| **S7 Explorer** | **EtherNet/IP Explorer** | **MC & FINS Explorer** |
+| ![S7 Explorer reading live DB tags from an S7 PLC](docs/screenshots/s7-explorer.webp) | ![EtherNet/IP Explorer showing the tag list of a PLC with live values](docs/screenshots/enip-explorer.webp) | ![MC & FINS Explorer reading Mitsubishi D and M device tags from the built-in MC simulator](docs/screenshots/mc-fins-explorer.webp) |
+| **OPC UA Explorer** | **MQTT Explorer** | **NATS Explorer** |
+| ![OPC UA Explorer namespace browser showing a variable node's attributes](docs/screenshots/opcua-explorer.webp) | ![MQTT Explorer topic table with the latest payload per topic](docs/screenshots/mqtt-explorer.webp) | ![NATS Explorer client receiving messages on wildcard subscriptions](docs/screenshots/nats-explorer.webp) |
+| **CNC Explorer** | **SECS/GEM Explorer** | **CAN Explorer** |
+| ![CNC Explorer showing live MTConnect data items from an agent](docs/screenshots/cnc-explorer.webp) | ![SECS/GEM Explorer polling status variables from equipment over HSMS](docs/screenshots/secsgem-explorer.webp) | ![CAN Explorer per-ID monitor with J1939 labels on the simulated bus](docs/screenshots/can-explorer.webp) |
+| **EtherCAT Explorer** | **Serial Monitor** | **BLE Inspector** |
+| ![EtherCAT Explorer listing devices of the simulated EtherCAT machine with identity details](docs/screenshots/ethercat-explorer.webp) | ![Serial Monitor sending AT commands and showing traffic in hex and ASCII](docs/screenshots/serial-monitor.webp) | ![BLE Inspector connected to a heart rate sensor, reading GATT characteristics](docs/screenshots/ble-inspector.webp) |
+
 The App Store versions are the same code, signed and kept up to date automatically; Pro features there are a
-one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source and the
-GitHub Releases (notarized DMGs, no auto-update) have every feature unlocked.
+one-time in-app purchase, which is the no-hassle way to get them and supports development. Builds from source
+(GPL-3.0) have every feature unlocked. Prebuilt Mac apps come from the Mac App Store or from
+[voltrus.id](https://voltrus.id), not from GitHub Releases: the only GitHub Releases are Modbus Poll for Windows.
 
 **Modbus Poll for Windows** (10 and 11, x64 and ARM64) is a direct download, not a Microsoft Store app: an installer
 and a portable zip on the `modbus-poll-windows-v<version>` GitHub Release, with `SHA256SUMS.txt`. The files are not
@@ -33,15 +49,14 @@ the key is checked online once. Building it yourself (`cargo tauri build --featu
 app; a build without `--features keys` has everything unlocked, like every other source build. See
 [docs/release.md](docs/release.md#windows-modbus-poll).
 
-Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, MC & FINS Explorer and EtherCAT Explorer are not on the App Store or GitHub Releases. They are free to download from
+Serial Monitor, BLE Inspector, CNC Explorer, SECS/GEM Explorer, CAN Explorer, MC & FINS Explorer and EtherCAT Explorer are not on the App Store. They are free to download from
 [voltrus.id](https://voltrus.id) and the [Voltrus Console](https://console.voltrus.id) (notarized DMG, no sign-in);
 Pro is a licence key bought there, see [Serial Monitor](#serial-monitor), [BLE Inspector](#ble-inspector), [CNC Explorer](#cnc-explorer), [CAN Explorer](#can-explorer), [EtherCAT Explorer](#ethercat-explorer) and [SECS/GEM Explorer](#secsgem-explorer).
 
 ## Free and Pro (App Store and licence-key builds)
 
 The App Store builds of DNP3 Explorer and OPC UA Explorer are free to download; Pro is a one-time in-app purchase.
-People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source and the GitHub
-Releases have everything.
+People who bought DNP3 Explorer while it was paid (before 1.3.0) keep every feature. Builds from source have everything.
 
 Modbus Poll and BACnet Explorer are still paid on the App Store. Once they go free, the split below applies (it only
 takes effect when `free_since` is set in their `store.json`).
