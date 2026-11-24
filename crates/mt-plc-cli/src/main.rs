@@ -5,6 +5,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "voltrus-plc",
+    version = match option_env!("VOLTRUS_TOOLCHAIN_VERSION") {
+        Some(v) => v,
+        None => env!("CARGO_PKG_VERSION"),
+    },
     about = "Headless Voltrus PLC toolchain: source checks and virtual-time scenario tests"
 )]
 struct Cli {

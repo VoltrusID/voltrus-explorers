@@ -1,0 +1,5 @@
+Broken.st:5:7: error: error: undefined identifier 'y' at 45..46
+Broken.st:6:2: error: error: undefined identifier 'z' at 54..55
+Broken.st:3:2: warning: warning: variable 'x' may be uninitialized at 21..29
+sub/Parse.st:1:1: error: invalid expression at 38
+checked 2 files, 3 errors, 1 warnings
