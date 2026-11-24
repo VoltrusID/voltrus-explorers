@@ -36,7 +36,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MONOREPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-WORKER_DIR="$PROJECT_DIR/cloudflare-worker"
+# Download worker lives in the private VoltrusID/voltrus-dl-workers repo (checked out next to this one).
+WORKER_DIR="${VOLTRUS_DL_WORKERS:-$MONOREPO_DIR/../voltrus-dl-workers}/apps/voltrus-hmi/cloudflare-worker"
 BUILD_DIR="$MONOREPO_DIR/target/release/bundle"
 APP_NAME="Voltrus HMI"
 PNPM_FILTER="voltrus-hmi"

@@ -272,7 +272,7 @@ billingRoutes.get("/billing/portal", authMiddleware, async (c) => {
   const user = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(c.get("userId")).first<{ email: string }>();
   if (!user) return c.json({ error: "user not found" }, 404);
 
-  // Same API base + Bearer style as the desktop worker (apps/voltrus-plc/cloudflare-worker/worker.ts).
+  // Same API base + Bearer style as the desktop worker (apps/voltrus-plc/cloudflare-worker/worker.ts in VoltrusID/voltrus-dl-workers).
   const polarHeaders: Record<string, string> = {
     Authorization: `Bearer ${c.env.POLAR_ACCESS_TOKEN}`,
     "Content-Type": "application/json",

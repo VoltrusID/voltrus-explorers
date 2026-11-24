@@ -51,7 +51,7 @@ NOTARIZE=1 ./scripts/release-local.sh   # production
 `scripts/release.sh` is deprecated — use `release-local.sh`.
 
 Update feed: `https://dl-voltrus-hmi.voltrus.id/update/{{target}}/{{arch}}/{{current_version}}`
-(Cloudflare Worker in `cloudflare-worker/`).
+(Cloudflare Worker `apps/voltrus-hmi/cloudflare-worker` in the private VoltrusID/voltrus-dl-workers repo).
 
 ## Security notes
 

@@ -49,7 +49,7 @@ SKIP_BUILD=1 ./scripts/release-local.sh       # upload existing builds
 ./scripts/build-linux.sh                      # Linux build (Docker)
 ```
 
-Downloads are served by the Cloudflare Worker in `cloudflare-worker/`
+Downloads are served by the Cloudflare Worker `apps/voltrus-plc/cloudflare-worker` in the private VoltrusID/voltrus-dl-workers repo
 (R2 + D1, `dl-voltrus-plc.voltrus.id`), which also handles Polar.sh license
 activation/validation/deactivation and the Tauri v2 auto-update endpoint.
 
