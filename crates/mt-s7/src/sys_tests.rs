@@ -311,8 +311,8 @@ async fn captured_block_list_requests_get_answers_in_the_cpus_layout() {
     server.stop().await;
 }
 
-/// A user data request the simulator does not offer, a PI service that is not a delete and an
-/// upload that was never started get errors, not silence.
+/// A user data request the simulator does not offer, a PI service that is neither a delete nor a
+/// start or stop, and an upload that was never started get errors, not silence.
 #[tokio::test]
 async fn unsupported_requests_are_refused() {
     let server = S7Server::start(0, vec![]).await.unwrap();
@@ -324,10 +324,10 @@ async fn unsupported_requests_are_refused() {
     let error = crate::framing::parse_response(&answer, 0x07, 0x01).err().unwrap();
     assert!(error.contains("0xD402"), "{error}");
 
-    // PLC stop, the PI service `P_PROGRAM` (snap7 `opPlcStop`).
-    let mut stop = vec![0x29, 0, 0, 0, 0, 0, 0x09];
-    stop.extend_from_slice(b"P_PROGRAM");
-    let answer = raw_exchange(&mut stream, &crate::framing::job_pdu(2, &stop, &[])).await;
+    // Copy RAM to ROM, the PI service `_MODU` (snap7 `opCopyRamToRom`).
+    let mut compress = vec![0x28, 0, 0, 0, 0, 0, 0, 0xFD, 0x00, 0x02, b'E', b'P', 0x05];
+    compress.extend_from_slice(b"_MODU");
+    let answer = raw_exchange(&mut stream, &crate::framing::job_pdu(2, &compress, &[])).await;
     assert_eq!(answer[1], 0x03);
     assert_ne!(answer[10..12], [0x00, 0x00]);
 
@@ -335,5 +335,30 @@ async fn unsupported_requests_are_refused() {
     let answer = raw_exchange(&mut stream, &crate::blocks::build_upload_request(3, 99)).await;
     assert_eq!(answer[10..12], [0x84, 0x01]);
 
+    server.stop().await;
+}
+
+// ── CPU control: stop and start ──
+
+#[tokio::test]
+async fn client_stops_and_starts_the_simulated_cpu() {
+    let (server, client) = connect(vec![], 480).await;
+    assert!(server.is_running().await);
+
+    client.plc_stop().await.unwrap();
+    assert!(!server.is_running().await);
+    assert_eq!(client.read_plc_mode().await.unwrap().mode, "STOP");
+    // Stopping a stopped CPU is not an error.
+    client.plc_stop().await.unwrap();
+
+    client.plc_start(crate::StartMode::Warm).await.unwrap();
+    assert!(server.is_running().await);
+    assert_eq!(client.read_plc_mode().await.unwrap().mode, "RUN");
+    client.plc_start(crate::StartMode::Cold).await.unwrap();
+
+    // Block deletes still reach the delete handler, not the start/stop one.
+    assert!(client.delete_block(&BlockType::OB, 1).await.is_err());
+
+    client.disconnect().await.unwrap();
     server.stop().await;
 }

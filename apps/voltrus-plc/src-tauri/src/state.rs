@@ -63,4 +63,5 @@ pub struct AppState {
     pub runtime: RuntimeState,
     pub io: IoState,
     pub target: TargetState,
+    pub siemens: crate::commands::siemens::SiemensState,
 }

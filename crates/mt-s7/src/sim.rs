@@ -85,11 +85,12 @@ impl SimSession {
         params: &[u8],
         data: &[u8],
         blocks: &[SimBlock],
+        running: bool,
         pdu_size: u16,
     ) -> Option<Vec<u8>> {
         let request = framing::parse_request(params, data)?;
         Some(match (request.group, request.subfunction) {
-            (GROUP_SZL, szl::SUBFUNCTION_READ) => self.build_szl_resp(pdu_ref, &request, pdu_size),
+            (GROUP_SZL, szl::SUBFUNCTION_READ) => self.build_szl_resp(pdu_ref, &request, running, pdu_size),
             (GROUP_BLOCKS, blocks::SUBFUNCTION_LIST_ALL | blocks::SUBFUNCTION_LIST_OF_TYPE) => {
                 self.build_block_list_resp(pdu_ref, &request, blocks, pdu_size)
             }
@@ -102,13 +103,13 @@ impl SimSession {
     }
 
     /// An SZL read: the first request names the SZL, follow-up requests fetch the next parts.
-    fn build_szl_resp(&mut self, pdu_ref: u16, request: &Request, pdu_size: u16) -> Vec<u8> {
+    fn build_szl_resp(&mut self, pdu_ref: u16, request: &Request, running: bool, pdu_size: u16) -> Vec<u8> {
         let (group, subfunction) = (GROUP_SZL, szl::SUBFUNCTION_READ);
         if request.follow_up {
             return self.next_part(pdu_ref, request, group, subfunction, Slot::Szl);
         }
         self.szl = None;
-        let payload = szl::parse_first_request_data(request.data).and_then(|(id, index)| szl::sim_payload(id, index));
+        let payload = szl::parse_first_request_data(request.data).and_then(|(id, index)| szl::sim_payload(id, index, running));
         match payload {
             Some(payload) => {
                 let parts = split(&payload, user_data_capacity(pdu_size), 1);
@@ -231,7 +232,7 @@ mod tests {
     fn ask(session: &mut SimSession, request: Vec<u8>, blocks: &[SimBlock], pdu_size: u16) -> Vec<u8> {
         let param_len = u16::from_be_bytes([request[6], request[7]]) as usize;
         let (params, data) = request[10..].split_at(param_len);
-        session.user_data(pdu_ref(&request), params, data, blocks, pdu_size).expect("a user data request")
+        session.user_data(pdu_ref(&request), params, data, blocks, true, pdu_size).expect("a user data request")
     }
 
     /// SZL 0x001C at PDU size 240 is cut where the CPU of the capture cuts it: the first part
@@ -321,7 +322,7 @@ mod tests {
         let answer = ask(&mut session, request, &[], 240);
         let error = framing::parse_response(&answer, 0x07, 0x01).err().unwrap();
         assert!(error.contains("0xD402"), "{error}");
-        assert!(session.user_data(1, &[1, 2, 3], &[], &[], 240).is_none());
+        assert!(session.user_data(1, &[1, 2, 3], &[], &[], true, 240).is_none());
     }
 
     #[test]

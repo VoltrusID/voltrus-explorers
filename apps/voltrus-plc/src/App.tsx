@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useStore } from "./store";
 import { invoke, listen } from "./api/bridge";
 import {
@@ -22,7 +22,9 @@ import {
   KeyRound,
   List,
   Milestone,
+  Monitor,
   Moon,
+  Palette,
   Network,
   Play,
   RefreshCw,
@@ -49,6 +51,7 @@ import {
   Button,
   EmptyState,
   IconButton,
+  Select,
   StatusDot,
   Tabs,
   Toolbar,
@@ -60,6 +63,7 @@ import RuntimeControls from "./components/Sidebar/RuntimeControls";
 import IoPanel from "./components/Sidebar/IoPanel";
 import IoMappingPanel from "./components/Sidebar/IoMappingPanel";
 import TargetPanel from "./components/Sidebar/TargetPanel";
+import OnlinePanel from "./components/Sidebar/OnlinePanel";
 import AiChatPanel from "./components/Sidebar/AiChatPanel";
 import LicensePanel from "./components/Sidebar/LicensePanel";
 import AccountBadge from "./components/Cloud/AccountBadge";
@@ -75,6 +79,7 @@ import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
 import { useMediaQuery } from "./lib/useMediaQuery";
+import { resolveTheme, type ThemeChoice } from "./lib/theme";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
 import { LD_SAMPLES } from "./constants/ld-samples";
 import { SFC_SAMPLES } from "./constants/sfc-samples";
@@ -83,7 +88,7 @@ import appIcon from "../src-tauri/icons/128x128.png";
 
 // Local mirrors of the store's tab unions (AppState is not exported).
 type BottomTab = "diagnostics" | "log" | "output" | "timing" | "histogram" | "search" | "simulation";
-type RightTab = "watch" | "io" | "ai" | "target" | "refs";
+type RightTab = "watch" | "io" | "ai" | "target" | "online" | "refs";
 
 const RUNTIME_TONES = {
   running: "success",
@@ -91,6 +96,21 @@ const RUNTIME_TONES = {
   error: "danger",
   stopped: "neutral",
 } as const;
+
+
+const THEME_ICONS: Record<ThemeChoice, ReactElement> = {
+  system: <Monitor size={14} strokeWidth={1.75} aria-hidden="true" />,
+  dark: <Moon size={14} strokeWidth={1.75} aria-hidden="true" />,
+  light: <Sun size={14} strokeWidth={1.75} aria-hidden="true" />,
+  petrol: <Palette size={14} strokeWidth={1.75} aria-hidden="true" />,
+};
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string; hint?: string; icon: ReactElement }[] = [
+  { value: "system", label: "System", hint: "Follow the OS setting", icon: THEME_ICONS.system },
+  { value: "dark", label: "Dark", icon: THEME_ICONS.dark },
+  { value: "light", label: "Light", icon: THEME_ICONS.light },
+  { value: "petrol", label: "Petrol", hint: "Grey panels, petrol-teal accent", icon: THEME_ICONS.petrol },
+];
 
 export default function App() {
   const {
@@ -179,9 +199,10 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  const systemPrefersLight = useMediaQuery("(prefers-color-scheme: light)");
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-  }, [theme]);
+    document.documentElement.setAttribute("data-theme", resolveTheme(theme, systemPrefersLight));
+  }, [theme, systemPrefersLight]);
 
   // Close the toolbar overflow menu on Escape or click-away.
   useEffect(() => {
@@ -317,14 +338,17 @@ export default function App() {
           <List size={16} strokeWidth={1.75} />
         </IconButton>
       )}
-      <IconButton
-        label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      <Select<ThemeChoice>
+        value={theme}
+        onChange={setTheme}
+        options={THEME_OPTIONS}
+        sheetTitle="Theme"
         size="sm"
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      >
-        {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
-      </IconButton>
+        fullWidth={false}
+        aria-label="Theme"
+        title="Theme"
+        display={THEME_ICONS[theme]}
+      />
       <span className="vt-divider--v" />
       <IconButton label="Open folder" title="Open project folder" size="sm" onClick={() => openProjectDir()}>
         <FolderOpen size={16} strokeWidth={1.75} />
@@ -994,6 +1018,7 @@ function RightSidebarBody() {
           { value: "watch", label: "Watch" },
           { value: "io", label: "I/O" },
           { value: "target", label: "Target" },
+          { value: "online", label: "Online" },
           { value: "ai", label: "AI" },
           { value: "refs", label: "Refs" },
         ]}
@@ -1038,6 +1063,11 @@ function RightSidebarBody() {
             </div>
             <TargetPanel />
           </section>
+        </div>
+      )}
+      {rightPanelTab === "online" && (
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <OnlinePanel />
         </div>
       )}
       {rightPanelTab === "ai" && (

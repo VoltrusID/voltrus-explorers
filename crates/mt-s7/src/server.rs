@@ -26,6 +26,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::blocks::{self, SimBlock};
+use crate::control;
 use crate::framing::{ERR_BLOCK_NOT_FOUND, ERR_BLOCK_PROTECTED};
 use crate::sim::SimSession;
 use crate::traffic::{self, TrafficSender};
@@ -67,6 +68,8 @@ struct Image {
     tags: HashSet<TagCoord>,
     /// What clients wrote since [`S7Server::apply_unless_written`] last took them.
     client_writes: Vec<ClientWrite>,
+    /// Whether a client put the CPU in STOP. It starts in RUN.
+    stopped: bool,
 }
 
 /// Client writes kept until taken; older ones are dropped beyond this.
@@ -396,6 +399,11 @@ impl S7Server {
     }
 
     /// Stop accepting connections, drop the connected clients and release the port.
+    /// Whether the simulated CPU is in RUN (a client can stop and start it).
+    pub async fn is_running(&self) -> bool {
+        !self.store.read().await.stopped
+    }
+
     pub async fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
         if let Some(h) = self.handle.lock().await.take() {
@@ -556,7 +564,8 @@ async fn handle_client(
                 (S7_MSG_TYPE_JOB, S7_WRITE_VAR) => build_write_resp(pdu_ref, params, data, &store).await,
                 (S7_MSG_TYPE_USER_DATA, _) => {
                     let list = sim_block_list(&store).await;
-                    sim.user_data(pdu_ref, params, data, &list, pdu_size)
+                    let running = !store.read().await.stopped;
+                    sim.user_data(pdu_ref, params, data, &list, running, pdu_size)
                         .unwrap_or_else(|| build_unsupported_resp(pdu_ref))
                 }
                 (S7_MSG_TYPE_JOB, S7_START_UPLOAD) => match blocks::parse_start_upload_request(params) {
@@ -565,6 +574,15 @@ async fn handle_client(
                 },
                 (S7_MSG_TYPE_JOB, S7_UPLOAD) => sim.build_upload_resp(pdu_ref, params, pdu_size),
                 (S7_MSG_TYPE_JOB, S7_END_UPLOAD) => sim.end_upload(pdu_ref, params),
+                (S7_MSG_TYPE_JOB, S7_PLC_CONTROL | control::S7_PLC_STOP)
+                    if control::parse_control_request(params).is_some() =>
+                {
+                    let request = control::parse_control_request(params).expect("checked by the guard");
+                    let mut image = store.write().await;
+                    let was_running = !image.stopped;
+                    image.stopped = request == control::ControlRequest::Stop;
+                    control::build_control_response(pdu_ref, request, was_running)
+                }
                 (S7_MSG_TYPE_JOB, S7_PLC_CONTROL) => match blocks::parse_delete_request(params) {
                     Some((block_type, number)) => {
                         blocks::build_delete_response(pdu_ref, sim_delete_block(&store, block_type, number).await)

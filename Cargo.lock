@@ -9187,6 +9187,8 @@ dependencies = [
  "mt-plc-cli",
  "mt-plc-runtime",
  "mt-plc-types",
+ "mt-protocol",
+ "mt-s7",
  "mt-stc",
  "reqwest 0.12.28",
  "serde",

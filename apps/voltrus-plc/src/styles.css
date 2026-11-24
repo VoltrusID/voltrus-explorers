@@ -686,48 +686,122 @@ body,
 
 /* ── Cloud auth + paywall (migrated by the Cloud slice) ──────────────────── */
 
-/* ── CodeMirror light-theme tuning (colours from tokens) ─────────────────── */
+/* ── Petrol theme ─────────────────────────────────────────────────────────
+   Light grey panels, slate text and a petrol-teal accent: the look of the
+   classic engineering workstations automation people spend their days in.
+   Every text token keeps >= 4.5:1 on --card and --surface. */
 
-[data-theme="light"] .cm-editor {
+[data-theme="petrol"] {
+  color-scheme: light;
+
+  --bg: #e3e8ec;
+  --surface: #edf1f3;
+  --card: #f9fbfc;
+  --card-hover: #eef3f5;
+  --input-bg: #ffffff;
+  --border: #c3ccd3;
+  --border-light: #a9b5be;
+
+  --text: #18262f;
+  --text-dim: #3e4f5a;
+  --text-muted: #56666f;
+
+  --accent: #00707a;
+  --accent-hover: #005c64;
+  --accent-fg: #ffffff;
+  --accent-text: #006570;
+  --accent-soft: rgba(0, 153, 153, 0.12);
+
+  --success: #2a7a1f;
+  --success-soft: rgba(42, 122, 31, 0.12);
+  --warn: #8a5800;
+  --warn-soft: rgba(230, 160, 0, 0.16);
+  --danger: #b8231c;
+  --danger-hover: #9b1d17;
+  --danger-soft: rgba(184, 35, 28, 0.1);
+  --info: #1a5fae;
+  --info-soft: rgba(26, 95, 174, 0.1);
+
+  --hover-overlay: rgba(0, 90, 100, 0.06);
+  --active-overlay: rgba(0, 90, 100, 0.11);
+  --selection: rgba(0, 153, 153, 0.18);
+  --sunken: rgba(20, 40, 50, 0.05);
+
+  --shadow: 0 1px 2px rgba(20, 40, 50, 0.08);
+  --shadow-raised: 0 1px 2px rgba(20, 40, 50, 0.1), 0 0 0 1px rgba(20, 40, 50, 0.08);
+  --shadow-pop: 0 12px 32px rgba(20, 40, 50, 0.16), 0 0 0 1px var(--border-light);
+  --shadow-overlay: 0 10px 30px -6px rgba(20, 40, 50, 0.2), 0 2px 6px rgba(20, 40, 50, 0.1);
+  --focus-ring: 0 0 0 3px rgba(0, 153, 153, 0.28);
+  --scrim: rgba(16, 32, 40, 0.4);
+}
+
+/* Title bar and panel headers carry the petrol band; the work areas stay light. */
+[data-theme="petrol"] .vt-titlebar {
+  background: linear-gradient(#2c5563, #224754);
+  border-bottom: 2px solid #00999a;
+  color: #f2f7f8;
+  --text: #f2f7f8;
+  --text-dim: #d3e1e5;
+  --text-muted: #b5c9cf;
+  --hover-overlay: rgba(255, 255, 255, 0.1);
+  --active-overlay: rgba(255, 255, 255, 0.16);
+  --border: rgba(255, 255, 255, 0.18);
+  --border-light: rgba(255, 255, 255, 0.28);
+  --input-bg: rgba(255, 255, 255, 0.08);
+  --card: #224754;
+}
+
+[data-theme="petrol"] .vt-section__title,
+[data-theme="petrol"] .vt-panel__title {
+  color: var(--accent-text);
+}
+
+[data-theme="petrol"] .vt-tab[aria-selected="true"] {
+  color: var(--accent-text);
+}
+
+/* ── CodeMirror tuning for the light and Petrol themes (colours from tokens) ── */
+
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor {
   background: var(--card);
   color: var(--text);
 }
 
-[data-theme="light"] .cm-gutters {
+:is([data-theme="light"], [data-theme="petrol"]) .cm-gutters {
   background: var(--surface);
   color: var(--text-muted);
   border-right-color: var(--border);
 }
 
-[data-theme="light"] .cm-activeLine {
+:is([data-theme="light"], [data-theme="petrol"]) .cm-activeLine {
   background: var(--hover-overlay);
 }
 
-[data-theme="light"] .cm-activeLineGutter {
+:is([data-theme="light"], [data-theme="petrol"]) .cm-activeLineGutter {
   background: var(--active-overlay);
 }
 
-[data-theme="light"] .cm-cursor {
+:is([data-theme="light"], [data-theme="petrol"]) .cm-cursor {
   border-left-color: var(--accent);
 }
 
-[data-theme="light"] .cm-selectionBackground,
-[data-theme="light"] .cm-focused .cm-selectionBackground {
+:is([data-theme="light"], [data-theme="petrol"]) .cm-selectionBackground,
+:is([data-theme="light"], [data-theme="petrol"]) .cm-focused .cm-selectionBackground {
   background: var(--selection) !important;
 }
 
 /* st-colors.ts ships One Dark hues tuned for dark backgrounds; these keep
    every token class at >= 5:1 on the light editor surface. */
-[data-theme="light"] .cm-editor .st-kw { color: #a626a4; }
-[data-theme="light"] .cm-editor .st-type { color: #8a5a00; }
-[data-theme="light"] .cm-editor .st-atom,
-[data-theme="light"] .cm-editor .st-num { color: #a14f00; }
-[data-theme="light"] .cm-editor .st-str { color: #3a7a26; }
-[data-theme="light"] .cm-editor .st-cmt { color: var(--text-muted); }
-[data-theme="light"] .cm-editor .st-id,
-[data-theme="light"] .cm-editor .st-addr { color: #2a62c4; }
-[data-theme="light"] .cm-editor .st-op { color: #0b7580; }
-[data-theme="light"] .cm-editor .st-punct { color: var(--text-dim); }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-kw { color: #a626a4; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-type { color: #8a5a00; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-atom,
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-num { color: #a14f00; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-str { color: #3a7a26; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-cmt { color: var(--text-muted); }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-id,
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-addr { color: #2a62c4; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-op { color: #0b7580; }
+:is([data-theme="light"], [data-theme="petrol"]) .cm-editor .st-punct { color: var(--text-dim); }
 
 /* ── Cloud auth + paywall (migrated by the Cloud slice) ──────────────────── */
 
@@ -895,3 +969,35 @@ body,
     font-size: 14px;
   }
 }
+
+/* ── Online panel (Siemens S7) ───────────────────────────────────────────── */
+
+.s7-panel { display: flex; flex-direction: column; }
+.s7-target { display: grid; grid-template-columns: minmax(0, 1fr) 56px 56px; gap: 6px; }
+.s7-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.s7-muted { margin: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+.s7-error { color: var(--danger); font-family: var(--font-sans); font-size: var(--fs-xs); }
+.s7-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--fs-sm); }
+
+.s7-kv { display: grid; gap: 2px; margin: 0; font-size: var(--fs-sm); }
+.s7-kv > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; }
+.s7-kv dt { color: var(--text-muted); }
+.s7-kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+.s7-table { width: 100%; font-size: var(--fs-sm); }
+.s7-table td { vertical-align: middle; }
+.s7-table .mono { font-family: var(--font-mono); }
+.s7-watch td:nth-child(3) { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s7-watch .vt-input, .s7-watch .vt-select { width: 100%; min-width: 64px; }
+.s7-actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+.s7-diag { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--fs-sm); max-height: 260px; overflow: auto; }
+.s7-diag li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.s7-diag__no { grid-row: span 2; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.s7-diag__time { color: var(--text-dim); font-size: var(--fs-xs); }
+.s7-diag__id { color: var(--text-muted); font-size: var(--fs-xs); text-align: right; }
+.s7-diag__text { grid-column: 2 / span 2; }
+
+.s7-blocks { display: grid; gap: 2px; font-size: var(--fs-sm); }
+.s7-blocks__type { font-weight: 600; }
+.s7-blocks__list { color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }

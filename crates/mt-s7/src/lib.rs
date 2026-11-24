@@ -46,6 +46,7 @@ mod blocks;
 #[cfg(test)]
 mod capture;
 pub mod client;
+mod control;
 mod framing;
 pub mod server;
 mod sim;
@@ -57,6 +58,7 @@ pub mod traffic;
 mod vars;
 
 // Re-export the primary public API at the crate root.
+pub use control::StartMode;
 pub use client::{S7Client, S7ConnectOptions, parse_area_string, read_tags, write_tag};
 pub use server::{ClientWrite, S7Server, S7ServerOptions};
 pub use traffic::{S7Frame, TrafficSender, describe_pdu};

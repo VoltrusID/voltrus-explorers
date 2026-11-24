@@ -7,6 +7,7 @@ mod commands {
     pub mod io;
     pub mod license;
     pub mod runtime;
+    pub mod siemens;
     pub mod target;
     pub mod tests;
     pub mod watch;
@@ -43,6 +44,7 @@ pub fn run() {
                 grpc_addr: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 last_deployed_crc32: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             },
+            siemens: commands::siemens::SiemensState::default(),
         })
         .invoke_handler(tauri::generate_handler![
             commands::compile::compile_source,
@@ -99,6 +101,16 @@ pub fn run() {
             commands::target::grpc_step,
             commands::tests::run_project_tests,
             commands::tests::generate_test_prompt,
+            commands::siemens::s7_go_online,
+            commands::siemens::s7_go_offline,
+            commands::siemens::s7_status,
+            commands::siemens::s7_diag_buffer,
+            commands::siemens::s7_list_blocks,
+            commands::siemens::s7_set_mode,
+            commands::siemens::s7_read_watch,
+            commands::siemens::s7_write_watch,
+            commands::siemens::scan::s7_scan,
+            commands::siemens::scan::s7_suggest_subnet,
         ])
         .setup(|app| {
             #[cfg(desktop)]

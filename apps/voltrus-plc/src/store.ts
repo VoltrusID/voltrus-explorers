@@ -1,3 +1,4 @@
+import { loadThemeChoice, saveThemeChoice, type ThemeChoice } from "./lib/theme";
 import { create } from "zustand";
 import { bridgeMode, invoke, listen, type UnlistenFn } from "./api/bridge";
 import type {
@@ -55,8 +56,8 @@ function notifyBridgeError(e: unknown): void {
 
 interface AppState {
   // Theme
-  theme: "dark" | "light";
-  setTheme: (t: "dark" | "light") => void;
+  theme: ThemeChoice;
+  setTheme: (t: ThemeChoice) => void;
 
   // File management
   openFiles: OpenFile[];
@@ -149,8 +150,8 @@ interface AppState {
   setOllamaEndpoint: (e: string) => void;
   aiApiKey: string;
   setAiApiKey: (k: string) => void;
-  rightPanelTab: "watch" | "io" | "ai" | "target" | "refs";
-  setRightPanelTab: (t: "watch" | "io" | "ai" | "target" | "refs") => void;
+  rightPanelTab: "watch" | "io" | "ai" | "target" | "online" | "refs";
+  setRightPanelTab: (t: "watch" | "io" | "ai" | "target" | "online" | "refs") => void;
 
   // Target (remote ESP32)
   targetIp: string;
@@ -255,8 +256,11 @@ function pushUndo(state: AppState) {
 
 export const useStore = create<AppState>((set, get) => ({
   // Theme
-  theme: "dark",
-  setTheme: (t) => set({ theme: t }),
+  theme: loadThemeChoice(),
+  setTheme: (t) => {
+    saveThemeChoice(t);
+    set({ theme: t });
+  },
 
   // Files
   openFiles: [
