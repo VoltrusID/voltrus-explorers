@@ -12,6 +12,7 @@ import {
   Ellipsis,
   Eye,
   FileCode,
+  FileInput,
   FilePlus,
   FileText,
   FlaskConical,
@@ -78,6 +79,7 @@ import Histogram from "./components/Bottom/Histogram";
 import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
+import ImportDialog from "./components/ImportDialog";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { resolveTheme, type ThemeChoice } from "./lib/theme";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
@@ -153,6 +155,7 @@ export default function App() {
   const [templates, setTemplates] = useState<SampleTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showLicense, setShowLicense] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(264);
@@ -353,6 +356,9 @@ export default function App() {
       <IconButton label="Open folder" title="Open project folder" size="sm" onClick={() => openProjectDir()}>
         <FolderOpen size={16} strokeWidth={1.75} />
       </IconButton>
+      <IconButton label="Import" title="Import tag table, DB or SCL source" size="sm" onClick={() => setShowImport(true)}>
+        <FileInput size={16} strokeWidth={1.75} />
+      </IconButton>
       <IconButton label="New file" title="New file" size="sm" onClick={() => setShowNewFile(true)}>
         <FilePlus size={16} strokeWidth={1.75} />
       </IconButton>
@@ -525,6 +531,7 @@ export default function App() {
       />
 
       {/* New File Modal */}
+      <ImportDialog open={showImport} onClose={() => setShowImport(false)} />
       {showNewFile && (
         <div className="modal-overlay" onClick={() => setShowNewFile(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title" onClick={(e) => e.stopPropagation()}>

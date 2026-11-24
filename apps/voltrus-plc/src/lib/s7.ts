@@ -68,6 +68,8 @@ export interface BlockEntry {
 
 export interface WatchRow {
   id: string;
+  /** Symbol name, for rows that came from an imported tag table or DB. */
+  name?: string;
   address: string;
   dataType: string;
   /** Value to write with "Modify". */
@@ -149,7 +151,13 @@ export function loadWatchRows(): WatchRow[] {
     if (Array.isArray(rows)) {
       return rows
         .filter((r) => r && typeof r.address === "string")
-        .map((r) => ({ id: String(r.id ?? crypto.randomUUID()), address: r.address, dataType: String(r.dataType ?? ""), modify: String(r.modify ?? "") }));
+        .map((r) => ({
+          id: String(r.id ?? crypto.randomUUID()),
+          name: typeof r.name === "string" && r.name ? r.name : undefined,
+          address: r.address,
+          dataType: String(r.dataType ?? ""),
+          modify: String(r.modify ?? ""),
+        }));
     }
   } catch { /* fall through */ }
   return [];
@@ -157,4 +165,28 @@ export function loadWatchRows(): WatchRow[] {
 
 export function saveWatchRows(rows: WatchRow[]) {
   try { localStorage.setItem(WATCH_KEY, JSON.stringify(rows)); } catch { /* session only */ }
+}
+
+/** Fired on window when the saved watch rows change outside the Online panel (an import). */
+export const WATCH_ROWS_EVENT = "s7-watch-rows-changed";
+
+/**
+ * Add rows to the saved watch table, skipping addresses already in it. Returns how many were
+ * added.
+ */
+export function appendWatchRows(rows: { name?: string; address: string; dataType: string }[]): number {
+  const current = loadWatchRows();
+  const have = new Set(current.map((r) => `${r.address.toUpperCase()}|${r.dataType}`));
+  const added: WatchRow[] = [];
+  for (const r of rows) {
+    const key = `${r.address.toUpperCase()}|${r.dataType}`;
+    if (have.has(key)) continue;
+    have.add(key);
+    added.push({ id: crypto.randomUUID(), name: r.name, address: r.address, dataType: r.dataType, modify: "" });
+  }
+  if (added.length > 0) {
+    saveWatchRows([...current, ...added]);
+    window.dispatchEvent(new Event(WATCH_ROWS_EVENT));
+  }
+  return added.length;
 }

@@ -976,6 +976,7 @@ body,
 .s7-target { display: grid; grid-template-columns: minmax(0, 1fr) 56px 56px; gap: 6px; }
 .s7-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .s7-muted { margin: 0; font-size: var(--fs-xs); color: var(--text-muted); }
+.s7-name { font-size: var(--fs-sm); font-weight: 500; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .s7-error { color: var(--danger); font-family: var(--font-sans); font-size: var(--fs-xs); }
 .s7-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--fs-sm); }
 
@@ -1001,3 +1002,11 @@ body,
 .s7-blocks { display: grid; gap: 2px; font-size: var(--fs-sm); }
 .s7-blocks__type { font-weight: 600; }
 .s7-blocks__list { color: var(--text-dim); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+
+/* ── Import dialog ───────────────────────────────────────────────────────── */
+
+.import-dialog { display: flex; flex-direction: column; gap: 10px; }
+.import-dialog__label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
+.import-dialog__list { margin: 0; padding-left: 18px; font-size: var(--fs-sm); }
+.import-dialog__warnings { max-height: 160px; overflow: auto; color: var(--text-dim); }
+.import-dialog__db { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--fs-sm); padding: 2px 0; }

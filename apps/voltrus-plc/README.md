@@ -33,6 +33,24 @@ cargo test -p mt-stc -p mt-plc-runtime -p mt-plc-types -p mt-grpc
 cargo check -p voltrus_plc
 ```
 
+## Siemens S7: online and import
+
+**Online tab** (desktop app): talks classic S7comm over ISO-on-TCP, port 102.
+
+- *Accessible devices* scans a subnet (up to a /22) for hosts answering on port 102, and reads each one's identity.
+- *Go online* shows the CPU's module, order number and firmware, and its operating mode. RUN and STOP each ask for confirmation.
+- The watch table monitors absolute addresses (`MW10`, `DB1.DBD4`, `Q0.1`, `T5`) in IEC display types and writes modify values. 64-bit types are read and written as two DWords.
+- It also reads the diagnostic buffer and the block list.
+
+This works with S7-300/400. S7-1200/1500 work only with PUT/GET allowed and an access level that permits it. Optimized DBs have no addresses and cannot be reached. Program download to S7-1200/1500 is not offered.
+
+**Import** (toolbar):
+- PLC tag tables (XML export or `.xlsx`) become a `PROGRAM <Table>_Tags` of located variables.
+- DB/UDT sources (`.db`, `.udt`) become STRUCT types plus a `PROGRAM <Source>_Data` that declares each DB, with standard-access offsets computed.
+- SCL sources (`.scl`) are converted to ST.
+
+Tags with absolute addresses, and members of non-optimized DBs once you enter the DB number, can be added to the Online watch table by name. What does not convert is listed in the dialog and the log.
+
 ## Release
 
 ```bash

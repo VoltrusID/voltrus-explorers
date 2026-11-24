@@ -10,6 +10,7 @@ import {
   s7,
   saveTarget,
   saveWatchRows,
+  WATCH_ROWS_EVENT,
   WATCH_TYPES,
   type BlockEntry,
   type DiagBuffer,
@@ -373,6 +374,13 @@ function WatchSection() {
     saveWatchRows(next);
   };
 
+  // Rows added by an import while the panel is open.
+  useEffect(() => {
+    const reload = () => setRows(loadWatchRows());
+    window.addEventListener(WATCH_ROWS_EVENT, reload);
+    return () => window.removeEventListener(WATCH_ROWS_EVENT, reload);
+  }, []);
+
   const readOnce = useCallback(async () => {
     if (reading.current || rows.length === 0) return;
     reading.current = true;
@@ -414,16 +422,21 @@ function WatchSection() {
     <section className="vt-section">
       <div className="vt-section__header">
         <span className="vt-section__title">Watch table</span>
-        <Button size="sm" variant={monitoring ? "primary" : "default"} disabled={rows.length === 0}
-          icon={monitoring ? <EyeOff size={14} /> : <Eye size={14} />}
-          onClick={() => setMonitoring(!monitoring)}>
-          {monitoring ? "Stop monitoring" : "Monitor all"}
-        </Button>
+        <span className="s7-row">
+          {rows.length > 0 && !monitoring && (
+            <Button size="sm" variant="ghost" onClick={() => { update([]); setResults([]); }}>Clear</Button>
+          )}
+          <Button size="sm" variant={monitoring ? "primary" : "default"} disabled={rows.length === 0}
+            icon={monitoring ? <EyeOff size={14} /> : <Eye size={14} />}
+            onClick={() => setMonitoring(!monitoring)}>
+            {monitoring ? "Stop monitoring" : "Monitor all"}
+          </Button>
+        </span>
       </div>
       {rows.length > 0 && (
         <table className="vt-table s7-table s7-watch">
           <thead>
-            <tr><th>Address</th><th>Type</th><th>Monitor value</th><th>Modify value</th><th /></tr>
+            <tr><th>Name / address</th><th>Type</th><th>Monitor value</th><th>Modify value</th><th /></tr>
           </thead>
           <tbody>
             {rows.map((row, i) => {
@@ -431,7 +444,10 @@ function WatchSection() {
               const err = rowError[row.id] ?? r?.error ?? null;
               return (
                 <tr key={row.id}>
-                  <td className="mono">{row.address}</td>
+                  <td>
+                    {row.name && <div className="s7-name" title={row.name}>{row.name}</div>}
+                    <div className={row.name ? "mono s7-muted" : "mono"}>{row.address}</div>
+                  </td>
                   <td>
                     <select className="vt-select vt-select--sm" aria-label={`Type of ${row.address}`} value={row.dataType}
                       onChange={(e) => update(rows.map((x) => x.id === row.id ? { ...x, dataType: e.target.value } : x))}>
