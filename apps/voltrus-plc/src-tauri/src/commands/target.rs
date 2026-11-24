@@ -15,8 +15,10 @@
 //! Required ESP32-C firmware change (firmware lives outside this repo):
 //! `GET /api/state` must include the loaded-bundle CRC32 in its JSON:
 //!
-//!      { "state": "running", "cycle_count": 1234,
-//!        "loaded_bundle_crc32": 3149628632 }
+//! ```json
+//! { "state": "running", "cycle_count": 1234,
+//!   "loaded_bundle_crc32": 3149628632 }
+//! ```
 //!
 //! After a successful `/api/deploy` validation the firmware stores
 //! `crc32_le(payload[0 .. len-4])` and reports it here. Older firmware that

@@ -24,6 +24,7 @@ impl EnipIoDriver {
             host: self.host.clone(),
             port: self.port,
             poll_interval_ms: 1000,
+            route_path: None,
         };
         let client = EnipClient::connect(config).await.map_err(|e| IoError {
             message: format!("EtherNet/IP connect: {}", e),
@@ -64,7 +65,13 @@ impl EnipIoDriver {
             CipValue::Dint(i) => PlcValue::Dint(*i),
             CipValue::Real(f) => PlcValue::Real(*f),
             CipValue::String(s) => PlcValue::String(s.clone()),
-            CipValue::Bytes(_) => PlcValue::Dint(0),
+            CipValue::Lint(i) => PlcValue::Dint(*i as i32),
+            CipValue::Usint(u) => PlcValue::Byte(*u),
+            CipValue::Uint(u) => PlcValue::Word(*u),
+            CipValue::Udint(u) => PlcValue::Dint(*u as i32),
+            CipValue::Ulint(u) => PlcValue::Dint(*u as i32),
+            CipValue::Lreal(f) => PlcValue::Real(*f as f32),
+            CipValue::Bytes(_) | CipValue::Array(_) => PlcValue::Dint(0),
         }
     }
 

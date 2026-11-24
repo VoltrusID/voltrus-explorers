@@ -4,7 +4,7 @@
   "description": "Free IEC 61131-3 Structured Text support: syntax highlighting, diagnostics, hover, go-to-definition, completion, compile checks and virtual-time scenario tests.",
   "version": "0.1.0",
   "publisher": "voltrus",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "homepage": "https://voltrus.id/voltrus-plc/",
   "icon": "images/icon.png",

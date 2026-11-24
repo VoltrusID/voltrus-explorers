@@ -6,7 +6,7 @@ import { billingRoutes } from "../src/routes/billing";
 import { effectivePlan, getPlan, setPlanForTest } from "../src/entitlements";
 
 const JWT_SECRET = "test-secret-change-me";
-const WEBHOOK_SECRET = "whsec_test_only_not_a_real_secret";
+const WEBHOOK_SECRET = "whsec_dGVzdC1vbmx5LW5vdC1hLXJlYWwtc2VjcmV0";
 const PRODUCT_SOLO = "prod_solo_00000000";
 const PRODUCT_TEAM = "prod_team_00000000";
 

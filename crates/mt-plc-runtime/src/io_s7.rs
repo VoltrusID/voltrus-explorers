@@ -70,6 +70,8 @@ impl S7IoDriver {
             S7Value::DWord(d) => PlcValue::Dint(*d as i32),
             S7Value::Real(r) => PlcValue::Real(*r),
             S7Value::String(_) => PlcValue::Dint(0),
+            S7Value::Timer(ms) => PlcValue::Dint(*ms as i32),
+            S7Value::Counter(c) => PlcValue::Word(*c),
         }
     }
 

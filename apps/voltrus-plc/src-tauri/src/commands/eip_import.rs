@@ -39,6 +39,7 @@ pub async fn eip_import_udts(
         host: host.clone(),
         port,
         poll_interval_ms: 1000,
+        route_path: None,
     };
 
     let tags = browse_tags(&config)
@@ -102,6 +103,7 @@ pub async fn eip_import_udts(
             element_count: t.element_count,
             initial_value: CipValue::default(),
             template_id: t.template_id,
+            read_only: false,
         });
     }
 

@@ -122,13 +122,12 @@ impl ModbusIoDriver {
 
     pub async fn connect(&mut self) -> Result<(), IoError> {
         let config = mt_modbus::ModbusConfig {
-            id: Some("voltrus-plc".into()),
             ip: self.host.clone(),
             port: self.port,
             unit_id: self.unit_id,
             interval_ms: 100,
+            timeout_ms: 1000,
             endianness: mt_modbus::Endianness::Big,
-            bind_addr: None,
         };
         let client = mt_modbus::ModbusClient::connect(config)
             .await
@@ -200,7 +199,9 @@ impl IoDriver for ModbusIoDriver {
                     mt_modbus::ModbusValue::Int16(i) => PlcValue::Int(i),
                     mt_modbus::ModbusValue::Int32(i) => PlcValue::Dint(i),
                     mt_modbus::ModbusValue::Float32(f) => PlcValue::Real(f),
+                    mt_modbus::ModbusValue::Uint32(u) => PlcValue::Dint(u as i32),
                     mt_modbus::ModbusValue::Float64(f) => PlcValue::Real(f as f32),
+                    mt_modbus::ModbusValue::Failed(_) => PlcValue::Dint(0),
                 })
                 .collect())
         } else {

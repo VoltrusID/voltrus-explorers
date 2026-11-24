@@ -27,7 +27,7 @@ filesRoutes.get("/:path{.+}", async (c) => {
   const path = requestedPath(c);
   if (!isValidPath(path)) return c.json({ error: "invalid path" }, 400);
 
-  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id"));
+  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id")!);
   if (!project) return c.json({ error: "project not found" }, 404);
 
   const object = await c.env.FILES.get(`${c.get("userId")}/${project.id}/${path}`);
@@ -40,7 +40,7 @@ filesRoutes.put("/:path{.+}", async (c) => {
   const path = requestedPath(c);
   if (!isValidPath(path)) return c.json({ error: "invalid path" }, 400);
 
-  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id"));
+  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id")!);
   if (!project) return c.json({ error: "project not found" }, 404);
 
   const body = await c.req.json().catch(() => null);
@@ -83,7 +83,7 @@ filesRoutes.delete("/:path{.+}", async (c) => {
   const path = requestedPath(c);
   if (!isValidPath(path)) return c.json({ error: "invalid path" }, 400);
 
-  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id"));
+  const project = await getOwnedProject(c.env.DB, c.get("userId"), c.req.param("id")!);
   if (!project) return c.json({ error: "project not found" }, 404);
 
   await c.env.FILES.delete(`${c.get("userId")}/${project.id}/${path}`);
