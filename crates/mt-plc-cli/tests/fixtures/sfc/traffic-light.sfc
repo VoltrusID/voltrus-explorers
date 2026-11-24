@@ -1,0 +1,159 @@
+{
+  "edges": [
+    {
+      "id": "e1",
+      "source": "s1",
+      "sourceHandle": "B",
+      "target": "t1",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e3",
+      "source": "s2",
+      "sourceHandle": "B",
+      "target": "t2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e5",
+      "source": "s3",
+      "sourceHandle": "B",
+      "target": "t3",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e2",
+      "source": "t1",
+      "sourceHandle": "B",
+      "target": "s2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e4",
+      "source": "t2",
+      "sourceHandle": "B",
+      "target": "s3",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e6",
+      "source": "t3",
+      "sourceHandle": "B",
+      "target": "j1",
+      "targetHandle": "T"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "condition": "T1.Q",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t1",
+      "position": {
+        "x": 200,
+        "y": 120
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "T2.Q",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t2",
+      "position": {
+        "x": 200,
+        "y": 360
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "T3.Q",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t3",
+      "position": {
+        "x": 200,
+        "y": 600
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "N",
+            "variableName": "GreenLamp"
+          }
+        ],
+        "elementType": "initial_step",
+        "pinValues": {},
+        "stepName": "Green"
+      },
+      "id": "s1",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "type": "initial_step"
+    },
+    {
+      "data": {
+        "elementType": "jump",
+        "pinValues": {},
+        "targetStepName": "Green"
+      },
+      "id": "j1",
+      "position": {
+        "x": 200,
+        "y": 720
+      },
+      "type": "jump"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "N",
+            "variableName": "RedLamp"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Red"
+      },
+      "id": "s3",
+      "position": {
+        "x": 200,
+        "y": 480
+      },
+      "type": "step"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "N",
+            "variableName": "YellowLamp"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Yellow"
+      },
+      "id": "s2",
+      "position": {
+        "x": 200,
+        "y": 240
+      },
+      "type": "step"
+    }
+  ],
+  "programName": "TrafficLight",
+  "version": "1.1"
+}

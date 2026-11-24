@@ -1,0 +1,8 @@
+menu "DNP3 Outstation Config"
+    config DNP3_TCP_PORT
+        int "TCP Port"
+        default 20000
+    config DNP3_OUTSTATION_ADDR
+        int "Outstation Address"
+        default 10
+endmenu

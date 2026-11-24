@@ -1,0 +1,18 @@
+PROGRAM AlarmLatch
+VAR_INPUT
+    X0 : BOOL;
+    X1 : BOOL;
+    X2 : BOOL;
+    X3 : BOOL;
+END_VAR
+VAR_OUTPUT
+    Y0 : BOOL;
+END_VAR
+VAR
+    M0 : BOOL;
+END_VAR
+
+    IF (X0 OR X1 OR X2) THEN M0 := TRUE; END_IF;
+    Y0 := M0;
+    IF X3 THEN M0 := FALSE; END_IF;
+END_PROGRAM

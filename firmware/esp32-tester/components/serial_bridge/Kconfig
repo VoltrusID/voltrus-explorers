@@ -1,0 +1,14 @@
+menu "Serial Bridge Config"
+    config SERIAL_BRIDGE_BAUD
+        int "UART Baud Rate"
+        default 9600
+    config SERIAL_BRIDGE_TX_PIN
+        int "UART TX Pin"
+        default 17
+    config SERIAL_BRIDGE_RX_PIN
+        int "UART RX Pin"
+        default 16
+    config SERIAL_BRIDGE_DE_PIN
+        int "RS485 DE/RE Pin"
+        default 4
+endmenu

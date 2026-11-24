@@ -1,0 +1,180 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Structured Text (IEC 61131-3)",
+  "scopeName": "source.iecst",
+  "fileTypes": ["st"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#pragmas" },
+    { "include": "#strings" },
+    { "include": "#literals" },
+    { "include": "#pou" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#stdlib" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.iecst",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.iecst",
+          "begin": "\\(\\*",
+          "end": "\\*\\)",
+          "captures": { "0": { "name": "punctuation.definition.comment.iecst" } }
+        },
+        {
+          "name": "comment.block.c-style.iecst",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.iecst" } }
+        }
+      ]
+    },
+    "pragmas": {
+      "name": "meta.preprocessor.pragma.iecst",
+      "begin": "\\{",
+      "end": "\\}"
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.iecst",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.iecst", "match": "\\$(?:[$'LlNnPpRrTt]|[0-9A-Fa-f]{2})" }]
+        },
+        {
+          "name": "string.quoted.double.iecst",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.iecst", "match": "\\$(?:[$\"LlNnPpRrTt]|[0-9A-Fa-f]{4})" }]
+        }
+      ]
+    },
+    "pou": {
+      "patterns": [
+        {
+          "match": "(?i)\\b(PROGRAM|FUNCTION_BLOCK|FUNCTION|INTERFACE|METHOD|PROPERTY|ACTION|CONFIGURATION|RESOURCE)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.pou.iecst" },
+            "2": { "name": "entity.name.function.iecst" }
+          }
+        },
+        {
+          "match": "(?i)\\b(TYPE)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.type.iecst" },
+            "2": { "name": "entity.name.type.iecst" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "storage.type.pou.iecst",
+          "match": "(?i)\\b(END_PROGRAM|END_FUNCTION_BLOCK|END_FUNCTION|END_INTERFACE|END_METHOD|END_PROPERTY|END_ACTION|END_CONFIGURATION|END_RESOURCE|TYPE|END_TYPE|STRUCT|END_STRUCT|UNION|END_UNION|EXTENDS|IMPLEMENTS)\\b"
+        },
+        {
+          "name": "storage.modifier.var.iecst",
+          "match": "(?i)\\b(VAR_INPUT|VAR_OUTPUT|VAR_IN_OUT|VAR_GLOBAL|VAR_EXTERNAL|VAR_TEMP|VAR_STAT|VAR_INST|VAR_CONFIG|VAR_ACCESS|VAR|END_VAR|CONSTANT|RETAIN|NON_RETAIN|PERSISTENT|AT|PUBLIC|PRIVATE|PROTECTED|INTERNAL|ABSTRACT|FINAL)\\b"
+        },
+        {
+          "name": "keyword.control.iecst",
+          "match": "(?i)\\b(IF|THEN|ELSIF|ELSE|END_IF|CASE|OF|END_CASE|FOR|TO|BY|DO|END_FOR|WHILE|END_WHILE|REPEAT|UNTIL|END_REPEAT|EXIT|CONTINUE|RETURN|JMP)\\b"
+        },
+        {
+          "name": "keyword.other.iecst",
+          "match": "(?i)\\b(ARRAY|POINTER|REF_TO|REFERENCE|THIS|SUPER|TASK|WITH|ON|READ_ONLY|READ_WRITE|INITIAL_STEP|END_STEP|STEP|TRANSITION|END_TRANSITION|FROM)\\b"
+        },
+        {
+          "name": "keyword.operator.word.iecst",
+          "match": "(?i)\\b(AND_THEN|OR_ELSE|AND|OR|XOR|NOT|MOD)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "support.type.primitive.iecst",
+      "match": "(?i)\\b(BOOL|BYTE|WORD|DWORD|LWORD|SINT|INT|DINT|LINT|USINT|UINT|UDINT|ULINT|REAL|LREAL|TIME|LTIME|DATE|LDATE|TIME_OF_DAY|TOD|LTOD|DATE_AND_TIME|DT|LDT|STRING|WSTRING|CHAR|WCHAR|ANY|ANY_NUM|ANY_INT|ANY_REAL|ANY_BIT)\\b"
+    },
+    "literals": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.iecst",
+          "match": "(?i)\\b(TRUE|FALSE|NULL)\\b"
+        },
+        {
+          "name": "constant.numeric.duration.iecst",
+          "match": "(?i)\\b(?:T|TIME|LT|LTIME)#[-+]?[0-9_.]+(?:d|h|ms|m|s|us|ns)(?:[0-9_.]+(?:d|h|ms|m|s|us|ns))*\\b"
+        },
+        {
+          "name": "constant.numeric.date.iecst",
+          "match": "(?i)\\b(?:DATE_AND_TIME|DT|LDT|TIME_OF_DAY|TOD|LTOD|DATE|D|LDATE)#[0-9][0-9_:.\\-]*"
+        },
+        {
+          "name": "constant.numeric.based.iecst",
+          "match": "(?i)\\b(?:[A-Z_]+#)?(?:2#[01_]+|8#[0-7_]+|16#[0-9A-F_]+)\\b"
+        },
+        {
+          "name": "constant.numeric.typed.iecst",
+          "match": "(?i)\\b[A-Z_]+#[-+]?[0-9][0-9_]*(?:\\.[0-9_]+)?(?:E[-+]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.real.iecst",
+          "match": "(?i)\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:E[-+]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.iecst",
+          "match": "\\b[0-9][0-9_]*\\b"
+        },
+        {
+          "name": "variable.other.direct-address.iecst",
+          "match": "(?i)%[IQM][XBWDL]?[0-9]+(?:\\.[0-9]+)*"
+        }
+      ]
+    },
+    "stdlib": {
+      "patterns": [
+        {
+          "name": "support.class.function-block.iecst",
+          "match": "(?i)\\b(TON|TOF|TP|CTU|CTD|CTUD|R_TRIG|F_TRIG|SR|RS)\\b"
+        },
+        {
+          "name": "support.function.iecst",
+          "match": "(?i)\\b(ABS|SQRT|LN|LOG|EXP|SIN|COS|TAN|ASIN|ACOS|ATAN|ATAN2|EXPT|MIN|MAX|LIMIT|SEL|MUX|SHL|SHR|ROL|ROR|LEN|LEFT|RIGHT|MID|CONCAT|INSERT|DELETE|REPLACE|FIND|TRUNC|ROUND|SIZEOF|ADR|[A-Z]+_TO_[A-Z]+)(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.assignment.iecst", "match": ":=|=>|\\?=|\\bS=|\\bR=" },
+        { "name": "keyword.operator.comparison.iecst", "match": "<>|<=|>=|=|<|>" },
+        { "name": "keyword.operator.arithmetic.iecst", "match": "\\*\\*|[-+*/]" },
+        { "name": "keyword.operator.bitwise.iecst", "match": "&" },
+        { "name": "keyword.operator.dereference.iecst", "match": "\\^" },
+        { "name": "punctuation.separator.range.iecst", "match": "\\.\\." },
+        { "name": "punctuation.terminator.statement.iecst", "match": ";" },
+        { "name": "punctuation.separator.colon.iecst", "match": ":" },
+        { "name": "punctuation.separator.comma.iecst", "match": "," }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": { "1": { "name": "entity.name.function.call.iecst" } }
+        },
+        {
+          "name": "variable.other.iecst",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

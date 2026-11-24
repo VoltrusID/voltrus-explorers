@@ -1,0 +1,8 @@
+menu "BACnet Device Config"
+    config BACNET_UDP_PORT
+        int "UDP Port"
+        default 47808
+    config BACNET_DEVICE_ID
+        int "Device Instance ID"
+        default 100
+endmenu

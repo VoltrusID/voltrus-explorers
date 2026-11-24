@@ -1,0 +1,31 @@
+[package]
+name = "relay-agent"
+description = "Outbound device relay agent connecting a PLC runtime to Voltrus PLC Cloud"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+mt-grpc = { path = "../mt-grpc", optional = true }
+bincode = { version = "1", optional = true }
+mt-plc-types = { path = "../mt-plc-types", optional = true }
+
+[features]
+default = ["grpc"]
+grpc = ["dep:mt-grpc", "dep:bincode", "dep:mt-plc-types"]
+
+[lib]
+name = "relay_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "relay-agent"
+path = "src/main.rs"

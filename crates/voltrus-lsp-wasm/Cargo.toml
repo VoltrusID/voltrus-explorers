@@ -1,0 +1,16 @@
+[package]
+name = "voltrus-lsp-wasm"
+version.workspace = true
+edition.workspace = true
+description = "WASM build of the voltrus-lsp core for in-browser ST language services"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+lsp-types = "0.94"
+mt-stc = { path = "../mt-stc" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+voltrus-lsp = { path = "../voltrus-lsp", default-features = false }
+wasm-bindgen = "0.2"

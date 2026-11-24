@@ -1,0 +1,77 @@
+{
+  "files": 2,
+  "scenarios": 4,
+  "failures": 3,
+  "duration_ms": 9,
+  "passed": false,
+  "suites": [
+    {
+      "name": "Bad.test.yaml",
+      "cases": [
+        {
+          "name": "load",
+          "outcome": "error",
+          "duration_ms": 0,
+          "failures": [],
+          "error": "failed to read program /tmp/sttest/Missing.st: No such file or directory (os error 2)",
+          "assertions": []
+        }
+      ]
+    },
+    {
+      "name": "sub/TankLevel.test.yaml",
+      "cases": [
+        {
+          "name": "pass one",
+          "outcome": "passed",
+          "duration_ms": 0,
+          "failures": [],
+          "error": null,
+          "assertions": [
+            {
+              "name": "inlet_valve",
+              "passed": true,
+              "expected": "TRUE",
+              "actual": "TRUE (BOOL)"
+            }
+          ]
+        },
+        {
+          "name": "fail one",
+          "outcome": "failed",
+          "duration_ms": 0,
+          "failures": [
+            "inlet_valve: expected FALSE, got TRUE (BOOL)",
+            "level: expected 3, got 41.00 (REAL)"
+          ],
+          "error": null,
+          "assertions": [
+            {
+              "name": "inlet_valve",
+              "passed": false,
+              "expected": "FALSE",
+              "actual": "TRUE (BOOL)"
+            },
+            {
+              "name": "level",
+              "passed": false,
+              "expected": "3",
+              "actual": "41.00 (REAL)"
+            }
+          ]
+        },
+        {
+          "name": "err one",
+          "outcome": "failed",
+          "duration_ms": 0,
+          "failures": [
+            "setup: unknown variable `levle` (declared: level, temperature, level_setpoint, temp_setpoint, deadband, inlet_valve, outlet_valve, heater, cooling_valve, high_level_alarm, low_level_alarm, high_temp_alarm, inlet_flow, outlet_flow, heat_rate, cool_rate, ambient_loss, cycles, total_inlet_time, total_outlet_time)"
+          ],
+          "error": null,
+          "assertions": []
+        }
+      ]
+    }
+  ],
+  "error": null
+}

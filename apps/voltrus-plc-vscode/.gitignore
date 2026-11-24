@@ -1,0 +1,5 @@
+dist/
+dist-test/
+.vscode-test/
+*.vsix
+node_modules/

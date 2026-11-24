@@ -1,0 +1,265 @@
+{
+  "edges": [
+    {
+      "id": "e8",
+      "source": "oc1",
+      "sourceHandle": "B",
+      "target": "s4",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e4",
+      "source": "od1",
+      "sourceHandle": "B0",
+      "target": "t2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e5",
+      "source": "od1",
+      "sourceHandle": "B1",
+      "target": "t3",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e1",
+      "source": "s1",
+      "sourceHandle": "B",
+      "target": "t1",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e3",
+      "source": "s2",
+      "sourceHandle": "B",
+      "target": "od1",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e9",
+      "source": "s4",
+      "sourceHandle": "B",
+      "target": "t4",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e11",
+      "source": "s5",
+      "sourceHandle": "B",
+      "target": "t5",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e2",
+      "source": "t1",
+      "sourceHandle": "B",
+      "target": "s2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e6",
+      "source": "t2",
+      "sourceHandle": "B",
+      "target": "oc1",
+      "targetHandle": "T0"
+    },
+    {
+      "id": "e7",
+      "source": "t3",
+      "sourceHandle": "B",
+      "target": "oc1",
+      "targetHandle": "T1"
+    },
+    {
+      "id": "e10",
+      "source": "t4",
+      "sourceHandle": "B",
+      "target": "s5",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e12",
+      "source": "t5",
+      "sourceHandle": "B",
+      "target": "j1",
+      "targetHandle": "T"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "elementType": "or_converge",
+        "pinValues": {}
+      },
+      "id": "oc1",
+      "position": {
+        "x": 200,
+        "y": 600
+      },
+      "type": "or_converge"
+    },
+    {
+      "data": {
+        "elementType": "or_diverge",
+        "pinValues": {}
+      },
+      "id": "od1",
+      "position": {
+        "x": 200,
+        "y": 360
+      },
+      "type": "or_diverge"
+    },
+    {
+      "data": {
+        "condition": "StartButton",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t1",
+      "position": {
+        "x": 200,
+        "y": 120
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "NOT JamSensor",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t2",
+      "position": {
+        "x": 80,
+        "y": 480
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "JamSensor",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t3",
+      "position": {
+        "x": 320,
+        "y": 480
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "ResetButton",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t4",
+      "position": {
+        "x": 200,
+        "y": 840
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "TRUE",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t5",
+      "position": {
+        "x": 200,
+        "y": 1080
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "S",
+            "variableName": "AlarmLamp"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Alarm"
+      },
+      "id": "s4",
+      "position": {
+        "x": 200,
+        "y": 720
+      },
+      "type": "step"
+    },
+    {
+      "data": {
+        "actions": [],
+        "elementType": "initial_step",
+        "pinValues": {},
+        "stepName": "Idle"
+      },
+      "id": "s1",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "type": "initial_step"
+    },
+    {
+      "data": {
+        "elementType": "jump",
+        "pinValues": {},
+        "targetStepName": "Idle"
+      },
+      "id": "j1",
+      "position": {
+        "x": 200,
+        "y": 1200
+      },
+      "type": "jump"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "R",
+            "variableName": "AlarmLamp"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Reset"
+      },
+      "id": "s5",
+      "position": {
+        "x": 200,
+        "y": 960
+      },
+      "type": "step"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "N",
+            "variableName": "ConveyorMotor"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Running"
+      },
+      "id": "s2",
+      "position": {
+        "x": 200,
+        "y": 240
+      },
+      "type": "step"
+    }
+  ],
+  "programName": "ConveyorBranch",
+  "version": "1.1"
+}

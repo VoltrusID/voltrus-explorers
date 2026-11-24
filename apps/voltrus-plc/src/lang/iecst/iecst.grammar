@@ -1,0 +1,142 @@
+@top Program { topItem* }
+
+@skip { space | LineComment | BlockComment }
+
+@external tokens specialTokens from "./special-tokens" { LineComment BlockComment }
+
+@precedence { orPrec @left, andPrec @left, xorPrec @left, cmpPrec @left, addPrec @left, mulPrec @left, modPrec @left, powPrec @right, unaryPrec, postfixPrec, callPrec }
+
+kw<word> { @specialize<ident, word> }
+
+topItem {
+  PouDecl |
+  VarDeclBlock |
+  Stmt
+}
+
+PouDecl {
+  kw<"PROGRAM"> ident BlockBody kw<"END_PROGRAM"> |
+  kw<"FUNCTION"> ident (":" ident)? BlockBody kw<"END_FUNCTION"> |
+  kw<"FUNCTION_BLOCK"> ident BlockBody kw<"END_FUNCTION_BLOCK"> |
+  kw<"TYPE"> ident (":" typeBody)? (";")? kw<"END_TYPE">
+}
+
+BlockBody { BlockItem* }
+
+BlockItem {
+  VarDeclBlock |
+  Stmt
+}
+
+typeBody {
+  kw<"STRUCT"> VarField* kw<"END_STRUCT"> |
+  "(" ident ("," ident)* ")" |
+  ident
+}
+
+VarDeclBlock {
+  VarKw ident ("," ident)* (":" typeInit)? (";")?
+}
+
+VarField {
+  ident ("," ident)* (":" typeInit)? (";")?
+}
+
+VarKw {
+  kw<"VAR"> | kw<"VAR_INPUT"> | kw<"VAR_OUTPUT"> | kw<"VAR_IN_OUT"> |
+  kw<"VAR_TEMP"> | kw<"VAR_GLOBAL"> | kw<"VAR_EXTERNAL">
+}
+
+typeInit {
+  typeSpec (":=" Expr)?
+}
+
+typeSpec {
+  ident |
+  kw<"ARRAY"> "[" Expr ".." Expr "]" kw<"OF"> typeSpec |
+  kw<"STRING"> ("[" Expr "]")?
+}
+
+Stmt {
+  kw<"IF"> Expr kw<"THEN"> BlockBody (kw<"ELSIF"> Expr kw<"THEN"> BlockBody)* (kw<"ELSE"> BlockBody)? kw<"END_IF"> |
+  kw<"CASE"> Expr kw<"OF"> CaseBody (kw<"ELSE"> BlockBody)? kw<"END_CASE"> |
+  kw<"FOR"> ident ":=" Expr kw<"TO"> Expr (kw<"BY"> Expr)? kw<"DO"> BlockBody kw<"END_FOR"> |
+  kw<"WHILE"> Expr kw<"DO"> BlockBody kw<"END_WHILE"> |
+  kw<"REPEAT"> BlockBody kw<"UNTIL"> Expr kw<"END_REPEAT"> |
+  kw<"EXIT"> | kw<"RETURN"> | kw<"CONTINUE"> |
+  SimpleStmt
+}
+
+CaseBody { CaseItem* }
+
+CaseItem {
+  CaseLabel ("," CaseLabel)* ":" BlockBody
+}
+
+CaseLabel {
+  Number | kw<"TRUE"> | kw<"FALSE"> | StringLit
+}
+
+SimpleStmt {
+  ident ":=" Expr (";")? |
+  FuncCall (";")? |
+  ident (";")?
+}
+
+FuncCall { ident "(" (Arg ("," Arg)*)? ")" }
+
+Arg { (ident ":=")? Expr }
+
+Expr {
+  AtomExpr |
+  Expr !orPrec kw<"OR"> Expr |
+  Expr !andPrec kw<"AND"> Expr |
+  Expr !xorPrec kw<"XOR"> Expr |
+  Expr !cmpPrec CmpOp Expr |
+  Expr !addPrec AddOp Expr |
+  Expr !mulPrec MulOp Expr |
+  Expr !modPrec kw<"MOD"> Expr |
+  Expr !powPrec "**" Expr |
+  !unaryPrec UnaryOp Expr
+}
+
+CmpOp { EqOp | NeOp | LtOp | GtOp | LeOp | GeOp }
+AddOp { PlusOp | MinusOp }
+MulOp { StarOp | DivOp }
+UnaryOp { kw<"NOT"> | MinusOp | PlusOp }
+
+AtomExpr {
+  "(" Expr ")" |
+  !callPrec FuncCall |
+  DirectAddr |
+  Number |
+  kw<"TRUE"> | kw<"FALSE"> |
+  StringLit |
+  !postfixPrec PostfixExpr |
+  ident
+}
+
+PostfixExpr {
+  AtomExpr "." ident |
+  AtomExpr "[" Expr ("," Expr)* "]"
+}
+
+DirectAddr { DirectAddrToken }
+
+@tokens {
+  space { $[ \t\n\r]+ }
+  DirectAddrToken { "%" $[IQMiqm] $[XWDBxwdb]? $[0-9]+ ("." $[0-9]+)* }
+  Number { "0" $[xX] $[0-9a-fA-F]+ | $[0-9]+ ("." $[0-9]+)? ($[eE] $[+\-]? $[0-9]+)? }
+  StringLit { "'" (![\n'] | "''")* "'" }
+  ident { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  EqOp { "=" }
+  NeOp { "<>" }
+  LtOp { "<" }
+  GtOp { ">" }
+  LeOp { "<=" }
+  GeOp { ">=" }
+  PlusOp { "+" }
+  MinusOp { "-" }
+  StarOp { "*" }
+  DivOp { "/" }
+}

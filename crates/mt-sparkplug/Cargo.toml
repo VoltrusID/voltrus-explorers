@@ -1,0 +1,19 @@
+[package]
+name = "mt-sparkplug"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mt-plc-types = { path = "../mt-plc-types" }
+prost = "0.13"
+rumqttc = "0.24"
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = "0.1"
+
+[build-dependencies]
+prost-build = "0.13"
+
+[dev-dependencies]
+parking_lot = "0.12"
+tempfile = "3"

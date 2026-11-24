@@ -1,0 +1,37 @@
+menu "PLC Runtime Configuration"
+    depends on ESP_TESTER_PROTOCOL_PLC_RUNTIME
+
+    config VOLTRUS_PLC_DEFAULT_SCAN_CYCLE_MS
+        int "Default scan cycle (ms)"
+        default 10
+        range 1 60000
+        help
+            Default PLC scan cycle time in milliseconds.
+
+    config VOLTRUS_PLC_MAX_VARIABLES
+        int "Maximum variables"
+        default 64
+        range 8 256
+        help
+            Maximum number of PLC variables allocated in the VM.
+
+    config VOLTRUS_PLC_IO_BUFFER_SIZE
+        int "I/O buffer size (bytes)"
+        default 256
+        range 64 1024
+        help
+            Size of the I/O bridge data buffer in bytes.
+
+    config VOLTRUS_PLC_MDNS_ENABLE
+        bool "Enable mDNS advertisement"
+        default y
+        help
+            Broadcast _voltrus-runtime._tcp via mDNS for auto-discovery.
+
+    config VOLTRUS_PLC_OTA_ENABLE
+        bool "Enable OTA firmware update"
+        default n
+        help
+            Allow firmware updates via HTTP POST to /api/firmware.
+            Requires OTA partition table.
+endmenu

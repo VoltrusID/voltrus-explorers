@@ -1,0 +1,23 @@
+[package]
+name = "mt-plc-cli"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "mt_plc_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "voltrus-plc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+mt-import = { path = "../mt-import" }
+mt-plc-runtime = { path = "../mt-plc-runtime", default-features = false }
+mt-plc-types = { path = "../mt-plc-types" }
+mt-stc = { path = "../mt-stc" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"

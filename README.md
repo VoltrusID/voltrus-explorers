@@ -21,6 +21,23 @@ Open-source industrial protocol tools for macOS, built with Tauri v2 (Rust + Rea
 | **MC & FINS Explorer** | Mitsubishi MELSEC over MC protocol / SLMP (3E and 4E frames, binary or ASCII, TCP or UDP) and Omron over FINS/UDP and FINS/TCP: tag table of devices and memory areas (D, W, R, ZR, M, X, Y, B, SM, SD, timers and counters; DM, CIO, W, H, A, EM, T, C) with Bool, Int16/32, UInt16/32, Float32, BCD and hex, device monitor, CPU model and status, every frame in the comm log with its end code explained, remote RUN/STOP, built-in MC and FINS PLC simulator | Free download ([DMG](https://dl-mc-fins-explorer.voltrus.id/latest) · [voltrus.id](https://voltrus.id/mc-fins-explorer/)); Pro by licence key, USD 29.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/14f440e3-f56c-4a6e-bccf-bb8567b92ab3)) |
 | **EtherCAT Explorer** | EtherCAT network explorer for commissioning and troubleshooting, from a Mac's wired Ethernet port: every device with identity, ESC, ports, DC, AL state and AL status code, SII EEPROM, ESC registers and error counters, the CoE object dictionary with names (SDO Information), PDO mapping and live process data; built-in simulated machine (EK1100 with EL1008/EL2008/EL3102/EL4102 terminals and two CiA 402 servo drives). Not on the App Store: the App Sandbox does not allow raw Ethernet | Free download ([DMG](https://dl-ethercat-explorer.voltrus.id/latest)); Pro by licence key, USD 39.99 one-time, one Mac ([buy in the console](https://console.voltrus.id/checkout/p/0e3a1912-178a-42ac-9d1c-23af2b1f0c22)) |
 
+## Voltrus PLC
+
+An IEC 61131-3 PLC toolchain and IDE, in the same workspace as the explorers so it shares their protocol crates:
+
+| Path | What it is |
+| --- | --- |
+| `apps/voltrus-plc` | The IDE (Tauri): Structured Text, FBD, LD and SFC editors, compile, run on the built-in softPLC, watch and force, deploy to ESP32 and Linux runtimes |
+| `apps/voltrus-plc-cloud` | app.plc.voltrus.id: browser IDE backend (Cloudflare Worker, D1) |
+| `apps/voltrus-hmi` | HMI designer for browser-capable displays |
+| `apps/voltrus-plc-vscode` | VS Code extension (not a bun workspace member: its package name is the Marketplace id) |
+| `crates/mt-stc`, `mt-plc-runtime`, `mt-plc-types`, `mt-plc-cli`, `voltrus-lsp` | ST compiler, VM, CLI and language server (plus `-wasm` builds for the browser) |
+| `crates/mt-grpc`, `voltrus-runtime`, `relay-agent`, `mt-sparkplug` | Linux runtime, remote access agent, Sparkplug B |
+| `firmware/esp32-tester` | ESP32 test target with the PLC runtime and protocol simulators |
+
+See [apps/voltrus-plc/README.md](apps/voltrus-plc/README.md). Run `bun run build:wasm` in `apps/voltrus-plc` once
+before its type check or tests.
+
 ## Screenshots
 
 | | | |

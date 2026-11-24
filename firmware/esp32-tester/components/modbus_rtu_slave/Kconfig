@@ -1,0 +1,17 @@
+menu "Modbus RTU Slave Config"
+    config MODBUS_RTU_BAUD
+        int "UART Baud Rate"
+        default 9600
+    config MODBUS_RTU_SLAVE_ID
+        int "Slave ID"
+        default 1
+    config MODBUS_RTU_DE_PIN
+        int "RS485 DE/RE Pin"
+        default 4
+    config MODBUS_RTU_TX_PIN
+        int "UART TX Pin"
+        default 17
+    config MODBUS_RTU_RX_PIN
+        int "UART RX Pin"
+        default 18
+endmenu

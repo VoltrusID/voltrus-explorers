@@ -1,0 +1,897 @@
+@import "@mactools/ui/styles.css";
+
+/*
+ * Voltrus PLC app styles.
+ * Tokens and the shared component layer (.vt-*) come from @mactools/ui;
+ * this file only adds app layout (rails, editor chrome, splitters, drawers),
+ * a few app-specific widgets, and CodeMirror light-theme tuning derived from
+ * the shared tokens.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* ── App frame ───────────────────────────────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-left {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar-right {
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* Collapsible Cloud block pinned to the bottom of the left rail. */
+.sidebar-cloud {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.cloud-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cloud-toggle:hover .vt-section__title {
+  color: var(--text);
+}
+
+.cloud-toggle svg {
+  color: var(--text-muted);
+}
+
+/* ── File tree (left rail) ───────────────────────────────────────────────── */
+
+.file-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-row:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+.file-row.is-active,
+.file-row.is-active:hover {
+  background: var(--selection);
+  color: var(--text);
+}
+
+.file-row svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.file-row.is-active svg {
+  color: var(--accent-text);
+}
+
+.file-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* List styles shared with the Cloud panels (AccountBadge, AiKeysPanel,
+   CloudProjectPanel). */
+.file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.file-item:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+/* ── Editor area ─────────────────────────────────────────────────────────── */
+
+.editor-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* File tabs reuse .vt-tabs / .vt-tab; only the close affordance is custom. */
+.editor-tab .tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.vt-tab:hover .tab-close,
+.editor-tab .tab-close:focus-visible {
+  opacity: 1;
+}
+
+.editor-tab .tab-close:hover {
+  background: var(--active-overlay);
+  color: var(--text);
+}
+
+/* Unsaved-changes dot: editor file tabs and sidebar file rows. */
+.tab-dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.editor-container {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Bottom panel ────────────────────────────────────────────────────────── */
+
+.bottom-panel {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.bottom-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-size: var(--fs-sm);
+}
+
+/* Interactive list rows: diagnostics, search results, test scenarios. */
+.diagnostic-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.diagnostic-item:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+.diagnostic-item .location {
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diagnostic-item .severity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.diagnostic-item .severity.error {
+  color: var(--danger);
+}
+
+.diagnostic-item .severity.warning {
+  color: var(--warn);
+}
+
+/* Runtime log lines are machine output: mono. */
+.log-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.log-line__dir {
+  color: var(--accent-text);
+  flex-shrink: 0;
+}
+
+.log-line__msg {
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.output-line {
+  font-size: var(--fs-sm);
+}
+
+.output-line--ok {
+  color: var(--accent-text);
+}
+
+.output-line--err {
+  color: var(--danger);
+}
+
+.output-line--muted {
+  color: var(--text-muted);
+}
+
+/* ── Splitters ───────────────────────────────────────────────────────────── */
+
+.resize-handle {
+  position: relative;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background-color 120ms var(--ease-out);
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--border-light);
+}
+
+.resize-handle-x {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.resize-handle-y {
+  height: 4px;
+  cursor: row-resize;
+}
+
+/* ── Runtime panel (Watch tab) ───────────────────────────────────────────── */
+
+.rt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rt-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.cycle-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 40px;
+  padding: 2px 4px;
+  background: var(--sunken);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* ── Watch table ─────────────────────────────────────────────────────────── */
+
+.watch-table th,
+.watch-table td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.watch-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.watch-value:hover {
+  background: var(--hover-overlay);
+}
+
+/* ── Simulation ──────────────────────────────────────────────────────────── */
+
+.sim-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.sim-col {
+  flex: 1;
+  min-width: 180px;
+  min-width: 0;
+}
+
+.sim-group {
+  margin-bottom: 12px;
+}
+
+.sim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.sim-name {
+  color: var(--text-dim);
+  min-width: 60px;
+}
+
+.sim-toggle {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--border-light);
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out);
+}
+
+.sim-toggle:hover {
+  background: var(--text-muted);
+}
+
+.sim-toggle[aria-pressed="true"] {
+  background: var(--accent);
+}
+
+.sim-toggle[aria-pressed="true"]:hover {
+  background: var(--accent-hover);
+}
+
+.sim-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-fg);
+  transition: left 120ms var(--ease-out);
+}
+
+.sim-toggle[aria-pressed="true"]::after {
+  left: 16px;
+}
+
+.sim-led {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--border-light);
+  flex-shrink: 0;
+  transition: background-color 120ms;
+}
+
+.sim-led.is-on {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.sim-pin-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--border-light);
+  flex-shrink: 0;
+}
+
+.sim-pin-led.is-on {
+  background: var(--accent);
+}
+
+/* ── Cycle charts (Timing, Histogram) ────────────────────────────────────── */
+
+.cycle-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.cycle-graph-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.cycle-stat strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.cycle-graph-svg {
+  width: 100%;
+  height: auto;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Modals ──────────────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  padding: 20px;
+  min-width: 400px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal h3 {
+  margin: 0 0 16px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Example-program picker rows. */
+.sample-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sample-item:hover {
+  background: var(--hover-overlay);
+}
+
+.sample-item strong {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.sample-item span {
+  margin-left: 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.menu-caption {
+  margin: 10px 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.menu-divider {
+  border-top: 1px solid var(--border);
+  margin: 8px 0;
+}
+
+/* ── Toolbar overflow menu ───────────────────────────────────────────────── */
+
+.tool-menu {
+  position: relative;
+  display: flex;
+}
+
+.tool-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 590;
+}
+
+.tool-menu__pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 600;
+  min-width: 210px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ── Mobile drawers ──────────────────────────────────────────────────────── */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 900;
+  width: min(300px, 85vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  transition: transform 0.2s var(--ease-out);
+}
+
+.drawer-left {
+  left: 0;
+  border-right: 1px solid var(--border);
+  transform: translateX(-100%);
+}
+
+.drawer-right {
+  right: 0;
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+}
+
+.drawer.open {
+  transform: translateX(0);
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s var(--ease-out);
+}
+
+.drawer-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Editor chrome kept for the editor slice ─────────────────────────────── */
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.breakpoint-gutter {
+  width: 20px;
+  cursor: pointer;
+}
+
+.breakpoint-marker {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: var(--danger);
+  border-radius: 50%;
+  margin: 2px 4px;
+  vertical-align: middle;
+}
+
+.execution-line-marker {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid var(--accent);
+  margin: 2px 0;
+  vertical-align: middle;
+}
+
+/* ── Cloud auth + paywall (migrated by the Cloud slice) ──────────────────── */
+
+/* ── CodeMirror light-theme tuning (colours from tokens) ─────────────────── */
+
+[data-theme="light"] .cm-editor {
+  background: var(--card);
+  color: var(--text);
+}
+
+[data-theme="light"] .cm-gutters {
+  background: var(--surface);
+  color: var(--text-muted);
+  border-right-color: var(--border);
+}
+
+[data-theme="light"] .cm-activeLine {
+  background: var(--hover-overlay);
+}
+
+[data-theme="light"] .cm-activeLineGutter {
+  background: var(--active-overlay);
+}
+
+[data-theme="light"] .cm-cursor {
+  border-left-color: var(--accent);
+}
+
+[data-theme="light"] .cm-selectionBackground,
+[data-theme="light"] .cm-focused .cm-selectionBackground {
+  background: var(--selection) !important;
+}
+
+/* st-colors.ts ships One Dark hues tuned for dark backgrounds; these keep
+   every token class at >= 5:1 on the light editor surface. */
+[data-theme="light"] .cm-editor .st-kw { color: #a626a4; }
+[data-theme="light"] .cm-editor .st-type { color: #8a5a00; }
+[data-theme="light"] .cm-editor .st-atom,
+[data-theme="light"] .cm-editor .st-num { color: #a14f00; }
+[data-theme="light"] .cm-editor .st-str { color: #3a7a26; }
+[data-theme="light"] .cm-editor .st-cmt { color: var(--text-muted); }
+[data-theme="light"] .cm-editor .st-id,
+[data-theme="light"] .cm-editor .st-addr { color: #2a62c4; }
+[data-theme="light"] .cm-editor .st-op { color: #0b7580; }
+[data-theme="light"] .cm-editor .st-punct { color: var(--text-dim); }
+
+/* ── Cloud auth + paywall (migrated by the Cloud slice) ──────────────────── */
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.auth-brand {
+  text-align: center;
+}
+
+.auth-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-text);
+  margin-bottom: 4px;
+}
+
+.auth-brand h1 {
+  font-size: 18px;
+  margin: 0;
+  color: var(--text);
+}
+
+.auth-tagline {
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 3px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: var(--fs-md);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.auth-tab.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 16px+ so iOS Safari does not auto-zoom on focus. */
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.auth-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.auth-error {
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+
+.auth-submit {
+  padding: 10px 0;
+  font-size: var(--fs-md);
+  justify-content: center;
+}
+
+.auth-skip {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  padding: 4px;
+}
+
+.auth-footnote {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.plan-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.plan-chip-solo {
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.plan-chip-team {
+  color: var(--accent-text);
+  border-color: var(--border-light);
+}
+
+/* ── Small screens ───────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .modal {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+
+  .file-item,
+  .file-row {
+    padding: 8px 12px;
+    height: 36px;
+  }
+
+  .cm-editor {
+    font-size: 14px;
+  }
+}
