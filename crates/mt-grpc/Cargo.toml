@@ -1,0 +1,18 @@
+[package]
+name = "mt-grpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1"
+mt-plc-types = { path = "../mt-plc-types" }
+mt-plc-runtime = { path = "../mt-plc-runtime" }
+
+[build-dependencies]
+tonic-build = "0.12"

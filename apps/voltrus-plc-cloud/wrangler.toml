@@ -1,0 +1,40 @@
+name = "voltrus-plc-cloud"
+main = "src/index.ts"
+compatibility_date = "2026-08-22"
+account_id = "b7e6f8457bd39fa37a7eea5249799754"
+
+# Custom domain on the voltrus.id zone. MUST stay above every [table] header —
+# TOML would otherwise fold it into the nearest table (vars/assets).
+routes = [
+  { pattern = "app.plc.voltrus.id", custom_domain = true }
+]
+
+[vars]
+# Comma-separated allowlist echoed by the CORS middleware.
+CORS_ORIGINS = "http://localhost:1440,https://app.plc.voltrus.id"
+
+# The built IDE SPA is served by this same worker (same-origin API, no CORS).
+[assets]
+directory = "../voltrus-plc/dist"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "voltrus-plc-cloud-db"
+database_id = "ecd43e1c-30d8-4cb8-ab9b-5f9a6509b4f0"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "voltrus-plc-cloud-files"
+# Local dev creates the bucket in .wrangler/state automatically.
+# Replace with the real id before deploying.
+# id = "00000000-0000-0000-0000-000000000000"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]

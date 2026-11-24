@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0.0.10" SoftwareRevision="32.11" TargetName="Line1" TargetType="Controller" ExportOptions="NoComments" ContainsContext="false">
+  <Controller Use="Target" Name="Line1">
+    <Description><![CDATA[Conveyor line controller]]></Description>
+    <Tags>
+      <Tag Name="SystemOk" TagType="Base" DataType="BOOL" Radix="Decimal" Constant="false">
+        <Description><![CDATA[Heartbeat of the line]]></Description>
+      </Tag>
+      <Tag Name="PartCount" TagType="Base" DataType="DINT" Radix="Decimal" Constant="false"/>
+      <Tag Name="SpeedSetpoint" TagType="Base" DataType="REAL" Radix="Float" Constant="false"/>
+      <Tag Name="RecipeId" TagType="Base" DataType="INT" Radix="Decimal" Constant="false"/>
+      <Tag Name="BatchLabel" TagType="Base" DataType="STRING" Constant="false"/>
+      <Tag Name="CycleTimer" TagType="Base" DataType="TIMER" Constant="false"/>
+      <Tag Name="RejectCounter" TagType="Base" DataType="COUNTER" Constant="false"/>
+      <Tag Name="SequencerStep" TagType="Base" DataType="CONTROL" Constant="false"/>
+    </Tags>
+    <Programs>
+      <Program Use="Target" Name="Conveyor" Type="Normal" MainRoutineName="Main">
+        <Tags>
+          <Tag Name="MotorStart" TagType="Base" DataType="BOOL" Constant="false"/>
+          <Tag Name="MotorSpeed" TagType="Base" DataType="REAL" Constant="false"/>
+          <Tag Name="RunTimer" TagType="Base" DataType="TIMER" Constant="false"/>
+          <Tag Name="ProductCount" TagType="Base" DataType="COUNTER" Constant="false"/>
+          <Tag Name="RecipeData" TagType="Base" DataType="RecipeUDT" Constant="false"/>
+        </Tags>
+        <Routines>
+          <Routine Use="Target" Name="Main" Type="ST">
+            <STContent>
+              <Line Number="0">MotorStart := TRUE;</Line>
+              <Line Number="1">RunTimer(IN := MotorStart, PT := T#500MS);</Line>
+              <Line Number="2">MotorSpeed := 12.5;</Line>
+              <Line Number="3">ProductCount(CU := MotorStart, R := FALSE, PV := 100);</Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

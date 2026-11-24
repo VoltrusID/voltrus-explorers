@@ -1,0 +1,11 @@
+menu "Modbus TCP Master Config"
+    config MODBUS_MASTER_SERVER_IP
+        string "Target Server IP"
+        default "192.168.1.100"
+    config MODBUS_MASTER_SERVER_PORT
+        int "Target Server Port"
+        default 502
+    config MODBUS_MASTER_POLL_INTERVAL_MS
+        int "Poll Interval (ms)"
+        default 2000
+endmenu

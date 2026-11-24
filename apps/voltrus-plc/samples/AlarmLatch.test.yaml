@@ -1,0 +1,44 @@
+# PLC-10: proves diagram programs execute in the headless VM. The program is
+# an .ld file — the harness transpiles it to ST (mt-plc-cli diagram port)
+# before compiling, then runs the scenarios in virtual time.
+#
+# AlarmLatch.ld (LD lowering):
+#   rung 1: X0 / X1 / X2 (parallel OR paths) -> SET M0
+#   rung 2: M0 -> Y0
+#   rung 3: X3 -> RESET M0
+
+program: AlarmLatch.ld
+
+scenarios:
+  - name: sensor sets the alarm latch and output follows
+    steps:
+      - set:
+          X0: true
+      - advance: 1scans
+        expect:
+          M0: true
+          Y0: true
+
+  - name: latch holds after the sensor clears
+    given:
+      M0: true
+    steps:
+      - set:
+          X0: false
+      - advance: 1scans
+        expect:
+          M0: true
+          Y0: true
+
+  - name: acknowledge resets the latch
+    given:
+      M0: true
+    steps:
+      - set:
+          X3: true
+      # Scan order: Y0 copies M0 before rung 3 resets M0, so the reset
+      # propagates to Y0 on the following scan.
+      - advance: 2scans
+        expect:
+          M0: false
+          Y0: false

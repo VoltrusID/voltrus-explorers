@@ -1,0 +1,55 @@
+# Virtual-time scenarios for TankLevel.st (PLC-4 headless test gate).
+#
+# TankLevel is a pure computation program — no physical I/O — so every
+# variable is directly seedable via `given:` and assertable via `expect:`.
+#
+# Semantics: with the default scan_ms (10) one scan = one discrete process
+# step, e.g. inlet_flow (+1.0 REAL per scan) — these assertions follow the
+# per-scan arithmetic in TankLevel.st exactly:
+#   - control: level < 47.0 -> inlet on; level > 53.0 -> outlet on
+#   - alarms:  level > 90.0 / level < 10.0 / temperature > 85.0
+#   - dynamics: temperature += heat_rate 0.3 (heater) or -= cool_rate 0.15
+#     (cooling), then ambient_loss 0.05 every scan.
+
+program: TankLevel.st
+
+scenarios:
+  - name: low level opens inlet and closes outlet
+    given:
+      level: 40.0 # below level_setpoint 50 - deadband 3
+    steps:
+      - advance: 1scans
+        expect:
+          inlet_valve: true
+          outlet_valve: false
+          level: {approx: 41.0, tol: 0.001} # 40.0 + inlet_flow 1.0
+
+  - name: high level raises alarm and blocks inlet
+    given:
+      level: 95.0 # above the 90.0 alarm threshold
+    steps:
+      - advance: 1scans
+        expect:
+          high_level_alarm: true
+          inlet_valve: false
+          outlet_valve: true # outlet is not blocked by the alarm
+
+  - name: overheating starts cooling, never the heater
+    given:
+      temperature: 90.0 # above the 85.0 alarm threshold
+    steps:
+      - advance: 1scans
+        expect:
+          high_temp_alarm: true
+          cooling_valve: true
+          heater: false
+          temperature: {approx: 89.8, tol: 0.001} # 90.0 - cool 0.15 - ambient 0.05
+
+  - name: heating ramps toward the temp setpoint
+    given:
+      temperature: 60.0 # below temp_setpoint 65 - deadband 3
+    steps:
+      - advance: 10scans
+        expect:
+          heater: true
+          temperature: {approx: 62.5, tol: 0.001} # 60.0 + 10 * (0.3 - 0.05)

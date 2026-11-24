@@ -1,0 +1,209 @@
+{
+  "edges": [
+    {
+      "id": "e1",
+      "source": "s1",
+      "sourceHandle": "B",
+      "target": "t1",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e3",
+      "source": "s2",
+      "sourceHandle": "B",
+      "target": "t2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e5",
+      "source": "s3",
+      "sourceHandle": "B",
+      "target": "t3",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e7",
+      "source": "s4",
+      "sourceHandle": "B",
+      "target": "t4",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e2",
+      "source": "t1",
+      "sourceHandle": "B",
+      "target": "s2",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e4",
+      "source": "t2",
+      "sourceHandle": "B",
+      "target": "s3",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e6",
+      "source": "t3",
+      "sourceHandle": "B",
+      "target": "s4",
+      "targetHandle": "T"
+    },
+    {
+      "id": "e8",
+      "source": "t4",
+      "sourceHandle": "B",
+      "target": "j1",
+      "targetHandle": "T"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "condition": "StartButton",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t1",
+      "position": {
+        "x": 200,
+        "y": 120
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "MotorReady",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t2",
+      "position": {
+        "x": 200,
+        "y": 360
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "StopButton",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t3",
+      "position": {
+        "x": 200,
+        "y": 600
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "condition": "MotorStopped",
+        "elementType": "transition",
+        "pinValues": {}
+      },
+      "id": "t4",
+      "position": {
+        "x": 200,
+        "y": 840
+      },
+      "type": "transition"
+    },
+    {
+      "data": {
+        "actions": [],
+        "elementType": "initial_step",
+        "pinValues": {},
+        "stepName": "Idle"
+      },
+      "id": "s1",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "type": "initial_step"
+    },
+    {
+      "data": {
+        "elementType": "jump",
+        "pinValues": {},
+        "targetStepName": "Idle"
+      },
+      "id": "j1",
+      "position": {
+        "x": 200,
+        "y": 960
+      },
+      "type": "jump"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "N",
+            "variableName": "Motor"
+          },
+          {
+            "qualifier": "N",
+            "variableName": "RunLamp"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Running"
+      },
+      "id": "s3",
+      "position": {
+        "x": 200,
+        "y": 480
+      },
+      "type": "step"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "S",
+            "variableName": "Motor"
+          },
+          {
+            "expression": "Counter := Counter + 1",
+            "qualifier": "P1",
+            "variableName": "Counter"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Starting"
+      },
+      "id": "s2",
+      "position": {
+        "x": 200,
+        "y": 240
+      },
+      "type": "step"
+    },
+    {
+      "data": {
+        "actions": [
+          {
+            "qualifier": "R",
+            "variableName": "Motor"
+          }
+        ],
+        "elementType": "step",
+        "pinValues": {},
+        "stepName": "Stopping"
+      },
+      "id": "s4",
+      "position": {
+        "x": 200,
+        "y": 720
+      },
+      "type": "step"
+    }
+  ],
+  "programName": "MotorControl",
+  "version": "1.1"
+}

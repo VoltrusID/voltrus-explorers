@@ -1,0 +1,50 @@
+menu "ESP32 Protocol Tester"
+
+choice ESP_TESTER_PROTOCOL
+    prompt "Select Protocol"
+    default ESP_TESTER_PROTOCOL_MODBUS_SLAVE
+    help
+        Select which protocol the ESP32 will run.
+
+config ESP_TESTER_PROTOCOL_MODBUS_SLAVE
+    bool "Modbus TCP Slave"
+config ESP_TESTER_PROTOCOL_MODBUS_MASTER
+    bool "Modbus TCP Master"
+config ESP_TESTER_PROTOCOL_MODBUS_RTU
+    bool "Modbus RTU Slave"
+config ESP_TESTER_PROTOCOL_MQTT
+    bool "MQTT Client"
+config ESP_TESTER_PROTOCOL_S7
+    bool "S7 Server"
+config ESP_TESTER_PROTOCOL_ENIP
+    bool "EtherNet/IP Server"
+config ESP_TESTER_PROTOCOL_OPCUA
+    bool "OPC UA Server"
+config ESP_TESTER_PROTOCOL_BACNET
+    bool "BACnet Device"
+config ESP_TESTER_PROTOCOL_DNP3
+    bool "DNP3 Outstation"
+config ESP_TESTER_PROTOCOL_SERIAL
+    bool "Serial Bridge"
+config ESP_TESTER_PROTOCOL_PLC_RUNTIME
+    bool "PLC Runtime"
+endchoice
+
+menu "WiFi Configuration"
+    config ESP_TESTER_WIFI_SSID
+        string "WiFi SSID"
+        default "YOUR_WIFI"
+    config ESP_TESTER_WIFI_PASSWORD
+        string "WiFi Password"
+        default "YOUR_PASSWORD"
+
+    config ESP_TESTER_WIFI_PORTAL_ENABLE
+        bool "Enable WiFi Configuration Portal"
+        default n
+        depends on ESP_TESTER_PROTOCOL_PLC_RUNTIME
+        help
+            Start a captive portal (SoftAP + HTTP form) when WiFi connection fails.
+            Allows runtime WiFi configuration without menuconfig.
+endmenu
+
+endmenu

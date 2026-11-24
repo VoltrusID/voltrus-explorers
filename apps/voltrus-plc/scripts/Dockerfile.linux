@@ -1,0 +1,43 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -qq && apt-get install -y -qq \
+    build-essential \
+    curl \
+    unzip \
+    pkg-config \
+    libssl-dev \
+    libudev-dev \
+    libwebkit2gtk-4.1-dev \
+    libgtk-3-dev \
+    libappindicator3-dev \
+    librsvg2-dev \
+    patchelf \
+    file \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y -qq nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pnpm
+RUN npm install -g pnpm@11
+
+# Install bun (tauri.conf.json beforeBuildCommand is "bun run build")
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# protoc for prost/tonic build scripts (voltrus-plc's gRPC runtime proto).
+# Ubuntu 22.04's protobuf-compiler (3.12) predates proto3 `optional`.
+RUN curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip \
+    && unzip -q /tmp/protoc.zip -d /usr/local bin/protoc 'include/*' \
+    && rm /tmp/protoc.zip
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /workspace

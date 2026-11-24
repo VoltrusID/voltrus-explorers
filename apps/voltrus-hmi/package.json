@@ -1,0 +1,36 @@
+{
+  "name": "voltrus-hmi",
+  "private": true,
+  "version": "1.0.1",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@mactools/symbol-engine": "workspace:*",
+    "@mactools/ui": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
+    "lucide-react": "1.21.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "zustand": "5.0.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.2.4",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4",
+    "tailwindcss": "4.2.4",
+    "typescript": "5.9.3",
+    "vite": "6.4.2",
+    "vitest": "3.2.4"
+  }
+}

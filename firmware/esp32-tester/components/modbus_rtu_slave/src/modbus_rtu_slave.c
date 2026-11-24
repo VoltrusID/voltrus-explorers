@@ -1,0 +1,213 @@
+#include "modbus_rtu_slave.h"
+#include "board.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "driver/uart.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "mbcontroller.h"
+#include <string.h>
+
+static const char *TAG = "modbus_rtu_slave";
+
+#define UART_NUM    UART_NUM_2
+#define SLAVE_ID    CONFIG_MODBUS_RTU_SLAVE_ID
+#define BAUD_RATE   CONFIG_MODBUS_RTU_BAUD
+#define DE_PIN      CONFIG_MODBUS_RTU_DE_PIN
+#define TX_PIN      CONFIG_MODBUS_RTU_TX_PIN
+#define RX_PIN      CONFIG_MODBUS_RTU_RX_PIN
+
+#define NUM_REGISTERS 100
+#define NUM_COILS     6
+
+static uint16_t holding_regs[NUM_REGISTERS];
+static uint16_t input_regs[NUM_REGISTERS];
+static uint8_t coils[4];
+static uint8_t discrete_inputs[4];
+static bool running = false;
+static SemaphoreHandle_t reg_mutex;
+static TaskHandle_t event_task_handle = NULL;
+static TaskHandle_t data_task_handle = NULL;
+
+#define MB_WRITE_MASK (MB_EVENT_HOLDING_REG_WR | MB_EVENT_COILS_WR)
+#define MB_RW_MASK    (MB_WRITE_MASK | MB_EVENT_HOLDING_REG_RD | MB_EVENT_INPUT_REG_RD \
+                       | MB_EVENT_DISCRETE_RD | MB_EVENT_COILS_RD)
+
+static void apply_register_write(uint16_t addr, uint16_t value) {
+    holding_regs[addr] = value;
+    switch (addr) {
+    case 10: board_set_buzzer(value != 0); break;
+    case 11: board_set_rgb(value & 0xFF, holding_regs[12] & 0xFF, holding_regs[13] & 0xFF); break;
+    case 12: board_set_rgb(holding_regs[11] & 0xFF, value & 0xFF, holding_regs[13] & 0xFF); break;
+    case 13: board_set_rgb(holding_regs[11] & 0xFF, holding_regs[12] & 0xFF, value & 0xFF); break;
+    }
+}
+
+static void apply_coil_change(void) {
+    for (int i = 0; i < NUM_COILS; i++) {
+        bool val = (coils[i / 8] >> (i % 8)) & 1;
+        board_set_relay(i, val);
+    }
+}
+
+esp_err_t modbus_rtu_slave_init(void) {
+    memset(holding_regs, 0, sizeof(holding_regs));
+    memset(input_regs, 0, sizeof(input_regs));
+    memset(coils, 0, sizeof(coils));
+    memset(discrete_inputs, 0, sizeof(discrete_inputs));
+
+    board_init();
+    holding_regs[1] = 123;
+
+    reg_mutex = xSemaphoreCreateMutex();
+    if (reg_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create reg_mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
+    void *slave_handler = NULL;
+    esp_err_t err = mbc_slave_init(MB_PORT_SERIAL_SLAVE, &slave_handler);
+    if (err != ESP_OK || slave_handler == NULL) {
+        ESP_LOGE(TAG, "mbc_slave_init serial failed: 0x%x", err);
+        return err;
+    }
+
+    mb_communication_info_t comm_info = {0};
+    comm_info.mode = MB_MODE_RTU;
+    comm_info.slave_addr = SLAVE_ID;
+    comm_info.port = UART_NUM;
+    comm_info.baudrate = BAUD_RATE;
+    comm_info.parity = MB_PARITY_NONE;
+
+    err = mbc_slave_setup((void *)&comm_info);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mbc_slave_setup failed: 0x%x", err);
+        return err;
+    }
+
+    // Configure UART pins and RS485 half-duplex mode
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM, TX_PIN, RX_PIN, DE_PIN, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_mode(UART_NUM, UART_MODE_RS485_HALF_DUPLEX));
+
+    mb_register_area_descriptor_t reg_area;
+
+    reg_area.type = MB_PARAM_HOLDING;
+    reg_area.start_offset = 0;
+    reg_area.address = (void *)holding_regs;
+    reg_area.size = sizeof(holding_regs);
+    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
+
+    reg_area.type = MB_PARAM_INPUT;
+    reg_area.start_offset = 0;
+    reg_area.address = (void *)input_regs;
+    reg_area.size = sizeof(input_regs);
+    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
+
+    reg_area.type = MB_PARAM_COIL;
+    reg_area.start_offset = 0;
+    reg_area.address = (void *)coils;
+    reg_area.size = sizeof(coils);
+    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
+
+    reg_area.type = MB_PARAM_DISCRETE;
+    reg_area.start_offset = 0;
+    reg_area.address = (void *)discrete_inputs;
+    reg_area.size = sizeof(discrete_inputs);
+    ESP_ERROR_CHECK(mbc_slave_set_descriptor(reg_area));
+
+    running = true;
+    ESP_LOGI(TAG, "Modbus RTU Slave init (id=%d, baud=%d, regs=%d, coils=%d)",
+             SLAVE_ID, BAUD_RATE, NUM_REGISTERS, NUM_COILS);
+    return ESP_OK;
+}
+
+static void event_task(void *arg) {
+    ESP_ERROR_CHECK(mbc_slave_start());
+
+    while (running) {
+        (void)mbc_slave_check_event(MB_RW_MASK);
+
+        mb_param_info_t reg_info;
+        esp_err_t err = mbc_slave_get_param_info(&reg_info, 10);
+        if (err != ESP_OK) continue;
+
+        if (reg_info.type & MB_EVENT_COILS_WR) {
+            if (xSemaphoreTake(reg_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                apply_coil_change();
+                xSemaphoreGive(reg_mutex);
+            }
+        }
+        if (reg_info.type & MB_EVENT_HOLDING_REG_WR) {
+            uint16_t offset = reg_info.mb_offset;
+            uint16_t count = reg_info.size; // size is already in registers
+            if (xSemaphoreTake(reg_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                for (int i = 0; i < count && (offset + i) < NUM_REGISTERS; i++) {
+                    apply_register_write(offset + i, holding_regs[offset + i]);
+                }
+                xSemaphoreGive(reg_mutex);
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void data_update_task(void *arg) {
+    uint16_t counter = 0;
+    int tick = 0;
+    while (running) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (!running) break;
+        tick++;
+        if (tick < 10) continue;
+        tick = 0;
+        counter++;
+
+        xSemaphoreTake(reg_mutex, portMAX_DELAY);
+        holding_regs[0] = counter;
+        holding_regs[1] = (uint16_t)(esp_random() % 1000);
+        memcpy(discrete_inputs, coils, sizeof(coils));
+
+        // Only copy sensor-like data to input registers:
+        //   counter (0), random (1), and general purpose (14-99).
+        // Do NOT mirror control registers: buzzer (10), RGB (11-13).
+        input_regs[0] = holding_regs[0];
+        input_regs[1] = holding_regs[1];
+        for (int i = 14; i < NUM_REGISTERS; i++) {
+            input_regs[i] = holding_regs[i];
+        }
+        xSemaphoreGive(reg_mutex);
+    }
+    vTaskDelete(NULL);
+}
+
+esp_err_t modbus_rtu_slave_start(void) {
+    xTaskCreate(event_task, "mb_rtu_evt", 4096, NULL, tskIDLE_PRIORITY + 5, &event_task_handle);
+    xTaskCreate(data_update_task, "mb_rtu_data", 2048, NULL, tskIDLE_PRIORITY + 3, &data_task_handle);
+    return ESP_OK;
+}
+
+esp_err_t modbus_rtu_slave_stop(void) {
+    running = false;
+    // Allow tasks to observe running==false; data_update_task checks every 100ms
+    vTaskDelay(pdMS_TO_TICKS(500));
+    // mbc_slave_destroy unblocks mbc_slave_check_event in event_task
+    mbc_slave_destroy();
+    // Wait for tasks to finish exiting
+    vTaskDelay(pdMS_TO_TICKS(200));
+    // Force-delete any task that still hasn't exited
+    if (event_task_handle != NULL && eTaskGetState(event_task_handle) != eDeleted) {
+        vTaskDelete(event_task_handle);
+    }
+    if (data_task_handle != NULL && eTaskGetState(data_task_handle) != eDeleted) {
+        vTaskDelete(data_task_handle);
+    }
+    event_task_handle = NULL;
+    data_task_handle = NULL;
+    if (reg_mutex != NULL) {
+        vSemaphoreDelete(reg_mutex);
+        reg_mutex = NULL;
+    }
+    ESP_LOGI(TAG, "Modbus RTU Slave stopped");
+    return ESP_OK;
+}

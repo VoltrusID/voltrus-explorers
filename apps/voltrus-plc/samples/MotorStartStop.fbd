@@ -1,0 +1,158 @@
+{
+  "declarations": [],
+  "edges": [
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e1",
+      "source": "node-1",
+      "sourceHandle": "OUT",
+      "target": "node-4",
+      "targetHandle": "IN1"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN2"
+      },
+      "id": "e4",
+      "source": "node-2",
+      "sourceHandle": "OUT",
+      "target": "node-5",
+      "targetHandle": "IN2"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN2"
+      },
+      "id": "e2",
+      "source": "node-3",
+      "sourceHandle": "OUT",
+      "target": "node-4",
+      "targetHandle": "IN2"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e3",
+      "source": "node-4",
+      "sourceHandle": "OUT",
+      "target": "node-5",
+      "targetHandle": "IN1"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN"
+      },
+      "id": "e5",
+      "source": "node-5",
+      "sourceHandle": "OUT",
+      "target": "node-6",
+      "targetHandle": "IN"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "blockType": "AND",
+        "label": "AND",
+        "pinValues": {}
+      },
+      "id": "node-5",
+      "position": {
+        "x": 500,
+        "y": 100
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "OR",
+        "label": "OR",
+        "pinValues": {}
+      },
+      "id": "node-4",
+      "position": {
+        "x": 250,
+        "y": 50
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "registerNumber": 0,
+        "registerType": "M",
+        "variableName": "M0",
+        "variableType": "BOOL"
+      },
+      "id": "node-3",
+      "position": {
+        "x": 0,
+        "y": 240
+      },
+      "type": "input_pin"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "registerNumber": 0,
+        "registerType": "X",
+        "variableName": "X0",
+        "variableType": "BOOL"
+      },
+      "id": "node-1",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "type": "input_pin"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "registerNumber": 1,
+        "registerType": "X",
+        "variableName": "X1",
+        "variableType": "BOOL"
+      },
+      "id": "node-2",
+      "position": {
+        "x": 0,
+        "y": 120
+      },
+      "type": "input_pin"
+    },
+    {
+      "data": {
+        "blockType": "OUTPUT_PIN",
+        "label": "Output",
+        "pinValues": {},
+        "registerNumber": 0,
+        "registerType": "Y",
+        "variableName": "Y0",
+        "variableType": "BOOL"
+      },
+      "id": "node-6",
+      "position": {
+        "x": 750,
+        "y": 100
+      },
+      "type": "output_pin"
+    }
+  ],
+  "programName": "MotorStartStop",
+  "version": "1.1"
+}

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0.0.10" SoftwareRevision="32.11" TargetName="Packaging" TargetType="Controller" ContainsContext="false">
+  <Controller Use="Target" Name="Packaging">
+    <Tags>
+      <Tag Name="Estop" TagType="Base" DataType="BOOL" Constant="false"/>
+    </Tags>
+    <Programs>
+      <Program Use="Target" Name="Packer" Type="Normal" MainRoutineName="Main">
+        <Tags>
+          <Tag Name="Grip" TagType="Base" DataType="BOOL" Constant="false"/>
+          <Tag Name="HomeTimer" TagType="Base" DataType="TIMER" Constant="false"/>
+        </Tags>
+        <Routines>
+          <Routine Use="Target" Name="Main" Type="RLL">
+            <RLLContent>
+              <Rung Number="0">
+                <Comment><![CDATA[Home the axis on first scan]]></Comment>
+                <Text><![CDATA[XIC(Estop)OTL(Grip)]]></Text>
+              </Rung>
+              <Rung Number="1">
+                <Text><![CDATA[XIC(Grip)OTU(Grip)]]></Text>
+              </Rung>
+            </RLLContent>
+          </Routine>
+          <Routine Use="Target" Name="Timing" Type="ST">
+            <STContent>
+              <Line Number="0">Grip := FALSE;</Line>
+              <Line Number="1">HomeTimer(IN := Grip, PT := T#100MS);</Line>
+            </STContent>
+          </Routine>
+        </Routines>
+      </Program>
+    </Programs>
+  </Controller>
+</RSLogix5000Content>

@@ -1,0 +1,5 @@
+menu "OPC UA Server Config"
+    config OPCUA_SERVER_PORT
+        int "TCP Port"
+        default 4840
+endmenu

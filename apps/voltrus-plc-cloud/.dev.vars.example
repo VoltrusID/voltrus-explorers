@@ -1,0 +1,13 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+JWT_SECRET=dev-secret-change-me
+# Polar.sh webhook signing secret (whsec_...); unsigned webhooks are rejected.
+POLAR_WEBHOOK_SECRET=
+# Polar product ids that map subscriptions to plans; unknown products are ignored.
+POLAR_PRODUCT_SOLO=
+POLAR_PRODUCT_TEAM=
+# Polar org access token with customer_sessions:write for the billing portal link.
+POLAR_ACCESS_TOKEN=
+# Polar checkout URLs surfaced by GET /api/billing/plan; empty = that plan's
+# Upgrade button is hidden in the IDE.
+POLAR_CHECKOUT_SOLO=
+POLAR_CHECKOUT_TEAM=

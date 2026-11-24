@@ -1,0 +1,28 @@
+[package]
+name = "mt-plc-runtime"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["io"]
+io = ["dep:mt-modbus", "dep:mt-opcua", "dep:mt-s7", "dep:mt-enip", "dep:mt-mqtt", "dep:mt-protocol", "dep:rumqttc", "dep:tokio"]
+
+[dependencies]
+mt-plc-types = { path = "../mt-plc-types" }
+mt-protocol = { path = "../mt-protocol", optional = true }
+mt-modbus = { path = "../mt-modbus", optional = true }
+mt-opcua = { path = "../mt-opcua", optional = true }
+mt-s7 = { path = "../mt-s7", optional = true }
+mt-mqtt = { path = "../mt-mqtt", optional = true }
+mt-enip = { path = "../mt-enip", optional = true }
+tokio = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rumqttc = { version = "0.24", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+
+[dev-dependencies]
+mt-stc = { path = "../mt-stc" }

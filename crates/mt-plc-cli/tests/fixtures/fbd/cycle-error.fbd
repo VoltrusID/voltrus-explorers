@@ -1,0 +1,83 @@
+{
+  "declarations": [],
+  "edges": [
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e1",
+      "source": "node-1",
+      "sourceHandle": "OUT",
+      "target": "node-2",
+      "targetHandle": "IN1"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN2"
+      },
+      "id": "e2",
+      "source": "node-2",
+      "sourceHandle": "OUT",
+      "target": "node-1",
+      "targetHandle": "IN2"
+    },
+    {
+      "data": {
+        "sourcePin": "OUT",
+        "targetPin": "IN1"
+      },
+      "id": "e3",
+      "source": "node-3",
+      "sourceHandle": "OUT",
+      "target": "node-1",
+      "targetHandle": "IN1"
+    }
+  ],
+  "nodes": [
+    {
+      "data": {
+        "blockType": "AND",
+        "label": "AND",
+        "pinValues": {}
+      },
+      "id": "node-1",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "OR",
+        "label": "OR",
+        "pinValues": {}
+      },
+      "id": "node-2",
+      "position": {
+        "x": 200,
+        "y": 0
+      },
+      "type": "block"
+    },
+    {
+      "data": {
+        "blockType": "INPUT_PIN",
+        "label": "Input",
+        "pinValues": {},
+        "variableName": "X0",
+        "variableType": "BOOL"
+      },
+      "id": "node-3",
+      "position": {
+        "x": 0,
+        "y": 200
+      },
+      "type": "input_pin"
+    }
+  ],
+  "programName": "CycleError",
+  "version": "1.1"
+}

@@ -1,0 +1,11 @@
+menu "S7 Server Config"
+    config S7_SERVER_PORT
+        int "TCP Port"
+        default 102
+    config S7_RACK
+        int "Rack Number"
+        default 0
+    config S7_SLOT
+        int "Slot Number"
+        default 1
+endmenu

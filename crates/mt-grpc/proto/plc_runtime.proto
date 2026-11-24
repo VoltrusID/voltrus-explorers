@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+package plc_runtime;
+
+// Empty message for RPCs that take no parameters.
+message Empty {}
+
+// ── Runtime State ──
+
+enum RuntimeStatus {
+  RUNTIME_STATUS_UNSPECIFIED = 0;
+  RUNTIME_STATUS_STOPPED = 1;
+  RUNTIME_STATUS_RUNNING = 2;
+  RUNTIME_STATUS_PAUSED = 3;
+  RUNTIME_STATUS_ERROR = 4;
+}
+
+message RuntimeState {
+  RuntimeStatus status = 1;
+  uint64 cycle_count = 2;
+  double last_cycle_ms = 3;
+  double avg_cycle_ms = 4;
+  double max_cycle_ms = 5;
+  string error_message = 6;
+  // Fingerprint of the bundle currently loaded by the runtime (drift
+  // detection). CRC32 is `crc32_le` over the payload the runtime loaded:
+  // the bincode bytes for gRPC deploys, the VLT1 body without its trailing
+  // 4-byte CRC for HTTP/ESP32 deploys. Both stay 0 until a Deploy succeeds
+  // (next free field numbers: 9+).
+  uint32 deployed_bundle_crc32 = 7;
+  uint64 deployed_bundle_len = 8;
+}
+
+// ── Variable Updates ──
+
+// Value is a oneof so we can carry typed PLC variable values.
+message VariableValue {
+  oneof value {
+    bool bool_val = 1;
+    int32 int_val = 2;
+    int32 dint_val = 3;
+    float real_val = 4;
+    string string_val = 5;
+    uint32 word_val = 6;
+    uint32 dword_val = 7;
+    int32 time_val = 8;
+    uint32 byte_val = 9;
+  }
+}
+
+message VariableUpdate {
+  string name = 1;
+  string type_name = 2;
+  VariableValue current = 3;
+  string quality = 4;
+  uint64 timestamp_us = 5; // microseconds since epoch
+}
+
+// ── Deploy ──
+
+message DeployRequest {
+  bytes bytecode = 1;
+  // JSON-encoded RuntimeConfig overrides
+  string config_json = 2;
+}
+
+message DeployResponse {
+  bool success = 1;
+  string error_message = 2;
+  RuntimeState new_state = 3;
+}
+
+// ── Start / Stop / Step ──
+
+message StartConfig {
+  // JSON-encoded RuntimeConfig overrides applied before starting
+  string config_json = 1;
+}
+
+// ── Watch ──
+
+message WatchRequest {
+  // If empty, watch all variables. Otherwise, only the named variables.
+  repeated string variable_names = 1;
+  // Minimum interval between pushes in milliseconds (0 = every cycle).
+  uint32 interval_ms = 2;
+}
+
+// ── Force / Unforce ──
+
+message ForceRequest {
+  string variable_name = 1;
+  VariableValue value = 2;
+}
+
+message UnforceRequest {
+  string variable_name = 1;
+}
+
+message ForceResponse {
+  bool success = 1;
+  string error_message = 2;
+  VariableUpdate current = 3;
+}
+
+// ── I/O ──
+
+message IoMapping {
+  string variable_name = 1;
+  string address = 2; // e.g. "%QW100", "%IX0.0"
+  string driver = 3;  // "modbus", "opcua", "s7", "enip", "mqtt"
+  // Driver-specific connection parameters as JSON
+  string connection_json = 4;
+}
+
+message IoConfig {
+  repeated IoMapping mappings = 1;
+}
+
+message IoConnectionStatus {
+  string driver = 1;
+  string address = 2;
+  bool connected = 3;
+  string error_message = 4;
+}
+
+message IoStatus {
+  repeated IoConnectionStatus connections = 1;
+}
+
+// ── Service ──
+
+service PlcRuntime {
+  // Deploy a new bytecode bundle into the runtime.
+  rpc Deploy(DeployRequest) returns (DeployResponse);
+  // Get the current runtime state.
+  rpc GetRuntimeState(Empty) returns (RuntimeState);
+  // Start the scan cycle loop.
+  rpc Start(StartConfig) returns (RuntimeState);
+  // Stop the scan cycle loop.
+  rpc Stop(Empty) returns (RuntimeState);
+  // Execute a single scan cycle.
+  rpc Step(Empty) returns (RuntimeState);
+  // Server-streaming: push variable snapshots each scan cycle.
+  rpc WatchVariables(WatchRequest) returns (stream VariableUpdate);
+  // Override a variable value (force).
+  rpc ForceVariable(ForceRequest) returns (ForceResponse);
+  // Remove a variable override (unforce).
+  rpc UnforceVariable(UnforceRequest) returns (ForceResponse);
+  // Get I/O driver connection status.
+  rpc GetIoStatus(Empty) returns (IoStatus);
+  // Configure I/O mappings.
+  rpc ConfigureIo(IoConfig) returns (IoStatus);
+}

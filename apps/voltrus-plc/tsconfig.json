@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // lib ahead of target: Promise.withResolvers (ES2024) is used at runtime.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@voltrus/stc-wasm": ["../../crates/mt-stc-wasm/pkg/mt_stc_wasm.d.ts"],
+      "@voltrus/runtime-wasm": ["../../crates/mt-plc-runtime-wasm/pkg/mt_plc_runtime_wasm.d.ts"],
+      "@voltrus/lsp-wasm": ["../../crates/voltrus-lsp-wasm/pkg/voltrus_lsp_wasm.d.ts"]
+    }
+  },
+  "include": ["src"]
+}
