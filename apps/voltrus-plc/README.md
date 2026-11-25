@@ -11,10 +11,10 @@ for the product vision and feature status.
 
 ```bash
 # from monorepo root
-pnpm install
+bun install
 
-# run the IDE (macOS)
-pnpm --filter voltrus-plc tauri dev
+# run the IDE
+cd apps/voltrus-plc && bun run build:wasm && bunx tauri dev
 ```
 
 - Frontend: React 19 + TypeScript + Vite (dev server on port **1440**)
@@ -25,8 +25,8 @@ pnpm --filter voltrus-plc tauri dev
 
 ```bash
 cd apps/voltrus-plc
-pnpm test          # Vitest unit tests (store + transpilers)
-pnpm test:e2e      # Playwright smoke tests (plain Chromium, port 1440)
+bun run test        # Vitest unit tests (store + transpilers)
+bun run test:e2e      # Playwright smoke tests (plain Chromium, port 1440)
 
 # from monorepo root
 cargo test -p mt-stc -p mt-plc-runtime -p mt-plc-types -p mt-grpc

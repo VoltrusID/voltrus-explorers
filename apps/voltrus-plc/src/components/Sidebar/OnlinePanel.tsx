@@ -134,7 +134,7 @@ function OnlinePanelDesktop() {
                 id={id}
                 className="vt-input vt-input--mono vt-input--sm"
                 value={target.host}
-                placeholder="192.168.0.1"
+                placeholder="192.168.0.1 or host:port"
                 disabled={online || busy}
                 onChange={(e) => setTarget({ ...target, host: e.target.value })}
                 onKeyDown={(e) => { if (e.key === "Enter" && !online) void goOnline(); }}

@@ -76,7 +76,7 @@ pub async fn s7_go_online(
     rack: u8,
     slot: u8,
 ) -> Result<OnlineInfo, String> {
-    let target = OnlineTarget { host: host.trim().to_string(), port: port.unwrap_or(102), rack, slot };
+    let target = parse_target(&host, port.unwrap_or(102), rack, slot)?;
     if target.host.is_empty() {
         return Err("Enter the CPU's IP address".into());
     }
@@ -107,6 +107,16 @@ pub async fn s7_go_online(
     let info = OnlineInfo { target: target.clone(), pdu_size, cpu, cpu_error, mode };
     *guard = Some(Online { client, target });
     Ok(info)
+}
+
+/// `192.168.0.1`, or `127.0.0.1:1102` for a CPU or simulator on another port.
+fn parse_target(host: &str, default_port: u16, rack: u8, slot: u8) -> Result<OnlineTarget, String> {
+    let host = host.trim();
+    let (host, port) = match host.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') => (h, p.parse::<u16>().map_err(|_| format!("{p} is not a port number"))?),
+        _ => (host, default_port),
+    };
+    Ok(OnlineTarget { host: host.to_string(), port, rack, slot })
 }
 
 #[tauri::command]
@@ -264,6 +274,14 @@ mod tests {
             poll_interval_ms: 1000,
         };
         (server, S7Client::connect(config).await.unwrap())
+    }
+
+    #[test]
+    fn targets_may_name_a_port() {
+        let t = parse_target(" 127.0.0.1:1102 ", 102, 0, 1).unwrap();
+        assert_eq!((t.host.as_str(), t.port), ("127.0.0.1", 1102));
+        assert_eq!(parse_target("10.0.0.5", 102, 0, 1).unwrap().port, 102);
+        assert!(parse_target("10.0.0.5:x", 102, 0, 1).is_err());
     }
 
     fn req(address: &str, t: &str) -> WatchRequest {
