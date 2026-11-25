@@ -72,6 +72,31 @@ export interface WatchRow {
   dataType: string;
 }
 
+export interface BlockDetails {
+  block_type: string;
+  block_number: number;
+  language: string;
+  load_size: number;
+  mc7_size: number;
+  local_data: number;
+  know_how_protected: boolean;
+  code_time: string;
+  interface_time: string;
+  author: string;
+  family: string;
+  name: string;
+  version: string;
+  checksum: number;
+}
+
+export interface BlockUpload {
+  block_type: string;
+  block_number: number;
+  details: BlockDetails | null;
+  error: string | null;
+  file: string | null;
+}
+
 export interface WatchResult {
   value: string | null;
   error: string | null;
@@ -96,6 +121,8 @@ export const s7 = {
     }),
   writeWatch: (row: WatchRow, value: string) =>
     invoke<void>("s7_write_watch", { address: row.address, dataType: row.dataType || null, value }),
+  uploadBlocks: (blocks: { block_type: string; block_number: number }[], backupDir?: string) =>
+    invoke<BlockUpload[]>("s7_upload_blocks", { blocks, backupDir: backupDir ?? null }),
   scan: (subnet: string) => invoke<FoundDevice[]>("s7_scan", { subnet }),
   suggestSubnet: () => invoke<string | null>("s7_suggest_subnet"),
 };

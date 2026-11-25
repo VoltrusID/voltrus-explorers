@@ -2,7 +2,7 @@
 // PLC tags or the layout of a standard-access DB). Both are JSON files saved with the project and
 // opened as editor tabs; the Online & diagnostics view is a tab without a file.
 import { watchTypeFor, s7WatchAddress } from "./plcImport/common";
-import { memberAddress, type Layout } from "./plcImport/dbSource";
+import { layoutDb, memberAddress, parseDbSource, sourceToSt, type DeclType, type Layout, type Member, type SourceBlock } from "./plcImport/dbSource";
 import type { TagTable } from "./plcImport/tagTable";
 import { defaultTypeFor } from "./s7";
 
@@ -15,11 +15,11 @@ export const isWatchDoc = (path: string) => path.endsWith(WATCH_EXT);
 export const isTagDoc = (path: string) => path.endsWith(TAGS_EXT);
 export const isVirtualDoc = (path: string) => path.startsWith("s7:");
 /** Device documents are not program source: the compiler and the Project list skip them. */
-export const isDeviceDoc = (path: string) => isVirtualDoc(path) || isWatchDoc(path) || isTagDoc(path);
+export const isDeviceDoc = (path: string) => isVirtualDoc(path) || isWatchDoc(path) || isTagDoc(path) || path.endsWith(".s7hw");
 
 /** File name without folder and extension. */
 export function docTitle(path: string): string {
-  return (path.split("/").pop() ?? path).replace(/\.(s7watch|s7tags)$/, "");
+  return (path.split("/").pop() ?? path).replace(/\.(s7watch|s7tags|s7hw)$/, "");
 }
 
 // ── Watch tables ──
@@ -90,11 +90,22 @@ export interface TagDocDb {
   size: number;
 }
 
+/** A top-level member of a DB as declared: the type is source text (`Int`, `Array[0..9] of Bool`). */
+export interface DeclRow {
+  name: string;
+  type: string;
+  initial?: string;
+  comment: string;
+}
+
 export interface TagDoc {
   format: "voltrus-s7-tags";
   version: 1;
   kind: "tags" | "db";
   db?: TagDocDb;
+  /** DBs: the declaration the rows are laid out from (editable), and the UDT sources it uses. */
+  decl?: DeclRow[];
+  types?: string;
   rows: TagDocRow[];
 }
 
@@ -127,7 +138,18 @@ export function parseTagDoc(text: string): TagDoc {
         size: num(raw.db.size) ?? 0,
       }
     : undefined;
-  return { format: "voltrus-s7-tags", version: 1, kind, db: kind === "db" ? db : undefined, rows };
+  const decl: DeclRow[] | undefined = kind === "db" && Array.isArray(raw?.decl)
+    ? raw.decl
+        .filter((r: unknown): r is Record<string, unknown> => !!r && typeof r === "object")
+        .map((r: Record<string, unknown>) => ({
+          name: String(r.name ?? ""),
+          type: String(r.type ?? ""),
+          initial: typeof r.initial === "string" && r.initial ? r.initial : undefined,
+          comment: String(r.comment ?? ""),
+        }))
+    : undefined;
+  const types = kind === "db" && typeof raw?.types === "string" && raw.types ? raw.types : undefined;
+  return { format: "voltrus-s7-tags", version: 1, kind, db: kind === "db" ? db : undefined, decl, types, rows };
 }
 
 export function serializeTagDoc(doc: TagDoc): string {
@@ -170,12 +192,19 @@ export function tagDocFromTable(t: TagTable): TagDoc {
   };
 }
 
-export function tagDocFromDb(db: { name: string; number?: number; optimized: boolean; layout: Layout }, number?: number): TagDoc {
+export function tagDocFromDb(
+  db: { name: string; number?: number; optimized: boolean; layout: Layout; block?: SourceBlock; types?: SourceBlock[] },
+  number?: number,
+): TagDoc {
   const doc: TagDoc = {
     format: "voltrus-s7-tags",
     version: 1,
     kind: "db",
     db: { name: db.name, number: undefined, optimized: db.optimized, size: db.layout.size },
+    decl: db.block && !db.block.ofType
+      ? db.block.members.map((m) => ({ name: m.name, type: declTypeText(m.type), initial: db.block!.actual[m.name] ?? m.initial, comment: m.comment }))
+      : undefined,
+    types: db.types?.length ? db.types.map(typeBlockText).join("\n") : undefined,
     rows: db.layout.members.map((m) => ({
       name: m.path,
       dataType: m.type,
@@ -253,4 +282,93 @@ export function nextDocName(base: string, ext: string, taken: string[]): string 
     const name = `${base}_${i}${ext}`;
     if (!names.has(name.toLowerCase())) return name;
   }
+}
+
+// ── DB declarations ──
+
+/** A declared type back as source text. */
+export function declTypeText(t: DeclType): string {
+  switch (t.kind) {
+    case "elementary": return t.name;
+    case "udt": return `"${t.name}"`;
+    case "array": return `Array[${t.dims.map(([a, b]) => `${a}..${b}`).join(", ")}] of ${declTypeText(t.of)}`;
+    case "struct": return `Struct ${t.members.map(memberText).join(" ")} End_Struct`;
+  }
+}
+
+function memberText(m: Member): string {
+  const name = /^[A-Za-z_][A-Za-z0-9_]*$/.test(m.name) ? m.name : `"${m.name}"`;
+  return `${name} : ${declTypeText(m.type)}${m.initial !== undefined ? ` := ${m.initial}` : ""};`;
+}
+
+function typeBlockText(b: SourceBlock): string {
+  return `TYPE "${b.name}"\n  STRUCT\n${b.members.map((m) => `    ${memberText(m)}${m.comment ? ` // ${m.comment}` : ""}`).join("\n")}\n  END_STRUCT;\nEND_TYPE\n`;
+}
+
+/** The DB as a source file: its UDTs, then the DATA_BLOCK with the declaration. */
+export function dbSourceText(doc: TagDoc): string {
+  const db = doc.db!;
+  const lines = (doc.decl ?? []).map((r) => {
+    const name = /^[A-Za-z_][A-Za-z0-9_]*$/.test(r.name) ? r.name : `"${r.name}"`;
+    const comment = r.comment.replace(/\n/g, " ");
+    return `      ${name} : ${r.type}${r.initial ? ` := ${r.initial}` : ""};${comment ? `   // ${comment}` : ""}`;
+  });
+  return `${doc.types ?? ""}
+DATA_BLOCK "${db.name}"
+{ S7_Optimized_Access := '${db.optimized ? "TRUE" : "FALSE"}' }
+VERSION : 0.1
+   STRUCT
+${lines.join("\n")}
+   END_STRUCT;
+BEGIN
+END_DATA_BLOCK
+`;
+}
+
+/**
+ * Lay a DB out again from its declaration: new rows with offsets (and addresses, with a DB
+ * number). On a declaration that does not parse, the rows stay as they were and the error is given.
+ */
+export function relayoutDb(doc: TagDoc): { doc: TagDoc; error: string | null } {
+  if (doc.kind !== "db" || !doc.db || !doc.decl) return { doc, error: null };
+  try {
+    const blocks = parseDbSource(dbSourceText(doc));
+    const block = blocks.find((b) => b.kind === "db");
+    if (!block) return { doc, error: "No data block in the declaration" };
+    const layout = layoutDb(block, blocks);
+    const next: TagDoc = {
+      ...doc,
+      db: { ...doc.db, size: layout.size },
+      rows: layout.members.map((m) => ({
+        name: m.path,
+        dataType: m.type,
+        address: "",
+        comment: m.comment,
+        byte: doc.db!.optimized ? undefined : m.byte,
+        bit: doc.db!.optimized ? undefined : m.bit,
+        size: m.size,
+      })),
+    };
+    return { doc: withDbNumber(next, doc.db.number), error: layout.warnings[0] ?? null };
+  } catch (e) {
+    return { doc, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** ST for the DB (types plus a program declaring it), as the DB-source import writes it. */
+export function dbToSt(doc: TagDoc): { fileName: string; st: string } {
+  const st = sourceToSt(parseDbSource(dbSourceText(doc)), `${doc.db?.name ?? "DB"}.db`);
+  return { fileName: st.fileName, st: st.st };
+}
+
+/** A new, empty DB with standard access. */
+export function newDbDoc(name: string): TagDoc {
+  return relayoutDb({
+    format: "voltrus-s7-tags",
+    version: 1,
+    kind: "db",
+    db: { name, optimized: false, size: 0 },
+    decl: [{ name: "Value", type: "Int", comment: "" }],
+    rows: [],
+  }).doc;
 }

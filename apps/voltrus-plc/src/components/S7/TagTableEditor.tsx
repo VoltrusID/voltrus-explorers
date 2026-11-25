@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Callout, IconButton, StatusDot } from "@mactools/ui";
-import { Database, Eye, EyeOff, ListPlus, Tags, X } from "lucide-react";
+import { Database, Eye, EyeOff, FileCode, ListPlus, Tags, X } from "lucide-react";
 import { s7, type WatchResult } from "../../lib/s7";
-import { createWatchTable, listDeviceDocs, readDoc, updateDoc, openDoc } from "../../lib/deviceProject";
+import { createWatchTable, listDeviceDocs, readDoc, updateDoc, openDoc, writeProjectFile } from "../../lib/deviceProject";
 import {
   appendToWatchDoc,
+  dbToSt,
   docTitle,
+  relayoutDb,
+  type DeclRow,
   offsetText,
   parseTagDoc,
   parseWatchDoc,
@@ -53,6 +56,7 @@ function TagTable({ path, doc, onChange }: { path: string; doc: TagDoc; onChange
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [results, setResults] = useState<WatchResult[]>([]);
   const [watchTarget, setWatchTarget] = useState<string>(NEW_TABLE);
+  const [view, setView] = useState<"members" | "declaration">("members");
   const watchTables = listDeviceDocs("watch");
   const rowsRef = useRef(doc.rows);
   rowsRef.current = doc.rows;
@@ -131,6 +135,15 @@ function TagTable({ path, doc, onChange }: { path: string; doc: TagDoc; onChange
           <StatusDot tone="neutral" label="Offline" />
         )}
       </header>
+      {isDb && doc.decl && (
+        <div className="vt-tabs s7-doc__views">
+          <button className="vt-tab" aria-selected={view === "members"} onClick={() => setView("members")}>Members and offsets</button>
+          <button className="vt-tab" aria-selected={view === "declaration"} onClick={() => setView("declaration")}>Declaration</button>
+        </div>
+      )}
+      {isDb && doc.decl && view === "declaration" ? (
+        <DbDeclaration path={path} doc={doc} onChange={onChange} />
+      ) : (<>
       <div className="s7-doc__toolbar">
         {isDb && !doc.db!.optimized && (
           <label className="s7-row s7-dbno">
@@ -249,6 +262,90 @@ function TagTable({ path, doc, onChange }: { path: string; doc: TagDoc; onChange
           </tbody>
         </table>
       </div>
+      </>)}
     </div>
+  );
+}
+
+/** Edit a DB's declaration; offsets and addresses follow on every change. */
+function DbDeclaration({ path, doc, onChange }: { path: string; doc: TagDoc; onChange: (d: TagDoc) => void }) {
+  const addLog = useStore((s) => s.addLog);
+  const decl = doc.decl ?? [];
+  const error = useMemo(() => relayoutDb(doc).error, [doc]);
+  const update = (next: DeclRow[], db = doc.db!) => onChange(relayoutDb({ ...doc, db, decl: next }).doc);
+  const patch = (i: number, p: Partial<DeclRow>) => update(decl.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const offsetOf = (name: string) => {
+    const r = doc.rows.find((x) => x.name === name || x.name.startsWith(`${name}.`) || x.name.startsWith(`${name}[`));
+    return r ? offsetText(r) : "";
+  };
+  const generateSt = async () => {
+    try {
+      const { fileName, st } = dbToSt(doc);
+      await writeProjectFile(fileName, st);
+      addLog("system", `Generated ${fileName} from ${docTitle(path)}`);
+    } catch (e) {
+      addLog("system", `Could not generate ST: ${errorText(e)}`);
+    }
+  };
+  return (
+    <>
+      <div className="s7-doc__toolbar">
+        <label className="s7-check s7-check--inline">
+          <input type="checkbox" checked={doc.db!.optimized}
+            onChange={(e) => update(decl, { ...doc.db!, optimized: e.target.checked })} />
+          Optimized block access
+        </label>
+        <span className="vt-divider--v" />
+        <Button size="sm" icon={<FileCode size={14} />} disabled={!!error && !doc.rows.length} onClick={() => void generateSt()}
+          title="Write the DB as ST types and a program declaring it">
+          Generate ST
+        </Button>
+        <span className="s7-muted">{doc.db!.size} bytes{doc.db!.optimized ? " (optimized: no fixed offsets)" : ""}</span>
+      </div>
+      {error && <Callout tone="danger">{error}</Callout>}
+      <div className="s7-grid-wrap">
+        <table className="vt-table s7-grid s7-grid--edit">
+          <thead>
+            <tr>
+              <th className="s7-grid__no">#</th><th>Name</th><th>Data type</th><th>Start value</th>
+              {!doc.db!.optimized && <th>Offset</th>}<th>Comment</th><th className="s7-grid__mark" />
+            </tr>
+          </thead>
+          <tbody>
+            {decl.map((r, i) => (
+              <tr key={i}>
+                <td className="s7-grid__no">{i + 1}</td>
+                <td><input className="s7-cell" aria-label={`Name of member ${i + 1}`} value={r.name} onChange={(e) => patch(i, { name: e.target.value })} /></td>
+                <td>
+                  <input className="s7-cell mono" aria-label={`Data type of member ${i + 1}`} value={r.type} list="s7-db-types"
+                    onChange={(e) => patch(i, { type: e.target.value })} />
+                </td>
+                <td><input className="s7-cell mono" aria-label={`Start value of member ${i + 1}`} value={r.initial ?? ""}
+                  onChange={(e) => patch(i, { initial: e.target.value || undefined })} /></td>
+                {!doc.db!.optimized && <td><span className="s7-cell-text mono">{offsetOf(r.name)}</span></td>}
+                <td><input className="s7-cell" aria-label={`Comment of member ${i + 1}`} value={r.comment} onChange={(e) => patch(i, { comment: e.target.value })} /></td>
+                <td className="s7-grid__mark">
+                  <IconButton size="sm" label={`Remove ${r.name}`} onClick={() => update(decl.filter((_, j) => j !== i))}><X size={12} /></IconButton>
+                </td>
+              </tr>
+            ))}
+            <tr className="s7-grid__new">
+              <td className="s7-grid__no" />
+              <td colSpan={doc.db!.optimized ? 5 : 6}>
+                <button className="s7-add-row" onClick={() => update([...decl, { name: `Member_${decl.length + 1}`, type: "Int", comment: "" }])}>&lt;Add new&gt;</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <datalist id="s7-db-types">
+          {["Bool", "Byte", "Word", "DWord", "Int", "DInt", "UInt", "UDInt", "Real", "LReal", "Time", "Char", "String[20]", "Array[0..9] of Int", "Struct a : Int; b : Bool; End_Struct"]
+            .map((t) => <option key={t} value={t} />)}
+        </datalist>
+      </div>
+      <p className="s7-muted s7-dv__pad">
+        Types as in a DB source: <code>Int</code>, <code>String[20]</code>, <code>Array[1..8] of Real</code>,
+        a data type in quotes, or <code>Struct … End_Struct</code>.
+      </p>
+    </>
   );
 }

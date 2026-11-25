@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { IconButton } from "@mactools/ui";
-import { Activity, Blocks, ChevronDown, ChevronRight, Cpu, Database, Plus, Table2, Tags } from "lucide-react";
+import { Activity, Blocks, ChevronDown, ChevronRight, Cpu, Database, Plus, Server, Table2, Tags } from "lucide-react";
 import { useStore } from "../../store";
-import { createWatchTable, listDeviceDocs, openDoc, openOnlineTab, readDoc } from "../../lib/deviceProject";
+import { createTagDoc, createWatchTable, listDeviceDocs, openDeviceConfig, openDoc, openOnlineTab, readDoc } from "../../lib/deviceProject";
 import { docTitle, ONLINE_PATH } from "../../lib/s7Docs";
 import { deviceLabel, useS7 } from "../../lib/s7Store";
 
@@ -85,6 +85,8 @@ export default function DeviceTree() {
         </div>
         {open.device && (
           <ul role="group">
+            <Leaf depth={1} label="Device configuration" icon={<Server size={14} strokeWidth={1.75} />}
+              active={!!activePath?.endsWith(".s7hw")} onClick={() => void openDeviceConfig()} />
             <Leaf depth={1} label="Online & diagnostics" icon={<Activity size={14} strokeWidth={1.75} />}
               active={activePath === ONLINE_PATH} onClick={openOnlineTab} />
             <Group label="Watch tables" icon={<Table2 size={14} strokeWidth={1.75} />} open={open.watch} onToggle={() => toggle("watch")}
@@ -99,8 +101,14 @@ export default function DeviceTree() {
                   active={activePath === w.path} onClick={() => void openDoc(w.path)} />
               ))}
             </Group>
-            <Group label="PLC tags and DBs" icon={<Tags size={14} strokeWidth={1.75} />} open={open.tags} onToggle={() => toggle("tags")}>
-              {tagTables.length === 0 && <li className="tree-empty">Import a tag table or DB source</li>}
+            <Group label="PLC tags and DBs" icon={<Tags size={14} strokeWidth={1.75} />} open={open.tags} onToggle={() => toggle("tags")}
+              action={
+                <>
+                  <IconButton size="sm" label="Add tag table" title="Add tag table" onClick={() => void createTagDoc("tags")}><Tags size={12} /></IconButton>
+                  <IconButton size="sm" label="Add data block" title="Add data block" onClick={() => void createTagDoc("db")}><Database size={12} /></IconButton>
+                </>
+              }>
+              {tagTables.length === 0 && <li className="tree-empty">Import, or add one with the buttons</li>}
               {tagTables.map((t) => (
                 <TagLeaf key={t.path} path={t.path} name={t.name} active={activePath === t.path} />
               ))}

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mt_protocol::ProtocolClient;
-use mt_s7::{BlockListEntry, CpuInfo, DiagBuffer, S7Client, S7Config, S7ConnectOptions, S7Value, StartMode};
+use mt_s7::{BlockDetails, BlockListEntry, BlockType, CpuInfo, DiagBuffer, S7Client, S7Config, S7ConnectOptions, S7Value, StartMode};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -159,6 +159,71 @@ pub async fn s7_diag_buffer(state: tauri::State<'_, AppState>) -> Result<DiagBuf
 #[tauri::command]
 pub async fn s7_list_blocks(state: tauri::State<'_, AppState>) -> Result<Vec<BlockListEntry>, String> {
     with_client(&state, async |c| c.list_blocks().await).await
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BlockRef {
+    pub block_type: String,
+    pub block_number: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockUpload {
+    pub block_type: String,
+    pub block_number: u16,
+    pub details: Option<BlockDetails>,
+    pub error: Option<String>,
+    /// Where the block was saved, when a backup folder was given.
+    pub file: Option<String>,
+}
+
+/// Upload blocks to read their details (author, version, checksum, time stamps) and, with
+/// `backup_dir`, save each as `<OB1>.blk`, the bytes the CPU sent. The code is not decoded.
+/// S7-1200/1500 refuse uploads over PUT/GET; each block gets its own error.
+#[tauri::command]
+pub async fn s7_upload_blocks(
+    state: tauri::State<'_, AppState>,
+    blocks: Vec<BlockRef>,
+    backup_dir: Option<String>,
+) -> Result<Vec<BlockUpload>, String> {
+    if let Some(dir) = &backup_dir {
+        std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create {dir}: {e}"))?;
+    }
+    let mut out = Vec::with_capacity(blocks.len());
+    for b in blocks {
+        let mut row = BlockUpload { block_type: b.block_type.clone(), block_number: b.block_number, details: None, error: None, file: None };
+        let Some(kind) = BlockType::from_str_name(&b.block_type) else {
+            row.error = Some(format!("{} is not a block type", b.block_type));
+            out.push(row);
+            continue;
+        };
+        match with_client(&state, async |c| c.upload_block(&kind, b.block_number).await).await {
+            Ok(bytes) => {
+                match mt_s7::block_details(&bytes) {
+                    Ok(d) => row.details = Some(d),
+                    Err(e) => row.error = Some(e),
+                }
+                if let Some(dir) = &backup_dir {
+                    let path = std::path::Path::new(dir).join(format!("{}{}.blk", b.block_type, b.block_number));
+                    match std::fs::write(&path, &bytes) {
+                        Ok(()) => row.file = Some(path.to_string_lossy().into_owned()),
+                        Err(e) => row.error = Some(format!("Uploaded but not saved: {e}")),
+                    }
+                }
+            }
+            Err(e) => {
+                let lost = !state.siemens.conn.lock().await.is_some();
+                row.error = Some(e.clone());
+                out.push(row);
+                if lost {
+                    return Err(e);
+                }
+                continue;
+            }
+        }
+        out.push(row);
+    }
+    Ok(out)
 }
 
 /// Switch the CPU to RUN (warm or cold restart) or STOP. The UI asks for confirmation first.

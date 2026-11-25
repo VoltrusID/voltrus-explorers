@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Callout, EmptyState, StatusDot } from "@mactools/ui";
-import { Blocks, Cpu, Gauge, Plug, RefreshCw, ScrollText, Settings2 } from "lucide-react";
+import { Badge, Button, Callout, EmptyState, StatusDot } from "@mactools/ui";
+import { Blocks, Cpu, FileSearch, Gauge, GitCompareArrows, HardDriveDownload, Plug, RefreshCw, Save, ScrollText, Settings2 } from "lucide-react";
 import { bridgeMode } from "../../api/bridge";
-import { s7, type DiagBuffer, type DiagEntry } from "../../lib/s7";
+import { s7, type BlockDetails, type DiagBuffer, type DiagEntry } from "../../lib/s7";
+import { compareBlocks, loadBaseline, saveBaseline, type Baseline, type CompareRow, type CompareStatus } from "../../lib/s7Blocks";
+import { useStore } from "../../store";
 import { deviceLabel, errorText, useS7 } from "../../lib/s7Store";
 import { ConnectionForm, CpuDetails, ModeBadge, ModeButtons, S7AccessNote } from "./common";
 
@@ -181,45 +183,171 @@ function DiagPane() {
   );
 }
 
+const STATUS_TEXT: Record<CompareStatus, string> = {
+  same: "Same as baseline",
+  changed: "Changed since baseline",
+  new: "Not in baseline",
+  missing: "In baseline, not in the CPU",
+};
+
 function BlocksPane() {
-  const { blocks, blocksError, readBlocks } = useS7();
-  const [loading, setLoading] = useState(false);
+  const { blocks, blocksError, readBlocks, target } = useS7();
+  const projectDir = useStore((s) => s.projectDir);
+  const addLog = useStore((s) => s.addLog);
+  const [loading, setLoading] = useState<null | "list" | "details" | "backup">(null);
+  const [details, setDetails] = useState<Record<string, BlockDetails>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [baseline, setBaseline] = useState<Baseline | null>(null);
+  const [compare, setCompare] = useState(false);
+
+  useEffect(() => { void loadBaseline(target.host).then(setBaseline); }, [target.host, projectDir]);
+
   const refresh = async () => {
-    setLoading(true);
+    setLoading("list");
     await readBlocks();
-    setLoading(false);
+    setLoading(null);
   };
+
+  /** Upload every listed block for its details; with a folder, keep the bytes as a backup. */
+  const upload = async (backup: boolean) => {
+    if (!blocks?.length) return null;
+    setLoading(backup ? "backup" : "details");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const dir = backup && projectDir ? `${projectDir}/cpu_backup/${stamp}` : undefined;
+    try {
+      const res = await s7.uploadBlocks(blocks.map((b) => ({ block_type: b.block_type, block_number: b.block_number })), dir);
+      const d: Record<string, BlockDetails> = {};
+      const err: Record<string, string> = {};
+      for (const r of res) {
+        const key = `${r.block_type}${r.block_number}`;
+        if (r.details) d[key] = r.details;
+        if (r.error) err[key] = r.error;
+      }
+      setDetails(d);
+      setErrors(err);
+      const ok = res.filter((r) => r.details).length;
+      if (dir) addLog("system", `Backed up ${res.filter((r) => r.file).length} of ${res.length} blocks to ${dir}`);
+      else addLog("system", `Read the details of ${ok} of ${res.length} blocks`);
+      return Object.values(d);
+    } catch (e) {
+      addLog("system", `Block upload failed: ${errorText(e)}`);
+      return null;
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const saveAsBaseline = async () => {
+    const list = Object.keys(details).length ? Object.values(details) : await upload(false);
+    if (!list?.length) return;
+    const b: Baseline = { savedAt: new Date().toISOString(), host: target.host, blocks: list };
+    const where = await saveBaseline(b);
+    setBaseline(b);
+    setCompare(true);
+    addLog("system", `Saved a baseline of ${list.length} blocks (${where})`);
+  };
+
+  const runCompare = async () => {
+    if (!Object.keys(details).length) await upload(false);
+    setCompare(true);
+  };
+
+  const rows: CompareRow[] | null = compare && baseline ? compareBlocks(Object.values(details), baseline.blocks) : null;
+  const counts = rows?.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] ?? 0) + 1 }), {} as Record<string, number>);
+  const hasDetails = Object.keys(details).length > 0;
+
+  const detailCells = (d: BlockDetails | undefined, key: string) => d ? (
+    <>
+      <td>{d.name || "–"}</td>
+      <td>{d.family || "–"}</td>
+      <td>{d.author || "–"}</td>
+      <td className="mono">{d.version}</td>
+      <td className="mono">{d.load_size}</td>
+      <td className="mono">{d.code_time}</td>
+      <td className="mono">16#{d.checksum.toString(16).toUpperCase().padStart(4, "0")}</td>
+      <td>{d.know_how_protected ? <Badge tone="warn">Protected</Badge> : ""}</td>
+    </>
+  ) : (
+    <td colSpan={8} className="s7-muted">{errors[key] ?? (hasDetails ? "No details" : "")}</td>
+  );
+
   return (
     <div className="s7-od__pane s7-od__pane--fill">
       <div className="s7-od__bar">
         <h2 className="s7-od__h">Program blocks in the CPU</h2>
         <span className="s7-doc__spacer" />
         {blocks && <span className="s7-muted">{blocks.length} blocks</span>}
-        <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} loading={loading} onClick={refresh}>Refresh</Button>
+        <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} loading={loading === "list"} onClick={refresh}>Refresh</Button>
+      </div>
+      <div className="s7-row">
+        <Button size="sm" icon={<FileSearch size={14} />} disabled={!blocks?.length || loading !== null} loading={loading === "details"}
+          onClick={() => void upload(false)} title="Upload each block to read its header: name, author, version, checksum, time stamps">
+          Read details
+        </Button>
+        <Button size="sm" icon={<HardDriveDownload size={14} />} disabled={!blocks?.length || loading !== null || !projectDir} loading={loading === "backup"}
+          onClick={() => void upload(true)}
+          title={projectDir ? "Save every block, as the CPU sends it, under cpu_backup/ in the project" : "Open a project folder to back up blocks"}>
+          Back up to project
+        </Button>
+        <span className="vt-divider--v" />
+        <Button size="sm" icon={<Save size={14} />} disabled={!blocks?.length || loading !== null} onClick={() => void saveAsBaseline()}>
+          Save as baseline
+        </Button>
+        <Button size="sm" variant={compare ? "primary" : "default"} icon={<GitCompareArrows size={14} />}
+          disabled={!baseline || loading !== null} onClick={() => (compare ? setCompare(false) : void runCompare())}
+          title={baseline ? `Compare with the baseline of ${new Date(baseline.savedAt).toLocaleString()}` : "Save a baseline first"}>
+          {compare ? "Hide comparison" : "Compare with baseline"}
+        </Button>
       </div>
       {blocksError && <Callout tone="warn">The CPU did not list its blocks: {blocksError}. S7-1200/1500 often refuse this.</Callout>}
+      {rows && counts && (
+        <Callout tone={counts.changed || counts.new || counts.missing ? "warn" : "success"}>
+          Against the baseline of {new Date(baseline!.savedAt).toLocaleString()}: {counts.changed ?? 0} changed,
+          {" "}{counts.new ?? 0} new, {counts.missing ?? 0} missing, {counts.same ?? 0} the same.
+        </Callout>
+      )}
       {blocks && blocks.length === 0 && <p className="s7-muted">No blocks listed.</p>}
       {blocks && blocks.length > 0 && (
         <div className="s7-grid-wrap">
           <table className="vt-table s7-grid">
             <thead>
-              <tr><th className="s7-grid__mark" /><th>Block</th><th>Type</th><th>Number</th><th>Language</th></tr>
+              <tr>
+                <th className="s7-grid__mark" /><th>Block</th><th>Language</th>
+                <th>Name</th><th>Family</th><th>Author</th><th>Version</th><th>Load size</th><th>Code time</th><th>Checksum</th><th />
+              </tr>
             </thead>
             <tbody>
-              {blocks.map((b) => (
-                <tr key={`${b.block_type}${b.block_number}`}>
-                  <td className="s7-grid__mark"><span className="s7-mark s7-mark--ok" title="In the CPU" /></td>
-                  <td className="mono">{b.block_type}{b.block_number}</td>
-                  <td>{b.block_type}</td>
-                  <td className="mono">{b.block_number}</td>
-                  <td>{b.language || "–"}</td>
-                </tr>
-              ))}
+              {rows
+                ? rows.map((r) => {
+                    const b = r.now ?? r.then!;
+                    return (
+                      <tr key={r.key} className={`s7-cmp s7-cmp--${r.status}`} title={STATUS_TEXT[r.status] + (r.diffs.length ? `: ${r.diffs.join(", ")}` : "")}>
+                        <td className="s7-grid__mark"><span className={`s7-mark s7-mark--cmp-${r.status}`} /></td>
+                        <td className="mono">{r.key}</td>
+                        <td>{b.language || "–"}</td>
+                        {detailCells(r.now ?? r.then, r.key)}
+                      </tr>
+                    );
+                  })
+                : blocks.map((b) => {
+                    const key = `${b.block_type}${b.block_number}`;
+                    return (
+                      <tr key={key}>
+                        <td className="s7-grid__mark"><span className="s7-mark s7-mark--ok" title="In the CPU" /></td>
+                        <td className="mono">{key}</td>
+                        <td>{b.language || "–"}</td>
+                        {detailCells(details[key], key)}
+                      </tr>
+                    );
+                  })}
             </tbody>
           </table>
         </div>
       )}
-      <p className="s7-muted">Block code is not uploaded: this view lists what the CPU holds.</p>
+      <p className="s7-muted">
+        Details come from each block's header, read by uploading it; the code itself is not decoded.
+        S7-1200/1500 do not allow uploads over PUT/GET. A baseline marks what changed in the CPU since.
+      </p>
     </div>
   );
 }

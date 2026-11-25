@@ -5,6 +5,8 @@ import SfcEditor from "./SfcEditor/SfcEditor";
 import OnlineDiagnostics from "../S7/OnlineDiagnostics";
 import TagTableEditor from "../S7/TagTableEditor";
 import WatchTableEditor from "../S7/WatchTableEditor";
+import DeviceView from "../S7/DeviceView";
+import { isHwDoc } from "../../lib/s7Hw";
 import { isTagDoc, isWatchDoc, ONLINE_PATH } from "../../lib/s7Docs";
 import "./editor.css";
 
@@ -17,6 +19,9 @@ interface EditorRouterProps {
 export default function EditorRouter({ filePath, content, onChange }: EditorRouterProps) {
   if (filePath === ONLINE_PATH) {
     return <OnlineDiagnostics />;
+  }
+  if (isHwDoc(filePath)) {
+    return <DeviceView path={filePath} value={content} onChange={onChange} />;
   }
   if (isWatchDoc(filePath)) {
     return <WatchTableEditor path={filePath} value={content} onChange={onChange} />;

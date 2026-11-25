@@ -106,6 +106,7 @@ pub fn run() {
             commands::siemens::s7_status,
             commands::siemens::s7_diag_buffer,
             commands::siemens::s7_list_blocks,
+            commands::siemens::s7_upload_blocks,
             commands::siemens::s7_set_mode,
             commands::siemens::s7_read_watch,
             commands::siemens::s7_write_watch,

@@ -8,13 +8,17 @@ import {
   isWatchDoc,
   nextDocName,
   ONLINE_PATH,
+  newDbDoc,
   parseTagDoc,
+  serializeTagDoc,
   serializeWatchDoc,
   TAGS_EXT,
   WATCH_EXT,
   type TagDoc,
   type WatchDocRow,
 } from "./s7Docs";
+import { emptyHwDoc, familyFromOrderCode, HW_EXT, isHwDoc, serializeHwDoc } from "./s7Hw";
+import { useS7 } from "./s7Store";
 
 export interface DocRef {
   path: string;
@@ -22,9 +26,9 @@ export interface DocRef {
 }
 
 /** Device documents in the project folder and among the open tabs, sorted by name. */
-export function listDeviceDocs(kind: "watch" | "tags"): DocRef[] {
+export function listDeviceDocs(kind: "watch" | "tags" | "hw"): DocRef[] {
   const { projectFiles, openFiles } = useStore.getState();
-  const test = kind === "watch" ? isWatchDoc : isTagDoc;
+  const test = kind === "watch" ? isWatchDoc : kind === "hw" ? isHwDoc : isTagDoc;
   const byPath = new Map<string, DocRef>();
   for (const f of projectFiles) if (!f.is_dir && test(f.path)) byPath.set(f.path, { path: f.path, name: f.name });
   for (const f of openFiles) if (test(f.path)) byPath.set(f.path, { path: f.path, name: f.name });
@@ -121,4 +125,22 @@ export async function loadTagDocs(): Promise<TagDoc[]> {
     } catch { /* skip */ }
   }
   return docs;
+}
+
+/** Open the device configuration, creating it (for the connected CPU's family) if there is none. */
+export async function openDeviceConfig() {
+  const existing = listDeviceDocs("hw")[0];
+  if (existing) return openDoc(existing.path);
+  const order = useS7.getState().info?.cpu?.order_code ?? "";
+  const doc = emptyHwDoc(familyFromOrderCode(order) ?? "S7-1200");
+  return writeProjectFile(`Device${HW_EXT}`, serializeHwDoc(doc));
+}
+
+/** A new, empty PLC tag table or standard-access DB in the project. */
+export async function createTagDoc(kind: "tags" | "db") {
+  const name = tagDocName(kind === "db" ? "Data_block" : "PLC_tags").replace(/\.s7tags$/, "");
+  const doc = kind === "db"
+    ? newDbDoc(name)
+    : { format: "voltrus-s7-tags" as const, version: 1 as const, kind: "tags" as const, rows: [{ name: "Tag_1", dataType: "Bool", address: "M0.0", comment: "" }] };
+  return writeProjectFile(`${name}${TAGS_EXT}`, serializeTagDoc(doc));
 }

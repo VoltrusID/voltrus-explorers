@@ -19,6 +19,8 @@ export interface ImportedDb {
   optimized: boolean;
   layout: Layout;
   block: SourceBlock;
+  /** The data types (UDTs) of the same source, which the DB may use. */
+  types: SourceBlock[];
 }
 
 export interface ImportPlan {
@@ -101,7 +103,7 @@ function dbSourcePlan(fileName: string, text: string): ImportPlan {
       } else {
         warnings.push(...layout.warnings);
       }
-      return { name: b.name, number: b.number, optimized: b.optimized, layout, block: b };
+      return { name: b.name, number: b.number, optimized: b.optimized, layout, block: b, types: blocks.filter((t) => t.kind === "type") };
     });
   const types = blocks.length - dbs.length;
   return {
