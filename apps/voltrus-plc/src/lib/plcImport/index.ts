@@ -2,7 +2,7 @@
 // (ST) plus, where addresses are known, rows for the Online watch table.
 import { dbWatchRows, layoutDb, parseDbSource, sourceToSt, type Layout, type SourceBlock } from "./dbSource";
 import { sclToSt } from "./scl";
-import { parseTagTableXlsx, parseTagTableXml, tagTableToSt, tagTableWatchRows, type ImportedWatchRow } from "./tagTable";
+import { parseTagTableXlsx, parseTagTableXml, tagTableToSt, tagTableWatchRows, type ImportedWatchRow, type TagTable } from "./tagTable";
 import { toIdentifier } from "./common";
 
 export type { ImportedWatchRow } from "./tagTable";
@@ -26,6 +26,8 @@ export interface ImportPlan {
   summary: string;
   files: ImportedFile[];
   watchRows: ImportedWatchRow[];
+  /** Tag tables as read, for the device's tag-table documents. */
+  tagTables: TagTable[];
   dbs: ImportedDb[];
   warnings: string[];
 }
@@ -55,6 +57,7 @@ export async function planImport(fileName: string, bytes: Uint8Array): Promise<I
       summary: `${r.pous.length} block(s): ${r.pous.join(", ") || "none"}`,
       files: [{ name: `${base}.st`, content: r.st.endsWith("\n") ? r.st : `${r.st}\n` }],
       watchRows: [],
+      tagTables: [],
       dbs: [],
       warnings: r.warnings,
     };
@@ -79,6 +82,7 @@ function tagTablesPlan(tables: Awaited<ReturnType<typeof parseTagTableXlsx>>): I
     summary: `${tables.length} tag table(s), ${tagCount} tag(s), ${watchRows.length} with an address`,
     files,
     watchRows,
+    tagTables: tables,
     dbs: [],
     warnings,
   };
@@ -105,6 +109,7 @@ function dbSourcePlan(fileName: string, text: string): ImportPlan {
     summary: `${dbs.length} data block(s), ${types} data type(s)`,
     files: [{ name: st.fileName, content: st.st }],
     watchRows: [],
+    tagTables: [],
     dbs,
     warnings,
   };

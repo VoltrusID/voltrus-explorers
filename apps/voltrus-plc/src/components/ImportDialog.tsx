@@ -1,37 +1,16 @@
 import { useRef, useState } from "react";
 import { Button, Callout, Dialog } from "@mactools/ui";
 import { FileInput } from "lucide-react";
-import { invoke } from "../api/bridge";
 import { useStore } from "../store";
 import { ACCEPTED_EXTENSIONS, dbRows, planImport, type ImportPlan } from "../lib/plcImport";
-import { appendWatchRows } from "../lib/s7";
-
-/** Write a generated file into the project the way the New File flow does. */
-async function writeProjectFile(name: string, content: string) {
-  const store = useStore.getState();
-  const path = store.projectDir ? `${store.projectDir}/${name}` : name;
-  if (store.projectDir) {
-    await invoke("save_file", { path, content });
-    await store.openFile(path);
-    return;
-  }
-  const { openFiles } = useStore.getState();
-  const existing = openFiles.findIndex((f) => f.path === path);
-  if (existing >= 0) {
-    const next = [...openFiles];
-    next[existing] = { ...next[existing], content, modified: true };
-    useStore.setState({ openFiles: next, activeFileIndex: existing });
-  } else {
-    useStore.setState({
-      openFiles: [...openFiles, { name, path, content, modified: false }],
-      activeFileIndex: openFiles.length,
-    });
-  }
-}
+import { createWatchTable, openDoc, tagDocName, writeProjectFile } from "../lib/deviceProject";
+import { serializeTagDoc, tagDocFromDb, tagDocFromTable, TAGS_EXT } from "../lib/s7Docs";
+import { toIdentifier } from "../lib/plcImport/common";
 
 /**
  * Import from an engineering-software export: XML or spreadsheet tag tables, DB/UDT sources and
- * SCL sources become ST files; tags with absolute addresses can go to the Online watch table.
+ * SCL sources become ST files. Tag tables and DBs also become tag-table documents of the device,
+ * and tags with absolute addresses can go to a new watch table.
  */
 export default function ImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,21 +51,42 @@ export default function ImportDialog({ open, onClose }: { open: boolean; onClose
     Object.entries(dbNumbers).filter(([, v]) => v.trim()).map(([k, v]) => [k, Number(v)]),
   );
   const watchRows = plan ? [...plan.watchRows, ...dbRows(plan.dbs, numbers)] : [];
+  const tagDocs = plan
+    ? [
+        ...plan.tagTables.map((t) => ({ base: toIdentifier(t.name) || "PLC_tags", doc: tagDocFromTable(t) })),
+        ...plan.dbs.map((d) => ({ base: toIdentifier(d.name) || "DB", doc: tagDocFromDb(d, numbers[d.name]) })),
+      ]
+    : [];
 
   const accept = async () => {
     if (!plan) return;
     setBusy(true);
     try {
-      for (const f of plan.files) await writeProjectFile(f.name, f.content);
-      const added = toWatch ? appendWatchRows(watchRows) : 0;
+      const created: string[] = [];
+      let first: string | null = null;
+      for (const f of plan.files) {
+        await writeProjectFile(f.name, f.content, false);
+        created.push(f.name);
+      }
+      for (const t of tagDocs) {
+        const name = tagDocName(t.base);
+        const path = await writeProjectFile(name, serializeTagDoc(t.doc), false);
+        first ??= path;
+        created.push(name);
+      }
+      const base = toIdentifier(fileName.replace(/\.[^.]+$/, "")) || "Imported";
+      if (toWatch && watchRows.length > 0) {
+        const path = await createWatchTable(watchRows.map((r) => ({ ...r, modify: "" })), `${base}_watch`);
+        created.push(path.split("/").pop() ?? path);
+      } else {
+        const store = useStore.getState();
+        const last = plan.files[plan.files.length - 1];
+        const target = first ?? (last ? (store.projectDir ? `${store.projectDir}/${last.name}` : last.name) : null);
+        if (target) await openDoc(target).catch(() => {});
+      }
       const store = useStore.getState();
-      store.addLog(
-        "system",
-        `Imported ${fileName}: ${plan.files.map((f) => f.name).join(", ")}` +
-          (added ? `; ${added} tag(s) added to the Online watch table` : ""),
-      );
+      store.addLog("system", `Imported ${fileName}: ${created.join(", ")}`);
       for (const w of plan.warnings) store.addLog("system", `${fileName}: check: ${w}`);
-      if (added) store.setRightPanelTab("online");
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -138,6 +138,7 @@ export default function ImportDialog({ open, onClose }: { open: boolean; onClose
               <div className="import-dialog__label">Files to create</div>
               <ul className="import-dialog__list mono">
                 {plan.files.map((f) => <li key={f.name}>{f.name}</li>)}
+                {tagDocs.map((t) => <li key={`tags-${t.base}`}>{t.base}{TAGS_EXT} <span className="s7-muted">(device tag table)</span></li>)}
               </ul>
             </div>
 
@@ -166,7 +167,7 @@ export default function ImportDialog({ open, onClose }: { open: boolean; onClose
             {watchRows.length > 0 && (
               <label className="s7-check">
                 <input type="checkbox" checked={toWatch} onChange={(e) => setToWatch(e.target.checked)} />
-                Add {watchRows.length} tag(s) to the Online watch table
+                Create a watch table with {watchRows.length} tag(s)
               </label>
             )}
 

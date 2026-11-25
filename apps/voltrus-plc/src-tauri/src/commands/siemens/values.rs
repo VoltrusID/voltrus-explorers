@@ -185,7 +185,7 @@ impl WatchItem {
             DisplayType::Udint => (bits as u32).to_string(),
             DisplayType::Lint => (bits as i64).to_string(),
             DisplayType::Ulint => bits.to_string(),
-            DisplayType::Real => format_float(f32::from_bits(bits as u32) as f64),
+            DisplayType::Real => format_real(f32::from_bits(bits as u32)),
             DisplayType::Lreal => format_float(f64::from_bits(bits)),
             DisplayType::Time => format_time("T#", bits as u32 as i32 as i64),
             DisplayType::Timer => format_time("S5T#", bits as i64),
@@ -257,6 +257,15 @@ impl WatchItem {
 
 fn type_name(d: DisplayType) -> String {
     format!("{d:?}").to_ascii_uppercase()
+}
+
+/// REAL in its own precision: `9.128201`, not the `9.12820053100586` of its f64 widening.
+fn format_real(f: f32) -> String {
+    if f.is_finite() && f == f.trunc() && f.abs() < 1e7 {
+        format!("{f:.1}")
+    } else {
+        format!("{f}")
+    }
 }
 
 fn format_float(f: f64) -> String {
@@ -412,6 +421,7 @@ mod tests {
         assert_eq!(item("MW0", "WORD").format(&[S7Value::Word(0xFF)]).unwrap(), "16#00FF");
         assert_eq!(item("MD0", "REAL").format(&[S7Value::DWord(1.5f32.to_bits())]).unwrap(), "1.5");
         assert_eq!(item("MD0", "REAL").format(&[S7Value::DWord(2.0f32.to_bits())]).unwrap(), "2.0");
+        assert_eq!(item("MD0", "REAL").format(&[S7Value::DWord(9.128201f32.to_bits())]).unwrap(), "9.128201");
         assert_eq!(item("MD0", "TIME").format(&[S7Value::DWord(90_500)]).unwrap(), "T#1m30s500ms");
         assert_eq!(item("MD0", "TIME").format(&[S7Value::DWord((-2000i32) as u32)]).unwrap(), "T#-2s");
         assert_eq!(item("MB0", "CHAR").format(&[S7Value::Byte(b'A')]).unwrap(), "'A'");
