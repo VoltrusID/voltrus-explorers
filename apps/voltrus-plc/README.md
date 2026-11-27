@@ -54,6 +54,18 @@ Tags with absolute addresses, and members of non-optimized DBs once you enter th
 
 ## Release
 
+From 2.1.0 releases are built in CI: run the **Release Voltrus PLC** workflow (`.github/workflows/release-plc.yml`:
+notarized universal DMG, Windows x64 zip, Linux .deb), then publish its artifacts from your machine:
+
+```bash
+scripts/publish-plc.sh 2.1.0 --run <run id> --notes "What changed"
+```
+
+The in-app updater trusts the CI updater key (`TAURI_SIGNING_PRIVATE_KEY`) from 2.1.0; the key that signed 2.0.x
+updates is gone, so 2.0.x users download 2.1.0 by hand. Update packages are not published yet.
+
+The older local scripts (Mac only):
+
 ```bash
 cd apps/voltrus-plc
 
