@@ -14,7 +14,8 @@ use tokio::net::TcpStream;
 use crate::types::*;
 use crate::vars::*;
 use crate::traffic::TrafficSender;
-use crate::{blocks, framing, szl};
+use crate::control::StartMode;
+use crate::{blocks, control, framing, szl};
 
 // ── Inner client (owns the TCP stream, requires &mut self) ──
 
@@ -455,6 +456,22 @@ impl Inner {
         let response = self.exchange(&request).await.map_err(fail)?;
         blocks::parse_delete_response(&response).map_err(fail)
     }
+
+    // ── CPU control ──
+
+    pub async fn plc_stop(&mut self) -> Result<(), ProtocolError> {
+        let fail = |e: String| ProtocolError::WriteFailed(format!("Stop CPU: {e}"));
+        let request = control::build_stop_request(self.next_pdu_ref());
+        let response = self.exchange(&request).await.map_err(fail)?;
+        control::parse_stop_response(&response).map_err(fail)
+    }
+
+    pub async fn plc_start(&mut self, mode: StartMode) -> Result<(), ProtocolError> {
+        let fail = |e: String| ProtocolError::WriteFailed(format!("Start CPU: {e}"));
+        let request = control::build_start_request(self.next_pdu_ref(), mode);
+        let response = self.exchange(&request).await.map_err(fail)?;
+        control::parse_start_response(&response).map_err(fail)
+    }
 }
 
 /// A string tag whose length the caller did not give: its characters are found by reading the
@@ -628,6 +645,20 @@ impl S7Client {
         let mut guard = self.inner.lock().await;
         let inner = guard.as_mut().ok_or(ProtocolError::NotConnected)?;
         inner.delete_block(block_type, block_number).await
+    }
+
+    /// Put the CPU in STOP. Succeeds if it already was.
+    pub async fn plc_stop(&self) -> Result<(), ProtocolError> {
+        let mut guard = self.inner.lock().await;
+        let inner = guard.as_mut().ok_or(ProtocolError::NotConnected)?;
+        inner.plc_stop().await
+    }
+
+    /// Put the CPU in RUN with a warm or cold restart. Succeeds if it already was running.
+    pub async fn plc_start(&self, mode: StartMode) -> Result<(), ProtocolError> {
+        let mut guard = self.inner.lock().await;
+        let inner = guard.as_mut().ok_or(ProtocolError::NotConnected)?;
+        inner.plc_start(mode).await
     }
 }
 

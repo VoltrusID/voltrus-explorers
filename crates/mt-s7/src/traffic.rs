@@ -86,7 +86,7 @@ fn function_name(code: u8) -> String {
         S7_UPLOAD => "Upload".into(),
         S7_END_UPLOAD => "End Upload".into(),
         S7_PLC_CONTROL => "PLC Control".into(),
-        0x29 => "PLC Stop".into(),
+        crate::control::S7_PLC_STOP => "PLC Stop".into(),
         0x1A => "Request Download".into(),
         0x1B => "Download Block".into(),
         0x1C => "Download Ended".into(),

@@ -467,6 +467,30 @@ pub struct BlockListEntry {
     pub language: String,
 }
 
+/// What the header and footer of an uploaded block say about it (snap7 `TS7BlockInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockDetails {
+    pub block_type: String,
+    pub block_number: u16,
+    pub language: String,
+    /// Size in load memory, header and footer included.
+    pub load_size: u32,
+    /// Size of the MC7 code, or of the data of a DB.
+    pub mc7_size: u16,
+    pub local_data: u16,
+    /// Block security 3: know-how protected.
+    pub know_how_protected: bool,
+    /// `2024-03-18 20:00:00.000`, local time of the engineering station.
+    pub code_time: String,
+    pub interface_time: String,
+    pub author: String,
+    pub family: String,
+    pub name: String,
+    /// `0.1`: major and minor from the version byte.
+    pub version: String,
+    pub checksum: u16,
+}
+
 /// Detailed information about a single block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockInfo {

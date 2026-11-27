@@ -221,6 +221,68 @@ pub(crate) fn check_block(block: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Days since 1984-01-01 and milliseconds since midnight, the S7 block time stamp, as text.
+fn block_time(ms: u32, days: u16) -> String {
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days as i64 + 5113 + 719_468; // 1984-01-01 is day 5113 after 1970-01-01
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (h, m, sec, milli) = (ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    format!("{year:04}-{month:02}-{day:02} {h:02}:{m:02}:{sec:02}.{milli:03}")
+}
+
+fn footer_text(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).trim().to_string()
+}
+
+/// The details of an uploaded block, from its 36-byte header and 56-byte footer.
+pub fn block_details(block: &[u8]) -> Result<BlockDetails, String> {
+    check_block(block)?;
+    if block.len() < BLOCK_HEADER_LEN + BLOCK_FOOTER_LEN {
+        return Err(format!("the block is {} bytes, too short for header and footer", block.len()));
+    }
+    let be16 = |o: usize| u16::from_be_bytes([block[o], block[o + 1]]);
+    let be32 = |o: usize| u32::from_be_bytes([block[o], block[o + 1], block[o + 2], block[o + 3]]);
+    let load_size = be32(8);
+    // The footer ends the block as announced in the header; extra bytes after it are ignored.
+    let end = (load_size as usize).clamp(BLOCK_HEADER_LEN + BLOCK_FOOTER_LEN, block.len());
+    let f = &block[end - BLOCK_FOOTER_LEN..end];
+    let version = f[44];
+    let block_type = match block[5] {
+        0x08 => "OB",
+        0x0A => "DB",
+        0x0B => "SDB",
+        0x0C => "FC",
+        0x0D => "SFC",
+        0x0E => "FB",
+        0x0F => "SFB",
+        _ => "?",
+    };
+    Ok(BlockDetails {
+        block_type: block_type.into(),
+        block_number: be16(6),
+        language: language_name(block[4]),
+        load_size,
+        mc7_size: be16(34),
+        local_data: be16(32),
+        know_how_protected: be32(12) == 3,
+        code_time: block_time(be32(16), be16(20)),
+        interface_time: block_time(be32(22), be16(26)),
+        author: footer_text(&f[20..28]),
+        family: footer_text(&f[28..36]),
+        name: footer_text(&f[36..44]),
+        version: format!("{}.{}", version >> 4, version & 0x0F),
+        checksum: u16::from_be_bytes([f[46], f[47]]),
+    })
+}
+
 // ── Client: delete ──
 
 /// *Delete*: PI service request, function 0x28:
@@ -539,6 +601,19 @@ mod tests {
         assert_eq!(numbers.len(), 71);
         assert_eq!(numbers[0..6], [0, 1, 2, 3, 4, 5]);
         assert_eq!(*numbers.last().unwrap(), 0x7F);
+    }
+
+    #[test]
+    fn block_details_from_header_and_footer() {
+        let block = encode_block(&SimBlock { block_type: BlockType::FC, number: 7, flags: 0x22, language: LANG_AWL, data: vec![0x70; 10] });
+        let d = block_details(&block).unwrap();
+        assert_eq!((d.block_type.as_str(), d.block_number, d.language.as_str()), ("FC", 7, "AWL"));
+        assert_eq!(d.load_size as usize, block.len());
+        assert_eq!(d.mc7_size, 10);
+        assert_eq!(d.code_time, "2024-03-18 20:00:00.000");
+        assert_eq!((d.author.as_str(), d.family.as_str(), d.name.as_str(), d.version.as_str()), ("SIM7", "mt-s7", "FC7", "0.1"));
+        assert!(!d.know_how_protected);
+        assert!(block_details(&block[..40]).is_err());
     }
 
     #[test]

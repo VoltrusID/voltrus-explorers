@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/Tauri/canary/tooling/cli/schema.json",
   "productName": "Voltrus PLC",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "identifier": "com.joyodigitama.voltrus-plc",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1440",
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build"
   },
   "app": {
@@ -29,7 +29,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwNzZDNjBCMTFFMDRGQ0UKUldUT1QrQVJDOFoyTVBsUXVsSlRlaTZGdUdvYTdkK0lzcUxOUktlTmpRemVqSitpL3p2Ulh0c3IK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ2RkVCNzExRjExRjU2OEYKUldTUFZoL3hFYmYrMWo2Zk4wT2YxRFhXZFNCZDAxUXNkMlRJYzVEMHduTnd0V0lINUZkeHNQTisK",
       "endpoints": [
         "https://dl-voltrus-plc.voltrus.id/update/{{target}}/{{arch}}/{{current_version}}"
       ]

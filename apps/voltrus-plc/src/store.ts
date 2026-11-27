@@ -1,3 +1,4 @@
+import { loadThemeChoice, saveThemeChoice, type ThemeChoice } from "./lib/theme";
 import { create } from "zustand";
 import { bridgeMode, invoke, listen, type UnlistenFn } from "./api/bridge";
 import type {
@@ -24,6 +25,7 @@ import { transpileFbdToSt } from "./components/Editor/FbdEditor/transpiler/fbd-t
 import { transpileLdToSt } from "./components/Editor/LdEditor/transpiler/ld-to-st";
 import { transpileSfcToSt } from "./components/Editor/SfcEditor/transpiler/sfc-to-st";
 import type { FbdProgram } from "./types/fbd";
+import { isDeviceDoc, isVirtualDoc } from "./lib/s7Docs";
 import type { SfcProgram } from "./types/sfc";
 import type { LdProgram } from "./types/ld";
 import {
@@ -55,8 +57,8 @@ function notifyBridgeError(e: unknown): void {
 
 interface AppState {
   // Theme
-  theme: "dark" | "light";
-  setTheme: (t: "dark" | "light") => void;
+  theme: ThemeChoice;
+  setTheme: (t: ThemeChoice) => void;
 
   // File management
   openFiles: OpenFile[];
@@ -149,8 +151,8 @@ interface AppState {
   setOllamaEndpoint: (e: string) => void;
   aiApiKey: string;
   setAiApiKey: (k: string) => void;
-  rightPanelTab: "watch" | "io" | "ai" | "target" | "refs";
-  setRightPanelTab: (t: "watch" | "io" | "ai" | "target" | "refs") => void;
+  rightPanelTab: "watch" | "io" | "ai" | "target" | "online" | "refs";
+  setRightPanelTab: (t: "watch" | "io" | "ai" | "target" | "online" | "refs") => void;
 
   // Target (remote ESP32)
   targetIp: string;
@@ -255,8 +257,11 @@ function pushUndo(state: AppState) {
 
 export const useStore = create<AppState>((set, get) => ({
   // Theme
-  theme: "dark",
-  setTheme: (t) => set({ theme: t }),
+  theme: loadThemeChoice(),
+  setTheme: (t) => {
+    saveThemeChoice(t);
+    set({ theme: t });
+  },
 
   // Files
   openFiles: [
@@ -352,7 +357,7 @@ export const useStore = create<AppState>((set, get) => ({
   saveFile: async (index) => {
     const { openFiles } = get();
     const file = openFiles[index];
-    if (!file) return;
+    if (!file || isVirtualDoc(file.path)) return;
     // PLC-5: every diagram save is canonicalized before it reaches disk.
     const content = canonicalizeFileContent(file.name, file.content);
     try {
@@ -477,8 +482,11 @@ export const useStore = create<AppState>((set, get) => ({
   diagnostics: [],
 
   compile: async () => {
-    const { openFiles, activeFileIndex } = get();
-    const file = openFiles[activeFileIndex];
+    const { openFiles: allFiles, activeFileIndex } = get();
+    // Watch tables, tag tables and the online view are not program source.
+    const openFiles = allFiles.filter((f) => !isDeviceDoc(f.path));
+    const active = allFiles[activeFileIndex];
+    const file = active && !isDeviceDoc(active.path) ? active : openFiles[0];
     if (!file) return;
 
     // Transpile a single file to ST if it's a graphical language
@@ -544,9 +552,9 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Transpile extra files (mixed-language support)
     const extraSources: [string, string][] = [];
-    for (let i = 0; i < openFiles.length; i++) {
-      if (i === activeFileIndex) continue;
-      const extraResult = await transpileFile(openFiles[i]);
+    for (const extra of openFiles) {
+      if (extra === file) continue;
+      const extraResult = await transpileFile(extra);
       if (extraResult) {
         extraSources.push([extraResult.fileName, extraResult.source]);
         allDiagnostics.push(...extraResult.diagnostics);
@@ -1181,7 +1189,7 @@ Format as a structured test plan.`;
     const s = get();
     return {
       version: "0.4",
-      files: s.openFiles.map((f) => ({
+      files: s.openFiles.filter((f) => !isVirtualDoc(f.path)).map((f) => ({
         name: f.name,
         path: f.path,
         content: f.content,

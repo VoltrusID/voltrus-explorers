@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useStore } from "./store";
 import { invoke, listen } from "./api/bridge";
 import {
@@ -12,6 +12,7 @@ import {
   Ellipsis,
   Eye,
   FileCode,
+  FileInput,
   FilePlus,
   FileText,
   FlaskConical,
@@ -22,9 +23,13 @@ import {
   KeyRound,
   List,
   Milestone,
+  Monitor,
   Moon,
+  Palette,
   Network,
   Play,
+  Plug,
+  Unplug,
   RefreshCw,
   Redo2,
   ScrollText,
@@ -49,6 +54,7 @@ import {
   Button,
   EmptyState,
   IconButton,
+  Select,
   StatusDot,
   Tabs,
   Toolbar,
@@ -60,6 +66,7 @@ import RuntimeControls from "./components/Sidebar/RuntimeControls";
 import IoPanel from "./components/Sidebar/IoPanel";
 import IoMappingPanel from "./components/Sidebar/IoMappingPanel";
 import TargetPanel from "./components/Sidebar/TargetPanel";
+import OnlinePanel from "./components/Sidebar/OnlinePanel";
 import AiChatPanel from "./components/Sidebar/AiChatPanel";
 import LicensePanel from "./components/Sidebar/LicensePanel";
 import AccountBadge from "./components/Cloud/AccountBadge";
@@ -74,7 +81,14 @@ import Histogram from "./components/Bottom/Histogram";
 import SimulationPanel from "./components/Bottom/SimulationPanel";
 import TestsPanel from "./components/Tests/TestsPanel";
 import ResizeHandle from "./components/ResizeHandle";
+import ImportDialog from "./components/ImportDialog";
+import DeviceTree from "./components/S7/DeviceTree";
+import { S7Dialogs } from "./components/S7/common";
+import { initS7, deviceLabel, useS7 } from "./lib/s7Store";
+import { openOnlineTab } from "./lib/deviceProject";
+import { isDeviceDoc } from "./lib/s7Docs";
 import { useMediaQuery } from "./lib/useMediaQuery";
+import { resolveTheme, type ThemeChoice } from "./lib/theme";
 import { FBD_SAMPLES } from "./constants/fbd-samples";
 import { LD_SAMPLES } from "./constants/ld-samples";
 import { SFC_SAMPLES } from "./constants/sfc-samples";
@@ -83,7 +97,7 @@ import appIcon from "../src-tauri/icons/128x128.png";
 
 // Local mirrors of the store's tab unions (AppState is not exported).
 type BottomTab = "diagnostics" | "log" | "output" | "timing" | "histogram" | "search" | "simulation";
-type RightTab = "watch" | "io" | "ai" | "target" | "refs";
+type RightTab = "watch" | "io" | "ai" | "target" | "online" | "refs";
 
 const RUNTIME_TONES = {
   running: "success",
@@ -91,6 +105,21 @@ const RUNTIME_TONES = {
   error: "danger",
   stopped: "neutral",
 } as const;
+
+
+const THEME_ICONS: Record<ThemeChoice, ReactElement> = {
+  system: <Monitor size={14} strokeWidth={1.75} aria-hidden="true" />,
+  dark: <Moon size={14} strokeWidth={1.75} aria-hidden="true" />,
+  light: <Sun size={14} strokeWidth={1.75} aria-hidden="true" />,
+  petrol: <Palette size={14} strokeWidth={1.75} aria-hidden="true" />,
+};
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string; hint?: string; icon: ReactElement }[] = [
+  { value: "system", label: "System", hint: "Follow the OS setting", icon: THEME_ICONS.system },
+  { value: "dark", label: "Dark", icon: THEME_ICONS.dark },
+  { value: "light", label: "Light", icon: THEME_ICONS.light },
+  { value: "petrol", label: "Petrol", hint: "Grey panels, petrol-teal accent", icon: THEME_ICONS.petrol },
+];
 
 export default function App() {
   const {
@@ -133,6 +162,22 @@ export default function App() {
   const [templates, setTemplates] = useState<SampleTemplate[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewFile, setShowNewFile] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const s7Info = useS7((s) => s.info);
+  const s7Mode = useS7((s) => s.mode);
+  const s7Busy = useS7((s) => s.busy);
+  const s7Target = useS7((s) => s.target);
+  const s7GoOnline = useS7((s) => s.goOnline);
+  const s7GoOffline = useS7((s) => s.goOffline);
+  const s7Online = s7Info !== null;
+
+  useEffect(() => { void initS7(); }, []);
+  // Online mode recolours the window chrome (styles.css, [data-s7-online]).
+  useEffect(() => {
+    const root = document.documentElement;
+    if (s7Online) root.dataset.s7Online = s7Mode === "STOP" ? "stop" : "run";
+    else delete root.dataset.s7Online;
+  }, [s7Online, s7Mode]);
   const [showLicense, setShowLicense] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(264);
@@ -179,9 +224,10 @@ export default function App() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
+  const systemPrefersLight = useMediaQuery("(prefers-color-scheme: light)");
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-  }, [theme]);
+    document.documentElement.setAttribute("data-theme", resolveTheme(theme, systemPrefersLight));
+  }, [theme, systemPrefersLight]);
 
   // Close the toolbar overflow menu on Escape or click-away.
   useEffect(() => {
@@ -317,17 +363,23 @@ export default function App() {
           <List size={16} strokeWidth={1.75} />
         </IconButton>
       )}
-      <IconButton
-        label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      <Select<ThemeChoice>
+        value={theme}
+        onChange={setTheme}
+        options={THEME_OPTIONS}
+        sheetTitle="Theme"
         size="sm"
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      >
-        {theme === "dark" ? <Sun size={16} strokeWidth={1.75} /> : <Moon size={16} strokeWidth={1.75} />}
-      </IconButton>
+        fullWidth={false}
+        aria-label="Theme"
+        title="Theme"
+        display={THEME_ICONS[theme]}
+      />
       <span className="vt-divider--v" />
       <IconButton label="Open folder" title="Open project folder" size="sm" onClick={() => openProjectDir()}>
         <FolderOpen size={16} strokeWidth={1.75} />
+      </IconButton>
+      <IconButton label="Import" title="Import tag table, DB or SCL source" size="sm" onClick={() => setShowImport(true)}>
+        <FileInput size={16} strokeWidth={1.75} />
       </IconButton>
       <IconButton label="New file" title="New file" size="sm" onClick={() => setShowNewFile(true)}>
         <FilePlus size={16} strokeWidth={1.75} />
@@ -352,6 +404,21 @@ export default function App() {
       <IconButton label="Redo" title="Redo (Cmd+Shift+Z)" size="sm" onClick={redo}>
         <Redo2 size={16} strokeWidth={1.75} />
       </IconButton>
+      <span className="vt-divider--v" />
+      {s7Online ? (
+        <Button size="sm" variant="ghost" icon={<Unplug size={14} strokeWidth={1.75} />} onClick={() => void s7GoOffline()}
+          title="Disconnect from the S7 CPU">
+          Go offline
+        </Button>
+      ) : (
+        <Button size="sm" variant="ghost" icon={<Plug size={14} strokeWidth={1.75} />} loading={s7Busy}
+          title={s7Target.host ? `Go online with the S7 CPU at ${s7Target.host}` : "Set up the S7 CPU connection"}
+          onClick={async () => {
+            if (!s7Target.host.trim() || !(await s7GoOnline())) openOnlineTab();
+          }}>
+          Go online
+        </Button>
+      )}
       <span className="vt-divider--v" />
       {runtimeState === "running" ? (
         <Button size="sm" variant="danger" icon={<Square size={14} strokeWidth={1.75} />} onClick={() => plcStop()}>
@@ -492,15 +559,26 @@ export default function App() {
         connected={false}
         onInfo={() => setShowLicense(true)}
         context={
-          <Badge tone={RUNTIME_TONES[runtimeState]}>
-            <StatusDot tone={RUNTIME_TONES[runtimeState]} />
-            {runtimeState.charAt(0).toUpperCase() + runtimeState.slice(1)}
-          </Badge>
+          <>
+            {s7Online && (
+              <button className="s7-online-pill" onClick={openOnlineTab} title="Open Online & diagnostics">
+                <span className="s7-online-pill__dot" />
+                Online: {deviceLabel(s7Info, s7Target)}
+                {s7Mode && <span className="s7-online-pill__mode">{s7Mode}</span>}
+              </button>
+            )}
+            <Badge tone={RUNTIME_TONES[runtimeState]}>
+              <StatusDot tone={RUNTIME_TONES[runtimeState]} />
+              Runtime: {runtimeState.charAt(0).toUpperCase() + runtimeState.slice(1)}
+            </Badge>
+          </>
         }
         actions={toolbarActions}
       />
 
       {/* New File Modal */}
+      <ImportDialog open={showImport} onClose={() => setShowImport(false)} />
+      <S7Dialogs />
       {showNewFile && (
         <div className="modal-overlay" onClick={() => setShowNewFile(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-file-title" onClick={(e) => e.stopPropagation()}>
@@ -941,7 +1019,7 @@ function ProjectSidebar({ cloudOpen, setCloudOpen }: { cloudOpen: boolean; setCl
           />
         ) : (
           <ul className="file-tree">
-            {openFiles.map((file, i) => (
+            {openFiles.map((file, i) => isDeviceDoc(file.path) ? null : (
               <li
                 key={file.path}
                 className={`file-row ${i === activeFileIndex ? "is-active" : ""}`}
@@ -954,6 +1032,13 @@ function ProjectSidebar({ cloudOpen, setCloudOpen }: { cloudOpen: boolean; setCl
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="vt-section sidebar-devices">
+        <div className="vt-section__header">
+          <span className="vt-section__title">Devices</span>
+        </div>
+        <DeviceTree />
       </section>
 
       {/* Cloud section (PLC-20): collapsible; local project flow above is untouched */}
@@ -994,6 +1079,7 @@ function RightSidebarBody() {
           { value: "watch", label: "Watch" },
           { value: "io", label: "I/O" },
           { value: "target", label: "Target" },
+          { value: "online", label: "Online" },
           { value: "ai", label: "AI" },
           { value: "refs", label: "Refs" },
         ]}
@@ -1038,6 +1124,11 @@ function RightSidebarBody() {
             </div>
             <TargetPanel />
           </section>
+        </div>
+      )}
+      {rightPanelTab === "online" && (
+        <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+          <OnlinePanel />
         </div>
       )}
       {rightPanelTab === "ai" && (

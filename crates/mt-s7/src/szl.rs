@@ -399,11 +399,13 @@ fn diag_record(event: u16, priority: u8, ob: u8, time: [u8; 3]) -> Vec<u8> {
     r
 }
 
-/// The CPU mode record: event ID, `FF`, mode byte (RUN, left no mode), 4 reserved bytes, 4 bytes of
-/// startup info, time stamp. The layout of capture packet 87.
-fn mode_record() -> Vec<u8> {
-    let mut r = 0x4302u16.to_be_bytes().to_vec();
-    r.extend_from_slice(&[0xFF, 0x08]);
+/// The CPU mode record: event ID, `FF`, mode byte, 4 reserved bytes, 4 bytes of startup info,
+/// time stamp. The layout of capture packet 87. In RUN the mode byte is `08` (left no mode); in
+/// STOP it is `84` (STOP, left RUN) with the "RUN to STOP" event.
+fn mode_record(running: bool) -> Vec<u8> {
+    let (event, mode): (u16, u8) = if running { (0x4302, 0x08) } else { (0x4304, 0x84) };
+    let mut r = event.to_be_bytes().to_vec();
+    r.extend_from_slice(&[0xFF, mode]);
     r.extend_from_slice(&[0; 8]);
     r.extend_from_slice(&sim_time(20, 0, 5, 120));
     r
@@ -411,7 +413,7 @@ fn mode_record() -> Vec<u8> {
 
 /// The simulator's answer to an SZL read: `(record length, records)`, or `None` for an SZL or
 /// index it does not have.
-pub(crate) fn sim_records(id: u16, index: u16) -> Option<(u16, Vec<u8>)> {
+pub(crate) fn sim_records(id: u16, index: u16, running: bool) -> Option<(u16, Vec<u8>)> {
     match (id, index) {
         (LIST, 0) => {
             let records = SIM_SZL_IDS.iter().flat_map(|id| id.to_be_bytes()).collect();
@@ -439,7 +441,7 @@ pub(crate) fn sim_records(id: u16, index: u16) -> Option<(u16, Vec<u8>)> {
             let wanted = all.into_iter().filter(|r| index == 0 || u16::from_be_bytes([r[0], r[1]]) == index);
             Some((COMPONENT_RECORD_LEN as u16, wanted.flatten().collect()))
         }
-        (CPU_MODE, 0) => Some((MODE_RECORD_LEN as u16, mode_record())),
+        (CPU_MODE, 0) => Some((MODE_RECORD_LEN as u16, mode_record(running))),
         (DIAG_BUFFER, 0) => {
             let records = SIM_DIAG_EVENTS
                 .iter()
@@ -453,8 +455,8 @@ pub(crate) fn sim_records(id: u16, index: u16) -> Option<(u16, Vec<u8>)> {
 
 /// The whole answer for an SZL read: the SZL header followed by the records. The simulator cuts
 /// it into PDU-sized parts.
-pub(crate) fn sim_payload(id: u16, index: u16) -> Option<Vec<u8>> {
-    let (record_len, records) = sim_records(id, index)?;
+pub(crate) fn sim_payload(id: u16, index: u16, running: bool) -> Option<Vec<u8>> {
+    let (record_len, records) = sim_records(id, index, running)?;
     let count = records.len() / record_len as usize;
     let mut payload = Vec::with_capacity(SZL_HEADER_LEN + records.len());
     payload.extend_from_slice(&id.to_be_bytes());
@@ -686,7 +688,7 @@ mod tests {
     // ── The simulator's records are what the parsers read, and what a CPU sends ──
 
     fn sim_szl(id: u16) -> Szl {
-        let payload = sim_payload(id, 0).unwrap();
+        let payload = sim_payload(id, 0, true).unwrap();
         let unit = framing::Unit { seq: 1, data_unit_ref: 0, more: false };
         let pdu = framing::build_response(1, GROUP_SZL, SUBFUNCTION_READ, &unit, &payload);
         let Progress::Done(szl) = Assembler::default().push(&pdu).unwrap() else { panic!() };
@@ -714,7 +716,7 @@ mod tests {
     /// The simulator's mode record has the layout of `STATUS_87`, byte for byte up to the time stamp.
     #[test]
     fn simulator_mode_record_follows_the_capture() {
-        let (len, record) = sim_records(CPU_MODE, 0).unwrap();
+        let (len, record) = sim_records(CPU_MODE, 0, true).unwrap();
         assert_eq!(len, 20);
         let szl = read(&[STATUS_87]);
         let real = szl.records().next().unwrap();
@@ -724,14 +726,14 @@ mod tests {
 
     #[test]
     fn simulator_has_what_the_szl_list_says() {
-        let (len, list) = sim_records(LIST, 0).unwrap();
+        let (len, list) = sim_records(LIST, 0, true).unwrap();
         assert_eq!(len, 2);
         for id in list.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])) {
-            assert!(sim_records(id, 0).is_some(), "SZL 0x{id:04X}");
+            assert!(sim_records(id, 0, true).is_some(), "SZL 0x{id:04X}");
         }
-        assert!(sim_records(0x0C91, 0x7FFF).is_none());
-        assert!(sim_records(CPU_MODE, 1).is_none());
-        let (_, one) = sim_records(COMPONENT_IDENTIFICATION, 5).unwrap();
+        assert!(sim_records(0x0C91, 0x7FFF, true).is_none());
+        assert!(sim_records(CPU_MODE, 1, true).is_none());
+        let (_, one) = sim_records(COMPONENT_IDENTIFICATION, 5, true).unwrap();
         assert_eq!(one.len(), 34);
     }
 }
