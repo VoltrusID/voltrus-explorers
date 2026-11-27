@@ -239,6 +239,13 @@ function ScanDialog({ open, onClose, onPick }: { open: boolean; onClose: () => v
   );
 }
 
+/** S7 online is new and has only been tested against S7 simulators so far. */
+export const S7_BETA_NOTE = "Beta: tested against S7 simulators. Tell us which CPU you use: support@voltrus.id";
+
+export function S7BetaBadge() {
+  return <Badge tone="warn" title={S7_BETA_NOTE}>Beta</Badge>;
+}
+
 /** Offline note on what the S7 functions need from the CPU. */
 export function S7AccessNote() {
   return (
@@ -246,6 +253,8 @@ export function S7AccessNote() {
       Works with S7-300/400, and with S7-1200/1500 when PUT/GET access is allowed in the CPU's
       protection settings. Addresses use absolute notation (MW10, DB1.DBD4, I0.0); optimized DBs
       cannot be reached this way.
+      <br />
+      {S7_BETA_NOTE}
     </Callout>
   );
 }

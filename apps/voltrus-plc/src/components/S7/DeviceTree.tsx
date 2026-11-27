@@ -5,6 +5,7 @@ import { useStore } from "../../store";
 import { createTagDoc, createWatchTable, listDeviceDocs, openDeviceConfig, openDoc, openOnlineTab, readDoc } from "../../lib/deviceProject";
 import { docTitle, ONLINE_PATH } from "../../lib/s7Docs";
 import { deviceLabel, useS7 } from "../../lib/s7Store";
+import { S7BetaBadge } from "./common";
 
 function Group({ label, icon, open, onToggle, action, children, depth = 1 }: {
   label: string;
@@ -81,6 +82,7 @@ export default function DeviceTree() {
           <Cpu size={14} strokeWidth={1.75} />
           <span className="tree-row__name">{deviceLabel(info, target)}</span>
           {target.host && <span className="tree-row__meta mono">{target.host}</span>}
+          <S7BetaBadge />
           <DeviceMark online={online} mode={mode} />
         </div>
         {open.device && (

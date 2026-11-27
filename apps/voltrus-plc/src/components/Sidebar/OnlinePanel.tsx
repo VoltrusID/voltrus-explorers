@@ -3,7 +3,7 @@ import { Activity, Plug, Table2 } from "lucide-react";
 import { bridgeMode } from "../../api/bridge";
 import { createWatchTable, openOnlineTab } from "../../lib/deviceProject";
 import { useS7 } from "../../lib/s7Store";
-import { ConnectionForm, CpuDetails, ModeBadge, ModeButtons, S7AccessNote } from "../S7/common";
+import { ConnectionForm, CpuDetails, ModeBadge, ModeButtons, S7AccessNote, S7BetaBadge } from "../S7/common";
 
 /**
  * The Online inspector: connection, CPU identity and mode at a glance. Diagnostics, watch tables
@@ -27,6 +27,7 @@ export default function OnlinePanel() {
       <section className="vt-section">
         <div className="vt-section__header">
           <span className="vt-section__title">Connection</span>
+          <S7BetaBadge />
           {online && <StatusDot tone="success" label="Online" />}
         </div>
         <ConnectionForm compact />
