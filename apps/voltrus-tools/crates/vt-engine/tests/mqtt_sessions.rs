@@ -245,8 +245,10 @@ fn a_client_watches_and_publishes_to_the_simulated_broker() {
         qos: MqttQos::AtLeastOnce,
         retain: true,
     });
-    engine.until("the published message to come back", |engine| {
-        engine.client.value("test/limit › kw") == Some(42.5)
+    // The broker may forward the message to the subscriber before it acknowledges the publish
+    // (PUBACK), so wait for both.
+    engine.until("the published message to come back and be acknowledged", |engine| {
+        engine.client.value("test/limit › kw") == Some(42.5) && !engine.client.published.is_empty()
     });
     assert_eq!(engine.client.published, [("test/limit".to_owned(), Ok(()))]);
     assert!(
